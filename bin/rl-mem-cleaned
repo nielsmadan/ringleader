@@ -1,0 +1,32 @@
+#!/usr/bin/env python3
+# bin/rl-mem-cleaned
+from __future__ import annotations
+import argparse, sys
+from datetime import datetime, timezone
+from pathlib import Path
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+from ringleader import registry, projects, overview  # noqa: E402
+DEFAULT_REGISTRY = REPO / "registry.json"
+
+def main():
+    ap = argparse.ArgumentParser(prog="rl-mem-cleaned")
+    ap.add_argument("selector")
+    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+    args = ap.parse_args()
+    reg = registry.load_registry(args.registry)
+    matched = projects.filter_by_projects(reg["memoryEntries"], [args.selector])
+    if not matched:
+        print(f"rl-mem-cleaned: no memory matches '{args.selector}' — nothing to track",
+              file=sys.stderr)
+        sys.exit(1)
+
+    keys = sorted({overview.group_key(e) for e in matched})
+    when = datetime.now(timezone.utc).isoformat()
+    for k in keys:
+        registry.mark_memory_project_cleaned(reg, k, when)
+    registry.save_registry(args.registry, reg)
+    print(f"marked memory cleaned: {', '.join(keys)}")
+
+if __name__ == "__main__":
+    main()

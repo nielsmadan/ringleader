@@ -1,0 +1,12 @@
+# machine-local derived state — never commit
+registry.json
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# archived raw transcripts (machine-local retention)
+archive/
+# machine-local superpowers scratch/specs (never part of the public repo)
+.superpowers/
+docs/superpowers/

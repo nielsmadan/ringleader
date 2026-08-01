@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+from ringleader import registry  # noqa: E402
+
+DEFAULT_REGISTRY = REPO / "registry.json"
+
+
+def main():
+    ap = argparse.ArgumentParser(
+        prog="rl-snooze",
+        description="Set a session aside: keep it open/resumable, but hide it from the "
+                    "default rl projects/overview until you `rl wake` it.")
+    ap.add_argument("id")
+    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+    args = ap.parse_args()
+
+    reg = registry.load_registry(args.registry)
+    when = datetime.now(timezone.utc).isoformat()
+    try:
+        registry.snooze_thread(reg, args.id, when)
+    except KeyError:
+        print(f"rl-snooze: unknown session {args.id}", file=sys.stderr)
+        sys.exit(1)
+    registry.save_registry(args.registry, reg)
+    print(f"snoozed {args.id} (hidden until `rl wake {args.id[:8]}…`)")
+
+
+if __name__ == "__main__":
+    main()

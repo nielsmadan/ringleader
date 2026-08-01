@@ -1,0 +1,43 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import shutil
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+from ringleader import registry  # noqa: E402
+
+DEFAULT_REGISTRY = REPO / "registry.json"
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="rl-delete")
+    ap.add_argument("id")
+    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+    args = ap.parse_args()
+
+    reg = registry.load_registry(args.registry)
+    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+    if t is None:
+        print(f"rl-delete: unknown session {args.id}", file=sys.stderr)
+        sys.exit(1)
+
+    f = Path(t["file"])
+    f.unlink(missing_ok=True)
+    shutil.rmtree(f.with_suffix(""), ignore_errors=True)
+    registry.prune_session(reg, args.id, _now(), reason="deleted")
+    registry.save_registry(args.registry, reg)
+    print(f"deleted {args.id}")
+
+
+if __name__ == "__main__":
+    main()

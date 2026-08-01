@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO))
+
+from ringleader import registry, export  # noqa: E402
+
+DEFAULT_REGISTRY = REPO / "registry.json"
+
+
+def main():
+    ap = argparse.ArgumentParser(prog="rl-export")
+    ap.add_argument("id")
+    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+
+    reg = registry.load_registry(args.registry)
+    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+    if t is None:
+        print(f"rl-export: unknown session {args.id}", file=sys.stderr)
+        sys.exit(1)
+
+    text = export.render_conversation(t["file"])
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        sys.stdout.write(text)
+
+
+if __name__ == "__main__":
+    main()
