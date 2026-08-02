@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timezone
 
-from .. import overview, projects, refresh, registry
+from .. import jsonout, overview, projects, refresh, registry
 from . import default_registry
 
 
@@ -25,7 +26,13 @@ def cmd_triage(argv: list[str]) -> int:
     ap.add_argument("--unclassified", "-u", action="store_true",
                     help="list only never-classified sessions (never triaged), "
                          "not the full awaiting-a-decision inbox")
+    ap.add_argument("--json", action="store_true",
+                    help="print the triage inbox as JSON instead of text; honors -u/"
+                         "--unclassified, not valid with --memory")
     args = ap.parse_args(argv)
+
+    if args.memory and args.json:
+        raise SystemExit("rl triage: --json is not supported with --memory")
 
     if args.memory:
         from .. import memory as memmod
@@ -55,5 +62,10 @@ def cmd_triage(argv: list[str]) -> int:
         if note:
             print(note + "\n")
     threads = projects.filter_by_projects(reg["threads"], args.project)
+    if args.json:
+        print(json.dumps(
+            jsonout.triage_json(threads, now, unclassified_only=args.unclassified),
+            indent=2))
+        return 0
     print(overview.render_triage(threads, now, unclassified_only=args.unclassified))
     return 0

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 from datetime import datetime, timezone
 
-from .. import overview, projects, refresh, registry
+from .. import jsonout, overview, projects, refresh, registry
 from . import default_registry
 
 
@@ -38,6 +39,9 @@ def cmd_overview(argv: list[str]) -> int:
                     help="do not auto-scan disk first (report from the registry as-is)")
     ap.add_argument("-m", "--memory", action="store_true",
                     help="rollup (or <selector> deep-dive) over memory entries instead of sessions")
+    ap.add_argument("--json", action="store_true",
+                    help="print the registry-wide rollup as JSON instead of text; "
+                         "ignores the selector and other view flags (-s/-a/--archived/-m)")
     args = ap.parse_args(argv)
 
     now = _now()
@@ -47,6 +51,10 @@ def cmd_overview(argv: list[str]) -> int:
         reg, note = refresh.auto_refresh(args.registry, now)
         if note:
             print(note + "\n")
+
+    if args.json:
+        print(json.dumps(jsonout.rollup_json(reg, now), indent=2))
+        return 0
 
     selectors = list(args.project or [])
     if args.selector:
