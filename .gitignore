@@ -10,3 +10,7 @@ archive/
 # machine-local superpowers scratch/specs (never part of the public repo)
 .superpowers/
 docs/superpowers/
+# build artifacts
+dist/
+build/
+*.egg-info/
