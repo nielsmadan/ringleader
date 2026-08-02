@@ -94,7 +94,7 @@ def test_triage_memory_lists_unreviewed(tmp_path):
     env = _seed_mem(tmp_path)
     reg = tmp_path / "registry.json"
     r = subprocess.run(
-        [sys.executable, "-m", "ringleader", "triage", "--memory", "--registry", str(reg)],
+        [sys.executable, "-m", "ringleader", "mem", "triage", "--registry", str(reg)],
         capture_output=True,
         text=True,
         check=False,
@@ -110,7 +110,7 @@ def test_triage_memory_empty_message(tmp_path):
     env = {**os.environ, "SESSION_TRACKER_PROJECTS_DIR": str(empty_dir)}
     reg = tmp_path / "registry.json"
     r = subprocess.run(
-        [sys.executable, "-m", "ringleader", "triage", "--memory", "--registry", str(reg)],
+        [sys.executable, "-m", "ringleader", "mem", "triage", "--registry", str(reg)],
         capture_output=True,
         text=True,
         check=False,

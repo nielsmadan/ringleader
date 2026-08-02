@@ -14,9 +14,9 @@ def _now() -> str:
 
 def cmd_cleaned(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl cleaned",
+        prog="rl session mark cleaned",
         description="Record that a project was just triaged (clean-project), so "
-        "rl projects can show what's done vs. needs another look.",
+        "rl overview can show what's done vs. needs another look.",
     )
     ap.add_argument("selector", help="git-project label or a cwd path")
     ap.add_argument("--registry", default=str(default_registry()))

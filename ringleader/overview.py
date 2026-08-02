@@ -254,14 +254,14 @@ def registry_age_human(reg: dict, now_iso: str) -> str:
 def staleness_banner(reg: dict, now_iso: str, max_age_minutes: float = 60) -> str | None:
     """A one-line warning when the registry hasn't been scanned recently, or None
     when it's fresh. Read commands report from the registry, which only
-    `rl sync scan` refreshes — so a stale registry silently under-reports counts."""
+    `rl session refresh` refreshes — so a stale registry silently under-reports counts."""
     if not is_stale(reg, now_iso, max_age_minutes):
         return None
     if registry_age_minutes(reg, now_iso) is None:
-        return "(registry never scanned — run `rl sync scan` to populate it)"
+        return "(registry never scanned — run `rl session refresh` to populate it)"
     return (
         f"(registry last scanned {registry_age_human(reg, now_iso)} — counts may be "
-        f"out of date; run `rl sync scan` to refresh)"
+        f"out of date; run `rl session refresh` to refresh)"
     )
 
 

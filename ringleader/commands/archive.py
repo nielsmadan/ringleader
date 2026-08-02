@@ -38,7 +38,7 @@ def _summary_from_file(path: str | None) -> str | None:
 
 
 def cmd_archive(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl archive")
+    ap = argparse.ArgumentParser(prog="rl session archive")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--archive-root", default=str(archive_root()))

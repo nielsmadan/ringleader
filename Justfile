@@ -26,7 +26,7 @@ typecheck:
 
 # Migrate legacy repo state, then install the global `rl`.
 install-local:
-    @uv run rl migrate
+    @uv run rl data migrate
     @uv tool install .
     @echo "Installed: $(which rl)"
 

@@ -9,7 +9,7 @@ from . import default_registry
 
 
 def cmd_export(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl export")
+    ap = argparse.ArgumentParser(prog="rl data export")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--out", default=None)

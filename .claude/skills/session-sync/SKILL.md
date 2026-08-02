@@ -6,7 +6,7 @@ description: Use to refresh the ringleader registry — scan ~/.claude/projects,
 # session-sync
 
 Refreshes the registry and classifies dormant sessions. Deterministic scanning is
-done by `rl sync`; you (the agent) do the classification. Requires `rl` installed
+done by `rl session refresh`; you (the agent) do the classification. Requires `rl` installed
 (`just install-local`) or, from a source checkout, run each command as `uv run rl <sub>`.
 
 ## Steps
@@ -14,7 +14,7 @@ done by `rl sync`; you (the agent) do the classification. Requires `rl` installe
 1. **Scan and reconcile.** Run from any cwd:
 
    ```bash
-   rl sync scan
+   rl session refresh
    ```
 
    To scope to one repo or directory, add `--project <selector>` (repeatable).
@@ -47,7 +47,7 @@ done by `rl sync`; you (the agent) do the classification. Requires `rl` installe
 4. **Write each result back:**
 
    ```bash
-   rl sync apply --session <sessionId> \
+   rl session set --session <sessionId> \
      --status <status> --what "<whatItIs>" --name "<suggestedName>" --confidence <0..1>
    ```
 

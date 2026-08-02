@@ -19,7 +19,7 @@ are human-readable summaries and do **not** print full ids.
 1. **Export the conversation** to a temp markdown file:
 
    ```bash
-   rl export <id> --out /tmp/rl-harvest-<id>.md
+   rl data export <id> --out /tmp/rl-harvest-<id>.md
    ```
 
 2. **Integrate into the repo's docs** by invoking the `/doc` skill with the export, from
@@ -33,15 +33,15 @@ are human-readable summaries and do **not** print full ids.
 3. **Record the harvest** in the registry (paths come from the report file, comma-joined):
 
    ```bash
-   rl mark-harvested <id> --paths "<comma-joined paths from the report>"
+   rl session mark harvested <id> --paths "<comma-joined paths from the report>"
    ```
 
-   If the report is empty (nothing worth documenting), run `rl mark-harvested <id>` with
+   If the report is empty (nothing worth documenting), run `rl session mark harvested <id>` with
    no `--paths` — it still marks the session harvested.
 
 4. **Report** which docs were updated and that the session is marked harvested.
 
 ## Notes
 - This harvests only — it does NOT archive or delete. To move a finished session out of
-  the resume picker afterward, use `rl archive <id>`.
+  the resume picker afterward, use `rl session archive <id>`.
 - Never hand-edit `registry.json` or transcripts.

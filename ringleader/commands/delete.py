@@ -15,7 +15,7 @@ def _now() -> str:
 
 
 def cmd_delete(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl delete")
+    ap = argparse.ArgumentParser(prog="rl session delete")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)

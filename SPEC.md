@@ -165,7 +165,7 @@ command via `ringleader/paths.py`.
 longer inside the repo at all (no `.gitignore` entry needed for them there). There is no
 `harvests/` directory: `session-harvest` integrates knowledge directly into the *target*
 repo's own docs (via the `/doc` skill) and records the resulting doc paths on the thread's
-`harvestPath`, rather than writing a ringleader-local copy. `rl migrate` moves any
+`harvestPath`, rather than writing a ringleader-local copy. `rl data migrate` moves any
 pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on install.
 
 ## registry.json schema (v1)
@@ -220,7 +220,7 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
 | 3 | `session-name` | Propose names for unnamed sessions (batch retroactive + current); surface them for the user to apply via native `/rename` / `claude -n` / `Ctrl+R`. | #2 |
 | 4 | `session-harvest` | Distill a chosen session/thread (what was done, key decisions, files touched, where it stopped, follow-ups) and integrate it into the *target repo's* own docs via the `/doc` skill; record the touched doc paths on `harvestPath` and mark `decision=harvested`. | ②, #3 |
 | 5 | `session-triage` | Guided cleanup: run `rl prune` for the tiny+stale junk, then walk the triage inbox (`rl triage`) session-by-session to delete, harvest, or leave open. | #3 |
-| 6 | `memory-triage` | Per-project curation: auto-prune obsolete memory entries via `rl mem-prune`, classify survivors, integrate durable items into repo's `CLAUDE.md`/`AGENTS.md`, mark project cleaned. Flags global-worthy items for manual integration. | #5 |
+| 6 | `memory-triage` | Per-project curation: auto-prune obsolete memory entries via `rl mem prune`, classify survivors, integrate durable items into repo's `CLAUDE.md`/`AGENTS.md`, mark project cleaned. Flags global-worthy items for manual integration. | #5 |
 
 ### Retention strategy (resolves the core dilemma)
 
@@ -237,7 +237,7 @@ under `~/.claude/projects/*/memory/` — a `MEMORY.md` index plus per-topic entr
 `memory.py` scans these entries, detects obsolete signals (repo gone, FIXED/DONE markers,
 already-integrated into the repo's docs), and feeds them into the registry as `memoryEntries`
 (schema v2). The `memory-triage` skill orchestrates cleanup: deterministic plumbing commands
-(`rl mem-scan`, `rl mem-prune`, `rl mark-mem-reviewed`, `rl mem-cleaned`) handle scanning,
+(`rl mem refresh`, `rl mem prune`, `rl mem mark reviewed`, `rl mem mark cleaned`) handle scanning,
 preview/deletion of obsolete entries, and state tracking; the skill agent classifies
 survivors and integrates durable items into the repo's `CLAUDE.md` or `AGENTS.md` (if
 present). Entries flagged as globally useful are reported only — never auto-edited into

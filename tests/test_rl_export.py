@@ -29,7 +29,7 @@ def _setup(tmp, sid="a"):
 
 def _run(reg, *args):
     return subprocess.run(
-        [sys.executable, "-m", "ringleader", "export", "--registry", str(reg), *args],
+        [sys.executable, "-m", "ringleader", "data", "export", "--registry", str(reg), *args],
         cwd=str(REPO),
         capture_output=True,
         text=True,

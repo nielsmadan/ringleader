@@ -57,6 +57,18 @@ def _run(reg, *args):
     )
 
 
+def _run_mem(reg, *args):
+    env = dict(os.environ, SESSION_TRACKER_PROJECTS_DIR=str(reg.parent / "empty"))
+    return subprocess.run(
+        [sys.executable, "-m", "ringleader", "mem", "overview", "--registry", str(reg), *args],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+
 def test_default_is_rollup(tmp_path):
     reg = _registry(tmp_path, [_thread("a")])
     r = _run(reg, "--no-scan")
@@ -179,7 +191,7 @@ def test_overview_memory_rollup(tmp_path):
             _mem_entry("b", obsoleteSignals=["FIXED"]),
         ],
     )
-    r = _run(reg, "--memory", "--no-scan")
+    r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "repo" in r.stdout
     assert "2 entries" in r.stdout
@@ -189,14 +201,14 @@ def test_overview_memory_rollup(tmp_path):
 
 def test_overview_memory_selector_lists_entries(tmp_path):
     reg = _registry_mem(tmp_path, [_mem_entry("a")])
-    r = _run(reg, "repo", "--memory", "--no-scan")
+    r = _run_mem(reg, "repo", "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "a" in r.stdout and "/p" in r.stdout
 
 
 def test_overview_memory_shows_cleaned_project_with_zero_entries(tmp_path):
     reg = _registry_mem(tmp_path, [], {"github.com/n/gone": "2026-07-01T00:00:00+00:00"})
-    r = _run(reg, "--memory", "--no-scan")
+    r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "no memory entries" not in r.stdout
     assert "gone: 0 entries (0 obsolete-candidate) [cleaned" in r.stdout
@@ -206,7 +218,7 @@ def test_overview_memory_cleaned_zero_sorts_after_populated(tmp_path):
     reg = _registry_mem(
         tmp_path, [_mem_entry("a")], {"github.com/n/gone": "2026-07-01T00:00:00+00:00"}
     )
-    r = _run(reg, "--memory", "--no-scan")
+    r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     lines = [ln for ln in r.stdout.splitlines() if ln.strip()]
     assert lines[0].startswith("repo: 1 entries")
@@ -215,13 +227,13 @@ def test_overview_memory_cleaned_zero_sorts_after_populated(tmp_path):
 
 def test_overview_memory_cleaned_zero_uses_cwd_key_as_label(tmp_path):
     reg = _registry_mem(tmp_path, [], {"/Users/x/wrksp/thing": "2026-07-01T00:00:00+00:00"})
-    r = _run(reg, "--memory", "--no-scan")
+    r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "/Users/x/wrksp/thing: 0 entries" in r.stdout
 
 
 def test_overview_memory_still_empty_when_nothing_tracked(tmp_path):
     reg = _registry_mem(tmp_path, [])
-    r = _run(reg, "--memory", "--no-scan")
+    r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "no memory entries" in r.stdout

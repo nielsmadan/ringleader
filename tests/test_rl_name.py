@@ -1,4 +1,4 @@
-"""Integration tests for the `rl name` CLI."""
+"""Integration tests for the `rl session name` CLI."""
 
 from __future__ import annotations
 
@@ -64,8 +64,8 @@ def _make_registry(threads: list[dict]) -> dict:
 
 
 def _run(*extra_args, registry_path: str, check: bool = False):
-    """Run rl-name with the given registry and extra args."""
-    cmd = [PYTHON, "-m", "ringleader", "name", "--registry", registry_path, *extra_args]
+    """Run rl session name with the given registry and extra args."""
+    cmd = [PYTHON, "-m", "ringleader", "session", "name", "--registry", registry_path, *extra_args]
     return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True, check=check)
 
 

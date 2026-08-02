@@ -15,7 +15,7 @@ def _now() -> str:
 
 
 def cmd_mem_prune(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem-prune")
+    ap = argparse.ArgumentParser(prog="rl mem prune")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None)
     ap.add_argument("--delete", action="store_true")

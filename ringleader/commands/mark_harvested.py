@@ -8,7 +8,7 @@ from . import default_registry
 
 
 def cmd_mark_harvested(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mark-harvested")
+    ap = argparse.ArgumentParser(prog="rl session mark harvested")
     ap.add_argument("id")
     ap.add_argument("--paths", default="", help="comma-separated doc paths harvested into")
     ap.add_argument("--registry", default=str(default_registry()))

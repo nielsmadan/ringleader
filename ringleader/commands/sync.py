@@ -60,31 +60,37 @@ def cmd_apply(args):
     print(f"applied {args.session}: {args.status}")
 
 
-def cmd_sync(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl sync")
-    ap.add_argument("--registry", default=str(default_registry()))
-    sub = ap.add_subparsers(required=True, dest="cmd")
-
-    s = sub.add_parser("scan", help="reconcile registry; emit pending classifications")
-    s.add_argument("--tail", type=int, default=30)
-    s.add_argument(
+def _add_scan_opts(p) -> None:
+    p.add_argument("--tail", type=int, default=30)
+    p.add_argument(
         "--project",
         action="append",
         default=None,
         help="repo/dir selector; repeatable — filters emitted pending",
     )
-    s.set_defaults(fn=cmd_scan)
 
-    a = sub.add_parser("apply", help="write one classification back")
-    a.add_argument("--session", required=True)
-    a.add_argument(
+
+def _add_apply_opts(p) -> None:
+    p.add_argument("--session", required=True)
+    p.add_argument(
         "--status", required=True, choices=["active", "unfinished", "blocked", "finished"]
     )
-    a.add_argument("--what", required=True)
-    a.add_argument("--name", required=True)
-    a.add_argument("--confidence", type=float, default=None)
-    a.set_defaults(fn=cmd_apply)
+    p.add_argument("--what", required=True)
+    p.add_argument("--name", required=True)
+    p.add_argument("--confidence", type=float, default=None)
 
-    args = ap.parse_args(argv)
-    args.fn(args)
+
+def cmd_refresh(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl session refresh")
+    ap.add_argument("--registry", default=str(default_registry()))
+    _add_scan_opts(ap)
+    cmd_scan(ap.parse_args(argv))
+    return 0
+
+
+def cmd_set(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl session set")
+    ap.add_argument("--registry", default=str(default_registry()))
+    _add_apply_opts(ap)
+    cmd_apply(ap.parse_args(argv))
     return 0

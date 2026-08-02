@@ -50,7 +50,7 @@ def test_staleness_banner_fresh_returns_none():
 
 def test_staleness_banner_stale_mentions_age_and_scan():
     b = staleness_banner({"lastScan": "2026-06-18T00:00:00+00:00"}, NOW)
-    assert b is not None and "12d ago" in b and "rl sync scan" in b
+    assert b is not None and "12d ago" in b and "rl session refresh" in b
 
 
 def test_staleness_banner_never_scanned():

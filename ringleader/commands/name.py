@@ -26,7 +26,7 @@ def _append_title(file_path: str, line: str) -> None:
 
 
 def cmd_name(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl name")
+    ap = argparse.ArgumentParser(prog="rl session name")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument(
         "--project", action="append", default=None, help="repo/dir selector; repeatable"

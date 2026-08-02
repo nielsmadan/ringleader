@@ -10,7 +10,7 @@ from . import default_registry
 
 def cmd_relocate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl relocate",
+        prog="rl session relocate",
         description="Re-point a session to a new directory after you moved it on disk. "
         "The transcript's baked-in cwd is stale; this pins the new location "
         "so scans don't revert it.",

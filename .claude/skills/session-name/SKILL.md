@@ -23,13 +23,13 @@ command as `uv run rl <sub>`. Scope everything to one repo/dir at a time with
    ```
 
 2. **Make sure that scope is classified/fresh** — run the `session-sync` skill
-   scoped to it (`rl sync scan --project <selector>`), classifying any pending
+   scoped to it (`rl session refresh --project <selector>`), classifying any pending
    sessions. Re-naming depends on fresh classifications.
 
 3. **Preview** what would be named/re-named in that scope:
 
    ```bash
-   rl name --project <selector> --dry-run
+   rl session name --project <selector> --dry-run
    ```
 
    `new:` rows are first-time names; `rename:` rows show `old -> new` where a
@@ -38,7 +38,7 @@ command as `uv run rl <sub>`. Scope everything to one repo/dir at a time with
 4. **Apply:**
 
    ```bash
-   rl name --project <selector>
+   rl session name --project <selector>
    ```
 
 5. **Report** the summary (named / renamed / skipped).

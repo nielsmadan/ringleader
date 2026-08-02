@@ -9,7 +9,7 @@ from . import default_registry
 
 
 def cmd_mem_cleaned(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem-cleaned")
+    ap = argparse.ArgumentParser(prog="rl mem mark cleaned")
     ap.add_argument("selector")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)

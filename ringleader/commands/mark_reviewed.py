@@ -10,7 +10,7 @@ from . import default_registry
 
 
 def cmd_mark_reviewed(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mark-reviewed")
+    ap = argparse.ArgumentParser(prog="rl session mark reviewed")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)

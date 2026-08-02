@@ -17,7 +17,7 @@ from a source checkout without installing, use `uv run rl <command>`.
 
 State (the registry and `archive/`) lives under `~/.local/share/ringleader/`
 (or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
-runs `rl migrate` first to move any pre-existing repo-root `registry.json` /
+runs `rl data migrate` first to move any pre-existing repo-root `registry.json` /
 `archive/` into that location.
 
 ## Everyday
@@ -31,8 +31,9 @@ The view. Auto-refreshes the registry (a disk scan) before rendering, unless
 is non-empty.
 
 - (no args) — project rollup, the default. The `cleaned` column is the last
-  `rl cleaned` (session triage); `mem` is the last `rl mem-cleaned` (memory
-  triage), showing `—` where the project has no memory entries at all.
+  `rl session mark cleaned` (session triage); `mem` is the last
+  `rl mem mark cleaned` (memory triage), showing `—` where the project has no
+  memory entries at all.
 - `-s`, `--sessions` — flat per-session list of live threads instead of the rollup.
 - `<selector>` — one-repo deep-dive (a git project label like `juggler`, or a cwd path).
 - `--archived` — list archived sessions instead of live ones.
@@ -42,12 +43,18 @@ is non-empty.
 - `--json` — print the registry-wide rollup as JSON instead of text; ignores the
   selector and other view flags.
 
+For the memory rollup instead of the session rollup, use `rl mem overview`
+(same flags: `[<selector>] [--no-scan]`).
+
 ### `rl triage [--project <sel>] [--no-scan] [--json]`
 
 Lists sessions awaiting your decision — not yet reviewed, harvested, or
 parked. Auto-refreshes the registry first, unless `--no-scan`. `--project`
 scopes the inbox to one repo/dir selector (repeatable). `--json` prints the
-inbox as JSON instead of text (honors `-u`/`--unclassified`; not valid with `--memory`).
+inbox as JSON instead of text (honors `-u`/`--unclassified`).
+
+For the memory-review inbox instead of the session inbox, use `rl mem triage`
+(same flags: `[--project <sel>] [--no-scan]`).
 
 ### `rl prune [--project <sel>] [--delete]`
 
@@ -57,22 +64,37 @@ actually delete. `--project` scopes the prune to one repo/dir selector.
 ## Plumbing
 
 Mostly invoked by the skills (`session-sync`, `session-overview`,
-`session-name`, `session-harvest`, `session-triage`), not by hand.
+`session-name`, `session-harvest`, `session-triage`, `memory-triage`), not by hand.
+
+Commands are grouped under `rl session`, `rl mem`, `rl data`, and the
+reserved `rl config`. `rl <group>` with no subcommand lists that group's
+verbs.
 
 | Command | Does |
 |---|---|
-| `rl export <id> [--out <path>]` | Render a session to markdown. |
-| `rl archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
-| `rl delete <id>` | Delete one session (files + tombstone). |
-| `rl mark-harvested <id> [--paths a,b]` | Mark a session harvested (records docs). |
-| `rl mark-reviewed <id>` | Mark an open session reviewed (skip until it changes). |
-| `rl cleaned <selector>` | Record a project as just-triaged. |
-| `rl relocate <id> <path>` | Re-point a session after moving its dir. |
-| `rl snooze <id>` | Park a session (hide from default views). |
-| `rl wake <id>` | Un-snooze a session. |
-| `rl sync scan [--project <sel>]` | Reconcile + emit sessions to classify. |
-| `rl name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
-| `rl migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
+| `rl session refresh [--project <sel>]` | Reconcile + emit sessions to classify. |
+| `rl session set` | Classify a session (whatItIs/decision/tags). |
+| `rl session enrich` | *(coming soon)* — reserved. |
+| `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
+| `rl session delete <id>` | Delete one session (files + tombstone). |
+| `rl session complete` | *(coming soon)* — reserved. |
+| `rl session snooze <id>` | Park a session (hide from default views). |
+| `rl session wake <id>` | Un-snooze a session. |
+| `rl session name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
+| `rl session relocate <id> <path>` | Re-point a session after moving its dir. |
+| `rl session mark harvested <id> [--paths a,b]` | Mark a session harvested (records docs). |
+| `rl session mark reviewed <id>` | Mark an open session reviewed (skip until it changes). |
+| `rl session mark cleaned <selector>` | Record a project as just-triaged. |
+| `rl mem refresh` | Reconcile + emit memory entries to review. |
+| `rl mem prune` | Delete obsolete-candidate memory entries. |
+| `rl mem triage [--project <sel>] [--no-scan]` | The memory-review inbox. |
+| `rl mem overview [<selector>] [--no-scan]` | Memory rollup (or `<selector>` deep-dive). |
+| `rl mem mark cleaned <selector>` | Record a project's memory as just-triaged. |
+| `rl mem mark reviewed <name>` | Mark a memory entry reviewed. |
+| `rl data export <id> [--out <path>]` | Render a session to markdown. |
+| `rl data tokens` | Report token/size stats. |
+| `rl data migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
+| `rl config` | *(coming soon)* — reserved. |
 
 ## Sources
 
@@ -92,8 +114,8 @@ name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
 1. Move **both** `archive/<slug>/<id>.jsonl` and its sidecar directory
    `archive/<slug>/<id>/` back into `~/.claude/projects/<slug>/`. Leaving the sidecar
    behind still resumes, but drops the session's `subagents/` and `tool-results/` data.
-   Check the live side doesn't already hold either name first — `rl archive` aborts on that
-   collision and the reverse move deserves the same care.
+   Check the live side doesn't already hold either name first — `rl session archive` aborts
+   on that collision and the reverse move deserves the same care.
 2. Delete the session's `reason: "archived"` tombstone from `registry.json`. Re-discovery
    does not depend on this: `reconcile` re-adds any scanned session it has no thread for,
    tombstone or not. But a stale tombstone keeps the session listed by

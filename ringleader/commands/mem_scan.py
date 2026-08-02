@@ -14,7 +14,7 @@ def _now() -> str:
 
 
 def cmd_mem_scan(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem-scan")
+    ap = argparse.ArgumentParser(prog="rl mem refresh")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None)
     args = ap.parse_args(argv)

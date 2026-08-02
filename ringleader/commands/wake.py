@@ -9,7 +9,8 @@ from . import default_registry
 
 def cmd_wake(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl wake", description="Un-snooze a session so it shows in rl projects/overview again."
+        prog="rl session wake",
+        description="Un-snooze a session so it shows in rl overview again.",
     )
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))

@@ -40,7 +40,7 @@ def _in_window(d, since, until):
 
 def cmd_tokens(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl tokens",
+        prog="rl data tokens",
         description="Claude token spend per day/project/session, bucketed by real "
         "message date (fixes ccusage's resumed-session mis-attribution). "
         "This machine only; API-list-price estimate.",

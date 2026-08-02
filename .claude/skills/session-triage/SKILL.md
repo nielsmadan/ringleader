@@ -38,15 +38,15 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
 
 3. **Triage each session (collect decisions).** Oldest-first, present each session in
    2-3 lines — what it was about, status, age, size — from the registry's
-   `whatItIs`/`lastPrompt`, or `rl export <id> --out /tmp/triage-<id>.md`
+   `whatItIs`/`lastPrompt`, or `rl data export <id> --out /tmp/triage-<id>.md`
    for a deeper look. Ask: **delete / finished / open?** Apply the cheap ones immediately,
    and **collect the `finished` ids into a list** for batch harvesting in step 4:
 
-   - **delete** → `rl delete <id>`
+   - **delete** → `rl session delete <id>`
    - **finished** → add `<id>` to the harvest list (step 4 — do NOT harvest inline).
    - **open** → classify it now so it can be named (you just read it): pick its status and
      a good kebab name, then
-     `rl sync apply --session <id> --status <unfinished|blocked|active|finished> --what "<one-line>" --name "<kebab-name>"`,
+     `rl session set --session <id> --status <unfinished|blocked|active|finished> --what "<one-line>" --name "<kebab-name>"`,
      and add `<id>` to the open list (named + reviewed in step 5).
 
 4. **Batch-harvest the finished sessions — two phases.** Harvesting writes to each
@@ -56,7 +56,7 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
 
    **Phase A — extract in parallel (read-only).** For each finished `<id>`, dispatch a
    subagent — all at once, since they only read transcripts and write their own temp file:
-   - `rl export <id> --out /tmp/triage-<id>.md` (if the export exceeds
+   - `rl data export <id> --out /tmp/triage-<id>.md` (if the export exceeds
      ~300 KB, sample it: first ~140 KB + `…[elided]…` + last ~140 KB).
    - extract ONLY durable, project-specific knowledge into `/tmp/nuggets-<id>.md` under
      `## Gotchas` / `## Decisions` / `## Changes` (empty section → `(none)`), with enough
@@ -74,24 +74,24 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
      touches `docs/product/`, and writes the touched paths to the report. Edits stay
      uncommitted for the user to review.
    - then for EACH finished `<id>` in that repo:
-     `rl mark-harvested <id> --paths "<paths from the report>"` and
-     `rl archive <id> --summary-file /tmp/nuggets-<id>.md`
+     `rl session mark harvested <id> --paths "<paths from the report>"` and
+     `rl session archive <id> --summary-file /tmp/nuggets-<id>.md`
      (the nuggets become the archived session's searchable summary sidecar).
 
    (Only one finished session total? Skip the fan-out — extract and synthesize it directly.)
 
 5. **Name + review the open sessions.** Open ones stay in the resume picker, so name them,
    then mark reviewed:
-   - `rl name [--project <X>]`
+   - `rl session name [--project <X>]`
      — applies the names you set in step 3 (writes a `custom-title`, which bumps each
      file's mtime).
-   - then for EACH open `<id>`: `rl mark-reviewed <id>` — it records
+   - then for EACH open `<id>`: `rl session mark reviewed <id>` — it records
      the *live* (post-name) mtime, so a just-named open session isn't re-surfaced next run.
 
 6. **Record the run + tally.** Stamp every repo touched this run as just-triaged, so
    `rl overview` shows it as done (and stops flagging it ⚠ until new activity lands): for
    each distinct project seen in step 2's inbox (just `<X>` if scoped), run
-   `rl cleaned <project>`. Then report the tally — pruned N, deleted N,
+   `rl session mark cleaned <project>`. Then report the tally — pruned N, deleted N,
    finished/harvested N, named+open N — and remind the user the harvested doc edits are
    uncommitted in each target repo for review. To find something later inside an archived
    session, use `rl overview --archived [--project <X>]`.
@@ -107,7 +107,7 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
   out of `~/.claude/projects`). If `/doc` finds nothing worth keeping, still archive — the
   summary sidecar is then the only index to that content.
 - "open" sessions are **named** (so `claude --resume <name>` works) and reviewed. Run
-  `rl name` before `rl mark-reviewed` so the marker captures the post-rename mtime.
+  `rl session name` before `rl session mark reviewed` so the marker captures the post-rename mtime.
 - Archived sessions keep a **summary sidecar** (`archive/<encoded>/<uuid>.md`) plus a
   one-line tombstone summary; browse/search them with
   `rl overview --archived [--project <X>]`.

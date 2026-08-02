@@ -10,9 +10,9 @@ from . import default_registry
 
 def cmd_snooze(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl snooze",
+        prog="rl session snooze",
         description="Set a session aside: keep it open/resumable, but hide it from the "
-        "default rl projects/overview until you `rl wake` it.",
+        "default rl overview until you `rl session wake` it.",
     )
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
@@ -26,5 +26,5 @@ def cmd_snooze(argv: list[str]) -> int:
         print(f"rl-snooze: unknown session {args.id}", file=sys.stderr)
         return 1
     registry.save_registry(args.registry, reg)
-    print(f"snoozed {args.id} (hidden until `rl wake {args.id[:8]}…`)")
+    print(f"snoozed {args.id} (hidden until `rl session wake {args.id[:8]}…`)")
     return 0

@@ -8,7 +8,7 @@ from ..migrate import migrate
 
 def cmd_migrate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl migrate",
+        prog="rl data migrate",
         description="Move a legacy repo-root registry.json/archive/ into "
         "~/.local/share/ringleader (or $XDG_DATA_HOME/ringleader). No-op if state "
         "already lives there.",

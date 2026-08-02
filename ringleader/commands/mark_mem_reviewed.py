@@ -8,7 +8,7 @@ from . import default_registry
 
 
 def cmd_mark_mem_reviewed(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mark-mem-reviewed")
+    ap = argparse.ArgumentParser(prog="rl mem mark reviewed")
     ap.add_argument("path")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)
