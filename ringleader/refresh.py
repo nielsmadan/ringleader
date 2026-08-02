@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from . import registry, scanner
+from .sources.claude_code import ClaudeCodeSource
 
 
 def delta_note(added: int, removed: int) -> str | None:
@@ -22,8 +23,11 @@ def auto_refresh(registry_path, now_iso, *, tail=30,
     their counts are never stale; classification/naming stays a separate agentic step."""
     reg = registry.load_registry(registry_path)
     before = {t["sessionId"] for t in reg["threads"]}
-    root = projects_root if projects_root is not None else scanner.projects_dir()
-    scanned = scanner.scan(root, tail_turns=tail, git_resolver=git_resolver)
+    source_kwargs = {"tail_turns": tail}
+    if projects_root is not None:
+        source_kwargs["projects_dir"] = projects_root
+    source = ClaudeCodeSource(**source_kwargs)
+    scanned = scanner.scan(sources=[source], git_resolver=git_resolver)
     reg = registry.reconcile(reg, scanned, now_iso)
     registry.save_registry(registry_path, reg)
     after = {t["sessionId"] for t in reg["threads"]}

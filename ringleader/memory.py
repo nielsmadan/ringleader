@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterator
 
-from .transcript import parse_transcript
 from .gitinfo import resolve_git_project
-from .scanner import projects_dir
+from .sources.claude_code import default_projects_dir as projects_dir
+from .transcript import parse_transcript
 
 INDEX_NAME = "MEMORY.md"
 

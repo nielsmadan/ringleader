@@ -6,6 +6,7 @@ import sys
 from datetime import datetime, timezone
 
 from .. import projects, registry, scanner
+from ..sources.claude_code import ClaudeCodeSource
 from . import default_registry
 
 
@@ -15,8 +16,8 @@ def _now() -> str:
 
 def cmd_scan(args):
     reg = registry.load_registry(args.registry)
-    scanned = scanner.scan(scanner.projects_dir(), tail_turns=args.tail)
-    tails = {s.session_id: s.tail_text for s in scanned}
+    scanned = scanner.scan(sources=[ClaudeCodeSource(tail_turns=args.tail)])
+    tails = {ns.session_id: ns.tail_text for ns in scanned}
     reg = registry.reconcile(reg, scanned, _now())
     registry.save_registry(args.registry, reg)
 

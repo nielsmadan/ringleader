@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .scanner import projects_dir
+from .sources.claude_code import default_projects_dir as projects_dir
 
 # USD per token: (input, output, cache_creation, cache_read).
 # cache_creation is the 5m-TTL write (1.25x input); cache_read is 0.1x input.

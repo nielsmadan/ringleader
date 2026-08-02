@@ -8,11 +8,11 @@ from . import overview
 
 REGISTRY_VERSION = 2
 
-# maps registry key -> SessionMeta field name
+# maps registry key -> NormalizedSession field name
 _METADATA_FIELDS = {
     "file": "file",
-    "project": "project",
-    "title": "title",
+    "project": "cwd",
+    "title": "custom_title",
     "aiTitle": "ai_title",
     "summary": "summary",
     "lastPrompt": "last_prompt",
@@ -66,8 +66,8 @@ def _new_thread(md: dict) -> dict:
     return {
         "sessionId": md["session_id"],
         "file": md["file"],
-        "project": md["project"],
-        "title": md["title"],
+        "project": md["cwd"],
+        "title": md["custom_title"],
         "aiTitle": md["ai_title"],
         "summary": md["summary"],
         "lastPrompt": md["last_prompt"],

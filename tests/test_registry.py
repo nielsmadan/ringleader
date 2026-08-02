@@ -1,14 +1,15 @@
 from ringleader.registry import (
     empty_registry, load_registry, save_registry, reconcile,
 )
-from ringleader.scanner import SessionMeta
+from ringleader.sources.base import NormalizedSession
 
 
 def _meta(sid, mtime, project="/p", title=None, git_label=None):
-    return SessionMeta(
-        session_id=sid, file=f"/x/{sid}.jsonl", project=project,
-        title=title, ai_title=None, summary=None, last_prompt="lp",
-        mtime=mtime, size_bytes=10, message_count=2, tail_text="USER: hi",
+    return NormalizedSession(
+        source="claude-code", session_id=sid, file=f"/x/{sid}.jsonl", cwd=project,
+        custom_title=title, ai_title=None, summary=None, last_prompt="lp",
+        mtime=mtime, size_bytes=10, subagent_count=0,
+        message_count=2, tail_text="USER: hi",
         git_project_key=git_label, git_project_label=git_label,
     )
 
