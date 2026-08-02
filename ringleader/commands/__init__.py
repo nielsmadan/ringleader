@@ -1,18 +1,27 @@
 from __future__ import annotations
 
-from pathlib import Path
-
-
-def default_registry() -> Path:
-    """Interim default registry path — the repo-root registry.json, same as the old
-    bin/rl-* scripts. Task 4 replaces this with paths.default_registry()."""
-    return Path(__file__).resolve().parents[2] / "registry.json"
-
-
+from ..paths import default_registry as default_registry
 from . import (
-    overview, triage, prune, export, archive, delete, mark_harvested,
-    mark_reviewed, cleaned, relocate, snooze, wake, sync, name, tokens,
-    mem_scan, mem_prune, mem_cleaned, mark_mem_reviewed,
+    archive,
+    cleaned,
+    delete,
+    export,
+    mark_harvested,
+    mark_mem_reviewed,
+    mark_reviewed,
+    mem_cleaned,
+    mem_prune,
+    mem_scan,
+    migrate,
+    name,
+    overview,
+    prune,
+    relocate,
+    snooze,
+    sync,
+    tokens,
+    triage,
+    wake,
 )
 
 TABLE = {
@@ -35,4 +44,5 @@ TABLE = {
     "mem-prune": mem_prune.cmd_mem_prune,
     "mem-cleaned": mem_cleaned.cmd_mem_cleaned,
     "mark-mem-reviewed": mark_mem_reviewed.cmd_mark_mem_reviewed,
+    "migrate": migrate.cmd_migrate,
 }

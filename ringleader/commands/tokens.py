@@ -5,7 +5,7 @@ import json
 from datetime import date, timedelta
 
 from .. import tokens
-from . import default_registry
+from ..paths import archive_root
 
 
 def _window(args):
@@ -59,7 +59,7 @@ def cmd_tokens(argv: list[str]) -> int:
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
-    extra = [str(default_registry().parent / "archive")] if args.archived else []
+    extra = [str(archive_root())] if args.archived else []
     cells = tokens.collect(extra_roots=extra)
     since, until = _resolve_window(cells, args)
 

@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .. import registry
+from ..paths import archive_root
 from . import default_registry
 
 _SESSION_HEADING = re.compile(r"(?i)^session\s+[0-9a-f-]+\s*[—-]\s*(.+)$")
@@ -40,7 +41,7 @@ def cmd_archive(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl archive")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--archive-root", default=str(default_registry().parent / "archive"))
+    ap.add_argument("--archive-root", default=str(archive_root()))
     ap.add_argument("--summary-file", default=None,
                     help="markdown summary to store next to the archived transcript")
     args = ap.parse_args(argv)
