@@ -23,20 +23,21 @@ def _text_blocks(message: dict) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts = [b.get("text", "") for b in content
-                 if isinstance(b, dict) and b.get("type") == "text"]
+        parts = [
+            b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text"
+        ]
         return " ".join(p for p in parts if p)
     return ""
 
 
-def parse_transcript(path, tail_turns: int = 30) -> TranscriptInfo:
+def parse_transcript(path, tail_turns: int = 30) -> TranscriptInfo:  # noqa: PLR0912 -- faithfully-ported, tested parser; branch-per-message-type isn't worth splitting up
     path = Path(path)
     info = TranscriptInfo(session_id=path.stem)
     turns: list[tuple[str, str]] = []
 
     with path.open(encoding="utf-8", errors="replace") as fh:
-        for line in fh:
-            line = line.strip()
+        for raw_line in fh:
+            line = raw_line.strip()
             if not line:
                 continue
             try:

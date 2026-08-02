@@ -34,11 +34,11 @@ class ProjectStat:
     total: int
     classified: int
     unnamed: int
-    checkouts: list[str]      # distinct cwds this repo was worked from, sorted
-    cleaned_at: str | None    # ISO of the last session-triage run, or None
-    needs_attention: bool     # never cleaned, or a session changed since the last clean
-    snoozed: int              # snoozed sessions in this group (0 unless include_snoozed)
-    mem_entries: int          # memory entries currently tracked for this project
+    checkouts: list[str]  # distinct cwds this repo was worked from, sorted
+    cleaned_at: str | None  # ISO of the last session-triage run, or None
+    needs_attention: bool  # never cleaned, or a session changed since the last clean
+    snoozed: int  # snoozed sessions in this group (0 unless include_snoozed)
+    mem_entries: int  # memory entries currently tracked for this project
     mem_cleaned_at: str | None  # ISO of the last memory-triage run, or None
 
 
@@ -53,15 +53,21 @@ def project_summary(reg: dict, include_snoozed: bool = False) -> list[ProjectSta
     for t in reg["threads"]:
         snoozed = bool(t.get("snoozedAt"))
         if snoozed and not include_snoozed:
-            continue                        # hidden from the default view
+            continue  # hidden from the default view
         key = overview.group_key(t)
         g = groups.get(key)
         if g is None:
-            g = {"label": overview.group_label(t),
-                 "is_git": bool(t.get("gitProjectKey")),
-                 "total": 0, "classified": 0, "unnamed": 0, "checkouts": set(),
-                 "cleaned_at": cleaned.get(key), "fresh_since_clean": False,
-                 "snoozed": 0}
+            g = {
+                "label": overview.group_label(t),
+                "is_git": bool(t.get("gitProjectKey")),
+                "total": 0,
+                "classified": 0,
+                "unnamed": 0,
+                "checkouts": set(),
+                "cleaned_at": cleaned.get(key),
+                "fresh_since_clean": False,
+                "snoozed": 0,
+            }
             groups[key] = g
         g["total"] += 1
         if snoozed:
@@ -77,17 +83,23 @@ def project_summary(reg: dict, include_snoozed: bool = False) -> list[ProjectSta
         if not snoozed and ca and t.get("mtime") and overview.newer_than(t["mtime"], ca):
             g["fresh_since_clean"] = True
 
-    stats = [ProjectStat(key=k, label=g["label"], is_git=g["is_git"],
-                         total=g["total"], classified=g["classified"],
-                         unnamed=g["unnamed"], checkouts=sorted(g["checkouts"]),
-                         cleaned_at=g["cleaned_at"],
-                         needs_attention=(g["cleaned_at"] is None
-                                          or g["fresh_since_clean"]),
-                         snoozed=g["snoozed"],
-                         mem_entries=mem_counts.get(k, 0),
-                         mem_cleaned_at=mem_cleaned.get(k))
-             for k, g in groups.items()]
+    stats = [
+        ProjectStat(
+            key=k,
+            label=g["label"],
+            is_git=g["is_git"],
+            total=g["total"],
+            classified=g["classified"],
+            unnamed=g["unnamed"],
+            checkouts=sorted(g["checkouts"]),
+            cleaned_at=g["cleaned_at"],
+            needs_attention=(g["cleaned_at"] is None or g["fresh_since_clean"]),
+            snoozed=g["snoozed"],
+            mem_entries=mem_counts.get(k, 0),
+            mem_cleaned_at=mem_cleaned.get(k),
+        )
+        for k, g in groups.items()
+    ]
     # needs-attention first, then git groups, then most sessions, then label
-    stats.sort(key=lambda s: (not s.needs_attention, not s.is_git,
-                              -s.total, s.label.lower()))
+    stats.sort(key=lambda s: (not s.needs_attention, not s.is_git, -s.total, s.label.lower()))
     return stats

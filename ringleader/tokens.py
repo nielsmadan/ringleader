@@ -52,8 +52,8 @@ class Bucket:
 @dataclass
 class Cell:
     date: str
-    project: str          # decoded, e.g. "wrksp/oss/ShortcutKit"
-    project_raw: str      # the encoded dir name
+    project: str  # decoded, e.g. "wrksp/oss/ShortcutKit"
+    project_raw: str  # the encoded dir name
     session_id: str
     family: str
     b: Bucket = field(default_factory=Bucket)
@@ -61,7 +61,7 @@ class Cell:
 
 def _decode_project(raw: str) -> str:
     home = str(Path.home()).replace("/", "-")  # e.g. -Users-nielsmadan
-    label = raw[len(home):] if raw.startswith(home) else raw
+    label = raw[len(home) :] if raw.startswith(home) else raw
     return label.lstrip("-").replace("-", "/")
 
 

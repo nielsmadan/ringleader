@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import registry
@@ -11,7 +11,7 @@ from . import default_registry
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def cmd_delete(argv: list[str]) -> int:

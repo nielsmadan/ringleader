@@ -14,7 +14,7 @@ def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:
         sources = SOURCES
     if git_resolver is None:
         git_resolver = resolve_git_project
-    cache: dict[str, object] = {}   # cwd -> GitProject|None, resolved once per cwd
+    cache: dict[str, object] = {}  # cwd -> GitProject|None, resolved once per cwd
     out: list[NormalizedSession] = []
     for src in sources:
         for ref in src.discover():

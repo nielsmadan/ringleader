@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import os
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from ..transcript import parse_transcript
 from .base import NormalizedSession, RawRef
@@ -27,7 +27,7 @@ def _iter_session_files(root: Path) -> Iterator[Path]:
 
 
 def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
 def _subagent_count(session_file: Path) -> int:
@@ -53,8 +53,7 @@ class ClaudeCodeSource:
             except OSError as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
-            yield RawRef(source=self.name, file=str(p),
-                        mtime=_iso_mtime(p), size_bytes=st.st_size)
+            yield RawRef(source=self.name, file=str(p), mtime=_iso_mtime(p), size_bytes=st.st_size)
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = Path(ref.file)

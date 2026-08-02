@@ -1,4 +1,5 @@
 """Integration tests for the `rl name` CLI."""
+
 from __future__ import annotations
 
 import json
@@ -14,8 +15,14 @@ OLD_MTIME = "2026-05-01T00:00:00+00:00"
 SESSION_ID = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
 
 
-def _make_thread(session_id: str, file_path: str, suggested: str = "demo-name",
-                 title=None, applied=None, status: str = "unfinished") -> dict:
+def _make_thread(
+    session_id: str,
+    file_path: str,
+    suggested: str = "demo-name",
+    title=None,
+    applied=None,
+    status: str = "unfinished",
+) -> dict:
     """Build a minimal thread dict matching the shape from registry._new_thread."""
     return {
         "sessionId": session_id,
@@ -58,13 +65,14 @@ def _make_registry(threads: list[dict]) -> dict:
 
 def _run(*extra_args, registry_path: str, check: bool = False):
     """Run rl-name with the given registry and extra args."""
-    cmd = [PYTHON, "-m", "ringleader", "name", "--registry", registry_path] + list(extra_args)
-    return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True)
+    cmd = [PYTHON, "-m", "ringleader", "name", "--registry", registry_path, *extra_args]
+    return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True, check=check)
 
 
 # ---------------------------------------------------------------------------
 # Test 1: dry-run writes nothing
 # ---------------------------------------------------------------------------
+
 
 def test_dry_run_writes_nothing(tmp_path):
     transcript = tmp_path / "sess.jsonl"
@@ -91,6 +99,7 @@ def test_dry_run_writes_nothing(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 2: apply appends title record + updates registry
 # ---------------------------------------------------------------------------
+
 
 def test_apply_appends_and_updates_registry(tmp_path):
     transcript = tmp_path / "sess.jsonl"
@@ -127,6 +136,7 @@ def test_apply_appends_and_updates_registry(tmp_path):
 # Test 3: idempotent second run
 # ---------------------------------------------------------------------------
 
+
 def test_idempotent_second_run(tmp_path):
     transcript = tmp_path / "sess.jsonl"
     transcript.write_text('{"type":"say","text":"hello"}\n', encoding="utf-8")
@@ -157,6 +167,7 @@ def test_idempotent_second_run(tmp_path):
 # Test 4: --limit 0 selects nothing
 # ---------------------------------------------------------------------------
 
+
 def test_limit_zero_selects_nothing(tmp_path):
     transcript = tmp_path / "sess.jsonl"
     transcript.write_text('{"type":"say","text":"hello"}\n', encoding="utf-8")
@@ -179,6 +190,7 @@ def test_limit_zero_selects_nothing(tmp_path):
 # Test 5: trailing-newline handling — file NOT ending in \n
 # ---------------------------------------------------------------------------
 
+
 def test_trailing_newline_handling(tmp_path):
     transcript = tmp_path / "sess.jsonl"
     # Deliberately omit trailing newline
@@ -194,8 +206,8 @@ def test_trailing_newline_handling(tmp_path):
 
     # Every line must be valid JSON
     content = transcript.read_text(encoding="utf-8")
-    lines = [l for l in content.splitlines() if l.strip()]
-    parsed = [json.loads(l) for l in lines]  # will raise if any line is invalid
+    lines = [ln for ln in content.splitlines() if ln.strip()]
+    parsed = [json.loads(ln) for ln in lines]  # will raise if any line is invalid
 
     # Last line must be the title record
     assert parsed[-1]["type"] == "custom-title"
@@ -206,6 +218,7 @@ def test_trailing_newline_handling(tmp_path):
 # ---------------------------------------------------------------------------
 # Test 6: missing file is skipped, not fatal
 # ---------------------------------------------------------------------------
+
 
 def test_missing_file_skipped_not_fatal(tmp_path):
     # Thread pointing at a non-existent file
@@ -222,9 +235,7 @@ def test_missing_file_skipped_not_fatal(tmp_path):
     good_thread = _make_thread(SESSION_ID, str(good_transcript), suggested="good-session")
 
     reg_file = tmp_path / "registry.json"
-    reg_file.write_text(
-        json.dumps(_make_registry([bad_thread, good_thread])), encoding="utf-8"
-    )
+    reg_file.write_text(json.dumps(_make_registry([bad_thread, good_thread])), encoding="utf-8")
 
     result = _run(registry_path=str(reg_file))
 

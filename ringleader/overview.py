@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 LIVE_STATUSES = ("active", "unfinished", "blocked")
 ABANDON_AGE_DAYS = 21
@@ -26,7 +26,7 @@ def _wrap(s: str, w: int = PROJECT_W) -> list[str]:
 def _parse(iso: str) -> datetime:
     dt = datetime.fromisoformat(iso)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
+        dt = dt.replace(tzinfo=UTC)
     return dt
 
 
@@ -42,7 +42,7 @@ def effective_status(thread: dict, now_iso: str) -> str:
         return "abandoned"
     st = thread.get("status", "unclassified")
     if dec == "keep":
-        return st                               # never auto-derive abandoned for kept sessions
+        return st  # never auto-derive abandoned for kept sessions
     if st == "unfinished" and age_days(thread["mtime"], now_iso) > ABANDON_AGE_DAYS:
         return "abandoned"
     return st
@@ -65,7 +65,7 @@ def tilde(path: str | None, home: str | None = None) -> str:
     if home and path == home:
         return "~"
     if home and path.startswith(home + "/"):
-        return "~" + path[len(home):]
+        return "~" + path[len(home) :]
     return path
 
 
@@ -93,12 +93,15 @@ def _label(thread: dict) -> str:
     return thread.get("title") or thread.get("suggestedName") or thread["sessionId"][:8]
 
 
+_BYTES_PER_UNIT = 1024
+
+
 def _human_size(num_bytes) -> str:
     n = float(num_bytes or 0)
     for unit in ("B", "KB", "MB", "GB"):
-        if n < 1024 or unit == "GB":
+        if n < _BYTES_PER_UNIT or unit == "GB":
             return f"{int(n)}B" if unit == "B" else f"{n:.1f}{unit}"
-        n /= 1024
+        n /= _BYTES_PER_UNIT
 
 
 def _size_suffix(thread: dict) -> str:
@@ -106,15 +109,15 @@ def _size_suffix(thread: dict) -> str:
     return f", {_human_size(b)}" if b else ""
 
 
-def render(reg: dict, now_iso: str, show_all: bool = False,
-           cleaned: dict | None = None) -> str:
+def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None = None) -> str:
     m = compute_metrics(reg, now_iso)
     lines = []
     lines.append("=== ringleader overview ===")
     lines.append(
         f"Live threads: {m['live_count']}  |  "
         f"spread across {m['spread_projects']} projects  |  "
-        f"blocked: {m['blocked_count']}  |  stale(>21d): {m['stale_count']}")
+        f"blocked: {m['blocked_count']}  |  stale(>21d): {m['stale_count']}"
+    )
     if m["oldest_age_days"] is not None:
         lines.append(f"Oldest live thread: {m['oldest_age_days']} days untouched")
     if m["unclassified"]:
@@ -138,15 +141,15 @@ def render(reg: dict, now_iso: str, show_all: bool = False,
         if cleaned and key in cleaned:
             head += f"  (cleaned {age_human(cleaned[key], now_iso)})"
         lines.append(head)
-        items = sorted(groups[key],
-                       key=lambda pair: age_days(pair[0]["mtime"], now_iso))
+        items = sorted(groups[key], key=lambda pair: age_days(pair[0]["mtime"], now_iso))
         for t, es in items:
             age = round(age_days(t["mtime"], now_iso))
             flag = "  <- BLOCKED" if es == "blocked" else ""
             branch = f" @{t['gitBranch']}" if t.get("gitBranch") else ""
             lines.append(
                 f"  [{es}]{branch} {_label(t)} ({age}d{_size_suffix(t)}) — "
-                f"{t.get('whatItIs') or ''}{flag}")
+                f"{t.get('whatItIs') or ''}{flag}"
+            )
         lines.append("")
 
     # status breakdown footer
@@ -180,13 +183,17 @@ def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> 
     if unclassified_only:
         inbox = [t for t in inbox if t.get("status", "unclassified") == "unclassified"]
     if not inbox:
-        return ("no unclassified sessions — every session has been triaged."
-                if unclassified_only
-                else "all triaged — nothing awaiting a decision.")
+        return (
+            "no unclassified sessions — every session has been triaged."
+            if unclassified_only
+            else "all triaged — nothing awaiting a decision."
+        )
     inbox.sort(key=lambda t: age_days(t["mtime"], now_iso), reverse=True)
-    header = (f"=== unclassified ({len(inbox)}) — never triaged ==="
-              if unclassified_only
-              else f"=== triage inbox ({len(inbox)}) — awaiting your decision ===")
+    header = (
+        f"=== unclassified ({len(inbox)}) — never triaged ==="
+        if unclassified_only
+        else f"=== triage inbox ({len(inbox)}) — awaiting your decision ==="
+    )
     lines = [header]
     groups: dict[str, list[dict]] = defaultdict(list)
     labels: dict[str, str] = {}
@@ -199,8 +206,9 @@ def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> 
         for t in groups[key]:
             age = round(age_days(t["mtime"], now_iso))
             es = effective_status(t, now_iso)
-            lines.append(f"  [{es}] {_label(t)} ({age}d{_size_suffix(t)}) — "
-                         f"{t.get('whatItIs') or ''}")
+            lines.append(
+                f"  [{es}] {_label(t)} ({age}d{_size_suffix(t)}) — {t.get('whatItIs') or ''}"
+            )
         lines.append("")
     return "\n".join(lines).rstrip()
 
@@ -222,15 +230,19 @@ def newer_than(mtime_iso: str, ref_iso: str) -> bool:
     return _parse(mtime_iso) > _parse(ref_iso)
 
 
+_MINUTES_PER_HOUR = 60
+_MINUTES_PER_DAY = 1440
+
+
 def age_human(iso: str | None, now_iso: str) -> str:
     if not iso:
         return "never"
     mins = (_parse(now_iso) - _parse(iso)).total_seconds() / 60.0
     if mins < 1:
         return "just now"
-    if mins < 60:
+    if mins < _MINUTES_PER_HOUR:
         return f"{int(mins)}m ago"
-    if mins < 1440:
+    if mins < _MINUTES_PER_DAY:
         return f"{int(mins // 60)}h ago"
     return f"{int(mins // 1440)}d ago"
 
@@ -247,8 +259,10 @@ def staleness_banner(reg: dict, now_iso: str, max_age_minutes: float = 60) -> st
         return None
     if registry_age_minutes(reg, now_iso) is None:
         return "(registry never scanned — run `rl sync scan` to populate it)"
-    return (f"(registry last scanned {registry_age_human(reg, now_iso)} — counts may be "
-            f"out of date; run `rl sync scan` to refresh)")
+    return (
+        f"(registry last scanned {registry_age_human(reg, now_iso)} — counts may be "
+        f"out of date; run `rl sync scan` to refresh)"
+    )
 
 
 def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
@@ -265,15 +279,12 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
     if show_all:
         interesting = list(eff)
     else:
-        interesting = [(t, es) for t, es in eff
-                       if es in LIVE_STATUSES or es == "abandoned"]
+        interesting = [(t, es) for t, es in eff if es in LIVE_STATUSES or es == "abandoned"]
     interesting.sort(key=lambda p: age_days(p[0]["mtime"], now_iso), reverse=True)
 
     blocked = by_status.get("blocked", 0)
-    stale = sum(1 for t, es in interesting
-                if age_days(t["mtime"], now_iso) > ABANDON_AGE_DAYS)
-    dupes = {n: c for n, c in Counter(_label(t) for t, _ in eff).items()
-             if n and c > 1}
+    stale = sum(1 for t, es in interesting if age_days(t["mtime"], now_iso) > ABANDON_AGE_DAYS)
+    dupes = {n: c for n, c in Counter(_label(t) for t, _ in eff).items() if n and c > 1}
 
     lines = [f"=== {tilde(label)} ==="]
     lines.append(f"checkouts ({len(checkouts)}):")
@@ -281,13 +292,13 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
     lines.append("")
     total_bytes = sum(t.get("sizeBytes") or 0 for t in threads)
     lines.append(f"{len(threads)} sessions  |  total size: {_human_size(total_bytes)}")
-    lines.append("by status: " + ", ".join(f"{k}:{v}"
-                 for k, v in sorted(by_status.items())))
-    lines.append(f"blocked (waiting on you): {blocked}  |  "
-                 f"stale >21d: {stale}  |  duplicate names: {len(dupes)}")
+    lines.append("by status: " + ", ".join(f"{k}:{v}" for k, v in sorted(by_status.items())))
+    lines.append(
+        f"blocked (waiting on you): {blocked}  |  "
+        f"stale >21d: {stale}  |  duplicate names: {len(dupes)}"
+    )
     if dupes:
-        lines.append("  duplicates: " + ", ".join(f"{n} ×{c}"
-                     for n, c in dupes.items()))
+        lines.append("  duplicates: " + ", ".join(f"{n} x{c}" for n, c in dupes.items()))
     lines.append("")
 
     heading = "all threads" if show_all else "live/abandoned threads"
@@ -296,8 +307,10 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
         age = round(age_days(t["mtime"], now_iso))
         branch = f" @{t['gitBranch']}" if t.get("gitBranch") else ""
         flag = "  <- BLOCKED" if es == "blocked" else ""
-        lines.append(f"  [{es}]{branch} {_label(t)} ({age}d{_size_suffix(t)}) — "
-                     f"{t.get('whatItIs') or ''}{flag}")
+        lines.append(
+            f"  [{es}]{branch} {_label(t)} ({age}d{_size_suffix(t)}) — "
+            f"{t.get('whatItIs') or ''}{flag}"
+        )
 
     hidden = []
     if not show_all:
@@ -314,21 +327,31 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
 
 
 def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) -> str:
-    from . import projects
+    from . import projects  # noqa: PLC0415 -- projects imports overview at module level; circular
+
     stats = projects.project_summary(reg, include_snoozed=include_snoozed)
-    lines = [f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
-             f"{'chk':>4} {'cleaned':>9} {'mem':>9}"]
+    lines = [
+        f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
+        f"{'chk':>4} {'cleaned':>9} {'mem':>9}"
+    ]
     for s in stats:
         flags = (" ⚠" if s.needs_attention else "") + ("" if s.is_git else "  (no git)")
         if s.snoozed:
             flags += f"  💤{s.snoozed}"
         cleaned_h = age_human(s.cleaned_at, now_iso)
         # "never" only means something where memory exists to triage
-        mem_h = (age_human(s.mem_cleaned_at, now_iso) if s.mem_cleaned_at
-                 else "never" if s.mem_entries else "—")
+        mem_h = (
+            age_human(s.mem_cleaned_at, now_iso)
+            if s.mem_cleaned_at
+            else "never"
+            if s.mem_entries
+            else "—"
+        )
         wrapped = _wrap(tilde(s.label or "(unknown)"))
-        lines.append(f"{wrapped[0]:{PROJECT_W}} {s.total:5} {s.classified:5} "
-                     f"{s.unnamed:7} {len(s.checkouts):4} {cleaned_h:>9} {mem_h:>9}{flags}")
+        lines.append(
+            f"{wrapped[0]:{PROJECT_W}} {s.total:5} {s.classified:5} "
+            f"{s.unnamed:7} {len(s.checkouts):4} {cleaned_h:>9} {mem_h:>9}{flags}"
+        )
         lines += wrapped[1:]
         if checkouts:
             lines += [f"    {tilde(path)}" for path in s.checkouts]
@@ -349,9 +372,12 @@ def render_archived(reg, selector: str | None = None) -> str:
     rows = [ts for ts in reg.get("tombstones", []) if ts.get("reason") == "archived"]
     if selector:
         sel = selector.lower()
-        rows = [ts for ts in rows
-                if sel in (ts.get("project") or "").lower()
-                or sel in (ts.get("archivePath") or "").lower()]
+        rows = [
+            ts
+            for ts in rows
+            if sel in (ts.get("project") or "").lower()
+            or sel in (ts.get("archivePath") or "").lower()
+        ]
     if not rows:
         return "no archived sessions"
     rows.sort(key=lambda ts: ts.get("deletedAt") or "")

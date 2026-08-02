@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import registry
@@ -25,7 +25,7 @@ def cmd_mark_reviewed(argv: list[str]) -> int:
     live_mtime = None
     f = Path(t["file"])
     if f.exists():
-        live_mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=timezone.utc).isoformat()
+        live_mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat()
     try:
         registry.mark_reviewed(reg, args.id, live_mtime)
     except KeyError:

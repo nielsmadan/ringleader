@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import memory, projects, registry
@@ -11,7 +11,7 @@ from . import default_registry
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def cmd_mem_prune(argv: list[str]) -> int:
@@ -33,8 +33,10 @@ def cmd_mem_prune(argv: list[str]) -> int:
         print("nothing to prune")
         return 0
     for e in cands:
-        print(f"  [{','.join(e['obsoleteSignals'])}] {e.get('name') or e['path']}  "
-              f"{e.get('project') or ''}")
+        print(
+            f"  [{','.join(e['obsoleteSignals'])}] {e.get('name') or e['path']}  "
+            f"{e.get('project') or ''}"
+        )
     print(f"\n{len(cands)} obsolete memory entries")
     if not args.delete:
         print("(preview — re-run with --delete to remove these)")
@@ -58,16 +60,15 @@ def cmd_mem_prune(argv: list[str]) -> int:
     registry.save_registry(args.registry, reg)
 
     by_dir = defaultdict(set)
-    for p in deleted_paths:
-        p = Path(p)
+    for raw_path in deleted_paths:
+        p = Path(raw_path)
         by_dir[p.parent].add(p.name)
     for mem_dir, basenames in by_dir.items():
         index_path = mem_dir / memory.INDEX_NAME
         if not index_path.exists():
             continue
         index_text = index_path.read_text(encoding="utf-8")
-        index_path.write_text(memory.rewrite_index_without(index_text, basenames),
-                               encoding="utf-8")
+        index_path.write_text(memory.rewrite_index_without(index_text, basenames), encoding="utf-8")
 
     print(f"deleted {deleted} memory files")
     return 0

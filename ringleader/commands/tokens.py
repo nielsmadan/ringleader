@@ -35,9 +35,7 @@ def _resolve_window(cells, args):
 def _in_window(d, since, until):
     if since and d < since:
         return False
-    if until and d > until:
-        return False
-    return True
+    return not (until and d > until)
 
 
 def cmd_tokens(argv: list[str]) -> int:
@@ -51,10 +49,17 @@ def cmd_tokens(argv: list[str]) -> int:
     ap.add_argument("--since", help="YYYY-MM-DD lower bound (inclusive)")
     ap.add_argument("--until", help="YYYY-MM-DD upper bound (inclusive)")
     ap.add_argument("--all", action="store_true", help="all time, ignore the window")
-    ap.add_argument("--by", choices=["day", "project", "session"], default="project",
-                    help="grouping for the ranked table (default project)")
-    ap.add_argument("--archived", action="store_true",
-                    help="also scan archive/ (sessions st has moved out of ~/.claude)")
+    ap.add_argument(
+        "--by",
+        choices=["day", "project", "session"],
+        default="project",
+        help="grouping for the ranked table (default project)",
+    )
+    ap.add_argument(
+        "--archived",
+        action="store_true",
+        help="also scan archive/ (sessions st has moved out of ~/.claude)",
+    )
     ap.add_argument("--limit", type=int, default=15, help="rows in the ranked table")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
@@ -72,8 +77,8 @@ def cmd_tokens(argv: list[str]) -> int:
         rows = per_day
     elif args.by == "session":
         rows = tokens.rollup(
-            {id(c): c for c in scoped},
-            key=lambda c: f"{c.session_id[:8]}  {c.project}")
+            {id(c): c for c in scoped}, key=lambda c: f"{c.session_id[:8]}  {c.project}"
+        )
     else:
         rows = tokens.rollup({id(c): c for c in scoped}, key=lambda c: c.project)
 
@@ -85,8 +90,12 @@ def cmd_tokens(argv: list[str]) -> int:
             "per_day": {d: round(b.cost, 2) for d, b in sorted(per_day.items())},
             "by": args.by,
             "rows": [
-                {"key": k, "cost": round(b.cost, 2), "tokens": b.total_tokens,
-                 "output_tokens": b.output_tokens}
+                {
+                    "key": k,
+                    "cost": round(b.cost, 2),
+                    "tokens": b.total_tokens,
+                    "output_tokens": b.output_tokens,
+                }
                 for k, b in sorted(rows.items(), key=lambda kv: -kv[1].cost)
             ],
         }

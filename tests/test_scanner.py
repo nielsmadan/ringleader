@@ -10,9 +10,10 @@ from ringleader.sources.claude_code import ClaudeCodeSource
 def _session(dir_: Path, sid: str, cwd: str, content="hello"):
     dir_.mkdir(parents=True, exist_ok=True)
     (dir_ / f"{sid}.jsonl").write_text(
-        json.dumps({"type": "user", "cwd": cwd,
-                    "message": {"role": "user", "content": content}}) + "\n",
-        encoding="utf-8")
+        json.dumps({"type": "user", "cwd": cwd, "message": {"role": "user", "content": content}})
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_scan_builds_normalized_sessions(tmp_path):
@@ -41,7 +42,7 @@ def test_scan_skips_invalid_utf8_file(tmp_path):
     _session(proj, "dddddddd-0000-0000-0000-000000000001", "/Users/me/proj", "valid content")
     # file with invalid UTF-8 bytes — should NOT abort the scan
     bad = proj / "eeeeeeee-0000-0000-0000-000000000002.jsonl"
-    bad.write_bytes(b'\xff\xfe not utf8\n')
+    bad.write_bytes(b"\xff\xfe not utf8\n")
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path)])
     session_ids = [ns.session_id for ns in scanned]
     assert "dddddddd-0000-0000-0000-000000000001" in session_ids
@@ -56,7 +57,9 @@ def test_scan_skips_oserror_file(tmp_path):
 
     bad_path = proj / "00000000-0000-0000-0000-000000000002.jsonl"
 
-    original_parse = __import__("ringleader.transcript", fromlist=["parse_transcript"]).parse_transcript
+    original_parse = __import__(
+        "ringleader.transcript", fromlist=["parse_transcript"]
+    ).parse_transcript
 
     def patched_parse(path, **kwargs):
         if Path(path) == bad_path:
@@ -73,12 +76,18 @@ def test_scan_skips_oserror_file(tmp_path):
 
 def test_scan_attaches_injected_git_project(tmp_path):
     from ringleader.gitinfo import GitProject
+
     proj = tmp_path / "-Users-me-proj"
     _session(proj, "cccccccc-0000-0000-0000-000000000009", "/Users/me/proj")
 
-    fake = lambda cwd: GitProject(root="/Users/me/proj",
-                                  remote="github.com/me/proj",
-                                  key="github.com/me/proj", label="proj")
+    def fake(cwd):
+        return GitProject(
+            root="/Users/me/proj",
+            remote="github.com/me/proj",
+            key="github.com/me/proj",
+            label="proj",
+        )
+
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path)], git_resolver=fake)
     assert scanned[0].git_project_key == "github.com/me/proj"
     assert scanned[0].git_project_label == "proj"

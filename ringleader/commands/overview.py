@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import argparse
 import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .. import jsonout, overview, projects, refresh, registry
 from . import default_registry
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _key_label(key: str) -> str:
@@ -17,31 +17,54 @@ def _key_label(key: str) -> str:
     return key if key.startswith("/") else key.rsplit("/", 1)[-1]
 
 
-def cmd_overview(argv: list[str]) -> int:
+def cmd_overview(argv: list[str]) -> int:  # noqa: PLR0912, PLR0915 -- faithfully-ported, tested CLI dispatcher; branches mirror the flag surface, not worth splitting
     ap = argparse.ArgumentParser(
         prog="rl overview",
         description="The session view: project rollup (default), --sessions list, "
-                    "a <selector> deep-dive, or --archived.")
-    ap.add_argument("selector", nargs="?", default=None,
-                    help="repo/dir selector (git label or cwd path) — deep single-repo report")
+        "a <selector> deep-dive, or --archived.",
+    )
+    ap.add_argument(
+        "selector",
+        nargs="?",
+        default=None,
+        help="repo/dir selector (git label or cwd path) — deep single-repo report",
+    )
     ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--project", action="append", default=None,
-                    help="repo/dir selector; repeatable (alias for the positional selector)")
-    ap.add_argument("-s", "--sessions", action="store_true",
-                    help="flat per-session list of live threads")
-    ap.add_argument("-a", "--all", action="store_true",
-                    help="include parked/snoozed sessions and every status")
-    ap.add_argument("--archived", action="store_true",
-                    help="list archived sessions instead of live ones")
-    ap.add_argument("--checkouts", action="store_true",
-                    help="rollup only: also list each repo's checkout paths")
-    ap.add_argument("--no-scan", action="store_true",
-                    help="do not auto-scan disk first (report from the registry as-is)")
-    ap.add_argument("-m", "--memory", action="store_true",
-                    help="rollup (or <selector> deep-dive) over memory entries instead of sessions")
-    ap.add_argument("--json", action="store_true",
-                    help="print the registry-wide rollup as JSON instead of text; "
-                         "ignores the selector and other view flags (-s/-a/--archived/-m)")
+    ap.add_argument(
+        "--project",
+        action="append",
+        default=None,
+        help="repo/dir selector; repeatable (alias for the positional selector)",
+    )
+    ap.add_argument(
+        "-s", "--sessions", action="store_true", help="flat per-session list of live threads"
+    )
+    ap.add_argument(
+        "-a", "--all", action="store_true", help="include parked/snoozed sessions and every status"
+    )
+    ap.add_argument(
+        "--archived", action="store_true", help="list archived sessions instead of live ones"
+    )
+    ap.add_argument(
+        "--checkouts", action="store_true", help="rollup only: also list each repo's checkout paths"
+    )
+    ap.add_argument(
+        "--no-scan",
+        action="store_true",
+        help="do not auto-scan disk first (report from the registry as-is)",
+    )
+    ap.add_argument(
+        "-m",
+        "--memory",
+        action="store_true",
+        help="rollup (or <selector> deep-dive) over memory entries instead of sessions",
+    )
+    ap.add_argument(
+        "--json",
+        action="store_true",
+        help="print the registry-wide rollup as JSON instead of text; "
+        "ignores the selector and other view flags (-s/-a/--archived/-m)",
+    )
     args = ap.parse_args(argv)
 
     now = _now()
@@ -73,11 +96,9 @@ def cmd_overview(argv: list[str]) -> int:
             if not entries:
                 print("no memory entries for that selector")
                 return 0
-            for e in sorted(entries, key=lambda e: (e.get("project") or "",
-                                                     e.get("name") or "")):
+            for e in sorted(entries, key=lambda e: (e.get("project") or "", e.get("name") or "")):
                 obs = ", ".join(e.get("obsoleteSignals") or []) or "none"
-                print(f"{e.get('name') or '(unnamed)'}  obsolete={obs}  "
-                      f"project={e.get('project')}")
+                print(f"{e.get('name') or '(unnamed)'}  obsolete={obs}  project={e.get('project')}")
             return 0
         groups: dict[str, list[dict]] = {}
         for e in entries:
@@ -119,6 +140,5 @@ def cmd_overview(argv: list[str]) -> int:
             if snoozed_total:
                 print(f"\n({snoozed_total} snoozed hidden — rl overview -s -a)")
     else:
-        print(overview.render_rollup(reg, now, include_snoozed=args.all,
-                                     checkouts=args.checkouts))
+        print(overview.render_rollup(reg, now, include_snoozed=args.all, checkouts=args.checkouts))
     return 0

@@ -8,21 +8,40 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _thread(sid, **kw):
-    base = {"sessionId": sid, "file": f"/nope/{sid}.jsonl",
-            "mtime": "2026-06-20T00:00:00+00:00", "status": "active",
-            "title": sid, "whatItIs": "does " + sid, "gitProjectLabel": "repo",
-            "gitProjectKey": "repo-k", "project": "/p", "gitBranch": None,
-            "classifiedAtMtime": "2026-06-20T00:00:00+00:00",
-            "snoozedAt": None, "decision": None, "reviewedAtMtime": None}
+    base = {
+        "sessionId": sid,
+        "file": f"/nope/{sid}.jsonl",
+        "mtime": "2026-06-20T00:00:00+00:00",
+        "status": "active",
+        "title": sid,
+        "whatItIs": "does " + sid,
+        "gitProjectLabel": "repo",
+        "gitProjectKey": "repo-k",
+        "project": "/p",
+        "gitBranch": None,
+        "classifiedAtMtime": "2026-06-20T00:00:00+00:00",
+        "snoozedAt": None,
+        "decision": None,
+        "reviewedAtMtime": None,
+    }
     base.update(kw)
     return base
 
 
 def _registry(tmp, threads, tombstones=None):
     p = tmp / "registry.json"
-    p.write_text(json.dumps({"version": 1, "lastScan": "2026-07-01T00:00:00+00:00",
-                             "threads": threads, "tombstones": tombstones or [],
-                             "projectsCleanedAt": {}}), encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lastScan": "2026-07-01T00:00:00+00:00",
+                "threads": threads,
+                "tombstones": tombstones or [],
+                "projectsCleanedAt": {},
+            }
+        ),
+        encoding="utf-8",
+    )
     return p
 
 
@@ -30,7 +49,12 @@ def _run(reg, *args):
     env = dict(os.environ, SESSION_TRACKER_PROJECTS_DIR=str(reg.parent / "empty"))
     return subprocess.run(
         [sys.executable, "-m", "ringleader", "overview", "--registry", str(reg), *args],
-        cwd=str(REPO), capture_output=True, text=True, env=env)
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
 
 
 def test_default_is_rollup(tmp_path):
@@ -55,15 +79,26 @@ def test_selector_gives_deep_report(tmp_path):
 
 
 def test_archived_flag(tmp_path):
-    reg = _registry(tmp_path, [], tombstones=[
-        {"sessionId": "z", "reason": "archived", "deletedAt": "2026-06-01T00:00:00+00:00",
-         "project": "/p", "summary": "old work", "archivePath": "/arc/z.jsonl"}])
+    reg = _registry(
+        tmp_path,
+        [],
+        tombstones=[
+            {
+                "sessionId": "z",
+                "reason": "archived",
+                "deletedAt": "2026-06-01T00:00:00+00:00",
+                "project": "/p",
+                "summary": "old work",
+                "archivePath": "/arc/z.jsonl",
+            }
+        ],
+    )
     r = _run(reg, "--archived", "--no-scan")
     assert r.returncode == 0 and "old work" in r.stdout
 
 
 def test_triage_header_shows_when_inbox_nonempty(tmp_path):
-    reg = _registry(tmp_path, [_thread("a")])   # undecided -> in inbox
+    reg = _registry(tmp_path, [_thread("a")])  # undecided -> in inbox
     r = _run(reg, "--no-scan")
     assert "awaiting triage — rl triage" in r.stdout
 
@@ -75,10 +110,13 @@ def test_no_triage_header_when_all_reviewed(tmp_path):
 
 
 def test_sessions_flag_hides_snoozed_unless_all(tmp_path):
-    reg = _registry(tmp_path, [
-        _thread("alpha"),
-        _thread("beta", snoozedAt="2026-07-02T00:00:00+00:00"),
-    ])
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("alpha"),
+            _thread("beta", snoozedAt="2026-07-02T00:00:00+00:00"),
+        ],
+    )
 
     r = _run(reg, "-s", "--no-scan")
     assert r.returncode == 0
@@ -92,7 +130,7 @@ def test_sessions_flag_hides_snoozed_unless_all(tmp_path):
 
 
 def test_selector_hides_triage_header(tmp_path):
-    reg = _registry(tmp_path, [_thread("a")])   # undecided -> would show global inbox count
+    reg = _registry(tmp_path, [_thread("a")])  # undecided -> would show global inbox count
     r = _run(reg, "repo", "--no-scan")
     assert r.returncode == 0
     assert "awaiting triage" not in r.stdout
@@ -100,28 +138,47 @@ def test_selector_hides_triage_header(tmp_path):
 
 def _registry_mem(tmp, memory_entries, cleaned_at=None):
     p = tmp / "registry.json"
-    p.write_text(json.dumps({"version": 2, "lastScan": "2026-07-01T00:00:00+00:00",
-                             "threads": [], "tombstones": [], "projectsCleanedAt": {},
-                             "memoryEntries": memory_entries,
-                             "memoryProjectsCleanedAt": cleaned_at or {}}),
-                encoding="utf-8")
+    p.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "lastScan": "2026-07-01T00:00:00+00:00",
+                "threads": [],
+                "tombstones": [],
+                "projectsCleanedAt": {},
+                "memoryEntries": memory_entries,
+                "memoryProjectsCleanedAt": cleaned_at or {},
+            }
+        ),
+        encoding="utf-8",
+    )
     return p
 
 
 def _mem_entry(name, **kw):
-    base = {"path": f"/p/-enc/memory/{name}.md", "project": "/p", "name": name,
-            "gitProjectKey": "repo-k", "gitProjectLabel": "repo", "gitRoot": "/p",
-            "obsoleteSignals": [], "reviewedAtMtime": None,
-            "mtime": "2026-06-20T00:00:00+00:00"}
+    base = {
+        "path": f"/p/-enc/memory/{name}.md",
+        "project": "/p",
+        "name": name,
+        "gitProjectKey": "repo-k",
+        "gitProjectLabel": "repo",
+        "gitRoot": "/p",
+        "obsoleteSignals": [],
+        "reviewedAtMtime": None,
+        "mtime": "2026-06-20T00:00:00+00:00",
+    }
     base.update(kw)
     return base
 
 
 def test_overview_memory_rollup(tmp_path):
-    reg = _registry_mem(tmp_path, [
-        _mem_entry("a"),
-        _mem_entry("b", obsoleteSignals=["FIXED"]),
-    ])
+    reg = _registry_mem(
+        tmp_path,
+        [
+            _mem_entry("a"),
+            _mem_entry("b", obsoleteSignals=["FIXED"]),
+        ],
+    )
     r = _run(reg, "--memory", "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "repo" in r.stdout
@@ -146,8 +203,9 @@ def test_overview_memory_shows_cleaned_project_with_zero_entries(tmp_path):
 
 
 def test_overview_memory_cleaned_zero_sorts_after_populated(tmp_path):
-    reg = _registry_mem(tmp_path, [_mem_entry("a")],
-                        {"github.com/n/gone": "2026-07-01T00:00:00+00:00"})
+    reg = _registry_mem(
+        tmp_path, [_mem_entry("a")], {"github.com/n/gone": "2026-07-01T00:00:00+00:00"}
+    )
     r = _run(reg, "--memory", "--no-scan")
     assert r.returncode == 0, r.stderr
     lines = [ln for ln in r.stdout.splitlines() if ln.strip()]

@@ -8,18 +8,33 @@ REPO = Path(__file__).resolve().parent.parent
 
 def _setup(tmp, sid="a"):
     f = tmp / f"{sid}.jsonl"
-    f.write_text(json.dumps({"type": "user", "message":
-                 {"role": "user", "content": "hello world"}}) + "\n", encoding="utf-8")
+    f.write_text(
+        json.dumps({"type": "user", "message": {"role": "user", "content": "hello world"}}) + "\n",
+        encoding="utf-8",
+    )
     reg = tmp / "registry.json"
-    reg.write_text(json.dumps({"version": 1, "lastScan": None, "tombstones": [],
-                   "threads": [{"sessionId": sid, "file": str(f)}]}), encoding="utf-8")
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lastScan": None,
+                "tombstones": [],
+                "threads": [{"sessionId": sid, "file": str(f)}],
+            }
+        ),
+        encoding="utf-8",
+    )
     return reg
 
 
 def _run(reg, *args):
     return subprocess.run(
         [sys.executable, "-m", "ringleader", "export", "--registry", str(reg), *args],
-        cwd=str(REPO), capture_output=True, text=True)
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
 
 
 def test_export_to_stdout(tmp_path):

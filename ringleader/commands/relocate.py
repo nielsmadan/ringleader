@@ -12,8 +12,9 @@ def cmd_relocate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl relocate",
         description="Re-point a session to a new directory after you moved it on disk. "
-                    "The transcript's baked-in cwd is stale; this pins the new location "
-                    "so scans don't revert it.")
+        "The transcript's baked-in cwd is stale; this pins the new location "
+        "so scans don't revert it.",
+    )
     ap.add_argument("id")
     ap.add_argument("path", help="the session's new directory (absolute)")
     ap.add_argument("--registry", default=str(default_registry()))
@@ -26,8 +27,7 @@ def cmd_relocate(argv: list[str]) -> int:
 
     reg = registry.load_registry(args.registry)
     gp = gitinfo.resolve_git_project(new_path)
-    git = {"key": gp.key, "label": gp.label, "root": gp.root,
-           "remote": gp.remote} if gp else None
+    git = {"key": gp.key, "label": gp.label, "root": gp.root, "remote": gp.remote} if gp else None
     try:
         registry.relocate_thread(reg, args.id, new_path, git)
     except KeyError:

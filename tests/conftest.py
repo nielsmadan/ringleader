@@ -18,5 +18,7 @@ def guard_live_registry():
         LIVE_REGISTRY.unlink()
     else:
         LIVE_REGISTRY.write_bytes(before)
-    pytest.fail("a test wrote to the live registry.json (restored) — "
-                "pass --registry <tmp path> to every rl invocation")
+    pytest.fail(
+        "a test wrote to the live registry.json (restored) — "
+        "pass --registry <tmp path> to every rl invocation"
+    )

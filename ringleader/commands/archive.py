@@ -4,7 +4,7 @@ import argparse
 import re
 import shutil
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import registry
@@ -15,7 +15,7 @@ _SESSION_HEADING = re.compile(r"(?i)^session\s+[0-9a-f-]+\s*[—-]\s*(.+)$")
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _summary_from_file(path: str | None) -> str | None:
@@ -42,8 +42,11 @@ def cmd_archive(argv: list[str]) -> int:
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--archive-root", default=str(archive_root()))
-    ap.add_argument("--summary-file", default=None,
-                    help="markdown summary to store next to the archived transcript")
+    ap.add_argument(
+        "--summary-file",
+        default=None,
+        help="markdown summary to store next to the archived transcript",
+    )
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
@@ -59,7 +62,10 @@ def cmd_archive(argv: list[str]) -> int:
     sidecar = src.with_suffix("")
     sidecar_dest = dest_dir / sidecar.name
     if dest.exists() or sidecar_dest.exists():
-        print(f"rl-archive: {dest_dir} already has {src.name} or its sidecar, aborting", file=sys.stderr)
+        print(
+            f"rl-archive: {dest_dir} already has {src.name} or its sidecar, aborting",
+            file=sys.stderr,
+        )
         return 1
 
     if src.exists():
@@ -76,9 +82,13 @@ def cmd_archive(argv: list[str]) -> int:
 
     summary = t.get("whatItIs") or _summary_from_file(args.summary_file)
     registry.archive_session(
-        reg, args.id, str(dest), _now(),
+        reg,
+        args.id,
+        str(dest),
+        _now(),
         summary=summary,
-        project=t.get("gitProjectLabel") or t.get("project"))
+        project=t.get("gitProjectLabel") or t.get("project"),
+    )
     registry.save_registry(args.registry, reg)
     extra = f" (+summary {summary_path.name})" if summary_path else ""
     print(f"archived {args.id} -> {dest}{extra}")

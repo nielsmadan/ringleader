@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from .. import naming, overview, projects, registry
@@ -10,7 +10,7 @@ from . import default_registry
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def _append_title(file_path: str, line: str) -> None:
@@ -28,8 +28,9 @@ def _append_title(file_path: str, line: str) -> None:
 def cmd_name(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl name")
     ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--project", action="append", default=None,
-                    help="repo/dir selector; repeatable")
+    ap.add_argument(
+        "--project", action="append", default=None, help="repo/dir selector; repeatable"
+    )
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--active-window", type=float, default=naming.ACTIVE_WINDOW_MINUTES)
     ap.add_argument("--dry-run", action="store_true")
@@ -40,10 +41,9 @@ def cmd_name(argv: list[str]) -> int:
     selected = naming.select_eligible(reg, now, active_window_minutes=args.active_window)
 
     if args.project:
-        selected = [s for s in selected
-                    if any(projects.matches(s[0], sel) for sel in args.project)]
+        selected = [s for s in selected if any(projects.matches(s[0], sel) for sel in args.project)]
     if args.limit is not None:
-        selected = selected[:args.limit]
+        selected = selected[: args.limit]
 
     if args.dry_run:
         for t, name, kind in selected:

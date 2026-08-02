@@ -39,25 +39,25 @@ def _age_minutes(thread: dict, now_iso: str) -> float:
     return overview.age_days(thread["mtime"], now_iso) * 1440.0
 
 
-def candidate_kind(thread: dict, now_iso: str,
-                   active_window_minutes: float = ACTIVE_WINDOW_MINUTES):
+def candidate_kind(
+    thread: dict, now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES
+):
     suggested = thread.get("suggestedName")
     if not suggested:
         return None
     if thread.get("status", "unclassified") == "unclassified":
         return None
     if _age_minutes(thread, now_iso) < active_window_minutes:
-        return None                                  # too recently active
+        return None  # too recently active
     title = thread.get("title")
     if not title:
         return "new"
     if title == thread.get("appliedName") and suggested != title:
         return "rename"
-    return None                                      # user-owned or converged
+    return None  # user-owned or converged
 
 
-def select_eligible(reg: dict, now_iso: str,
-                    active_window_minutes: float = ACTIVE_WINDOW_MINUTES):
+def select_eligible(reg: dict, now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES):
     # Seeded from ALL current titles (including ones about to be renamed away), so a
     # new candidate may get a suffix even though a soon-to-be-renamed title will free
     # up — intentional: global uniqueness, no ordering dependence (spec-compliant).

@@ -16,8 +16,7 @@ def delta_note(added: int, removed: int) -> str | None:
     return "(scanning… " + ", ".join(bits) + ")"
 
 
-def auto_refresh(registry_path, now_iso, *, tail=30,
-                 projects_root=None, git_resolver=None):
+def auto_refresh(registry_path, now_iso, *, tail=30, projects_root=None, git_resolver=None):
     """Scan the projects dir, reconcile into the registry, persist, and report the
     membership delta. This is the cheap, pure-code refresh the read commands run so
     their counts are never stale; classification/naming stays a separate agentic step."""

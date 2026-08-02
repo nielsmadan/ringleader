@@ -1,4 +1,4 @@
-from ringleader.gitinfo import normalize_remote, resolve_git_project, GitProject
+from ringleader.gitinfo import GitProject, normalize_remote, resolve_git_project
 
 
 def test_normalize_remote_variants():
@@ -16,15 +16,18 @@ def _runner(mapping):
         # cmd = ["git", "-C", cwd, *args]
         key = tuple(cmd[3:])
         return mapping.get(key)
+
     return run
 
 
 def test_resolve_prefers_remote_slug(tmp_path):
     cwd = str(tmp_path)  # must exist
-    runner = _runner({
-        ("rev-parse", "--show-toplevel"): f"{cwd}\n",
-        ("config", "--get", "remote.origin.url"): "git@github.com:me/cool-repo.git\n",
-    })
+    runner = _runner(
+        {
+            ("rev-parse", "--show-toplevel"): f"{cwd}\n",
+            ("config", "--get", "remote.origin.url"): "git@github.com:me/cool-repo.git\n",
+        }
+    )
     gp = resolve_git_project(cwd, runner=runner)
     assert isinstance(gp, GitProject)
     assert gp.key == "github.com/me/cool-repo"
@@ -35,10 +38,12 @@ def test_resolve_prefers_remote_slug(tmp_path):
 
 def test_resolve_falls_back_to_toplevel_without_remote(tmp_path):
     cwd = str(tmp_path)
-    runner = _runner({
-        ("rev-parse", "--show-toplevel"): f"{cwd}\n",
-        ("config", "--get", "remote.origin.url"): None,  # no remote
-    })
+    runner = _runner(
+        {
+            ("rev-parse", "--show-toplevel"): f"{cwd}\n",
+            ("config", "--get", "remote.origin.url"): None,  # no remote
+        }
+    )
     gp = resolve_git_project(cwd, runner=runner)
     assert gp.remote is None
     assert gp.key == cwd
@@ -53,7 +58,9 @@ def test_resolve_returns_none_when_not_a_repo(tmp_path):
 
 def test_resolve_returns_none_when_cwd_missing(tmp_path):
     missing = str(tmp_path / "gone")
+
     # runner should never be consulted; pass one that would explode if called
     def boom(cmd):
         raise AssertionError("runner must not run for a missing cwd")
+
     assert resolve_git_project(missing, runner=boom) is None

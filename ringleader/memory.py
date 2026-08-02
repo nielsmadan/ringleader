@@ -2,19 +2,24 @@ from __future__ import annotations
 
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 from .gitinfo import resolve_git_project
-from .sources.claude_code import default_projects_dir as projects_dir
+from .sources.claude_code import (
+    default_projects_dir as projects_dir,  # noqa: F401 -- re-exported; callers use memory.projects_dir()
+)
 from .transcript import parse_transcript
 
 INDEX_NAME = "MEMORY.md"
+_NONTRIVIAL_LINE_LEN = 25
 
 _FIXED_RE = re.compile(r"\b(FIXED|DONE)\b")
-_STATUS_RE = re.compile(r"(?i)status \(as of|\bsteps?\s+\d+[-–]?\d*\s+(complete|done)|\b\d+\s+tests?\s+passing")
+_STATUS_RE = re.compile(
+    r"(?i)status \(as of|\bsteps?\s+\d+[-–]?\d*\s+(complete|done)|\b\d+\s+tests?\s+passing"  # noqa: RUF001 -- the char class intentionally matches both hyphen and en dash variants of a numeric range
+)
 _LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")
 
 
@@ -44,9 +49,9 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
     if end == -1:
         return {}, text
     raw = text[4:end]
-    body = text[end + 5:]
+    body = text[end + 5 :]
     meta: dict = {}
-    stack = [(-1, meta)]                 # (indent, dict) for one level of nesting
+    stack = [(-1, meta)]  # (indent, dict) for one level of nesting
     for line in raw.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -91,7 +96,7 @@ def detect_obsolete(body: str, *, repo_gone: bool, repo_doc_text: str | None) ->
     if repo_doc_text:
         doc = _normalize(repo_doc_text)
         # each non-trivial line of the body already present verbatim in the doc
-        lines = [ln for ln in body.splitlines() if len(ln.strip()) > 25]
+        lines = [ln for ln in body.splitlines() if len(ln.strip()) > _NONTRIVIAL_LINE_LEN]
         if lines and all(_normalize(ln) in doc for ln in lines):
             signals.append("already-in-doc")
     return signals
@@ -105,7 +110,7 @@ def rewrite_index_without(text: str, targets: set[str]) -> str:
     keep = []
     for line in text.splitlines():
         links = _LINK_RE.findall(line)
-        if links and any(l in targets for l in links):
+        if links and any(link in targets for link in links):
             continue
         keep.append(line)
     return "\n".join(keep).rstrip() + "\n"
@@ -121,7 +126,7 @@ def iter_memory_dirs(root) -> Iterator[Path]:
 
 
 def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
 def _resolve_cwd(project_dir: Path) -> str | None:
@@ -171,17 +176,24 @@ def scan_memory(root, git_resolver=None) -> list[MemoryEntry]:
                 continue
             meta, body = parse_frontmatter(text)
             md = meta.get("metadata", {}) if isinstance(meta.get("metadata"), dict) else {}
-            out.append(MemoryEntry(
-                path=str(f), encoded_dir=encoded, project=cwd,
-                mtime=_iso_mtime(f),
-                name=meta.get("name"), description=meta.get("description"),
-                mem_type=md.get("type"), body=body.strip(),
-                git_project_key=getattr(gp, "key", None),
-                git_project_label=getattr(gp, "label", None),
-                git_root=getattr(gp, "root", None),
-                git_remote=getattr(gp, "remote", None),
-                repo_gone=repo_gone,
-                obsolete_signals=detect_obsolete(body, repo_gone=repo_gone,
-                                                 repo_doc_text=doc_text),
-            ))
+            out.append(
+                MemoryEntry(
+                    path=str(f),
+                    encoded_dir=encoded,
+                    project=cwd,
+                    mtime=_iso_mtime(f),
+                    name=meta.get("name"),
+                    description=meta.get("description"),
+                    mem_type=md.get("type"),
+                    body=body.strip(),
+                    git_project_key=getattr(gp, "key", None),
+                    git_project_label=getattr(gp, "label", None),
+                    git_root=getattr(gp, "root", None),
+                    git_remote=getattr(gp, "remote", None),
+                    repo_gone=repo_gone,
+                    obsolete_signals=detect_obsolete(
+                        body, repo_gone=repo_gone, repo_doc_text=doc_text
+                    ),
+                )
+            )
     return out

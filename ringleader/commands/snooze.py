@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .. import registry
 from . import default_registry
@@ -12,13 +12,14 @@ def cmd_snooze(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl snooze",
         description="Set a session aside: keep it open/resumable, but hide it from the "
-                    "default rl projects/overview until you `rl wake` it.")
+        "default rl projects/overview until you `rl wake` it.",
+    )
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
-    when = datetime.now(timezone.utc).isoformat()
+    when = datetime.now(UTC).isoformat()
     try:
         registry.snooze_thread(reg, args.id, when)
     except KeyError:

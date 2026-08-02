@@ -9,10 +9,16 @@ def test_parse_extracts_normalized_fields(tmp_path: Path):
     proj = tmp_path / "-Users-me-wrksp-proj"
     proj.mkdir()
     f = proj / "aaaaaaaa-0000-0000-0000-000000000000.jsonl"
-    f.write_text("\n".join([
-        json.dumps({"type": "user", "cwd": "/Users/me/wrksp/proj", "message": {"content": "hi"}}),
-        json.dumps({"type": "custom-title", "customTitle": "my-thread"}),
-    ]))
+    f.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {"type": "user", "cwd": "/Users/me/wrksp/proj", "message": {"content": "hi"}}
+                ),
+                json.dumps({"type": "custom-title", "customTitle": "my-thread"}),
+            ]
+        )
+    )
     src = ClaudeCodeSource(projects_dir=tmp_path)
     refs = list(src.discover())
     assert len(refs) == 1
@@ -48,15 +54,15 @@ def test_parse_counts_subagent_transcripts(tmp_path):
     proj.mkdir()
     sid = "bbbbbbbb-0000-0000-0000-000000000002"
     (proj / f"{sid}.jsonl").write_text(
-        json.dumps({"type": "user", "cwd": "/Users/me/proj",
-                    "message": {"content": "hi"}}) + "\n")
+        json.dumps({"type": "user", "cwd": "/Users/me/proj", "message": {"content": "hi"}}) + "\n"
+    )
     sub = proj / sid / "subagents"
     sub.mkdir(parents=True)
     (sub / "agent-a.jsonl").write_text("{}\n")
     (sub / "agent-b.jsonl").write_text("{}\n")
 
     src = ClaudeCodeSource(projects_dir=tmp_path)
-    ns = src.parse(list(src.discover())[0])
+    ns = src.parse(next(iter(src.discover())))
     assert isinstance(ns, NormalizedSession)
     assert ns.subagent_count == 2
 
@@ -66,11 +72,11 @@ def test_no_subagents_dir_counts_zero(tmp_path):
     proj.mkdir()
     sid = "cccccccc-0000-0000-0000-000000000003"
     (proj / f"{sid}.jsonl").write_text(
-        json.dumps({"type": "user", "cwd": "/Users/me/proj",
-                    "message": {"content": "hi"}}) + "\n")
+        json.dumps({"type": "user", "cwd": "/Users/me/proj", "message": {"content": "hi"}}) + "\n"
+    )
 
     src = ClaudeCodeSource(projects_dir=tmp_path)
-    ns = src.parse(list(src.discover())[0])
+    ns = src.parse(next(iter(src.discover())))
     assert ns.subagent_count == 0
 
 

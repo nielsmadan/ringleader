@@ -1,10 +1,12 @@
 from pathlib import Path
+
 from ringleader import memory
 
 
 def test_parse_frontmatter_splits_meta_and_body():
-    text = ("---\nname: foo\ndescription: a thing\nmetadata:\n  type: feedback\n---\n"
-            "\nThe body line.\n")
+    text = (
+        "---\nname: foo\ndescription: a thing\nmetadata:\n  type: feedback\n---\n\nThe body line.\n"
+    )
     meta, body = memory.parse_frontmatter(text)
     assert meta["name"] == "foo"
     assert meta["description"] == "a thing"
@@ -19,9 +21,12 @@ def test_parse_frontmatter_no_frontmatter():
 
 
 def test_detect_obsolete_flags_fixed_and_status_snapshot():
-    assert "fixed" in memory.detect_obsolete("Bug X — FIXED 2026-06-10", repo_gone=False, repo_doc_text=None)
-    assert "status-snapshot" in memory.detect_obsolete("Status (as of 2026-06-23): 23 tests passing",
-                                                       repo_gone=False, repo_doc_text=None)
+    assert "fixed" in memory.detect_obsolete(
+        "Bug X — FIXED 2026-06-10", repo_gone=False, repo_doc_text=None
+    )
+    assert "status-snapshot" in memory.detect_obsolete(
+        "Status (as of 2026-06-23): 23 tests passing", repo_gone=False, repo_doc_text=None
+    )
 
 
 def test_detect_obsolete_repo_gone():
@@ -35,8 +40,12 @@ def test_detect_obsolete_already_in_doc():
 
 
 def test_detect_obsolete_clean_body_has_no_signals():
-    assert memory.detect_obsolete("A durable convention about ports.",
-                                  repo_gone=False, repo_doc_text="# unrelated\n") == []
+    assert (
+        memory.detect_obsolete(
+            "A durable convention about ports.", repo_gone=False, repo_doc_text="# unrelated\n"
+        )
+        == []
+    )
 
 
 def test_parse_index_links_excludes_memory_md():
@@ -58,22 +67,28 @@ def test_rewrite_index_without_drops_matching_lines():
 def _memory_file(root: Path, encoded: str, slug: str, body: str, frontmatter=True):
     d = root / encoded / "memory"
     d.mkdir(parents=True, exist_ok=True)
-    fm = (f"---\nname: {slug}\ndescription: d\nmetadata:\n  type: feedback\n---\n\n"
-          if frontmatter else "")
+    fm = (
+        f"---\nname: {slug}\ndescription: d\nmetadata:\n  type: feedback\n---\n\n"
+        if frontmatter
+        else ""
+    )
     (d / f"{slug}.md").write_text(fm + body + "\n", encoding="utf-8")
 
 
 def _transcript(root: Path, encoded: str, cwd: str):
     import json
+
     (root / encoded).mkdir(parents=True, exist_ok=True)
     (root / encoded / "s.jsonl").write_text(
-        json.dumps({"type": "user", "cwd": cwd,
-                    "message": {"role": "user", "content": "hi"}}) + "\n",
-        encoding="utf-8")
+        json.dumps({"type": "user", "cwd": cwd, "message": {"role": "user", "content": "hi"}})
+        + "\n",
+        encoding="utf-8",
+    )
 
 
 def test_scan_memory_builds_entries_with_git_and_signals(tmp_path):
     from ringleader.gitinfo import GitProject
+
     enc = "-Users-me-proj"
     cwd = str(tmp_path / "proj")
     (tmp_path / "proj").mkdir()
@@ -82,8 +97,11 @@ def test_scan_memory_builds_entries_with_git_and_signals(tmp_path):
     _memory_file(tmp_path, enc, "keep-me", "A durable convention about ports.")
     _memory_file(tmp_path, enc, "already", "Run yarn check-all before done.")
 
-    fake = lambda c: GitProject(root=cwd, remote="github.com/me/proj",
-                                key="github.com/me/proj", label="proj")
+    def fake(c):
+        return GitProject(
+            root=cwd, remote="github.com/me/proj", key="github.com/me/proj", label="proj"
+        )
+
     entries = memory.scan_memory(tmp_path, git_resolver=fake)
     by_name = {e.name: e for e in entries}
     assert by_name["keep-me"].git_project_label == "proj"

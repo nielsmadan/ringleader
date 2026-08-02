@@ -1,5 +1,4 @@
 import json
-from pathlib import Path
 
 from ringleader import refresh
 
@@ -9,15 +8,17 @@ def _projects_dir(tmp, sid="s1"):
     proj = tmp / "projects" / "-Users-me-proj"
     proj.mkdir(parents=True)
     (proj / f"{sid}.jsonl").write_text(
-        '{"sessionId":"%s","cwd":"/Users/me/proj","type":"user"}\n' % sid,
-        encoding="utf-8")
+        f'{{"sessionId":"{sid}","cwd":"/Users/me/proj","type":"user"}}\n', encoding="utf-8"
+    )
     return tmp / "projects"
 
 
 def _registry(tmp, threads):
     p = tmp / "registry.json"
-    p.write_text(json.dumps({"version": 1, "lastScan": None,
-                             "threads": threads, "tombstones": []}), encoding="utf-8")
+    p.write_text(
+        json.dumps({"version": 1, "lastScan": None, "threads": threads, "tombstones": []}),
+        encoding="utf-8",
+    )
     return p
 
 
@@ -32,8 +33,8 @@ def test_auto_refresh_adds_new_session_and_saves(tmp_path):
     root = _projects_dir(tmp_path, "s1")
     reg_path = _registry(tmp_path, [])
     reg, note = refresh.auto_refresh(
-        reg_path, "2026-07-19T00:00:00+00:00",
-        projects_root=root, git_resolver=lambda cwd: None)
+        reg_path, "2026-07-19T00:00:00+00:00", projects_root=root, git_resolver=lambda cwd: None
+    )
     assert note == "(scanning… 1 new)"
     assert [t["sessionId"] for t in reg["threads"]] == ["s1"]
     # persisted, not just returned
@@ -45,8 +46,10 @@ def test_auto_refresh_adds_new_session_and_saves(tmp_path):
 def test_auto_refresh_no_change_returns_none(tmp_path):
     root = _projects_dir(tmp_path, "s1")
     reg_path = _registry(tmp_path, [])
-    refresh.auto_refresh(reg_path, "2026-07-19T00:00:00+00:00",
-                         projects_root=root, git_resolver=lambda cwd: None)
-    _, note = refresh.auto_refresh(reg_path, "2026-07-19T00:01:00+00:00",
-                                   projects_root=root, git_resolver=lambda cwd: None)
+    refresh.auto_refresh(
+        reg_path, "2026-07-19T00:00:00+00:00", projects_root=root, git_resolver=lambda cwd: None
+    )
+    _, note = refresh.auto_refresh(
+        reg_path, "2026-07-19T00:01:00+00:00", projects_root=root, git_resolver=lambda cwd: None
+    )
     assert note is None

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import Iterator, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 
 @dataclass(frozen=True)
 class RawRef:
     source: str
-    file: str          # absolute transcript path
+    file: str  # absolute transcript path
     mtime: str
     size_bytes: int
 
@@ -30,7 +31,7 @@ class NormalizedSession:
     # can't supply them just leaves the defaults.
     ai_title: str | None = None
     message_count: int = 0
-    tail_text: str = ""              # transient; used for classification, not persisted
+    tail_text: str = ""  # transient; used for classification, not persisted
     git_branch: str | None = None
     git_project_key: str | None = None
     git_project_label: str | None = None
@@ -42,5 +43,5 @@ class NormalizedSession:
 class Source(Protocol):
     name: str
 
-    def discover(self) -> Iterator[RawRef]: ...       # cheap: paths + mtime/size, no parse
+    def discover(self) -> Iterator[RawRef]: ...  # cheap: paths + mtime/size, no parse
     def parse(self, ref: RawRef) -> NormalizedSession: ...  # read tail, extract fields

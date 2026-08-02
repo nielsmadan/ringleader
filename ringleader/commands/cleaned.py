@@ -2,21 +2,22 @@ from __future__ import annotations
 
 import argparse
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from .. import overview, projects, registry
 from . import default_registry
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 def cmd_cleaned(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl cleaned",
         description="Record that a project was just triaged (clean-project), so "
-                    "rl projects can show what's done vs. needs another look.")
+        "rl projects can show what's done vs. needs another look.",
+    )
     ap.add_argument("selector", help="git-project label or a cwd path")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--at", default=None, help="ISO timestamp to record (default: now)")
@@ -26,8 +27,9 @@ def cmd_cleaned(argv: list[str]) -> int:
     matched = projects.filter_by_projects(reg["threads"], [args.selector])
     keys = sorted({overview.group_key(t) for t in matched})
     if not keys:
-        print(f"rl-cleaned: no sessions match '{args.selector}' — nothing to track",
-              file=sys.stderr)
+        print(
+            f"rl-cleaned: no sessions match '{args.selector}' — nothing to track", file=sys.stderr
+        )
         return 1
 
     when = args.at or _now()
