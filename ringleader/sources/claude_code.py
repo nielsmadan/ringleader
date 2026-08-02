@@ -30,13 +30,6 @@ def _iso_mtime(p: Path) -> str:
     return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
-def _subagent_count(session_file: Path) -> int:
-    sub_dir = session_file.parent / session_file.stem / "subagents"
-    if not sub_dir.exists():
-        return 0
-    return sum(1 for _ in sub_dir.glob("*.jsonl"))
-
-
 @dataclass
 class ClaudeCodeSource:
     projects_dir: Path = field(default_factory=default_projects_dir)
@@ -67,7 +60,6 @@ class ClaudeCodeSource:
             custom_title=info.custom_title,
             summary=info.summary,
             last_prompt=info.last_prompt,
-            subagent_count=_subagent_count(path),
             file=ref.file,
             ai_title=info.ai_title,
             message_count=info.message_count,

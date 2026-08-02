@@ -19,7 +19,6 @@ def _meta(sid, mtime, project="/p", title=None, git_label=None):
         last_prompt="lp",
         mtime=mtime,
         size_bytes=10,
-        subagent_count=0,
         message_count=2,
         tail_text="USER: hi",
         git_project_key=git_label,

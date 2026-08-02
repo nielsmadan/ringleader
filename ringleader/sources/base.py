@@ -23,7 +23,6 @@ class NormalizedSession:
     custom_title: str | None
     summary: str | None
     last_prompt: str | None
-    subagent_count: int
     file: str
     # Below: Claude-Code-observed extras beyond the cross-harness-generic core above.
     # registry.reconcile still persists these (messageCount drives prune eligibility,
