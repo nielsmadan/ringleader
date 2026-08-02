@@ -10,15 +10,16 @@ deterministic bits are ringleader CLIs; the doc integration is the `/doc` skill.
 
 ## Steps
 
-Run from the ringleader repo (`~/wrksp/incubation/ringleader`). You need the
-session's `sessionId`. Get it from `registry.json`: each entry in `.threads[]` has
-`sessionId`, `project`, and `whatItIs`. `./rl overview --all` and `./rl overview <repo>`
+Requires `rl` installed (`just install-local`) or, from a source checkout, run each
+command as `uv run rl <sub>`. You need the session's `sessionId`. Get it from the
+registry (`~/.local/share/ringleader/registry.json`): each entry in `.threads[]` has
+`sessionId`, `project`, and `whatItIs`. `rl overview --all` and `rl overview <repo>`
 are human-readable summaries and do **not** print full ids.
 
 1. **Export the conversation** to a temp markdown file:
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-export <id> --out /tmp/rl-harvest-<id>.md
+   rl export <id> --out /tmp/rl-harvest-<id>.md
    ```
 
 2. **Integrate into the repo's docs** by invoking the `/doc` skill with the export, from
@@ -32,7 +33,7 @@ are human-readable summaries and do **not** print full ids.
 3. **Record the harvest** in the registry (paths come from the report file, comma-joined):
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-mark-harvested <id> --paths "<comma-joined paths from the report>"
+   rl mark-harvested <id> --paths "<comma-joined paths from the report>"
    ```
 
    If the report is empty (nothing worth documenting), run `rl mark-harvested <id>` with
@@ -42,5 +43,5 @@ are human-readable summaries and do **not** print full ids.
 
 ## Notes
 - This harvests only — it does NOT archive or delete. To move a finished session out of
-  the resume picker afterward, use `./rl archive <id>`.
+  the resume picker afterward, use `rl archive <id>`.
 - Never hand-edit `registry.json` or transcripts.

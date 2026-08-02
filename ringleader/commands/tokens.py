@@ -58,7 +58,7 @@ def cmd_tokens(argv: list[str]) -> int:
     ap.add_argument(
         "--archived",
         action="store_true",
-        help="also scan archive/ (sessions st has moved out of ~/.claude)",
+        help="also scan archive/ (sessions rl has moved out of ~/.claude)",
     )
     ap.add_argument("--limit", type=int, default=15, help="rows in the ranked table")
     ap.add_argument("--json", action="store_true")

@@ -12,24 +12,24 @@ names, and only ever touches names *it* generated (never a name you set by hand)
 
 ## Steps
 
-Work from the repo root (`~/wrksp/incubation/ringleader`). Scope everything
-to one repo/dir at a time with `--project <selector>` (a git-project label, or a
-cwd path; repeatable).
+Requires `rl` installed (`just install-local`) or, from a source checkout, run each
+command as `uv run rl <sub>`. Scope everything to one repo/dir at a time with
+`--project <selector>` (a git-project label, or a cwd path; repeatable).
 
 1. **See which repos/dirs have sessions** (to pick a scope):
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-overview
+   rl overview
    ```
 
 2. **Make sure that scope is classified/fresh** — run the `session-sync` skill
-   scoped to it (`rl-sync scan --project <selector>`), classifying any pending
+   scoped to it (`rl sync scan --project <selector>`), classifying any pending
    sessions. Re-naming depends on fresh classifications.
 
 3. **Preview** what would be named/re-named in that scope:
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-name --project <selector> --dry-run
+   rl name --project <selector> --dry-run
    ```
 
    `new:` rows are first-time names; `rename:` rows show `old -> new` where a
@@ -38,7 +38,7 @@ cwd path; repeatable).
 4. **Apply:**
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-name --project <selector>
+   rl name --project <selector>
    ```
 
 5. **Report** the summary (named / renamed / skipped).

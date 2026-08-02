@@ -12,11 +12,11 @@ Shows the curated overview of dormant sessions from the ringleader registry.
 1. **Check freshness.** Run from any cwd:
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-overview
+   rl overview
    ```
 
    To scope to one repo/dir (across all its checkouts), add `--project <selector>`
-   (repeatable), e.g. `bin/rl-overview --project acme-core`.
+   (repeatable), e.g. `rl overview --project acme-core`.
 
 2. **If the output starts with a staleness/unclassified nudge**, run the
    `session-sync` skill first, then re-run the command above.
@@ -33,7 +33,7 @@ To answer "which repos/dirs do I have sessions for?" (e.g. to pick a scope for
 naming or syncing), run:
 
 ```bash
-cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-overview
+rl overview
 ```
 
 It prints each git project (and non-git cwd) with total / classified / unnamed

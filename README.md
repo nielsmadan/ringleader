@@ -3,14 +3,28 @@
 Curates the **dormant** Claude Code sessions sitting on disk
 (`~/.claude/projects/*.jsonl`) — naming them, classifying what state they're
 in, surfacing what's still in-flight vs. abandoned, and pruning the rest
-before the GC clock silently deletes it. Run the dispatcher as `./rl <command>`
-from this repo — it's not installed on `PATH`.
+before the GC clock silently deletes it.
+
+## Install
+
+```sh
+just install-local        # migrates any legacy repo-root state, then `uv tool install .`
+```
+
+or directly: `uv tool install .`. Either way this puts `rl` on `PATH` as a real
+console command — run it as `rl <command>` from anywhere, not `./rl`. To run
+from a source checkout without installing, use `uv run rl <command>`.
+
+State (the registry and `archive/`) lives under `~/.local/share/ringleader/`
+(or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
+runs `rl migrate` first to move any pre-existing repo-root `registry.json` /
+`archive/` into that location.
 
 ## Everyday
 
 The three front-door commands, most useful first.
 
-### `rl overview [<selector>] [-s] [-a] [--archived] [--checkouts] [--no-scan]`
+### `rl overview [<selector>] [-s] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
 
 The view. Auto-refreshes the registry (a disk scan) before rendering, unless
 `--no-scan` is passed. Prints a `⚠ N awaiting triage` header when the inbox
@@ -25,12 +39,15 @@ is non-empty.
 - `-a`, `--all` — include parked/snoozed sessions and every status.
 - `--checkouts` — rollup only: also list each repo's checkout paths.
 - `--no-scan` — skip the auto-scan, report from the registry as-is.
+- `--json` — print the registry-wide rollup as JSON instead of text; ignores the
+  selector and other view flags.
 
-### `rl triage [--project <sel>] [--no-scan]`
+### `rl triage [--project <sel>] [--no-scan] [--json]`
 
 Lists sessions awaiting your decision — not yet reviewed, harvested, or
 parked. Auto-refreshes the registry first, unless `--no-scan`. `--project`
-scopes the inbox to one repo/dir selector (repeatable).
+scopes the inbox to one repo/dir selector (repeatable). `--json` prints the
+inbox as JSON instead of text (honors `-u`/`--unclassified`; not valid with `--memory`).
 
 ### `rl prune [--project <sel>] [--delete]`
 
@@ -55,6 +72,15 @@ Mostly invoked by the skills (`session-sync`, `session-overview`,
 | `rl wake <id>` | Un-snooze a session. |
 | `rl sync scan [--project <sel>]` | Reconcile + emit sessions to classify. |
 | `rl name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
+| `rl migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
+
+## Sources
+
+Scanning is behind a `Source` protocol (`ringleader/sources/`): `discover()` lists
+raw session refs cheaply (path + mtime/size, no parse), `parse()` reads one into a
+`NormalizedSession`. `ringleader/sources/claude_code.py` — reading
+`~/.claude/projects/*.jsonl` — is the only source today; the seam exists so another
+transcript store could be added without touching the registry/overview/triage code.
 
 ## Restoring an archived session
 
@@ -72,7 +98,7 @@ name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
    does not depend on this: `reconcile` re-adds any scanned session it has no thread for,
    tombstone or not. But a stale tombstone keeps the session listed by
    `rl overview --archived` forever while it is also live.
-3. Re-scan — `./rl overview`, or any command run without `--no-scan`.
+3. Re-scan — `rl overview`, or any command run without `--no-scan`.
 4. Optionally delete the leftover `archive/<slug>/<id>.md` harvest summary and the emptied
    archive directory.
 
@@ -80,7 +106,8 @@ Then `cd <project> && claude --resume`. **The thread's registry record does not 
 Archiving pops it, so the session returns as a brand-new unclassified, unnamed thread — its
 name, `whatItIs`, decision, tags, `harvestPath` and reviewed/classified markers are gone.
 Re-run the `session-sync` and `session-name` skills to rebuild them. Both `archive/` and
-`registry.json` are git-ignored, so none of this touches tracked files.
+`registry.json` live under `~/.local/share/ringleader/`, outside this repo, so none of
+this touches tracked files.
 
 ## Selectors
 

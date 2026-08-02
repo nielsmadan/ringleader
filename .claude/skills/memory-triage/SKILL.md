@@ -1,6 +1,6 @@
 ---
 name: memory-triage
-description: Guided cleanup of accumulated Claude memory (~/.claude/projects/*/memory/*.md) across all projects — auto-prune clear-obsolete entries, then classify survivors to delete, integrate into the repo's docs, flag as global, or keep. Reads the inbox from `./rl triage --memory`; accepts an optional repo/dir scope. Use to triage memory, across everything or for one repo. Triggers "clean up my memory", "triage memory", "triage memory for X".
+description: Guided cleanup of accumulated Claude memory (~/.claude/projects/*/memory/*.md) across all projects — auto-prune clear-obsolete entries, then classify survivors to delete, integrate into the repo's docs, flag as global, or keep. Reads the inbox from `rl triage --memory`; accepts an optional repo/dir scope. Use to triage memory, across everything or for one repo. Triggers "clean up my memory", "triage memory", "triage memory for X".
 ---
 
 # memory-triage
@@ -10,14 +10,15 @@ every project**; the user may optionally name one repo/dir to scope to instead.
 Deterministic actions are ringleader CLIs; integrating a fact into a repo's docs
 is a judgment call you make and apply by hand.
 
-Run from the ringleader repo (`~/wrksp/incubation/ringleader`). Ask the user
-if they want to scope to a single repo/dir (a git-project label or path). If they name
+Requires `rl` installed (`just install-local`) or, from a source checkout, run each
+command as `uv run rl <sub>`. Ask the user if they want to scope to a single
+repo/dir (a git-project label or path). If they name
 one, call it `<X>` and pass `--project <X>` to every command below. If they don't, skip
 `--project` everywhere and triage the full cross-project inbox.
 
 ## Steps
 
-1. **Build the triage list.** Run `./rl triage --memory [--project <X>]` — it
+1. **Build the triage list.** Run `rl triage --memory [--project <X>]` — it
    auto-reconciles and prints the inbox grouped by project, entry counts, and how many
    of those are obsolete-candidates. This is the inbox source for the whole skill.
    Work **most-cluttered project first**.
@@ -25,17 +26,17 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
 2. **Per project, auto-prune clear-obsolete.** This is the only auto-delete gate:
 
    ```bash
-   ./rl mem-prune --project <X>            # preview only — no deletion
+   rl mem-prune --project <X>            # preview only — no deletion
    ```
    This lists the candidates (those with a deterministic `obsoleteSignals`:
    `repo-gone`, `fixed`, `status-snapshot`, `already-in-doc`). Show the preview to the
    user; if they approve, apply it — stdin is non-interactive here, so feed the
    confirmation:
    ```bash
-   echo y | ./rl mem-prune --project <X> --delete
+   echo y | rl mem-prune --project <X> --delete
    ```
 
-3. **Classify the survivors.** Run `./rl mem-scan --project <X>` — it emits one JSON
+3. **Classify the survivors.** Run `rl mem-scan --project <X>` — it emits one JSON
    memory-entry per line (`path`, `project`, `name`, `description`, `obsoleteSignals`,
    `gitProjectLabel`, etc.). For each entry decide one of:
 
@@ -70,11 +71,11 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
 
 6. **Finish each project.** Once its survivors are classified and integrations
    applied:
-   - `./rl mark-mem-reviewed <path>` for every entry you decided to **keep**
+   - `rl mark-mem-reviewed <path>` for every entry you decided to **keep**
      (integrated and deleted entries no longer exist to mark; global-flagged entries
      are intentionally left unmarked so they keep surfacing until someone promotes
      them).
-   - `./rl mem-cleaned <X>` to stamp the project as just-triaged, so `rl overview
+   - `rl mem-cleaned <X>` to stamp the project as just-triaged, so `rl overview
      --memory` stops flagging it until new memory lands.
 
 7. **Report the tally.** For each project touched: integrated N / deleted N / kept N /
@@ -82,7 +83,7 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
    each target repo for review — this skill never commits on the user's behalf.
 
 ## Gates
-- **Auto-delete**: only `./rl mem-prune --delete`'s clear-obsolete set
+- **Auto-delete**: only `rl mem-prune --delete`'s clear-obsolete set
   (`obsoleteSignals` present). Everything else is a judgment call.
 - **Confirm before applying**: batch of integrate-repo writes, and any judgment-call
   deletion (survivors without a deterministic obsolete signal).
@@ -92,10 +93,10 @@ one, call it `<X>` and pass `--project <X>` to every command below. If they don'
   scope for this skill.
 
 ## Notes
-- `./rl triage --memory` and `./rl mem-scan` both auto-reconcile the registry against
+- `rl triage --memory` and `rl mem-scan` both auto-reconcile the registry against
   disk before reporting, so the inbox reflects the current state of every project's
   `memory/*.md` files.
-- `./rl overview --memory [<selector>]` gives the same data as a rollup or per-repo
+- `rl overview --memory [<selector>]` gives the same data as a rollup or per-repo
   deep-dive, useful for a quick before/after check without re-running the full triage.
 - Never hand-edit `registry.json` or a project's `memory/*.md` files outside the flows
   above.

@@ -111,10 +111,13 @@ The user will **experiment with skills first**, then crystallize into a CLI once
   `~/.claude/projects`, so they work regardless of cwd; they are only *discoverable* when
   CC runs with this repo as cwd (acceptable for experimentation; symlink into
   `~/.claude/skills` if global access is wanted sooner).
-- **Later (crystallize):** pour the validated behavior into a CLI (`rl`) on `PATH` —
-  deterministic parts as code, LLM parts via `claude -p --model haiku`. A single optional
-  thin global skill can wrap it for conversational use. Out of scope for this spec beyond
-  noting the migration path.
+- **Later (crystallize) — realized.** The validated behavior now lives in a packaged CLI
+  (`rl`, a `pyproject.toml` console-script entry point, installed via `uv tool install .` /
+  `just install-local`); the LLM parts (classification, naming, harvesting) stay in the
+  skills, which now just call `rl <sub>` instead of a repo-local script. Scanning itself
+  moved behind a `Source` seam (`ringleader/sources/`) so it isn't hardwired to Claude
+  Code's transcript format. See `docs/plans/2026-08-02-tooling-and-packaging.md` and
+  `docs/specs/2026-08-02-tooling-and-packaging-design.md` for the crystallization plan.
 
 ### The lifecycle classifier (engine, ①)
 
@@ -133,22 +136,37 @@ for the one-time backfill of ~219 files; incremental runs touch only changed fil
 
 ### Homes
 
+Code and runtime state now live in separate places — the repo holds only source and
+skills; the CLI's state is machine-local under the user's home dir, resolved at every
+command via `ringleader/paths.py`.
+
 ```
-~/wrksp/incubation/ringleader/        # the project repo (this dir)
+~/wrksp/incubation/ringleader/            # the project repo (source; installed elsewhere via `rl`)
 ├── SPEC.md                                 # this file
-├── registry.json                           # hybrid cache: threads + decisions + tombstones
-├── harvests/                               # distilled closeout markdown, one per harvested thread
-└── .claude/skills/                         # experimentation skills (project-scoped; CC only discovers skills under .claude/)
+├── ringleader/                             # the package (installed as the `rl` console script)
+│   ├── paths.py                            # state_dir() / default_registry() / archive_root()
+│   ├── sources/                            # Source seam: discover()/parse() per transcript store
+│   │   └── claude_code.py                  # ~/.claude/projects/*.jsonl (the only source today)
+│   └── commands/                           # one module per `rl <sub>` dispatch entry
+└── .claude/skills/                         # skills that shell out to the installed `rl`
     ├── session-overview/
     ├── session-sync/
-    ├── session-name/                       # Phase 2
-    ├── session-harvest/                     # Phase 2
-    └── session-triage/                     # Phase 2
+    ├── session-name/
+    ├── session-harvest/
+    ├── session-triage/
+    └── memory-triage/
+
+~/.local/share/ringleader/                # state_dir() — $XDG_DATA_HOME/ringleader if set
+├── registry.json                           # hybrid cache: threads + decisions + tombstones
+└── archive/                                # archived sessions moved out of ~/.claude/projects/
 ```
 
-`registry.json` and `harvests/` are runtime data; decide via `.gitignore` whether to commit
-them. **Recommendation:** gitignore `registry.json` (machine-local, derived) but **commit
-`harvests/`** — those are the distilled knowledge we explicitly want to keep durable.
+`registry.json` and `archive/` are machine-local, derived data — never committed, and no
+longer inside the repo at all (no `.gitignore` entry needed for them there). There is no
+`harvests/` directory: `session-harvest` integrates knowledge directly into the *target*
+repo's own docs (via the `/doc` skill) and records the resulting doc paths on the thread's
+`harvestPath`, rather than writing a ringleader-local copy. `rl migrate` moves any
+pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on install.
 
 ## registry.json schema (v1)
 
@@ -179,7 +197,7 @@ them. **Recommendation:** gitignore `registry.json` (machine-local, derived) but
       "suggestedName": "kebab-case-name or null",
       "classifiedAtMtime": "<iso mtime when last classified>",
       "decision": "keep|abandon|harvested|null",   // user decision; never auto-overwritten
-      "harvestPath": "harvests/<file>.md or null",
+      "harvestPath": "comma-joined target-repo doc paths, or null",
       "todoId": "todoist id or null",       // reserved for Phase 3
       "tags": []
     }
@@ -200,7 +218,7 @@ them. **Recommendation:** gitignore `registry.json` (machine-local, derived) but
 | 1 | `session-sync` | Scan disk, reconcile registry (hybrid C), classify changed sessions, tombstone vanished ones. | engine ① |
 | 2 | `session-overview` | Render dormant threads grouped by **git project** (worktrees/clones/monorepo-subdirs collapse together; cwd is the fallback) and status; show spread / WIP-debt metrics, oldest-untouched, blocked-waiting-on-me. | #1, ④ |
 | 3 | `session-name` | Propose names for unnamed sessions (batch retroactive + current); surface them for the user to apply via native `/rename` / `claude -n` / `Ctrl+R`. | #2 |
-| 4 | `session-harvest` | Distill a chosen session/thread into `harvests/<name>.md` (what was done, key decisions, files touched, where it stopped, follow-ups). Mark `decision=harvested`. | ②, #3 |
+| 4 | `session-harvest` | Distill a chosen session/thread (what was done, key decisions, files touched, where it stopped, follow-ups) and integrate it into the *target repo's* own docs via the `/doc` skill; record the touched doc paths on `harvestPath` and mark `decision=harvested`. | ②, #3 |
 | 5 | `session-triage` | Guided cleanup: run `rl prune` for the tiny+stale junk, then walk the triage inbox (`rl triage`) session-by-session to delete, harvest, or leave open. | #3 |
 | 6 | `memory-triage` | Per-project curation: auto-prune obsolete memory entries via `rl mem-prune`, classify survivors, integrate durable items into repo's `CLAUDE.md`/`AGENTS.md`, mark project cleaned. Flags global-worthy items for manual integration. | #5 |
 
@@ -248,7 +266,10 @@ and `rl triage` commands.
   having run (proposal: overview triggers a sync if registry is stale).
   **Resolved:** `rl overview` and `rl triage` now auto-refresh (a structural disk scan)
   on every read, unless `--no-scan` is passed.
-- `.gitignore` policy confirmation (proposal above: ignore `registry.json`, commit `harvests/`).
+- `.gitignore` policy confirmation. **Resolved (superseded):** `registry.json` and
+  `archive/` moved out of the repo entirely, into `~/.local/share/ringleader/` (see
+  Homes above); there is no `harvests/` to decide on, since harvesting now writes into
+  the target repo's own docs instead of a ringleader-local copy.
 
 ## Parked
 
@@ -256,6 +277,7 @@ Considered and deliberately not built (yet):
 
 - **`/clear`-boundary splitting** — needs `uuid`/`parentUuid`/`leafUuid` preservation to be safe.
 - **Todoist ↔ session linking** — the Phase 3 item above; parked, not scheduled.
-- **Putting `rl` on `PATH`** — stays repo-local for now.
+- ~~**Putting `rl` on `PATH`**~~ — **done**: `rl` is now a `pyproject.toml` console-script
+  entry point, installed via `uv tool install .` / `just install-local`.
 - **A `.session-aliases` sweep** — see the key-facts bullet above; would make stale picker
   grouping self-heal instead of needing a manual `find` + delete.

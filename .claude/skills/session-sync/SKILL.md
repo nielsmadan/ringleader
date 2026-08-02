@@ -5,15 +5,16 @@ description: Use to refresh the ringleader registry — scan ~/.claude/projects,
 
 # session-sync
 
-Refreshes `registry.json` and classifies dormant sessions. Deterministic scanning is
-done by the `rl-sync` CLI; you (the agent) do the classification.
+Refreshes the registry and classifies dormant sessions. Deterministic scanning is
+done by `rl sync`; you (the agent) do the classification. Requires `rl` installed
+(`just install-local`) or, from a source checkout, run each command as `uv run rl <sub>`.
 
 ## Steps
 
 1. **Scan and reconcile.** Run from any cwd:
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-sync scan
+   rl sync scan
    ```
 
    To scope to one repo or directory, add `--project <selector>` (repeatable).
@@ -46,7 +47,7 @@ done by the `rl-sync` CLI; you (the agent) do the classification.
 4. **Write each result back:**
 
    ```bash
-   cd ~/wrksp/incubation/ringleader && .venv/bin/python bin/rl-sync apply --session <sessionId> \
+   rl sync apply --session <sessionId> \
      --status <status> --what "<whatItIs>" --name "<suggestedName>" --confidence <0..1>
    ```
 

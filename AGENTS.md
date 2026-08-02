@@ -15,22 +15,31 @@ pruning them before the GC clock deletes them.
   treat archiving as ending the thread. There is no `rl unarchive`, but nothing is deleted:
   a human can move the files back by hand (README → "Restoring an archived session"), at
   the cost of the thread's registry record.
-- **`./rl` is repo-local and not on `PATH`.** Run it from the repo root or by absolute path.
-  It dispatches through `.venv/bin/python`, so the venv must exist — a missing `.venv` fails
-  with a bare "no such file" rather than anything useful.
+- **`rl` is an installed console command, not a repo-local script.** `just install-local`
+  (or `uv tool install .`) puts it on `PATH`; from a source checkout without installing,
+  use `uv run rl <sub>` instead. Its state — `registry.json` and `archive/` — lives under
+  `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not in this repo.
+  `rl migrate` (run automatically by `just install-local`) moves any legacy repo-root
+  state there once.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
   meant to be called by the skills in `.claude/skills/`, not by hand.
+- **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
+  `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
+  `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage
+  code talks to `Source`, not to Claude Code transcripts directly.
 
 ## Commands
 
 ```sh
-./rl overview [<selector>]   # the view; project rollup by default
-./rl triage                  # sessions awaiting a decision
-./rl prune [--delete]        # delete tiny + stale sessions
-pytest                       # tests; config in pytest.ini (testpaths=tests, pythonpath=.)
+rl overview [<selector>] [--json]   # the view; project rollup by default
+rl triage [--json]                  # sessions awaiting a decision
+rl prune [--delete]                 # delete tiny + stale sessions
+just test                           # tests; pytest config lives in pyproject.toml now
 ```
+
+From a source checkout without installing, prefix each `rl` call with `uv run` (`uv run rl overview`).
 
 A `<selector>` is a git-project label (`juggler`) or a cwd path — not a session id.
 
