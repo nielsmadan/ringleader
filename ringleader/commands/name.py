@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -6,12 +5,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, naming, projects, overview  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import naming, overview, projects, registry
+from . import default_registry
 
 
 def _now() -> str:
@@ -30,15 +25,15 @@ def _append_title(file_path: str, line: str) -> None:
         fh.write(lead + line.encode("utf-8") + b"\n")
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-name")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+def cmd_name(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl name")
+    ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None,
                     help="repo/dir selector; repeatable")
     ap.add_argument("--limit", type=int, default=None)
     ap.add_argument("--active-window", type=float, default=naming.ACTIVE_WINDOW_MINUTES)
     ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     now = _now()
     reg = registry.load_registry(args.registry)
@@ -58,7 +53,7 @@ def main():
             else:
                 print(f"rename: {t['title']} -> {name}  ({label})")
         print(f"({len(selected)} to apply)")
-        return
+        return 0
 
     new_n = ren_n = skipped = suffixed = 0
     for t, name, kind in selected:
@@ -77,7 +72,4 @@ def main():
             ren_n += 1
     registry.save_registry(args.registry, reg)
     print(f"named {new_n}, renamed {ren_n}, skipped {skipped}, suffixed {suffixed}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

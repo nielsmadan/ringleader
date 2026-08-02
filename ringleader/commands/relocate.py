@@ -1,33 +1,28 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import sys
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, gitinfo  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import gitinfo, registry
+from . import default_registry
 
 
-def main():
+def cmd_relocate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl-relocate",
+        prog="rl relocate",
         description="Re-point a session to a new directory after you moved it on disk. "
                     "The transcript's baked-in cwd is stale; this pins the new location "
                     "so scans don't revert it.")
     ap.add_argument("id")
     ap.add_argument("path", help="the session's new directory (absolute)")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
-    args = ap.parse_args()
+    ap.add_argument("--registry", default=str(default_registry()))
+    args = ap.parse_args(argv)
 
     new_path = str(Path(args.path).expanduser())
     if not Path(new_path).is_dir():
         print(f"rl-relocate: {new_path} is not a directory", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     reg = registry.load_registry(args.registry)
     gp = gitinfo.resolve_git_project(new_path)
@@ -37,11 +32,8 @@ def main():
         registry.relocate_thread(reg, args.id, new_path, git)
     except KeyError:
         print(f"rl-relocate: unknown session {args.id}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     registry.save_registry(args.registry, reg)
     where = f"{gp.label} ({new_path})" if gp else new_path
     print(f"relocated {args.id} -> {where}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

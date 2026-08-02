@@ -1,4 +1,4 @@
-"""Integration tests for bin/rl-name CLI."""
+"""Integration tests for the `rl name` CLI."""
 from __future__ import annotations
 
 import json
@@ -7,8 +7,7 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CLI = str(REPO / "bin" / "rl-name")
-PYTHON = str(REPO / ".venv" / "bin" / "python")
+PYTHON = sys.executable
 
 # A mtime 30 days in the past so threads are never considered "active".
 OLD_MTIME = "2026-05-01T00:00:00+00:00"
@@ -59,7 +58,7 @@ def _make_registry(threads: list[dict]) -> dict:
 
 def _run(*extra_args, registry_path: str, check: bool = False):
     """Run rl-name with the given registry and extra args."""
-    cmd = [PYTHON, CLI, "--registry", registry_path] + list(extra_args)
+    cmd = [PYTHON, "-m", "ringleader", "name", "--registry", registry_path] + list(extra_args)
     return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True)
 
 

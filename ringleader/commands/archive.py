@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -8,12 +7,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import registry
+from . import default_registry
 
 _SESSION_HEADING = re.compile(r"(?i)^session\s+[0-9a-f-]+\s*[—-]\s*(.+)$")
 
@@ -41,20 +36,20 @@ def _summary_from_file(path: str | None) -> str | None:
     return None
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-archive")
+def cmd_archive(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl archive")
     ap.add_argument("id")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
-    ap.add_argument("--archive-root", default=str(REPO / "archive"))
+    ap.add_argument("--registry", default=str(default_registry()))
+    ap.add_argument("--archive-root", default=str(default_registry().parent / "archive"))
     ap.add_argument("--summary-file", default=None,
                     help="markdown summary to store next to the archived transcript")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
     t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
     if t is None:
         print(f"rl-archive: unknown session {args.id}", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     src = Path(t["file"])
     dest_dir = Path(args.archive_root) / src.parent.name
@@ -64,7 +59,7 @@ def main():
     sidecar_dest = dest_dir / sidecar.name
     if dest.exists() or sidecar_dest.exists():
         print(f"rl-archive: {dest_dir} already has {src.name} or its sidecar, aborting", file=sys.stderr)
-        sys.exit(1)
+        return 1
 
     if src.exists():
         shutil.move(str(src), str(dest))
@@ -86,7 +81,4 @@ def main():
     registry.save_registry(args.registry, reg)
     extra = f" (+summary {summary_path.name})" if summary_path else ""
     print(f"archived {args.id} -> {dest}{extra}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

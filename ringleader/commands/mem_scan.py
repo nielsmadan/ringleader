@@ -1,29 +1,23 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, memory, projects  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import memory, projects, registry
+from . import default_registry
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-mem-scan")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+def cmd_mem_scan(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl mem-scan")
+    ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None)
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
     scanned = memory.scan_memory(memory.projects_dir())
@@ -36,7 +30,4 @@ def main():
     for e in rows:
         print(json.dumps(e, ensure_ascii=False))
     print(f"# {len(rows)} memory entries need review", file=sys.stderr)
-
-
-if __name__ == "__main__":
-    main()
+    return 0

@@ -1,9 +1,9 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
 
 
 def _thread(tmp, sid, *, size_bytes, msgs=1, mtime="2026-01-01T00:00:00+00:00",
@@ -36,7 +36,7 @@ def _write_registry(tmp, threads):
 
 def _run(reg, *args, stdin=""):
     return subprocess.run(
-        [str(PY), str(REPO / "bin" / "rl-prune"), "--registry", str(reg), *args],
+        [sys.executable, "-m", "ringleader", "prune", "--registry", str(reg), *args],
         cwd=str(REPO), capture_output=True, text=True, input=stdin)
 
 

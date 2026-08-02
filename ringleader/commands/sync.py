@@ -1,18 +1,12 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import scanner, registry, projects  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import projects, registry, scanner
+from . import default_registry
 
 
 def _now() -> str:
@@ -53,9 +47,9 @@ def cmd_apply(args):
     print(f"applied {args.session}: {args.status}")
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-sync")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+def cmd_sync(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl sync")
+    ap.add_argument("--registry", default=str(default_registry()))
     sub = ap.add_subparsers(required=True, dest="cmd")
 
     s = sub.add_parser("scan", help="reconcile registry; emit pending classifications")
@@ -73,9 +67,6 @@ def main():
     a.add_argument("--confidence", type=float, default=None)
     a.set_defaults(fn=cmd_apply)
 
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     args.fn(args)
-
-
-if __name__ == "__main__":
-    main()
+    return 0

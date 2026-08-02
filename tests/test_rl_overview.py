@@ -1,10 +1,10 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
 
 
 def _thread(sid, **kw):
@@ -28,9 +28,9 @@ def _registry(tmp, threads, tombstones=None):
 
 def _run(reg, *args):
     env = dict(os.environ, SESSION_TRACKER_PROJECTS_DIR=str(reg.parent / "empty"))
-    return subprocess.run([str(PY), str(REPO / "bin" / "rl-overview"),
-                           "--registry", str(reg), *args],
-                          cwd=str(REPO), capture_output=True, text=True, env=env)
+    return subprocess.run(
+        [sys.executable, "-m", "ringleader", "overview", "--registry", str(reg), *args],
+        cwd=str(REPO), capture_output=True, text=True, env=env)
 
 
 def test_default_is_rollup(tmp_path):

@@ -1,9 +1,9 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
 
 
 def _setup(tmp, sid="a"):
@@ -17,9 +17,9 @@ def _setup(tmp, sid="a"):
 
 
 def _run(reg, *args):
-    return subprocess.run([str(PY), str(REPO / "bin" / "rl-export"),
-                           "--registry", str(reg), *args],
-                          cwd=str(REPO), capture_output=True, text=True)
+    return subprocess.run(
+        [sys.executable, "-m", "ringleader", "export", "--registry", str(reg), *args],
+        cwd=str(REPO), capture_output=True, text=True)
 
 
 def test_export_to_stdout(tmp_path):

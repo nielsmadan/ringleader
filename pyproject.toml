@@ -1,0 +1,35 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ringleader"
+version = "0.1.0"
+description = "Curate dormant Claude Code sessions on disk — name, classify, triage, and prune them before the GC clock deletes them."
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
+license = "MIT"
+authors = [{ name = "Niels Madan" }]
+
+[project.scripts]
+rl = "ringleader.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["ringleader"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["ringleader"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true

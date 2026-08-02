@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,12 +6,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, prune, projects, overview  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import overview, projects, prune, registry
+from . import default_registry
 
 
 def _now() -> str:
@@ -23,9 +18,9 @@ def _label(t: dict) -> str:
     return t.get("title") or t.get("suggestedName") or t["sessionId"][:8]
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-prune")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+def cmd_prune(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl prune")
+    ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None,
                     help="repo/dir selector; repeatable — scope the prune")
     ap.add_argument("--older-than", type=int, default=prune.DEFAULT_OLDER_THAN_DAYS,
@@ -36,7 +31,7 @@ def main():
                     help="'tiny' message-count ceiling (default 12)")
     ap.add_argument("--delete", action="store_true",
                     help="actually delete (otherwise preview only)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     now = _now()
     reg = registry.load_registry(args.registry)
@@ -48,7 +43,7 @@ def main():
 
     if not cands:
         print("nothing to prune")
-        return
+        return 0
 
     cands.sort(key=lambda t: overview.age_days(t["mtime"], now), reverse=True)
     total = sum(t.get("sizeBytes") or 0 for t in cands)
@@ -61,7 +56,7 @@ def main():
 
     if not args.delete:
         print("(preview — re-run with --delete to remove these)")
-        return
+        return 0
 
     try:
         resp = input(f"Delete {len(cands)} sessions "
@@ -70,7 +65,7 @@ def main():
         resp = ""
     if resp not in ("y", "yes"):
         print("aborted, nothing deleted")
-        return
+        return 0
 
     deleted = skipped = 0
     for t in cands:
@@ -87,7 +82,4 @@ def main():
         deleted += 1
     registry.save_registry(args.registry, reg)
     print(f"deleted {deleted} sessions, skipped {skipped}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

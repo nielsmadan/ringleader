@@ -1,9 +1,9 @@
 import json
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
 
 
 def _session(tmp, sid="a"):
@@ -27,9 +27,10 @@ def _registry(tmp, sid, f, *, harvest=None):
 
 
 def _run(script, reg, *args):
-    return subprocess.run([str(PY), str(REPO / "bin" / script),
-                           "--registry", str(reg), *args],
-                          cwd=str(REPO), capture_output=True, text=True)
+    sub = script.removeprefix("rl-")
+    return subprocess.run(
+        [sys.executable, "-m", "ringleader", sub, "--registry", str(reg), *args],
+        cwd=str(REPO), capture_output=True, text=True)
 
 
 def test_archive_moves_files_and_tombstones(tmp_path):

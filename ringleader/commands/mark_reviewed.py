@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -6,25 +5,21 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import registry
+from . import default_registry
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-mark-reviewed")
+def cmd_mark_reviewed(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl mark-reviewed")
     ap.add_argument("id")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
-    args = ap.parse_args()
+    ap.add_argument("--registry", default=str(default_registry()))
+    args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
     t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
     if t is None:
         print(f"rl-mark-reviewed: unknown session {args.id}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     # Record the LIVE file mtime so a session just renamed (which bumped the file)
     # isn't re-surfaced on the next scan. Fall back to the registry mtime.
     live_mtime = None
@@ -35,10 +30,7 @@ def main():
         registry.mark_reviewed(reg, args.id, live_mtime)
     except KeyError:
         print(f"rl-mark-reviewed: unknown session {args.id}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     registry.save_registry(args.registry, reg)
     print(f"marked reviewed (open) {args.id}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

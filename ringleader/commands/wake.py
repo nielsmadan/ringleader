@@ -1,35 +1,26 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import sys
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import registry
+from . import default_registry
 
 
-def main():
+def cmd_wake(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl-wake",
+        prog="rl wake",
         description="Un-snooze a session so it shows in rl projects/overview again.")
     ap.add_argument("id")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
-    args = ap.parse_args()
+    ap.add_argument("--registry", default=str(default_registry()))
+    args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
     try:
         registry.wake_thread(reg, args.id)
     except KeyError:
         print(f"rl-wake: unknown session {args.id}", file=sys.stderr)
-        sys.exit(1)
+        return 1
     registry.save_registry(args.registry, reg)
     print(f"woke {args.id}")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

@@ -5,7 +5,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 
 def _run(sub, *args, env=None):
-    return subprocess.run([sys.executable, str(REPO / f"bin/rl-{sub}"), *args],
+    return subprocess.run([sys.executable, "-m", "ringleader", sub, *args],
                           capture_output=True, text=True, env=env)
 
 
@@ -44,7 +44,7 @@ def test_mem_prune_previews_then_deletes_obsolete(tmp_path):
     prev = _run("mem-prune", "--registry", str(reg), env=env)
     assert "fixed" in prev.stdout and "preview" in prev.stdout.lower()
     assert (tmp_path / "-enc" / "memory" / "gone.md").exists()          # preview: not deleted
-    dele = subprocess.run([sys.executable, str(REPO / "bin/rl-mem-prune"),
+    dele = subprocess.run([sys.executable, "-m", "ringleader", "mem-prune",
                            "--registry", str(reg), "--delete"],
                           input="y\n", capture_output=True, text=True, env=env)
     assert not (tmp_path / "-enc" / "memory" / "gone.md").exists()      # deleted
@@ -108,7 +108,7 @@ def test_mem_prune_delete_trims_memory_index(tmp_path):
     env = {**os.environ, "SESSION_TRACKER_PROJECTS_DIR": str(tmp_path)}
     _run("mem-scan", "--registry", str(reg), env=env)
 
-    dele = subprocess.run([sys.executable, str(REPO / "bin/rl-mem-prune"),
+    dele = subprocess.run([sys.executable, "-m", "ringleader", "mem-prune",
                            "--registry", str(reg), "--project", str(proj), "--delete"],
                           input="y\n", capture_output=True, text=True, env=env)
     assert dele.returncode == 0, dele.stderr

@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
@@ -7,24 +6,20 @@ from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, memory, projects  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import memory, projects, registry
+from . import default_registry
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def main():
-    ap = argparse.ArgumentParser(prog="rl-mem-prune")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+def cmd_mem_prune(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl mem-prune")
+    ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None)
     ap.add_argument("--delete", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
     scanned = memory.scan_memory(memory.projects_dir())
@@ -36,21 +31,21 @@ def main():
         cands = projects.filter_by_projects(cands, args.project)
     if not cands:
         print("nothing to prune")
-        return
+        return 0
     for e in cands:
         print(f"  [{','.join(e['obsoleteSignals'])}] {e.get('name') or e['path']}  "
               f"{e.get('project') or ''}")
     print(f"\n{len(cands)} obsolete memory entries")
     if not args.delete:
         print("(preview — re-run with --delete to remove these)")
-        return
+        return 0
     try:
         resp = input(f"Delete {len(cands)} memory files? [y/N] ").strip().lower()
     except EOFError:
         resp = ""
     if resp not in ("y", "yes"):
         print("aborted, nothing deleted")
-        return
+        return 0
     deleted = 0
     deleted_paths = {e["path"] for e in cands}
     for e in cands:
@@ -75,7 +70,4 @@ def main():
                                encoding="utf-8")
 
     print(f"deleted {deleted} memory files")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

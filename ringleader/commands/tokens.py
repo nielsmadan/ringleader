@@ -1,16 +1,11 @@
-#!/usr/bin/env python3
 from __future__ import annotations
 
 import argparse
 import json
-import sys
 from datetime import date, timedelta
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import tokens  # noqa: E402
+from .. import tokens
+from . import default_registry
 
 
 def _window(args):
@@ -45,9 +40,9 @@ def _in_window(d, since, until):
     return True
 
 
-def main():
+def cmd_tokens(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl-tokens",
+        prog="rl tokens",
         description="Claude token spend per day/project/session, bucketed by real "
         "message date (fixes ccusage's resumed-session mis-attribution). "
         "This machine only; API-list-price estimate.",
@@ -62,9 +57,9 @@ def main():
                     help="also scan archive/ (sessions st has moved out of ~/.claude)")
     ap.add_argument("--limit", type=int, default=15, help="rows in the ranked table")
     ap.add_argument("--json", action="store_true")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
-    extra = [str(REPO / "archive")] if args.archived else []
+    extra = [str(default_registry().parent / "archive")] if args.archived else []
     cells = tokens.collect(extra_roots=extra)
     since, until = _resolve_window(cells, args)
 
@@ -96,7 +91,7 @@ def main():
             ],
         }
         print(json.dumps(out, indent=2))
-        return
+        return 0
 
     label = "all time" if args.all else f"{since} .. {until or 'latest'}"
     print(f"Claude spend — this machine — {label}")
@@ -112,7 +107,4 @@ def main():
         print(f"    ${b.cost:8,.2f}  {k}")
     if len(rows) > args.limit:
         print(f"    … {len(rows) - args.limit} more")
-
-
-if __name__ == "__main__":
-    main()
+    return 0

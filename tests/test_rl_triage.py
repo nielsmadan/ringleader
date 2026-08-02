@@ -1,10 +1,10 @@
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-PY = REPO / ".venv" / "bin" / "python"
 
 
 def _registry(tmp, threads):
@@ -27,9 +27,9 @@ def _thread(sid, **kw):
 
 def _run(reg, *args):
     env = dict(os.environ, SESSION_TRACKER_PROJECTS_DIR=str(reg.parent / "empty"))
-    return subprocess.run([str(PY), str(REPO / "bin" / "rl-triage"),
-                           "--registry", str(reg), *args],
-                          cwd=str(REPO), capture_output=True, text=True, env=env)
+    return subprocess.run(
+        [sys.executable, "-m", "ringleader", "triage", "--registry", str(reg), *args],
+        cwd=str(REPO), capture_output=True, text=True, env=env)
 
 
 def test_triage_lists_only_undecided_with_no_scan(tmp_path):
@@ -66,9 +66,10 @@ def _seed_mem(tmp_path):
 def test_triage_memory_lists_unreviewed(tmp_path):
     env = _seed_mem(tmp_path)
     reg = tmp_path / "registry.json"
-    r = subprocess.run([str(PY), str(REPO / "bin" / "rl-triage"), "--memory",
-                        "--registry", str(reg)],
-                       capture_output=True, text=True, env=env)
+    r = subprocess.run(
+        [sys.executable, "-m", "ringleader", "triage", "--memory",
+         "--registry", str(reg)],
+        capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     assert "a.md" in r.stdout or "proj" in r.stdout
 
@@ -78,8 +79,9 @@ def test_triage_memory_empty_message(tmp_path):
     empty_dir.mkdir()
     env = {**os.environ, "SESSION_TRACKER_PROJECTS_DIR": str(empty_dir)}
     reg = tmp_path / "registry.json"
-    r = subprocess.run([str(PY), str(REPO / "bin" / "rl-triage"), "--memory",
-                        "--registry", str(reg)],
-                       capture_output=True, text=True, env=env)
+    r = subprocess.run(
+        [sys.executable, "-m", "ringleader", "triage", "--memory",
+         "--registry", str(reg)],
+        capture_output=True, text=True, env=env)
     assert r.returncode == 0, r.stderr
     assert "no memory awaiting review" in r.stdout

@@ -1,18 +1,10 @@
-#!/usr/bin/env python3
-# bin/rl-overview
 from __future__ import annotations
 
 import argparse
-import sys
 from datetime import datetime, timezone
-from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(REPO))
-
-from ringleader import registry, overview, projects, refresh  # noqa: E402
-
-DEFAULT_REGISTRY = REPO / "registry.json"
+from .. import overview, projects, refresh, registry
+from . import default_registry
 
 
 def _now() -> str:
@@ -24,14 +16,14 @@ def _key_label(key: str) -> str:
     return key if key.startswith("/") else key.rsplit("/", 1)[-1]
 
 
-def main():
+def cmd_overview(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
-        prog="rl-overview",
+        prog="rl overview",
         description="The session view: project rollup (default), --sessions list, "
                     "a <selector> deep-dive, or --archived.")
     ap.add_argument("selector", nargs="?", default=None,
                     help="repo/dir selector (git label or cwd path) — deep single-repo report")
-    ap.add_argument("--registry", default=str(DEFAULT_REGISTRY))
+    ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--project", action="append", default=None,
                     help="repo/dir selector; repeatable (alias for the positional selector)")
     ap.add_argument("-s", "--sessions", action="store_true",
@@ -46,7 +38,7 @@ def main():
                     help="do not auto-scan disk first (report from the registry as-is)")
     ap.add_argument("-m", "--memory", action="store_true",
                     help="rollup (or <selector> deep-dive) over memory entries instead of sessions")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     now = _now()
     if args.no_scan:
@@ -64,7 +56,7 @@ def main():
     if args.archived:
         sel = selectors[0] if selectors else None
         print(overview.render_archived(reg, sel))
-        return
+        return 0
 
     if args.memory:
         entries = reg.get("memoryEntries", [])
@@ -72,20 +64,20 @@ def main():
             entries = projects.filter_by_projects(entries, selectors)
             if not entries:
                 print("no memory entries for that selector")
-                return
+                return 0
             for e in sorted(entries, key=lambda e: (e.get("project") or "",
                                                      e.get("name") or "")):
                 obs = ", ".join(e.get("obsoleteSignals") or []) or "none"
                 print(f"{e.get('name') or '(unnamed)'}  obsolete={obs}  "
                       f"project={e.get('project')}")
-            return
+            return 0
         groups: dict[str, list[dict]] = {}
         for e in entries:
             groups.setdefault(overview.group_key(e), []).append(e)
         cleaned = reg.get("memoryProjectsCleanedAt", {})
         if not groups and not cleaned:
             print("no memory entries")
-            return
+            return 0
         rows = []
         for key in set(groups) | set(cleaned):
             items = groups.get(key, [])
@@ -96,7 +88,7 @@ def main():
             rows.append((len(items), label, obs, status))
         for n, label, obs, status in sorted(rows, key=lambda r: (-r[0], r[1])):
             print(f"{label}: {n} entries ({obs} obsolete-candidate) [{status}]")
-        return
+        return 0
 
     # triage bridge (top-level views only, not the selector deep-dive)
     if not selectors:
@@ -121,7 +113,4 @@ def main():
     else:
         print(overview.render_rollup(reg, now, include_snoozed=args.all,
                                      checkouts=args.checkouts))
-
-
-if __name__ == "__main__":
-    main()
+    return 0
