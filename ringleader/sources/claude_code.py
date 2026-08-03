@@ -35,9 +35,14 @@ class ClaudeCodeSource:
     projects_dir: Path = field(default_factory=default_projects_dir)
     tail_turns: int = 30
     name: str = "claude-code"
+    capabilities: frozenset[str] = field(default_factory=lambda: frozenset({"applies_names"}))
 
     def __post_init__(self) -> None:
         self.projects_dir = Path(self.projects_dir)
+
+    @property
+    def root(self) -> Path:
+        return self.projects_dir
 
     def discover(self) -> Iterator[RawRef]:
         for p in _iter_session_files(self.projects_dir):

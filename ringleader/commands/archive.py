@@ -56,7 +56,13 @@ def cmd_archive(argv: list[str]) -> int:
         return 1
 
     src = Path(t["file"])
-    dest_dir = Path(args.archive_root) / src.parent.name
+    slug = (
+        t.get("gitProjectLabel")
+        or (Path(t["project"]).name if t.get("project") else None)
+        or t.get("source")
+        or "unknown"
+    )
+    dest_dir = Path(args.archive_root) / slug
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
     sidecar = src.with_suffix("")

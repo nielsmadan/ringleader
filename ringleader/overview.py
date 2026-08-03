@@ -93,6 +93,11 @@ def _label(thread: dict) -> str:
     return thread.get("title") or thread.get("suggestedName") or thread["sessionId"][:8]
 
 
+def source_badge(thread: dict) -> str:
+    s = thread.get("source") or "claude-code"
+    return "claude" if s == "claude-code" else s
+
+
 _BYTES_PER_UNIT = 1024
 
 
@@ -147,7 +152,7 @@ def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None
             flag = "  <- BLOCKED" if es == "blocked" else ""
             branch = f" @{t['gitBranch']}" if t.get("gitBranch") else ""
             lines.append(
-                f"  [{es}]{branch} {_label(t)} ({age}d{_size_suffix(t)}) — "
+                f"  [{es}] ({source_badge(t)}){branch} {_label(t)} ({age}d{_size_suffix(t)}) — "
                 f"{t.get('whatItIs') or ''}{flag}"
             )
         lines.append("")
@@ -207,7 +212,8 @@ def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> 
             age = round(age_days(t["mtime"], now_iso))
             es = effective_status(t, now_iso)
             lines.append(
-                f"  [{es}] {_label(t)} ({age}d{_size_suffix(t)}) — {t.get('whatItIs') or ''}"
+                f"  [{es}] ({source_badge(t)}) {_label(t)} ({age}d{_size_suffix(t)}) — "
+                f"{t.get('whatItIs') or ''}"
             )
         lines.append("")
     return "\n".join(lines).rstrip()

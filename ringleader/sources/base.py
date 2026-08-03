@@ -41,6 +41,7 @@ class NormalizedSession:
 @runtime_checkable
 class Source(Protocol):
     name: str
+    capabilities: frozenset[str]
 
     def discover(self) -> Iterator[RawRef]: ...  # cheap: paths + mtime/size, no parse
     def parse(self, ref: RawRef) -> NormalizedSession: ...  # read tail, extract fields

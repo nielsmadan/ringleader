@@ -452,3 +452,54 @@ def test_session_reconcile_preserves_memory_keys():
     reg = registry.reconcile(reg, [], "now2")  # session scan must not drop memory
     assert len(reg["memoryEntries"]) == 1
     assert reg["memoryProjectsCleanedAt"] == {"k": "when"}
+
+
+def _ns(**kw):
+    from ringleader.sources.base import NormalizedSession
+
+    base = {
+        "source": "claude-code",
+        "session_id": "s1",
+        "cwd": "/p",
+        "mtime": "t",
+        "size_bytes": 10,
+        "custom_title": None,
+        "summary": None,
+        "last_prompt": None,
+        "file": "/p/s1.jsonl",
+    }
+    base.update(kw)
+    return NormalizedSession(**base)
+
+
+def test_reconcile_persists_source():
+    from ringleader import registry
+
+    reg = registry.empty_registry()
+    reg = registry.reconcile(reg, [_ns(source="codex", session_id="c1")], "now")
+    assert reg["threads"][0]["source"] == "codex"
+
+
+def test_reconcile_backfills_source_on_legacy_thread():
+    from ringleader import registry
+
+    reg = registry.empty_registry()
+    reg["threads"].append({"sessionId": "s1", "file": "/p/s1.jsonl"})  # legacy: no source
+    reg = registry.reconcile(reg, [_ns(source="claude-code", session_id="s1")], "now")
+    # matched (not duplicated / tombstoned) and stamped with source
+    assert len(reg["threads"]) == 1
+    assert reg["threads"][0]["source"] == "claude-code"
+    assert reg["tombstones"] == []
+
+
+def test_reconcile_distinguishes_same_id_across_sources():
+    from ringleader import registry
+
+    reg = registry.empty_registry()
+    reg = registry.reconcile(
+        reg,
+        [_ns(source="claude-code", session_id="x"), _ns(source="codex", session_id="x")],
+        "now",
+    )
+    assert len(reg["threads"]) == 2
+    assert {t["source"] for t in reg["threads"]} == {"claude-code", "codex"}

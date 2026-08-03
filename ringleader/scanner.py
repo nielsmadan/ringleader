@@ -5,8 +5,20 @@ import sys
 from .gitinfo import resolve_git_project
 from .sources.base import NormalizedSession
 from .sources.claude_code import ClaudeCodeSource
+from .sources.codex import CodexSource
 
-SOURCES = [ClaudeCodeSource()]
+SOURCES = [ClaudeCodeSource(), CodexSource()]
+
+
+def active_sources() -> list:
+    # Fresh instances (not SOURCES) so each call re-reads the env-based default
+    # roots — SOURCES is constructed once at import time and would otherwise
+    # keep whatever root was current then, which breaks under monkeypatched env.
+    return [s for s in (ClaudeCodeSource(), CodexSource()) if s.root.exists()]
+
+
+def source_by_name(name: str):
+    return next((s for s in SOURCES if s.name == name), None)
 
 
 def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:

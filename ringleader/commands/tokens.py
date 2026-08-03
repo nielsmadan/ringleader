@@ -39,6 +39,8 @@ def _in_window(d, since, until):
 
 
 def cmd_tokens(argv: list[str]) -> int:
+    # Claude Code only, intentionally: this reads Claude's own usage/pricing accounting
+    # (ccusage-style), which Codex has no equivalent format for. Not a source-neutral gap.
     ap = argparse.ArgumentParser(
         prog="rl data tokens",
         description="Claude token spend per day/project/session, bucketed by real "

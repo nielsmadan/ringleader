@@ -220,6 +220,55 @@ def test_trailing_newline_handling(tmp_path):
 # ---------------------------------------------------------------------------
 
 
+def test_codex_thread_skipped_for_missing_name_capability(tmp_path):
+    """Codex sessions have no applies_names capability (no writeback format), so
+    `session name` must leave them untouched while still naming Claude threads."""
+    claude_transcript = tmp_path / "claude.jsonl"
+    claude_transcript.write_text('{"type":"say","text":"hello"}\n', encoding="utf-8")
+    claude_thread = _make_thread(
+        "aaaaaaaa-0000-0000-0000-000000000001",
+        str(claude_transcript),
+        suggested="claude-name",
+    )
+
+    codex_transcript = tmp_path / "codex.jsonl"
+    codex_transcript.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    codex_thread = _make_thread(
+        "bbbbbbbb-0000-0000-0000-000000000002",
+        str(codex_transcript),
+        suggested="codex-name",
+    )
+    codex_thread["source"] = "codex"
+
+    reg_file = tmp_path / "registry.json"
+    reg_file.write_text(json.dumps(_make_registry([claude_thread, codex_thread])), encoding="utf-8")
+    original_codex_bytes = codex_transcript.read_bytes()
+
+    result = _run(registry_path=str(reg_file))
+
+    assert result.returncode == 0, result.stderr
+
+    # Claude thread got the title record appended.
+    lines = claude_transcript.read_text(encoding="utf-8").strip().splitlines()
+    last = json.loads(lines[-1])
+    assert last["type"] == "custom-title"
+    assert last["customTitle"] == "claude-name"
+
+    # Codex thread is untouched: no title record appended, no appliedName set.
+    assert codex_transcript.read_bytes() == original_codex_bytes
+
+    updated_reg = json.loads(reg_file.read_text(encoding="utf-8"))
+    by_id = {t["sessionId"]: t for t in updated_reg["threads"]}
+    assert by_id[claude_thread["sessionId"]]["appliedName"] == "claude-name"
+    assert by_id[codex_thread["sessionId"]]["appliedName"] is None
+    # suggestedName is still visible for the Codex thread — used by overview.
+    assert by_id[codex_thread["sessionId"]]["suggestedName"] == "codex-name"
+
+    # Summary reports the capability-gated skip.
+    assert "named 1" in result.stdout
+    assert "no-name-support" in result.stdout
+
+
 def test_missing_file_skipped_not_fatal(tmp_path):
     # Thread pointing at a non-existent file
     missing_path = str(tmp_path / "does_not_exist.jsonl")

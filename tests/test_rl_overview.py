@@ -141,6 +141,34 @@ def test_sessions_flag_hides_snoozed_unless_all(tmp_path):
     assert "does beta" in r_all.stdout
 
 
+def test_sessions_list_shows_source_badge(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("cc", source="claude-code"),
+            _thread("cx", source="codex"),
+        ],
+    )
+    r = _run(reg, "-s", "--no-scan")
+    assert r.returncode == 0
+    assert "(claude)" in r.stdout
+    assert "(codex)" in r.stdout
+
+
+def test_source_filter_limits_to_codex(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("cc", source="claude-code"),
+            _thread("cx", source="codex"),
+        ],
+    )
+    r = _run(reg, "-s", "--source", "codex", "--no-scan")
+    assert r.returncode == 0
+    assert "does cx" in r.stdout
+    assert "does cc" not in r.stdout
+
+
 def test_selector_hides_triage_header(tmp_path):
     reg = _registry(tmp_path, [_thread("a")])  # undecided -> would show global inbox count
     r = _run(reg, "repo", "--no-scan")

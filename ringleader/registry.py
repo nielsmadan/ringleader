@@ -10,6 +10,7 @@ REGISTRY_VERSION = 2
 
 # maps registry key -> NormalizedSession field name
 _METADATA_FIELDS = {
+    "source": "source",
     "file": "file",
     "project": "cwd",
     "title": "custom_title",
@@ -70,6 +71,7 @@ def _as_dict(meta) -> dict:
 def _new_thread(md: dict) -> dict:
     return {
         "sessionId": md["session_id"],
+        "source": md["source"],
         "file": md["file"],
         "project": md["cwd"],
         "title": md["custom_title"],
@@ -101,18 +103,22 @@ def _new_thread(md: dict) -> dict:
     }
 
 
+def _key(rec: dict) -> tuple:
+    return (rec.get("source") or "claude-code", rec["sessionId"])
+
+
 def reconcile(reg: dict, scanned, now_iso: str) -> dict:
     scanned_dicts = [_as_dict(m) for m in scanned]
-    by_id = {t["sessionId"]: t for t in reg["threads"]}
+    by_id = {_key(t): t for t in reg["threads"]}
     seen = set()
     threads = []
 
     for md in scanned_dicts:
-        sid = md["session_id"]
-        seen.add(sid)
-        existing = by_id.get(sid)
+        k = (md["source"], md["session_id"])
+        seen.add(k)
+        existing = by_id.get(k)
         if existing is not None:
-            existing = dict(by_id[sid])  # copy-on-write: never mutate the input
+            existing = dict(by_id[k])  # copy-on-write: never mutate the input
             pinned = existing.get("locationPinned")
             for rk, mk in _METADATA_FIELDS.items():
                 if pinned and rk == "project":  # relocated: keep the pinned cwd
@@ -130,7 +136,7 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
     tombstoned = {ts["sessionId"] for ts in tombstones}
     for t in reg["threads"]:
         sid = t["sessionId"]
-        if sid not in seen and sid not in tombstoned:
+        if _key(t) not in seen and sid not in tombstoned:
             tombstones.append(
                 {
                     "sessionId": sid,

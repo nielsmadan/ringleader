@@ -5,12 +5,17 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import naming, overview, projects, registry
+from .. import naming, overview, projects, registry, scanner
 from . import default_registry
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def _can_name(t: dict) -> bool:
+    src = scanner.source_by_name(t.get("source") or "claude-code")
+    return bool(src and "applies_names" in src.capabilities)
 
 
 def _append_title(file_path: str, line: str) -> None:
@@ -39,6 +44,9 @@ def cmd_name(argv: list[str]) -> int:
     now = _now()
     reg = registry.load_registry(args.registry)
     selected = naming.select_eligible(reg, now, active_window_minutes=args.active_window)
+
+    cap_skipped = [s for s in selected if not _can_name(s[0])]
+    selected = [s for s in selected if _can_name(s[0])]
 
     if args.project:
         selected = [s for s in selected if any(projects.matches(s[0], sel) for sel in args.project)]
@@ -71,5 +79,8 @@ def cmd_name(argv: list[str]) -> int:
         else:
             ren_n += 1
     registry.save_registry(args.registry, reg)
-    print(f"named {new_n}, renamed {ren_n}, skipped {skipped}, suffixed {suffixed}")
+    print(
+        f"named {new_n}, renamed {ren_n}, "
+        f"skipped {skipped} ({len(cap_skipped)} no-name-support), suffixed {suffixed}"
+    )
     return 0

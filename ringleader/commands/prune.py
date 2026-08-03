@@ -34,12 +34,6 @@ def cmd_prune(argv: list[str]) -> int:
         help="minimum age in days (default 7)",
     )
     ap.add_argument(
-        "--max-size",
-        type=int,
-        default=prune.DEFAULT_MAX_SIZE_BYTES // 1024,
-        help="'tiny' size ceiling in KB (default 50)",
-    )
-    ap.add_argument(
         "--max-turns",
         type=int,
         default=prune.DEFAULT_MAX_TURNS,
@@ -56,7 +50,6 @@ def cmd_prune(argv: list[str]) -> int:
         reg,
         now,
         older_than_days=args.older_than,
-        max_size_bytes=args.max_size * 1024,
         max_turns=args.max_turns,
     )
     if args.project:

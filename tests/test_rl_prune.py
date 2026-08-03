@@ -132,6 +132,18 @@ def test_missing_transcript_is_tolerated(tmp_path):
     assert json.loads(reg.read_text())["tombstones"][0]["sessionId"] == "a"
 
 
+def test_codex_thread_tiny_by_message_count_despite_large_bytes(tmp_path):
+    """Codex transcripts are event-heavy (full request/response payloads), so a
+    genuinely tiny session (few real messages) can sit well above the byte
+    ceiling. Tininess must key on messageCount, not sizeBytes."""
+    t = _thread(tmp_path, "codex-a", size_bytes=200 * 1024, msgs=2)
+    t["source"] = "codex"
+    reg = _write_registry(tmp_path, [t])
+    r = _run(reg, "--delete", stdin="y\n")
+    assert r.returncode == 0 and "deleted 1" in r.stdout
+    assert not Path(t["file"]).exists()
+
+
 def test_keep_marked_session_never_listed(tmp_path):
     t = _thread(tmp_path, "a", size_bytes=100, decision="keep")
     reg = _write_registry(tmp_path, [t])

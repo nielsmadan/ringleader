@@ -1,5 +1,4 @@
 from ringleader.prune import (
-    DEFAULT_MAX_SIZE_BYTES,
     DEFAULT_MAX_TURNS,
     prune_candidates,
 )
@@ -41,27 +40,31 @@ def test_age_boundary_exactly_threshold_is_included():
     assert _ids(prune_candidates(reg, NOW)) == ["a"]
 
 
-def test_small_by_size_or_by_turns_each_qualify():
+def test_tininess_is_message_count_driven_not_size():
+    # Sources vary wildly in bytes-per-message (e.g. Codex embeds full request/
+    # response payloads), so size never gates eligibility — only messageCount does.
     reg = _reg(
         [
-            _t("small_size", size=10_000, msgs=999),  # under size, many turns
-            _t("few_turns", size=5_000_000, msgs=3),  # huge, but few turns
-            _t("big", size=5_000_000, msgs=999),  # neither → excluded
+            _t("small_size_many_msgs", size=10_000, msgs=999),  # tiny bytes, too many msgs
+            _t("huge_size_few_msgs", size=5_000_000, msgs=3),  # huge bytes, few msgs
         ]
     )
-    assert _ids(prune_candidates(reg, NOW)) == ["few_turns", "small_size"]
+    assert _ids(prune_candidates(reg, NOW)) == ["huge_size_few_msgs"]
 
 
-def test_thresholds_are_strict_less_than():
+def test_message_count_threshold_is_strict():
+    # Strict `<`, not `<=`: a session with exactly max_turns messages must NOT be
+    # pruned, even at a large size — widening this to inclusive would make the new
+    # (size-dropped) eligibility set bigger than the old OR-based one, which used a
+    # strict `<` on the message-count path. That would newly delete real transcripts.
     reg = _reg(
         [
-            _t(
-                "at_size", size=DEFAULT_MAX_SIZE_BYTES, msgs=DEFAULT_MAX_TURNS
-            ),  # == both → not small
-            _t("under_size", size=DEFAULT_MAX_SIZE_BYTES - 1, msgs=999),
+            _t("at_turns", msgs=DEFAULT_MAX_TURNS, size=5_000_000),  # == threshold → not small
+            _t("under_turns", msgs=DEFAULT_MAX_TURNS - 1, size=5_000_000),  # under → small
+            _t("over_turns", msgs=DEFAULT_MAX_TURNS + 1),  # over → not small
         ]
     )
-    assert _ids(prune_candidates(reg, NOW)) == ["under_size"]
+    assert _ids(prune_candidates(reg, NOW)) == ["under_turns"]
 
 
 def test_keep_and_harvested_protected_other_decisions_eligible():
@@ -77,7 +80,7 @@ def test_keep_and_harvested_protected_other_decisions_eligible():
 
 
 def test_custom_thresholds():
-    reg = _reg([_t("a", size=80_000, msgs=999)])  # not tiny under defaults
+    reg = _reg([_t("a", msgs=15)])  # not tiny under the default max_turns=12
     assert prune_candidates(reg, NOW) == []
-    got = prune_candidates(reg, NOW, max_size_bytes=100_000)
+    got = prune_candidates(reg, NOW, max_turns=20)
     assert _ids(got) == ["a"]

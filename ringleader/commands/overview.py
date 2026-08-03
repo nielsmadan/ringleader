@@ -110,6 +110,12 @@ def cmd_overview(argv: list[str]) -> int:
         "--checkouts", action="store_true", help="rollup only: also list each repo's checkout paths"
     )
     ap.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        help="filter to sessions from this source (repeatable)",
+    )
+    ap.add_argument(
         "--no-scan",
         action="store_true",
         help="do not auto-scan disk first (report from the registry as-is)",
@@ -155,12 +161,18 @@ def cmd_overview(argv: list[str]) -> int:
         scoped["threads"] = projects.filter_by_projects(reg["threads"], selectors)
         print(overview.project_detail(scoped, now, show_all=args.all))
     elif args.sessions:
-        snoozed_total = sum(1 for t in reg["threads"] if t.get("snoozedAt"))
+        threads = reg["threads"]
+        if args.source:
+            wanted = set(args.source)
+            threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
+        snoozed_total = sum(1 for t in threads if t.get("snoozedAt"))
         if args.all:
-            print(overview.render(reg, now, show_all=args.all))
+            scoped = dict(reg)
+            scoped["threads"] = threads
+            print(overview.render(scoped, now, show_all=args.all))
         else:
             scoped = dict(reg)
-            scoped["threads"] = [t for t in reg["threads"] if not t.get("snoozedAt")]
+            scoped["threads"] = [t for t in threads if not t.get("snoozedAt")]
             print(overview.render(scoped, now, show_all=args.all))
             if snoozed_total:
                 print(f"\n({snoozed_total} snoozed hidden — rl overview -s -a)")

@@ -27,8 +27,14 @@ def _run(*args, env=None):
 def test_session_refresh_honors_registry_and_emits_pending(tmp_path):
     empty_projects = tmp_path / "empty"
     empty_projects.mkdir()
+    empty_codex = tmp_path / "empty-codex"
+    empty_codex.mkdir()
     reg = tmp_path / "registry.json"
-    env = {**os.environ, "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects)}
+    env = {
+        **os.environ,
+        "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
+        "CODEX_SESSIONS_DIR": str(empty_codex),
+    }
 
     r = _run("session", "refresh", "--registry", str(reg), env=env)
 
@@ -43,8 +49,14 @@ def test_session_refresh_honors_registry_and_emits_pending(tmp_path):
 def test_session_refresh_project_filter_is_reachable(tmp_path):
     empty_projects = tmp_path / "empty"
     empty_projects.mkdir()
+    empty_codex = tmp_path / "empty-codex"
+    empty_codex.mkdir()
     reg = tmp_path / "registry.json"
-    env = {**os.environ, "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects)}
+    env = {
+        **os.environ,
+        "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
+        "CODEX_SESSIONS_DIR": str(empty_codex),
+    }
 
     r = _run("session", "refresh", "--registry", str(reg), "--project", "nope", env=env)
 

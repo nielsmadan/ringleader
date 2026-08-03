@@ -91,3 +91,32 @@ def test_scan_attaches_injected_git_project(tmp_path):
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path)], git_resolver=fake)
     assert scanned[0].git_project_key == "github.com/me/proj"
     assert scanned[0].git_project_label == "proj"
+
+
+def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):
+    claude = tmp_path / "claude"
+    codex = tmp_path / "codex"
+    claude.mkdir()  # only claude root exists
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(claude))
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(codex))
+    from ringleader import scanner
+
+    names = {s.name for s in scanner.active_sources()}
+    assert names == {"claude-code"}
+    codex.mkdir()
+    assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex"}
+
+
+def test_capabilities_declared():
+    from ringleader.sources.claude_code import ClaudeCodeSource
+    from ringleader.sources.codex import CodexSource
+
+    assert "applies_names" in ClaudeCodeSource().capabilities
+    assert CodexSource().capabilities == frozenset()
+
+
+def test_source_by_name():
+    from ringleader import scanner
+
+    assert scanner.source_by_name("codex").name == "codex"
+    assert scanner.source_by_name("nope") is None

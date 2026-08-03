@@ -70,6 +70,20 @@ def test_triage_lists_only_undecided_with_no_scan(tmp_path):
     assert "triage inbox" in r.stdout
 
 
+def test_triage_source_filter(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("cc", source="claude-code"),
+            _thread("cx", source="codex"),
+        ],
+    )
+    r = _run(reg, "--source", "codex", "--no-scan")
+    assert r.returncode == 0
+    assert "cx" in r.stdout
+    assert "cc" not in r.stdout
+
+
 def test_triage_all_triaged_message(tmp_path):
     reg = _registry(tmp_path, [_thread("hv", decision="harvested")])
     r = _run(reg, "--no-scan")

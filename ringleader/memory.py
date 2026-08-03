@@ -8,6 +8,9 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from .gitinfo import resolve_git_project
+
+# Claude Code only: per-project memory/*.md files have no Codex equivalent (Codex's
+# memories_1.sqlite is out of scope — see docs/specs/2026-08-03-codex-source-design.md).
 from .sources.claude_code import (
     default_projects_dir as projects_dir,  # noqa: F401 -- re-exported; callers use memory.projects_dir()
 )

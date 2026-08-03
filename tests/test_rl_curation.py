@@ -52,9 +52,11 @@ def test_archive_moves_files_and_tombstones(tmp_path):
     r = _run("rl-session archive", reg, "a", "--archive-root", str(arc))
     assert r.returncode == 0 and "archived a" in r.stdout
     assert not f.exists() and not (f.parent / "a").exists()  # moved out
-    archived = arc / "-Users-me-proj" / "a.jsonl"
+    # no gitProjectLabel/project/source on this bare thread, so the slug falls
+    # back to "unknown" rather than the transcript's parent dir name.
+    archived = arc / "unknown" / "a.jsonl"
     assert archived.exists()
-    assert (arc / "-Users-me-proj" / "a").exists()  # sidecar moved too
+    assert (arc / "unknown" / "a").exists()  # sidecar moved too
     data = json.loads(reg.read_text())
     assert data["threads"] == []
     ts = data["tombstones"][0]
@@ -125,7 +127,7 @@ def test_archive_aborts_on_sidecar_dest_collision(tmp_path):
     reg = _registry(tmp_path, "c", f)
     arc = tmp_path / "archive"
     # Pre-create the sidecar destination directory so it already exists
-    sidecar_dest = arc / "-Users-me-proj" / "c"
+    sidecar_dest = arc / "unknown" / "c"
     sidecar_dest.mkdir(parents=True, exist_ok=True)
     r = _run("rl-session archive", reg, "c", "--archive-root", str(arc))
     assert r.returncode == 1
@@ -165,7 +167,7 @@ def test_archive_writes_summary_sidecar_and_records_summary_project(tmp_path):
         "rl-session archive", reg, "a", "--archive-root", str(arc), "--summary-file", str(summ)
     )
     assert r.returncode == 0
-    side = arc / "-Users-me-proj" / "a.md"
+    side = arc / "splashdown" / "a.md"  # dest dir now derives from gitProjectLabel
     assert side.exists() and "watch out" in side.read_text()
     ts = json.loads(reg.read_text())["tombstones"][0]
     assert ts["summary"] == "fixed the thing" and ts["project"] == "splashdown"
@@ -198,6 +200,45 @@ def test_archive_summary_fallback_uses_first_line_without_session_prefix(tmp_pat
     _run("rl-session archive", reg, "a", "--archive-root", str(arc), "--summary-file", str(summ))
     ts = json.loads(reg.read_text())["tombstones"][0]
     assert ts["summary"] == "Gotchas"
+
+
+def test_archive_codex_thread_uses_git_project_label_not_parent_dir(tmp_path):
+    """Codex transcripts don't live under a per-project encoded directory the way
+    Claude Code's do, so the archive destination must come from gitProjectLabel
+    (falling back to project/source), not from the transcript's parent dir name."""
+    f = tmp_path / "codex-sessions" / "2026" / "08" / "03" / "rollout-abc.jsonl"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("{}\n", encoding="utf-8")
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lastScan": None,
+                "tombstones": [],
+                "threads": [
+                    {
+                        "sessionId": "codex-a",
+                        "source": "codex",
+                        "file": str(f),
+                        "gitProjectLabel": "proj",
+                        "project": "/Users/me/proj",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    arc = tmp_path / "archive"
+    r = _run("rl-session archive", reg, "codex-a", "--archive-root", str(arc))
+    assert r.returncode == 0 and "archived codex-a" in r.stdout
+    archived = arc / "proj" / "rollout-abc.jsonl"
+    assert archived.exists()
+    assert not f.exists()
+    data = json.loads(reg.read_text())
+    assert data["threads"] == []
+    ts = data["tombstones"][0]
+    assert ts["reason"] == "archived" and ts["archivePath"] == str(archived)
 
 
 def test_st_archived_lists_archived_with_project_filter(tmp_path):

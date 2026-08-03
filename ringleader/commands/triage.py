@@ -67,6 +67,12 @@ def cmd_triage(argv: list[str]) -> int:
         "not the full awaiting-a-decision inbox",
     )
     ap.add_argument(
+        "--source",
+        action="append",
+        default=None,
+        help="filter to sessions from this source (repeatable)",
+    )
+    ap.add_argument(
         "--json",
         action="store_true",
         help="print the triage inbox as JSON instead of text; honors -u/--unclassified",
@@ -81,6 +87,9 @@ def cmd_triage(argv: list[str]) -> int:
         if note:
             print(note + "\n")
     threads = projects.filter_by_projects(reg["threads"], args.project)
+    if args.source:
+        wanted = set(args.source)
+        threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
     if args.json:
         print(
             json.dumps(

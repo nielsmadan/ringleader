@@ -16,17 +16,20 @@ def delta_note(added: int, removed: int) -> str | None:
     return "(scanning… " + ", ".join(bits) + ")"
 
 
-def auto_refresh(registry_path, now_iso, *, tail=30, projects_root=None, git_resolver=None):
-    """Scan the projects dir, reconcile into the registry, persist, and report the
+def auto_refresh(
+    registry_path, now_iso, *, tail=30, projects_root=None, git_resolver=None, sources=None
+):
+    """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. This is the cheap, pure-code refresh the read commands run so
     their counts are never stale; classification/naming stays a separate agentic step."""
     reg = registry.load_registry(registry_path)
     before = {t["sessionId"] for t in reg["threads"]}
-    source_kwargs = {"tail_turns": tail}
-    if projects_root is not None:
-        source_kwargs["projects_dir"] = projects_root
-    source = ClaudeCodeSource(**source_kwargs)
-    scanned = scanner.scan(sources=[source], git_resolver=git_resolver)
+    if sources is None:
+        if projects_root is not None:
+            sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=projects_root)]
+        else:
+            sources = scanner.active_sources()
+    scanned = scanner.scan(sources=sources, git_resolver=git_resolver)
     reg = registry.reconcile(reg, scanned, now_iso)
     registry.save_registry(registry_path, reg)
     after = {t["sessionId"] for t in reg["threads"]}
