@@ -3,9 +3,9 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .. import naming, overview, projects, registry, scanner
+from ..sources.base import NameApplyingSource
 from . import default_registry
 
 
@@ -15,19 +15,7 @@ def _now() -> str:
 
 def _can_name(t: dict) -> bool:
     src = scanner.source_by_name(t.get("source") or "claude-code")
-    return bool(src and "applies_names" in src.capabilities)
-
-
-def _append_title(file_path: str, line: str) -> None:
-    p = Path(file_path)
-    if p.stat().st_size == 0:
-        lead = b""
-    else:
-        with p.open("rb") as fh:
-            fh.seek(-1, 2)
-            lead = b"" if fh.read(1) == b"\n" else b"\n"
-    with p.open("ab") as fh:
-        fh.write(lead + line.encode("utf-8") + b"\n")
+    return bool(src and "applies_names" in src.capabilities and isinstance(src, NameApplyingSource))
 
 
 def cmd_name(argv: list[str]) -> int:
@@ -65,13 +53,16 @@ def cmd_name(argv: list[str]) -> int:
 
     new_n = ren_n = skipped = suffixed = 0
     for t, name, kind in selected:
+        src = scanner.source_by_name(t.get("source") or "claude-code")
         try:
-            _append_title(t["file"], naming.title_line(t["sessionId"], name))
-        except OSError as e:
+            if not isinstance(src, NameApplyingSource):
+                raise OSError("unknown session source")
+            src.apply_name(t["sessionId"], t["file"], name)
+        except (OSError, ValueError) as e:
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
             skipped += 1
             continue
-        registry.apply_name(reg, t["sessionId"], name)
+        registry.apply_name(reg, t["sessionId"], name, source=t.get("source") or "claude-code")
         if name != t.get("suggestedName"):
             suffixed += 1
         if kind == "new":

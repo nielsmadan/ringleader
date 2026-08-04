@@ -2,7 +2,23 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+
+def append_jsonl_line(path: Path, line: str) -> None:
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        size = 0
+    if size == 0:
+        lead = b""
+    else:
+        with path.open("rb") as fh:
+            fh.seek(-1, 2)
+            lead = b"" if fh.read(1) == b"\n" else b"\n"
+    with path.open("ab") as fh:
+        fh.write(lead + line.encode("utf-8") + b"\n")
 
 
 @dataclass(frozen=True)
@@ -45,3 +61,8 @@ class Source(Protocol):
 
     def discover(self) -> Iterator[RawRef]: ...  # cheap: paths + mtime/size, no parse
     def parse(self, ref: RawRef) -> NormalizedSession: ...  # read tail, extract fields
+
+
+@runtime_checkable
+class NameApplyingSource(Source, Protocol):
+    def apply_name(self, session_id: str, file_path: str, name: str) -> None: ...

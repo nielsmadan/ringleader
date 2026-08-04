@@ -7,8 +7,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from ..naming import title_line
 from ..transcript import parse_transcript
-from .base import NormalizedSession, RawRef
+from .base import NormalizedSession, RawRef, append_jsonl_line
 
 
 def default_projects_dir() -> Path:
@@ -71,3 +72,8 @@ class ClaudeCodeSource:
             tail_text=info.tail_text,
             git_branch=info.git_branch,
         )
+
+    def apply_name(self, session_id: str, file_path: str, name: str) -> None:
+        path = Path(file_path)
+        path.stat()
+        append_jsonl_line(path, title_line(session_id, name))

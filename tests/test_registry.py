@@ -503,3 +503,20 @@ def test_reconcile_distinguishes_same_id_across_sources():
     )
     assert len(reg["threads"]) == 2
     assert {t["source"] for t in reg["threads"]} == {"claude-code", "codex"}
+
+
+def test_apply_name_targets_source_when_ids_collide():
+    from ringleader import registry
+
+    reg = registry.empty_registry()
+    reg = registry.reconcile(
+        reg,
+        [_ns(source="claude-code", session_id="x"), _ns(source="codex", session_id="x")],
+        "now",
+    )
+
+    registry.apply_name(reg, "x", "codex-name", source="codex")
+
+    by_source = {thread["source"]: thread for thread in reg["threads"]}
+    assert by_source["claude-code"]["title"] is None
+    assert by_source["codex"]["title"] == "codex-name"

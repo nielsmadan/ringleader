@@ -7,18 +7,25 @@ from .sources.base import NormalizedSession
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
 
-SOURCES = [ClaudeCodeSource(), CodexSource()]
+SOURCE_TYPES = (ClaudeCodeSource, CodexSource)
+
+
+def _new_sources():
+    return [source_type() for source_type in SOURCE_TYPES]
+
+
+SOURCES = _new_sources()
 
 
 def active_sources() -> list:
     # Fresh instances (not SOURCES) so each call re-reads the env-based default
     # roots — SOURCES is constructed once at import time and would otherwise
     # keep whatever root was current then, which breaks under monkeypatched env.
-    return [s for s in (ClaudeCodeSource(), CodexSource()) if s.root.exists()]
+    return [source for source in _new_sources() if source.root.exists()]
 
 
 def source_by_name(name: str):
-    return next((s for s in SOURCES if s.name == name), None)
+    return next((source for source in _new_sources() if source.name == name), None)
 
 
 def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:

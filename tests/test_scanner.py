@@ -112,7 +112,7 @@ def test_capabilities_declared():
     from ringleader.sources.codex import CodexSource
 
     assert "applies_names" in ClaudeCodeSource().capabilities
-    assert CodexSource().capabilities == frozenset()
+    assert "applies_names" in CodexSource().capabilities
 
 
 def test_source_by_name():

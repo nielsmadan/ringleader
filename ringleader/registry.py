@@ -188,9 +188,9 @@ def apply_classification(
     raise KeyError(session_id)
 
 
-def apply_name(reg: dict, session_id: str, name: str) -> dict:
+def apply_name(reg: dict, session_id: str, name: str, *, source: str | None = None) -> dict:
     for t in reg["threads"]:
-        if t["sessionId"] == session_id:
+        if t["sessionId"] == session_id and (source is None or _key(t)[0] == source):
             t["title"] = name
             t["appliedName"] = name
             t["namedAtMtime"] = t["mtime"]

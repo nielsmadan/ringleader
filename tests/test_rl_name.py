@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -63,10 +64,14 @@ def _make_registry(threads: list[dict]) -> dict:
     }
 
 
-def _run(*extra_args, registry_path: str, check: bool = False):
+def _run(*extra_args, registry_path: str, check: bool = False, env: dict | None = None):
     """Run rl session name with the given registry and extra args."""
     cmd = [PYTHON, "-m", "ringleader", "session", "name", "--registry", registry_path, *extra_args]
-    return subprocess.run(cmd, cwd=str(REPO), capture_output=True, text=True, check=check)
+    process_env = os.environ.copy()
+    process_env.update(env or {})
+    return subprocess.run(
+        cmd, cwd=str(REPO), capture_output=True, text=True, check=check, env=process_env
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -216,13 +221,11 @@ def test_trailing_newline_handling(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# Test 6: missing file is skipped, not fatal
+# Codex writes names to its native session index
 # ---------------------------------------------------------------------------
 
 
-def test_codex_thread_skipped_for_missing_name_capability(tmp_path):
-    """Codex sessions have no applies_names capability (no writeback format), so
-    `session name` must leave them untouched while still naming Claude threads."""
+def test_codex_thread_uses_native_session_index(tmp_path):
     claude_transcript = tmp_path / "claude.jsonl"
     claude_transcript.write_text('{"type":"say","text":"hello"}\n', encoding="utf-8")
     claude_thread = _make_thread(
@@ -231,20 +234,32 @@ def test_codex_thread_skipped_for_missing_name_capability(tmp_path):
         suggested="claude-name",
     )
 
-    codex_transcript = tmp_path / "codex.jsonl"
-    codex_transcript.write_text('{"type":"session_meta"}\n', encoding="utf-8")
+    codex_home = tmp_path / "codex-home"
+    codex_sessions = codex_home / "sessions"
+    codex_sessions.mkdir(parents=True)
+    codex_transcript = codex_sessions / "codex.jsonl"
     codex_thread = _make_thread(
         "bbbbbbbb-0000-0000-0000-000000000002",
         str(codex_transcript),
         suggested="codex-name",
     )
     codex_thread["source"] = "codex"
+    codex_transcript.write_text(
+        json.dumps(
+            {
+                "type": "session_meta",
+                "payload": {"session_id": codex_thread["sessionId"], "cwd": "/test"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
 
     reg_file = tmp_path / "registry.json"
     reg_file.write_text(json.dumps(_make_registry([claude_thread, codex_thread])), encoding="utf-8")
     original_codex_bytes = codex_transcript.read_bytes()
 
-    result = _run(registry_path=str(reg_file))
+    result = _run(registry_path=str(reg_file), env={"CODEX_SESSIONS_DIR": str(codex_sessions)})
 
     assert result.returncode == 0, result.stderr
 
@@ -254,19 +269,23 @@ def test_codex_thread_skipped_for_missing_name_capability(tmp_path):
     assert last["type"] == "custom-title"
     assert last["customTitle"] == "claude-name"
 
-    # Codex thread is untouched: no title record appended, no appliedName set.
+    # Codex names live in its session index, not in the rollout transcript.
     assert codex_transcript.read_bytes() == original_codex_bytes
+    index_entries = [
+        json.loads(line)
+        for line in (codex_home / "session_index.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert index_entries[-1]["id"] == codex_thread["sessionId"]
+    assert index_entries[-1]["thread_name"] == "codex-name"
 
     updated_reg = json.loads(reg_file.read_text(encoding="utf-8"))
     by_id = {t["sessionId"]: t for t in updated_reg["threads"]}
     assert by_id[claude_thread["sessionId"]]["appliedName"] == "claude-name"
-    assert by_id[codex_thread["sessionId"]]["appliedName"] is None
-    # suggestedName is still visible for the Codex thread — used by overview.
-    assert by_id[codex_thread["sessionId"]]["suggestedName"] == "codex-name"
+    assert by_id[codex_thread["sessionId"]]["appliedName"] == "codex-name"
 
-    # Summary reports the capability-gated skip.
-    assert "named 1" in result.stdout
-    assert "no-name-support" in result.stdout
+    # Both sources support native name writeback.
+    assert "named 2" in result.stdout
+    assert "(0 no-name-support)" in result.stdout
 
 
 def test_missing_file_skipped_not_fatal(tmp_path):

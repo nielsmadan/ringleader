@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ringleader.sources.base import Source
+from ringleader.sources.base import NameApplyingSource, Source
 from ringleader.sources.claude_code import ClaudeCodeSource
 
 
@@ -33,6 +33,22 @@ def test_source_satisfies_protocol():
     src = ClaudeCodeSource(projects_dir=Path("/does-not-exist"))
     assert isinstance(src, Source)
     assert src.name == "claude-code"
+
+
+def test_read_only_source_does_not_need_name_writeback():
+    class ReadOnlySource:
+        name = "read-only"
+        capabilities = frozenset()
+
+        def discover(self):
+            return iter(())
+
+        def parse(self, ref):
+            raise NotImplementedError
+
+    src = ReadOnlySource()
+    assert isinstance(src, Source)
+    assert not isinstance(src, NameApplyingSource)
 
 
 def test_discover_excludes_subagent_transcripts(tmp_path):

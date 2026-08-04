@@ -2,8 +2,9 @@ import json
 from itertools import zip_longest
 from pathlib import Path
 
-from ringleader.sources.base import RawRef, Source
-from ringleader.sources.codex import CodexSource
+import pytest
+from ringleader.sources.base import NameApplyingSource, RawRef, Source
+from ringleader.sources.codex import CodexSessionIndexError, CodexSource
 
 
 def _rollout(
@@ -75,8 +76,9 @@ def _rollout(
 def test_source_satisfies_protocol(tmp_path):
     src = CodexSource(sessions_dir=tmp_path)
     assert isinstance(src, Source)
+    assert isinstance(src, NameApplyingSource)
     assert src.name == "codex"
-    assert src.capabilities == frozenset()
+    assert src.capabilities == frozenset({"applies_names"})
 
 
 def test_discover_finds_rollouts(tmp_path):
@@ -165,3 +167,69 @@ def test_parse_leaves_git_fields_at_defaults(tmp_path):
     ns = src.parse(next(iter(src.discover())))
     assert ns.git_branch is None
     assert ns.git_project_key is None
+
+
+def test_parse_reads_latest_name_from_session_index(tmp_path):
+    sessions = tmp_path / "sessions"
+    sid = "77777777-0000-0000-0000-000000000007"
+    _rollout(sessions / "2026" / "07" / "28", sid, "/Users/me/proj", ["hello"])
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        "\n".join(
+            [
+                json.dumps({"id": sid, "thread_name": "old-name", "updated_at": "earlier"}),
+                "not json",
+                json.dumps({"id": sid, "thread_name": "latest-name", "updated_at": "later"}),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    src = CodexSource(sessions_dir=sessions)
+    ns = src.parse(next(iter(src.discover())))
+
+    assert ns.custom_title == "latest-name"
+
+
+def test_apply_name_appends_native_session_index_entry(tmp_path):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    sid = "88888888-0000-0000-0000-000000000008"
+    rollout = _rollout(sessions, sid, "/Users/me/proj", ["hello"])
+    index = tmp_path / "session_index.jsonl"
+    index.write_text(
+        json.dumps({"id": "other", "thread_name": "other-name", "updated_at": "earlier"}),
+        encoding="utf-8",
+    )
+    src = CodexSource(sessions_dir=sessions)
+
+    src.apply_name(sid, str(rollout), "  fresh-name  ")
+
+    entries = [json.loads(line) for line in index.read_text(encoding="utf-8").splitlines()]
+    assert entries[-1]["id"] == sid
+    assert entries[-1]["thread_name"] == "fresh-name"
+    assert entries[-1]["updated_at"].endswith("Z")
+
+
+def test_apply_name_rejects_missing_rollout(tmp_path):
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    src = CodexSource(sessions_dir=sessions)
+
+    with pytest.raises(FileNotFoundError):
+        src.apply_name("missing", str(sessions / "missing.jsonl"), "ghost-name")
+
+    assert not (tmp_path / "session_index.jsonl").exists()
+
+
+def test_unreadable_session_index_aborts_scan(tmp_path):
+    sessions = tmp_path / "sessions"
+    sid = "99999999-0000-0000-0000-000000000009"
+    _rollout(sessions, sid, "/Users/me/proj", ["hello"])
+    index = tmp_path / "session_index.jsonl"
+    index.mkdir()
+    src = CodexSource(sessions_dir=sessions)
+
+    with pytest.raises(CodexSessionIndexError):
+        src.parse(next(iter(src.discover())))
