@@ -6,6 +6,7 @@ from ..paths import default_registry as default_registry
 from . import (
     archive,
     cleaned,
+    config,
     delete,
     export,
     mark_harvested,
@@ -77,5 +78,5 @@ TABLE = {
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
-    "config": _reserved("config"),
+    "config": config.cmd_config,
 }

@@ -13,5 +13,9 @@ def default_registry() -> Path:
     return state_dir() / "registry.json"
 
 
+def config_path() -> Path:
+    return state_dir() / "config.json"
+
+
 def archive_root() -> Path:
     return state_dir() / "archive"

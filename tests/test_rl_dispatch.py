@@ -39,6 +39,7 @@ def test_help_lists_commands(capsys):
         (["data", "export"], commands.export.cmd_export),
         (["data", "tokens"], commands.tokens.cmd_tokens),
         (["data", "migrate"], commands.migrate.cmd_migrate),
+        (["config"], commands.config.cmd_config),
     ],
 )
 def test_new_paths_resolve(path, expected):
@@ -61,7 +62,7 @@ def test_unknown_subcommand_returns_2(capsys):
     assert "bogus" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("path", [["session", "enrich"], ["session", "complete"], ["config"]])
+@pytest.mark.parametrize("path", [["session", "enrich"], ["session", "complete"]])
 def test_reserved_verbs_return_2(path, capsys):
     rc = main(path)
     assert rc == 2
