@@ -10,6 +10,34 @@ from pathlib import Path
 from .base import ModelError
 
 
+def _inject_additional_properties_false(schema):
+    # OpenAI's structured-output backend rejects object schemas that omit
+    # additionalProperties; codex forwards the schema verbatim, so set it here on
+    # every nested object node ($defs/definitions, properties, items included) --
+    # not just the root -- since C2's richer schemas will nest objects.
+    if not isinstance(schema, dict):
+        return schema
+    schema = dict(schema)
+    if schema.get("type") == "object" and "additionalProperties" not in schema:
+        schema["additionalProperties"] = False
+    if "properties" in schema:
+        schema["properties"] = {
+            k: _inject_additional_properties_false(v) for k, v in schema["properties"].items()
+        }
+    if "items" in schema:
+        items = schema["items"]
+        if isinstance(items, list):
+            schema["items"] = [_inject_additional_properties_false(i) for i in items]
+        else:
+            schema["items"] = _inject_additional_properties_false(items)
+    for key in ("$defs", "definitions"):
+        if key in schema:
+            schema[key] = {
+                k: _inject_additional_properties_false(v) for k, v in schema[key].items()
+            }
+    return schema
+
+
 @dataclass
 class CodexCliModel:
     name: str = "codex"
@@ -22,10 +50,7 @@ class CodexCliModel:
         return path is not None and Path(path).name == "codex"
 
     def complete_json(self, prompt: str, schema: dict) -> dict:
-        # OpenAI's structured-output backend rejects object schemas that omit
-        # additionalProperties; codex forwards the schema verbatim, so set it here.
-        if schema.get("type") == "object" and "additionalProperties" not in schema:
-            schema = {**schema, "additionalProperties": False}
+        schema = _inject_additional_properties_false(schema)
         with tempfile.TemporaryDirectory() as td:
             sf = Path(td) / "schema.json"
             sf.write_text(json.dumps(schema), encoding="utf-8")

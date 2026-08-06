@@ -1,13 +1,27 @@
 import json
 import types
+from pathlib import Path
 
 import pytest
 from ringleader import models
+from ringleader.models.api import ApiModel
 from ringleader.models.base import Model, ModelError
 from ringleader.models.claude_cli import ClaudeCliModel
 from ringleader.models.codex_cli import CodexCliModel
 
 SCHEMA = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
+NESTED_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "x": {"type": "string"},
+        "y": {
+            "type": "object",
+            "properties": {"z": {"type": "string"}},
+            "required": ["z"],
+        },
+    },
+    "required": ["x", "y"],
+}
 
 
 def test_backends_satisfy_protocol():
@@ -39,6 +53,21 @@ def test_claude_complete_json_builds_command_and_parses_result(monkeypatch):
     assert "-p" in seen["cmd"]
 
 
+def test_claude_complete_json_prefers_structured_output(monkeypatch):
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.subprocess.run",
+        lambda cmd, **kw: types.SimpleNamespace(
+            returncode=0,
+            # "result" deliberately disagrees with structured_output to prove precedence
+            stdout=json.dumps(
+                {"result": json.dumps({"x": "wrong"}), "structured_output": {"x": "hi"}}
+            ),
+            stderr="",
+        ),
+    )
+    assert ClaudeCliModel().complete_json("p", SCHEMA) == {"x": "hi"}
+
+
 def test_claude_raises_modelerror_on_nonzero(monkeypatch):
     monkeypatch.setattr(
         "ringleader.models.claude_cli.subprocess.run",
@@ -58,6 +87,44 @@ def test_codex_complete_json_parses_schema_output(monkeypatch):
     assert CodexCliModel().complete_json("p", SCHEMA) == {"x": "yo"}
 
 
+def test_codex_complete_json_builds_command(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        schema_path = cmd[cmd.index("--output-schema") + 1]
+        seen["schema"] = json.loads(Path(schema_path).read_text())
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
+
+    monkeypatch.setattr("ringleader.models.codex_cli.subprocess.run", fake_run)
+    CodexCliModel().complete_json("classify this", SCHEMA)
+
+    cmd = seen["cmd"]
+    assert cmd[0] == "codex"
+    assert cmd[1] == "exec"
+    assert "--output-schema" in cmd
+    assert "--skip-git-repo-check" in cmd
+    assert "--sandbox" in cmd and "read-only" in cmd
+    assert "classify this" in cmd
+    assert seen["schema"]["additionalProperties"] is False
+
+
+def test_codex_injects_additional_properties_recursively(monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        schema_path = cmd[cmd.index("--output-schema") + 1]
+        seen["schema"] = json.loads(Path(schema_path).read_text())
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
+
+    monkeypatch.setattr("ringleader.models.codex_cli.subprocess.run", fake_run)
+    CodexCliModel().complete_json("p", NESTED_SCHEMA)
+
+    schema = seen["schema"]
+    assert schema["additionalProperties"] is False
+    assert schema["properties"]["y"]["additionalProperties"] is False
+
+
 def test_active_model_autopicks_first_available_agent(monkeypatch):
     monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: None)
     monkeypatch.setattr("ringleader.models.codex_cli.shutil.which", lambda n: "/bin/codex")
@@ -73,3 +140,61 @@ def test_active_model_none_when_nothing_available(monkeypatch):
     from ringleader.config import Config
 
     assert models.active_model(Config()) is None
+
+
+def test_active_model_explicit_backend_unavailable_fails_closed(monkeypatch):
+    # An explicit backend that isn't available must return None, not silently
+    # fall back to auto-picking a different backend.
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: None)
+    from ringleader.config import Config
+
+    assert models.active_model(Config(backend="claude")) is None
+
+
+def test_api_missing_extra_is_unavailable_and_raises(monkeypatch):
+    def raise_modelerror(self):
+        raise ModelError("the api backend needs `pip install ringleader[api]`")
+
+    monkeypatch.setattr(ApiModel, "_llm", raise_modelerror)
+    m = ApiModel()
+    assert m.available() is False
+    with pytest.raises(ModelError):
+        m.complete_json("p", SCHEMA)
+
+
+def test_api_complete_json_success(monkeypatch):
+    captured = {}
+
+    class FakeResponse:
+        def __init__(self, text):
+            self._text = text
+
+        def text(self):
+            return self._text
+
+    class FakeLlmModel:
+        def prompt(self, prompt, schema=None):
+            captured["prompt"] = prompt
+            captured["schema"] = schema
+            return FakeResponse(json.dumps({"x": "hi"}))
+
+    class FakeLlm:
+        def get_model(self, name):
+            captured["model_name"] = name
+            return FakeLlmModel()
+
+    monkeypatch.setattr(ApiModel, "_llm", lambda self: FakeLlm())
+    out = ApiModel().complete_json("classify this", SCHEMA)
+    assert out == {"x": "hi"}
+    assert captured["prompt"] == "classify this"
+    assert captured["schema"] == SCHEMA
+
+
+def test_api_complete_json_wraps_provider_failure(monkeypatch):
+    class FakeLlm:
+        def get_model(self, name):
+            raise RuntimeError("provider boom")
+
+    monkeypatch.setattr(ApiModel, "_llm", lambda self: FakeLlm())
+    with pytest.raises(ModelError):
+        ApiModel().complete_json("p", SCHEMA)
