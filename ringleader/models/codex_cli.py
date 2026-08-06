@@ -1,0 +1,58 @@
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import tempfile
+from dataclasses import dataclass
+from pathlib import Path
+
+from .base import ModelError
+
+
+@dataclass
+class CodexCliModel:
+    name: str = "codex"
+    model: str | None = None
+
+    def available(self) -> bool:
+        # shutil is a single shared module object across backends, so compare the
+        # resolved binary's basename rather than just truthiness of shutil.which.
+        path = shutil.which("codex")
+        return path is not None and Path(path).name == "codex"
+
+    def complete_json(self, prompt: str, schema: dict) -> dict:
+        # OpenAI's structured-output backend rejects object schemas that omit
+        # additionalProperties; codex forwards the schema verbatim, so set it here.
+        if schema.get("type") == "object" and "additionalProperties" not in schema:
+            schema = {**schema, "additionalProperties": False}
+        with tempfile.TemporaryDirectory() as td:
+            sf = Path(td) / "schema.json"
+            sf.write_text(json.dumps(schema), encoding="utf-8")
+            # --skip-git-repo-check: cwd isn't guaranteed to be a git repo.
+            # --sandbox read-only: this is a completion call, not a file-editing one.
+            cmd = [
+                "codex",
+                "exec",
+                "--skip-git-repo-check",
+                "--sandbox",
+                "read-only",
+                "--output-schema",
+                str(sf),
+            ]
+            if self.model:
+                cmd += ["--model", self.model]
+            cmd.append(prompt)
+            try:
+                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+            except OSError as e:  # CLI vanished mid-run
+                raise ModelError(f"codex invocation failed: {e}") from e
+        if proc.returncode != 0:
+            raise ModelError(f"codex exited {proc.returncode}: {proc.stderr.strip()[:200]}")
+        try:
+            result = json.loads(proc.stdout)
+        except json.JSONDecodeError as e:
+            raise ModelError(f"codex returned unparseable output: {e}") from e
+        if not isinstance(result, dict):
+            raise ModelError("codex returned non-object JSON")
+        return result

@@ -12,6 +12,9 @@ dependencies = []
 license = "MIT"
 authors = [{ name = "Niels Madan" }]
 
+[project.optional-dependencies]
+api = ["llm"]
+
 [project.scripts]
 rl = "ringleader.cli:main"
 
