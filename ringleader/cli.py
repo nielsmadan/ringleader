@@ -8,7 +8,7 @@ TABLE = commands.TABLE
 
 _FLAT = ("overview", "triage", "prune", "config")
 _GROUPS = ("session", "mem", "data")
-_RESERVED = {"session enrich", "session complete"}
+_RESERVED = {"session complete"}
 
 
 def _leaf_names(node, group: str = "") -> str:

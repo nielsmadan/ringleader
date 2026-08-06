@@ -20,6 +20,7 @@ def test_help_lists_commands(capsys):
     "path,expected",
     [
         (["session", "archive"], commands.archive.cmd_archive),
+        (["session", "enrich"], commands.enrich.cmd_enrich),
         (["session", "delete"], commands.delete.cmd_delete),
         (["session", "snooze"], commands.snooze.cmd_snooze),
         (["session", "wake"], commands.wake.cmd_wake),
@@ -62,7 +63,7 @@ def test_unknown_subcommand_returns_2(capsys):
     assert "bogus" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("path", [["session", "enrich"], ["session", "complete"]])
+@pytest.mark.parametrize("path", [["session", "complete"]])
 def test_reserved_verbs_return_2(path, capsys):
     rc = main(path)
     assert rc == 2

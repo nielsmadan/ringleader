@@ -8,6 +8,7 @@ from . import (
     cleaned,
     config,
     delete,
+    enrich,
     export,
     mark_harvested,
     mark_mem_reviewed,
@@ -39,7 +40,7 @@ def _reserved(label):
 _SESSION = {
     "refresh": sync.cmd_refresh,
     "set": sync.cmd_set,
-    "enrich": _reserved("session enrich"),
+    "enrich": enrich.cmd_enrich,
     "archive": archive.cmd_archive,
     "delete": delete.cmd_delete,
     "complete": _reserved("session complete"),
