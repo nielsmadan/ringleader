@@ -25,15 +25,19 @@ pruning them before the GC clock deletes them.
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
   grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
-  meant to be called by the skills in `plugin/skills/` (session track) or
+  meant to be called by the skills in `.agents/skills/` (session track) or
   `.claude/skills/` (`memory-triage`), not by hand.
-- **`plugin/` is a Claude Code plugin, not a skills directory of its own.** Four skills —
-  `overview`, `init`, `triage`, `cleanup` — live under `plugin/skills/<name>/SKILL.md` as
-  thin, per-agent wrappers over the shared, agent-neutral flow in `plugin/PLAYBOOK.md`.
-  They replace the old, single-purpose session skills (sync, overview, name, harvest,
-  triage as separate skills) — those are gone, folded into these four. `memory-triage` is
-  untouched and still lives in `.claude/skills/`. Install the plugin with
-  `just install-plugin`; see `plugin/SMOKE.md` for the manual smoke checklist.
+- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Four skills —
+  `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup` —
+  each ship an agent-neutral `SKILL.md` plus a bundled `references/playbook.md`, synced
+  from the canonical `.agents/skills/PLAYBOOK.md` (`just sync-playbook`). They replace the
+  old, single-purpose session skills (sync, overview, name, harvest, triage as separate
+  skills) — those are gone, folded into these four. `memory-triage` is untouched and still
+  lives in `.claude/skills/`. Wire them into an agent with `rl skills install`, which
+  symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi) and
+  `~/.claude/skills` (Claude Code); `rl skills status`/`update`/`uninstall` round out the
+  surface. The old Claude-only plugin manifest and installer are gone. See
+  `.agents/skills/SMOKE.md` for the manual smoke checklist.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
   `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage

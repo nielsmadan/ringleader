@@ -33,7 +33,8 @@ Flat commands:
 - `rl doctor [--settings PATH]` — checks each installed harness's session-retention
   setting so live sessions aren't garbage-collected before you get to them.
 - `rl config show` / `rl config set …` — select the LLM backend used by
-  `rl session enrich`. Stores no secrets.
+  `rl session enrich` and `rl session harvest`. Stores no secrets.
+- `rl harvests` — list what tool-native harvesting has put in the harvest store.
 
 Session subcommands (`rl session <sub>`):
 
@@ -50,6 +51,9 @@ Session subcommands (`rl session <sub>`):
 - `rl session archive ID [--summary-file PATH]` — move a finished session's transcript out
   of the live registry; optionally attach a markdown summary.
 - `rl session delete ID` — permanently delete a session's transcript.
+- `rl session harvest ID [--dry-run]` — extract a finished session's durable knowledge into
+  ringleader's harvest store via the configured model; a no-op that says so if none is set.
+- `rl session complete ID` — harvest (as above) and then archive, in one step.
 - `rl session mark reviewed ID` — record that an open session has been looked at this run.
 - `rl session mark harvested ID [--paths PATHS]` — record that a session's durable
   knowledge has been integrated, and where.
@@ -90,7 +94,25 @@ not just at the end of the run.
 ## Harvest sub-protocol
 
 Used whenever `triage` or `cleanup` finds a session whose work is finished and contains
-knowledge worth keeping (a decision, a gotcha, a fix) before the session is archived.
+knowledge worth keeping (a decision, a gotcha, a fix) before the session is archived. There
+are two ways to do it — choose per the user's setup.
+
+### Preferred: tool-native (`rl session complete`)
+
+When a model is configured (`rl config show`), run **`rl session complete <id>`** per
+finished session. It extracts the session's durable knowledge into ringleader's harvest
+store via that model and archives the session, in one step — no agent extraction, no
+checkout, no `[FAN-OUT]`. It both harvests and archives, so **do not** also call
+`rl session mark harvested` / `rl session archive` for that session. Browse the results
+with `rl harvests`. If no model is configured, `complete` does nothing and says so — fall
+back to the agent-driven flow below.
+
+Prefer this whenever the harvest store is where the user wants durable knowledge kept.
+
+### Alternative: agent-driven, into the repo's own docs
+
+Use this when the user wants knowledge integrated into the target repo's **living docs**
+(their `/doc` setup) rather than the harvest store, or when no model is configured.
 
 1. **Integration target is prompted, not hardcoded.** Ask the user how they want durable
    knowledge integrated into the target repo. Default, and this user's standing answer: the

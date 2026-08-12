@@ -24,6 +24,7 @@ from . import (
     overview,
     prune,
     relocate,
+    skills,
     snooze,
     sync,
     tokens,
@@ -74,6 +75,12 @@ _DATA = {
     "tokens": tokens.cmd_tokens,
     "migrate": migrate.cmd_migrate,
 }
+_SKILLS = {
+    "install": skills.cmd_install,
+    "status": skills.cmd_status,
+    "update": skills.cmd_update,
+    "uninstall": skills.cmd_uninstall,
+}
 
 TABLE = {
     # flat daily verbs
@@ -86,5 +93,6 @@ TABLE = {
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
+    "skills": _SKILLS,
     "config": config.cmd_config,
 }

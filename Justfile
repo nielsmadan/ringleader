@@ -33,11 +33,13 @@ install-local:
 refresh-local:
     @uv tool install --reinstall --force .
 
-install-plugin:
-    @echo "Load the ringleader plugin dir into Claude Code: /plugin install $(pwd)/plugin"
-
 reset-local:
     @uv tool uninstall ringleader
 
 clean:
     @rm -rf .pytest_cache .ruff_cache .coverage htmlcov
+
+sync-playbook:
+    @for s in init triage cleanup overview; do \
+      cp .agents/skills/PLAYBOOK.md ".agents/skills/ringleader-$s/references/playbook.md"; \
+    done

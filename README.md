@@ -22,27 +22,35 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 
 ## Skills
 
-`plugin/` is a Claude Code plugin that drives `rl` through four agent skills instead of
-raw commands:
+`.agents/skills/` ships four agent skills that drive `rl` instead of raw commands —
+`ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`:
 
-- **`overview`** — the morning read: what's in flight, what's stale and awaiting triage,
-  what's snoozed, and an offer to jump into `triage` when the inbox is old.
-- **`init`** — onboard a machine: verify `rl` is installed, check session-retention
-  settings (`rl doctor`), and run a small, bounded first triage pass (`--recent 7`).
-- **`triage`** — recurring cleanup of the last few days of sessions: delete/finished/open
-  per session, harvest what's finished into the repo's docs, name and review what's open.
-- **`cleanup`** — the same flow as `triage` over the *entire* backlog instead of a recent
-  window; resumable across runs, since the registry records what's already been triaged.
+- **`ringleader-overview`** — the morning read: what's in flight, what's stale and
+  awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
+- **`ringleader-init`** — onboard a machine: verify `rl` is installed, check
+  session-retention settings (`rl doctor`), offer to wire the skills into your agent(s),
+  and run a small, bounded first triage pass (`--recent 7`).
+- **`ringleader-triage`** — recurring cleanup of the last few days of sessions:
+  delete/finished/open per session, harvest what's finished into the repo's docs, name and
+  review what's open.
+- **`ringleader-cleanup`** — the same flow as triage over the *entire* backlog instead of a
+  recent window; resumable across runs, since the registry records what's already been
+  triaged.
 
-Each skill is a thin per-agent wrapper (`plugin/skills/<name>/SKILL.md`) over
-`plugin/PLAYBOOK.md`, which holds the agent-neutral flow, conventions, and the harvest
-sub-protocol shared by all four. Install the plugin locally with:
+Each is an agent-neutral `SKILL.md` plus a bundled `references/playbook.md` (synced from
+the canonical `.agents/skills/PLAYBOOK.md`), so they read natively in Claude Code, Codex,
+OpenCode, and Pi — no per-agent plugin format required. Wire them into your agent(s) with:
 
 ```sh
-just install-plugin       # prints the `/plugin install <path>` command to run in Claude Code
+rl skills install     # symlink the bundled skills into ~/.claude/skills and ~/.agents/skills
+rl skills status      # show what's linked for each detected agent
+rl skills update      # re-sync after the bundled skill set changes
+rl skills uninstall   # remove the symlinks this tool created
 ```
 
-See `plugin/SMOKE.md` for the manual checklist used to exercise the skills end to end.
+`install` and `uninstall` ask for confirmation before touching anything; pass `--yes` to
+skip the prompt. See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
+the skills end to end.
 
 ## Everyday
 
@@ -92,12 +100,12 @@ harvest`/`rl session complete`) — folder path, repo url, and content for
 each. `--json` prints the full list (including `content`) as JSON instead of
 text. Harvests are stored as markdown files under `state_dir()/harvests/`
 (`~/.local/share/ringleader/harvests/` by default); `rl harvests` is the
-inbox the `plugin/` skills read from to fold that knowledge into a repo's docs.
+inbox the `ringleader-*` skills read from to fold that knowledge into a repo's docs.
 
 ## Plumbing
 
-Mostly invoked by the `plugin/` skills (`overview`, `init`, `triage`, `cleanup`, plus the
-separate `memory-triage` skill for the memory track), not by hand.
+Mostly invoked by the `ringleader-*` skills (`overview`, `init`, `triage`, `cleanup`, plus
+the separate `memory-triage` skill for the memory track), not by hand.
 
 Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 `rl config`. `rl <group>` with no subcommand lists that group's verbs.
