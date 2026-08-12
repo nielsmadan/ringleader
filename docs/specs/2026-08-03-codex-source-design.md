@@ -64,7 +64,9 @@ slots in later; it must not hardcode "sources are session sources."
   `parse()`.
 - **The first user message is an injected `AGENTS.md` preamble** (analogous to Claude's
   injected context) — the parser must skip it to find the real first/last prompt.
-- **No custom-title, summary, or ai-title mechanism** — those normalize to `None`.
+- Native names are append-only entries in `~/.codex/session_index.jsonl` with `id`,
+  `thread_name`, and `updated_at`; the latest entry for an id wins. Summary and ai-title
+  still normalize to `None`.
 
 ## Components
 
@@ -83,7 +85,8 @@ Implements the existing `Source` protocol (`sources/base.py`).
     `last_prompt` (skipping the injected `AGENTS.md` preamble); collect recent turns into
     `tail_text` (bounded, mirroring Claude's `tail_turns`).
   - derive git fields from `cwd` via the existing `gitinfo` module (source-neutral).
-  - `custom_title=None`, `summary=None`, `ai_title=None`.
+  - `custom_title` from the latest matching session-index entry; `summary=None`,
+    `ai_title=None`.
   - return `NormalizedSession(source="codex", session_id=…, cwd=…, mtime=ref.mtime,
     size_bytes=ref.size_bytes, last_prompt=…, file=ref.file, message_count=…,
     tail_text=…, git_*=…)`.
@@ -106,8 +109,8 @@ Implements the existing `Source` protocol (`sources/base.py`).
 
 ### 4. Capabilities
 
-- `Source` gains `capabilities: frozenset[str]` (default empty). `ClaudeCodeSource`
-  declares `frozenset({"applies_names"})`; `CodexSource` declares `frozenset()`.
+- `Source` gains `capabilities: frozenset[str]` (default empty). Both
+  `ClaudeCodeSource` and `CodexSource` declare `frozenset({"applies_names"})`.
 - `rl session name` (`commands/name.py`) filters to threads whose `source_for(...)`
   has `applies_names`; it reports the count of sessions skipped for lacking the
   capability rather than erroring. Names remain visible in `overview`/`triage` for all
@@ -151,8 +154,8 @@ Implements the existing `Source` protocol (`sources/base.py`).
   both with correct `source`.
 - **Registry identity**: two threads with the same `session_id` but different `source`
   are distinct records; reconcile updates the right one.
-- **Capabilities**: `rl session name` processes Claude sessions and skips Codex ones
-  (asserts the skip count), while both still show their name in `overview`.
+- **Capabilities**: `rl session name` writes Claude titles to their transcripts and Codex
+  titles to `session_index.jsonl`; both show their native name in `overview`.
 - **Views**: per-session `overview`/`triage` output includes the source badge;
   `--source codex` filters to Codex threads only.
 - **Archive**: archiving a Codex session lands under the project-label folder (not a
@@ -164,6 +167,4 @@ Implements the existing `Source` protocol (`sources/base.py`).
 
 - **Codex memory** (`memories_1.sqlite`) — Spec B.
 - **Any configuration** — sources are auto-detected only.
-- **Name writeback for Codex** — Codex has no custom-title slot; the capability is simply
-  absent.
 - **LLM enrichment / TUI** — later specs.
