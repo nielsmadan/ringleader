@@ -66,15 +66,14 @@ actually delete. `--project` scopes the prune to one repo/dir selector.
 Mostly invoked by the skills (`session-sync`, `session-overview`,
 `session-name`, `session-harvest`, `session-triage`, `memory-triage`), not by hand.
 
-Commands are grouped under `rl session`, `rl mem`, `rl data`, and the
-reserved `rl config`. `rl <group>` with no subcommand lists that group's
-verbs.
+Commands are grouped under `rl session`, `rl mem`, `rl data`, and
+`rl config`. `rl <group>` with no subcommand lists that group's verbs.
 
 | Command | Does |
 |---|---|
 | `rl session refresh [--project <sel>]` | Reconcile + emit sessions to classify. |
 | `rl session set` | Classify a session (whatItIs/decision/tags). |
-| `rl session enrich` | *(coming soon)* — reserved. |
+| `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to the `session-sync` skill. No-op if no model is configured. |
 | `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
 | `rl session delete <id>` | Delete one session (files + tombstone). |
 | `rl session complete` | *(coming soon)* — reserved. |
@@ -94,15 +93,26 @@ verbs.
 | `rl data export <id> [--out <path>]` | Render a session to markdown. |
 | `rl data tokens` | Report token/size stats. |
 | `rl data migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
-| `rl config` | *(coming soon)* — reserved. |
+| `rl config show` / `rl config set <key> <value>` | Select the LLM backend for `enrich` (`backend` = `claude`/`codex`/`api`, plus `model`, `api.provider`). Stores no secrets. |
+
+## LLM backend
+
+`rl session enrich` classifies sessions by calling a model through a small `Model`
+seam (`ringleader/models/`). By default it **auto-picks the first installed agent CLI**
+(`claude`, then `codex`) and drives it one-shot, reusing that CLI's own auth — so
+ringleader stores **no API keys or secrets**. `rl config set backend <claude|codex|api>`
+pins a choice. For a direct API backend instead of an agent CLI, install the extra
+(`pip install ringleader[api]`, which pulls in the `llm` library — key managed by `llm`,
+not ringleader) and `rl config set backend api`. When no backend is available, `enrich`
+is a no-op and the `session-sync` skill remains the way to classify.
 
 ## Sources
 
 Scanning is behind a `Source` protocol (`ringleader/sources/`): `discover()` lists
 raw session refs cheaply (path + mtime/size, no parse), `parse()` reads one into a
-`NormalizedSession`. `ringleader/sources/claude_code.py` — reading
-`~/.claude/projects/*.jsonl` — is the only source today; the seam exists so another
-transcript store could be added without touching the registry/overview/triage code.
+`NormalizedSession`. Claude Code sessions come from `~/.claude/projects/*.jsonl`;
+Codex sessions come from `~/.codex/sessions/**/*.jsonl`, with native names read from
+`~/.codex/session_index.jsonl`. Both sources support native name writeback.
 
 ## Restoring an archived session
 

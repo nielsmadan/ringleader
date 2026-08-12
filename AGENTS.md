@@ -24,7 +24,7 @@ pruning them before the GC clock deletes them.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
-  grouped under `rl session`, `rl mem`, `rl data`, and the reserved `rl config`, and is
+  grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
   meant to be called by the skills in `.claude/skills/`, not by hand.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
@@ -38,9 +38,10 @@ rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
+rl session enrich                   # classify pending sessions via an LLM (vs the session-sync skill)
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
 rl data <sub>                       # export, tokens, migrate
-rl config                           # reserved (coming soon)
+rl config                           # select the LLM backend for enrich (stores no secrets)
 just test                           # tests; pytest config lives in pyproject.toml now
 ```
 
