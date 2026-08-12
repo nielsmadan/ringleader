@@ -1,0 +1,6 @@
+{
+  "name": "ringleader",
+  "description": "Curate dormant agent sessions — triage, overview, and cleanup skills over the rl CLI.",
+  "version": "0.1.0",
+  "keywords": ["sessions", "triage", "ringleader", "cleanup"]
+}

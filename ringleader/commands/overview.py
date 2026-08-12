@@ -78,11 +78,32 @@ def cmd_mem_overview(argv: list[str]) -> int:
     return _memory_rollup(reg, now, selectors)
 
 
+def _filter_source_recent(threads, now: str, args) -> list[dict]:
+    if args.source:
+        wanted = set(args.source)
+        threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
+    return overview.filter_recent(threads, now, args.recent)
+
+
+def _json_view(reg: dict, now: str, args) -> int:
+    if args.snoozed:
+        print(json.dumps(jsonout.snoozed_json(reg["threads"], now), indent=2))
+        return 0
+    if args.sessions:
+        threads = _filter_source_recent(reg["threads"], now, args)
+        if not args.all:
+            threads = [t for t in threads if not overview.snooze_active(t, now)]
+        print(json.dumps(jsonout.sessions_json(threads, now), indent=2))
+        return 0
+    print(json.dumps(jsonout.rollup_json(reg, now), indent=2))
+    return 0
+
+
 def cmd_overview(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl overview",
         description="The session view: project rollup (default), --sessions list, "
-        "a <selector> deep-dive, or --archived.",
+        "a <selector> deep-dive, --archived, or --snoozed.",
     )
     ap.add_argument(
         "selector",
@@ -107,6 +128,11 @@ def cmd_overview(argv: list[str]) -> int:
         "--archived", action="store_true", help="list archived sessions instead of live ones"
     )
     ap.add_argument(
+        "--snoozed",
+        action="store_true",
+        help="list currently-snoozed sessions instead of live ones",
+    )
+    ap.add_argument(
         "--checkouts", action="store_true", help="rollup only: also list each repo's checkout paths"
     )
     ap.add_argument(
@@ -123,8 +149,15 @@ def cmd_overview(argv: list[str]) -> int:
     ap.add_argument(
         "--json",
         action="store_true",
-        help="print the registry-wide rollup as JSON instead of text; "
-        "ignores the selector and other view flags (-s/-a/--archived)",
+        help="print JSON instead of text: the per-session list with -s/--snoozed, "
+        "otherwise the registry-wide rollup; ignores the selector and --archived",
+    )
+    ap.add_argument(
+        "--recent",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help="only sessions active within the last DAYS",
     )
     args = ap.parse_args(argv)
 
@@ -137,8 +170,7 @@ def cmd_overview(argv: list[str]) -> int:
             print(note + "\n")
 
     if args.json:
-        print(json.dumps(jsonout.rollup_json(reg, now), indent=2))
-        return 0
+        return _json_view(reg, now, args)
 
     selectors = list(args.project or [])
     if args.selector:
@@ -148,6 +180,11 @@ def cmd_overview(argv: list[str]) -> int:
     if args.archived:
         sel = selectors[0] if selectors else None
         print(overview.render_archived(reg, sel))
+        return 0
+
+    # --snoozed wins the view too, applied over the registry's threads (not selector-scoped).
+    if args.snoozed:
+        print(overview.render_snoozed(reg["threads"], now))
         return 0
 
     # triage bridge (top-level views only, not the selector deep-dive)
@@ -161,18 +198,15 @@ def cmd_overview(argv: list[str]) -> int:
         scoped["threads"] = projects.filter_by_projects(reg["threads"], selectors)
         print(overview.project_detail(scoped, now, show_all=args.all))
     elif args.sessions:
-        threads = reg["threads"]
-        if args.source:
-            wanted = set(args.source)
-            threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
-        snoozed_total = sum(1 for t in threads if t.get("snoozedAt"))
+        threads = _filter_source_recent(reg["threads"], now, args)
+        snoozed_total = sum(1 for t in threads if overview.snooze_active(t, now))
         if args.all:
             scoped = dict(reg)
             scoped["threads"] = threads
             print(overview.render(scoped, now, show_all=args.all))
         else:
             scoped = dict(reg)
-            scoped["threads"] = [t for t in threads if not t.get("snoozedAt")]
+            scoped["threads"] = [t for t in threads if not overview.snooze_active(t, now)]
             print(overview.render(scoped, now, show_all=args.all))
             if snoozed_total:
                 print(f"\n({snoozed_total} snoozed hidden — rl overview -s -a)")

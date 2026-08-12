@@ -17,6 +17,20 @@ def _session_json(t: dict, now_iso: str) -> dict:
     }
 
 
+def sessions_json(threads, now_iso: str) -> list[dict]:
+    return [_session_json(t, now_iso) for t in threads]
+
+
+def snoozed_json(threads, now_iso: str) -> list[dict]:
+    out = []
+    for t in threads:
+        if overview.snooze_active(t, now_iso):
+            row = _session_json(t, now_iso)
+            row["snoozed_until"] = t.get("snoozedUntil")
+            out.append(row)
+    return out
+
+
 def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> list[dict]:
     """JSON-safe view of the triage inbox — same sessions `render_triage` shows.
 
@@ -31,9 +45,9 @@ def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> li
 
 
 def rollup_json(reg: dict, now_iso: str) -> dict:
-    """JSON-safe view of the overview rollup metrics — same numbers `render`/
-    `render_rollup` derive from `compute_metrics`."""
-    m = overview.compute_metrics(reg, now_iso)
+    """JSON-safe view of the overview rollup metrics — hides currently-snoozed
+    sessions the same way `render_rollup`/`project_summary` do by default."""
+    m = overview.compute_metrics(reg, now_iso, include_snoozed=False)
     return {
         "live_count": m["live_count"],
         "spread_projects": m["spread_projects"],

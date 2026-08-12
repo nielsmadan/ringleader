@@ -25,7 +25,15 @@ pruning them before the GC clock deletes them.
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
   grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
-  meant to be called by the skills in `.claude/skills/`, not by hand.
+  meant to be called by the skills in `plugin/skills/` (session track) or
+  `.claude/skills/` (`memory-triage`), not by hand.
+- **`plugin/` is a Claude Code plugin, not a skills directory of its own.** Four skills —
+  `overview`, `init`, `triage`, `cleanup` — live under `plugin/skills/<name>/SKILL.md` as
+  thin, per-agent wrappers over the shared, agent-neutral flow in `plugin/PLAYBOOK.md`.
+  They replace the old, single-purpose session skills (sync, overview, name, harvest,
+  triage as separate skills) — those are gone, folded into these four. `memory-triage` is
+  untouched and still lives in `.claude/skills/`. Install the plugin with
+  `just install-plugin`; see `plugin/SMOKE.md` for the manual smoke checklist.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
   `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage
@@ -38,7 +46,7 @@ rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
-rl session enrich                   # classify pending sessions via an LLM (vs the session-sync skill)
+rl session enrich                   # classify pending sessions via an LLM (vs. by hand in the triage/cleanup skill)
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
 rl data <sub>                       # export, tokens, migrate
 rl config                           # select the LLM backend for enrich (stores no secrets)

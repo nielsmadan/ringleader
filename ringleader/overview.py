@@ -48,6 +48,12 @@ def effective_status(thread: dict, now_iso: str) -> str:
     return st
 
 
+def filter_recent(threads, now_iso: str, days: int | None):
+    if days is None:
+        return threads
+    return [t for t in threads if t.get("mtime") and age_days(t["mtime"], now_iso) <= days]
+
+
 def group_key(thread: dict) -> str:
     # git identity groups worktrees/clones/monorepo-subdirs together; cwd is the fallback
     return thread.get("gitProjectKey") or thread.get("project") or "(unknown)"
@@ -69,8 +75,11 @@ def tilde(path: str | None, home: str | None = None) -> str:
     return path
 
 
-def compute_metrics(reg: dict, now_iso: str) -> dict:
-    eff = [(t, effective_status(t, now_iso)) for t in reg["threads"]]
+def compute_metrics(reg: dict, now_iso: str, *, include_snoozed: bool = True) -> dict:
+    threads = reg["threads"]
+    if not include_snoozed:
+        threads = [t for t in threads if not snooze_active(t, now_iso)]
+    eff = [(t, effective_status(t, now_iso)) for t in threads]
     by_status = Counter(es for _, es in eff)
     live = [t for t, es in eff if es in LIVE_STATUSES]
     by_project = Counter(group_key(t) for t in live)
@@ -163,13 +172,20 @@ def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None
     return "\n".join(lines)
 
 
+def snooze_active(thread: dict, now_iso: str) -> bool:
+    if not thread.get("snoozedAt"):
+        return False
+    until = thread.get("snoozedUntil")
+    return until is None or now_iso < until
+
+
 def triage_inbox(threads, now_iso: str) -> list[dict]:
     """Sessions awaiting a decision: not parked, not harvested, and not reviewed at
     their current state. A session re-enters once its file changes (reviewedAtMtime
     no longer matches mtime). Archived/deleted sessions are already gone from threads."""
     out = []
     for t in threads:
-        if t.get("snoozedAt"):
+        if snooze_active(t, now_iso):
             continue
         if t.get("decision") == "harvested":
             continue
@@ -335,7 +351,7 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
 def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) -> str:
     from . import projects  # noqa: PLC0415 -- projects imports overview at module level; circular
 
-    stats = projects.project_summary(reg, include_snoozed=include_snoozed)
+    stats = projects.project_summary(reg, now_iso, include_snoozed=include_snoozed)
     lines = [
         f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
         f"{'chk':>4} {'cleaned':>9} {'mem':>9}"
@@ -362,7 +378,7 @@ def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) 
         if checkouts:
             lines += [f"    {tilde(path)}" for path in s.checkouts]
     attn = sum(1 for s in stats if s.needs_attention)
-    snoozed_total = sum(1 for t in reg["threads"] if t.get("snoozedAt"))
+    snoozed_total = sum(1 for t in reg["threads"] if snooze_active(t, now_iso))
     bits = []
     if attn:
         bits.append(f"{attn} need a look ⚠")
@@ -398,4 +414,19 @@ def render_archived(reg, selector: str | None = None) -> str:
             lines.append(f"    harvested into: {ts['harvestPath']}")
     lines.append("")
     lines.append(f"{len(rows)} archived session(s)")
+    return "\n".join(lines)
+
+
+def render_snoozed(threads, now_iso: str) -> str:
+    rows = [t for t in threads if snooze_active(t, now_iso)]
+    if not rows:
+        return "no snoozed sessions"
+    rows.sort(key=lambda t: t.get("snoozedUntil") or "")
+    lines = []
+    for t in rows:
+        name = t.get("title") or t.get("suggestedName") or (t.get("sessionId") or "")[:8]
+        mtime = t.get("mtime")
+        age = round(age_days(mtime, now_iso)) if mtime else 0
+        until = t.get("snoozedUntil") or "no wake date"
+        lines.append(f"{name} · {age}d · {until}")
     return "\n".join(lines)

@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -141,6 +142,31 @@ def test_sessions_flag_hides_snoozed_unless_all(tmp_path):
     assert "does beta" in r_all.stdout
 
 
+def test_sessions_flag_auto_wakes_after_until(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("alpha"),
+            _thread(
+                "beta",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2020-01-01T00:00:00+00:00",  # long expired
+            ),
+            _thread(
+                "gamma",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2099-01-01T00:00:00+00:00",  # still snoozed
+            ),
+        ],
+    )
+
+    r = _run(reg, "-s", "--no-scan")
+    assert r.returncode == 0
+    assert "does alpha" in r.stdout
+    assert "does beta" in r.stdout  # expired snooze -> auto-woken, included
+    assert "does gamma" not in r.stdout  # still within its snooze window
+
+
 def test_sessions_list_shows_source_badge(tmp_path):
     reg = _registry(
         tmp_path,
@@ -174,6 +200,105 @@ def test_selector_hides_triage_header(tmp_path):
     r = _run(reg, "repo", "--no-scan")
     assert r.returncode == 0
     assert "awaiting triage" not in r.stdout
+
+
+def test_json_flag_emits_rollup_not_session_array(tmp_path):
+    reg = _registry(tmp_path, [_thread("a")])
+    r = _run(reg, "--json", "--no-scan")
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert isinstance(data, dict)
+    assert "live_count" in data
+
+
+def test_json_rollup_hides_snoozed_but_counts_auto_woken(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("alpha"),
+            _thread(
+                "beta",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2020-01-01T00:00:00+00:00",  # long expired -> auto-woken
+            ),
+            _thread(
+                "gamma",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2099-01-01T00:00:00+00:00",  # still snoozed -> hidden
+            ),
+        ],
+    )
+    r = _run(reg, "--json", "--no-scan")
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert data["live_count"] == 2  # alpha + auto-woken beta, gamma hidden
+    assert data["by_project"] == {"repo-k": 2}
+
+
+def test_sessions_flag_json_emits_session_array(tmp_path):
+    reg = _registry(tmp_path, [_thread("a")])
+    r = _run(reg, "-s", "--json", "--no-scan")
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert isinstance(data, list)
+    assert data[0]["session_id"] == "a"
+
+
+def test_snoozed_json_excludes_expired_includes_active(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("alpha"),
+            _thread(
+                "beta",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2020-01-01T00:00:00+00:00",  # long expired -> auto-woken
+            ),
+            _thread(
+                "gamma",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2099-01-01T00:00:00+00:00",  # still snoozed
+            ),
+        ],
+    )
+    r = _run(reg, "--snoozed", "--json", "--no-scan")
+    assert r.returncode == 0
+    data = json.loads(r.stdout)
+    assert [row["session_id"] for row in data] == ["gamma"]
+    assert data[0]["snoozed_until"] == "2099-01-01T00:00:00+00:00"
+
+
+def test_snoozed_text_lists_wake_time(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread(
+                "gamma",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+                snoozedUntil="2099-01-01T00:00:00+00:00",
+            ),
+        ],
+    )
+    r = _run(reg, "--snoozed", "--no-scan")
+    assert r.returncode == 0
+    assert "gamma" in r.stdout
+    assert "2099-01-01T00:00:00+00:00" in r.stdout
+
+
+def test_snoozed_text_empty_state(tmp_path):
+    reg = _registry(tmp_path, [_thread("alpha")])  # no thread is snoozed
+    r = _run(reg, "--snoozed", "--no-scan")
+    assert r.returncode == 0
+    assert "no snoozed sessions" in r.stdout
+
+
+def test_sessions_json_recent_narrows_by_age(tmp_path):
+    now = datetime.now(UTC)
+    old_mtime = (now - timedelta(days=50)).isoformat()
+    reg = _registry(tmp_path, [_thread("old", mtime=old_mtime)])
+    r = _run(reg, "-s", "--json", "--recent", "1", "--no-scan")
+    assert r.returncode == 0
+    assert json.loads(r.stdout) == []
 
 
 def _registry_mem(tmp, memory_entries, cleaned_at=None):

@@ -8,6 +8,7 @@ from . import (
     cleaned,
     config,
     delete,
+    doctor,
     enrich,
     export,
     mark_harvested,
@@ -75,6 +76,7 @@ TABLE = {
     "overview": overview.cmd_overview,
     "triage": triage.cmd_triage,
     "prune": prune.cmd_prune,
+    "doctor": doctor.cmd_doctor,
     # namespaces
     "session": _SESSION,
     "mem": _MEM,

@@ -253,12 +253,14 @@ def mark_project_cleaned(reg: dict, key: str, when: str) -> dict:
     return reg
 
 
-def snooze_thread(reg: dict, session_id: str, when: str) -> dict:
+def snooze_thread(reg: dict, session_id: str, when: str, until: str | None = None) -> dict:
     """Set a session aside: still open/resumable, but hidden from the default
-    rl overview until woken. `when` records when it was snoozed."""
+    rl overview until woken. `when` records when it was snoozed; `until`, if
+    given, is an ISO timestamp after which the snooze auto-wakes."""
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["snoozedAt"] = when
+            t["snoozedUntil"] = until
             return reg
     raise KeyError(session_id)
 

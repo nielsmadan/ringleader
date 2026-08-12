@@ -20,6 +20,30 @@ State (the registry and `archive/`) lives under `~/.local/share/ringleader/`
 runs `rl data migrate` first to move any pre-existing repo-root `registry.json` /
 `archive/` into that location.
 
+## Skills
+
+`plugin/` is a Claude Code plugin that drives `rl` through four agent skills instead of
+raw commands:
+
+- **`overview`** — the morning read: what's in flight, what's stale and awaiting triage,
+  what's snoozed, and an offer to jump into `triage` when the inbox is old.
+- **`init`** — onboard a machine: verify `rl` is installed, check session-retention
+  settings (`rl doctor`), and run a small, bounded first triage pass (`--recent 7`).
+- **`triage`** — recurring cleanup of the last few days of sessions: delete/finished/open
+  per session, harvest what's finished into the repo's docs, name and review what's open.
+- **`cleanup`** — the same flow as `triage` over the *entire* backlog instead of a recent
+  window; resumable across runs, since the registry records what's already been triaged.
+
+Each skill is a thin per-agent wrapper (`plugin/skills/<name>/SKILL.md`) over
+`plugin/PLAYBOOK.md`, which holds the agent-neutral flow, conventions, and the harvest
+sub-protocol shared by all four. Install the plugin locally with:
+
+```sh
+just install-plugin       # prints the `/plugin install <path>` command to run in Claude Code
+```
+
+See `plugin/SMOKE.md` for the manual checklist used to exercise the skills end to end.
+
 ## Everyday
 
 The three front-door commands, most useful first.
@@ -63,8 +87,8 @@ actually delete. `--project` scopes the prune to one repo/dir selector.
 
 ## Plumbing
 
-Mostly invoked by the skills (`session-sync`, `session-overview`,
-`session-name`, `session-harvest`, `session-triage`, `memory-triage`), not by hand.
+Mostly invoked by the `plugin/` skills (`overview`, `init`, `triage`, `cleanup`, plus the
+separate `memory-triage` skill for the memory track), not by hand.
 
 Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 `rl config`. `rl <group>` with no subcommand lists that group's verbs.
@@ -73,7 +97,7 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 |---|---|
 | `rl session refresh [--project <sel>]` | Reconcile + emit sessions to classify. |
 | `rl session set` | Classify a session (whatItIs/decision/tags). |
-| `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to the `session-sync` skill. No-op if no model is configured. |
+| `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to classifying by hand in the `triage`/`cleanup` skill flow. No-op if no model is configured. |
 | `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
 | `rl session delete <id>` | Delete one session (files + tombstone). |
 | `rl session complete` | *(coming soon)* — reserved. |
@@ -104,7 +128,8 @@ ringleader stores **no API keys or secrets**. `rl config set backend <claude|cod
 pins a choice. For a direct API backend instead of an agent CLI, install the extra
 (`pip install ringleader[api]`, which pulls in the `llm` library — key managed by `llm`,
 not ringleader) and `rl config set backend api`. When no backend is available, `enrich`
-is a no-op and the `session-sync` skill remains the way to classify.
+is a no-op and classifying sessions by hand — the `triage`/`cleanup` skill flow's
+per-session `[SELECT]` step — remains the way to do it.
 
 ## Sources
 
@@ -137,7 +162,8 @@ name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
 Then `cd <project> && claude --resume`. **The thread's registry record does not come back.**
 Archiving pops it, so the session returns as a brand-new unclassified, unnamed thread — its
 name, `whatItIs`, decision, tags, `harvestPath` and reviewed/classified markers are gone.
-Re-run the `session-sync` and `session-name` skills to rebuild them. Both `archive/` and
+Re-run the `triage` or `cleanup` skill (which classifies and names sessions as part of its
+flow) to rebuild them. Both `archive/` and
 `registry.json` live under `~/.local/share/ringleader/`, outside this repo, so none of
 this touches tracked files.
 

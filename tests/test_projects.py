@@ -239,6 +239,36 @@ def test_project_summary_all_snoozed_project_disappears():
     assert len(stats) == 1 and stats[0].total == 1 and stats[0].snoozed == 1
 
 
+def test_project_summary_auto_wakes_after_snooze_until():
+    reg = _reg(
+        [
+            dict(
+                _t("a", git_key="k1", git_label="repo1"),
+                snoozedAt="2026-06-01T00:00:00+00:00",
+                snoozedUntil="2026-06-05T00:00:00+00:00",  # expired
+            ),
+        ]
+    )
+    stats = project_summary(reg, "2026-06-10T00:00:00+00:00")
+    assert len(stats) == 1
+    assert stats[0].total == 1 and stats[0].snoozed == 0  # auto-woken, counted as visible
+
+
+def test_project_summary_stays_hidden_before_snooze_until():
+    reg = _reg(
+        [
+            dict(
+                _t("a", git_key="k1", git_label="repo1"),
+                snoozedAt="2026-06-01T00:00:00+00:00",
+                snoozedUntil="2026-06-20T00:00:00+00:00",  # not yet expired
+            ),
+        ]
+    )
+    assert project_summary(reg, "2026-06-10T00:00:00+00:00") == []  # still snoozed, hidden
+    stats = project_summary(reg, "2026-06-10T00:00:00+00:00", include_snoozed=True)
+    assert len(stats) == 1 and stats[0].snoozed == 1
+
+
 def test_project_summary_snoozed_does_not_flag_attention():
     reg = _reg(
         [

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from . import overview
 
@@ -42,7 +43,11 @@ class ProjectStat:
     mem_cleaned_at: str | None  # ISO of the last memory-triage run, or None
 
 
-def project_summary(reg: dict, include_snoozed: bool = False) -> list[ProjectStat]:
+def project_summary(
+    reg: dict, now_iso: str | None = None, include_snoozed: bool = False
+) -> list[ProjectStat]:
+    if now_iso is None:
+        now_iso = datetime.now(UTC).isoformat()
     cleaned = reg.get("projectsCleanedAt", {})
     mem_cleaned = reg.get("memoryProjectsCleanedAt", {})
     mem_counts: dict[str, int] = {}
@@ -51,7 +56,7 @@ def project_summary(reg: dict, include_snoozed: bool = False) -> list[ProjectSta
         mem_counts[k] = mem_counts.get(k, 0) + 1
     groups: dict[str, dict] = {}
     for t in reg["threads"]:
-        snoozed = bool(t.get("snoozedAt"))
+        snoozed = overview.snooze_active(t, now_iso)
         if snoozed and not include_snoozed:
             continue  # hidden from the default view
         key = overview.group_key(t)

@@ -77,6 +77,13 @@ def cmd_triage(argv: list[str]) -> int:
         action="store_true",
         help="print the triage inbox as JSON instead of text; honors -u/--unclassified",
     )
+    ap.add_argument(
+        "--recent",
+        type=int,
+        default=None,
+        metavar="DAYS",
+        help="only sessions active within the last DAYS",
+    )
     args = ap.parse_args(argv)
 
     now = _now()
@@ -90,6 +97,7 @@ def cmd_triage(argv: list[str]) -> int:
     if args.source:
         wanted = set(args.source)
         threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
+    threads = overview.filter_recent(threads, now, args.recent)
     if args.json:
         print(
             json.dumps(
