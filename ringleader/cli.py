@@ -6,9 +6,9 @@ from . import commands
 
 TABLE = commands.TABLE
 
-_FLAT = ("overview", "triage", "prune", "doctor", "config")
+_FLAT = ("overview", "triage", "prune", "doctor", "harvests", "config")
 _GROUPS = ("session", "mem", "data")
-_RESERVED = {"session complete"}
+_RESERVED = set()
 
 
 def _leaf_names(node, group: str = "") -> str:

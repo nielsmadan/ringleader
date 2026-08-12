@@ -40,7 +40,9 @@ def test_help_lists_commands(capsys):
         (["data", "export"], commands.export.cmd_export),
         (["data", "tokens"], commands.tokens.cmd_tokens),
         (["data", "migrate"], commands.migrate.cmd_migrate),
+        (["harvests"], commands.harvests.cmd_harvests),
         (["config"], commands.config.cmd_config),
+        (["session", "complete"], commands.complete.cmd_complete),
     ],
 )
 def test_new_paths_resolve(path, expected):
@@ -63,27 +65,11 @@ def test_unknown_subcommand_returns_2(capsys):
     assert "bogus" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("path", [["session", "complete"]])
-def test_reserved_verbs_return_2(path, capsys):
-    rc = main(path)
-    assert rc == 2
-    assert "not yet implemented" in capsys.readouterr().err
-
-
 def test_help_lists_groups(capsys):
     rc = main(["--help"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "session" in out and "mem" in out and "data" in out
-
-
-def test_help_marks_reserved_verbs_coming_soon(capsys):
-    rc = main(["--help"])
-    assert rc == 0
-    out = capsys.readouterr().out
-    session_line = next(line for line in out.splitlines() if line.strip().startswith("session:"))
-    assert "enrich" in session_line
-    assert "(coming soon)" in session_line
 
 
 @pytest.mark.parametrize(

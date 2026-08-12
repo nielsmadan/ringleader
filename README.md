@@ -46,7 +46,7 @@ See `plugin/SMOKE.md` for the manual checklist used to exercise the skills end t
 
 ## Everyday
 
-The three front-door commands, most useful first.
+The front-door commands, most useful first.
 
 ### `rl overview [<selector>] [-s] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
 
@@ -85,6 +85,15 @@ For the memory-review inbox instead of the session inbox, use `rl mem triage`
 Deletes tiny + stale sessions. Preview by default; pass `--delete` to
 actually delete. `--project` scopes the prune to one repo/dir selector.
 
+### `rl harvests [--json]`
+
+Lists the durable knowledge harvested out of completed sessions (`rl session
+harvest`/`rl session complete`) — folder path, repo url, and content for
+each. `--json` prints the full list (including `content`) as JSON instead of
+text. Harvests are stored as markdown files under `state_dir()/harvests/`
+(`~/.local/share/ringleader/harvests/` by default); `rl harvests` is the
+inbox the `plugin/` skills read from to fold that knowledge into a repo's docs.
+
 ## Plumbing
 
 Mostly invoked by the `plugin/` skills (`overview`, `init`, `triage`, `cleanup`, plus the
@@ -100,7 +109,8 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to classifying by hand in the `triage`/`cleanup` skill flow. No-op if no model is configured. |
 | `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
 | `rl session delete <id>` | Delete one session (files + tombstone). |
-| `rl session complete` | *(coming soon)* — reserved. |
+| `rl session harvest <id> [--dry-run]` | Distill a finished session into a durable markdown harvest (summary/gotchas/decisions/whatChanged) with a configured LLM, store it, and mark the session harvested. `--dry-run` prints the markdown instead of writing it. No-op if no model is configured. |
+| `rl session complete <id>` | Harvest, then archive — the tool-native "I'm done with this session" verb. Does not archive if the harvest was a no-op (no model configured). |
 | `rl session snooze <id>` | Park a session (hide from default views). |
 | `rl session wake <id>` | Un-snooze a session. |
 | `rl session name [--project <sel>] [--dry-run]` | Apply/refresh session names. |

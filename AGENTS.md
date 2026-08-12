@@ -45,8 +45,11 @@ pruning them before the GC clock deletes them.
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
+rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
 rl session enrich                   # classify pending sessions via an LLM (vs. by hand in the triage/cleanup skill)
+rl session harvest <id> [--dry-run] # distill a finished session into a harvest via an LLM
+rl session complete <id>            # harvest, then archive (no-op archive if harvest didn't run)
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
 rl data <sub>                       # export, tokens, migrate
 rl config                           # select the LLM backend for enrich (stores no secrets)

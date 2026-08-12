@@ -6,11 +6,13 @@ from ..paths import default_registry as default_registry
 from . import (
     archive,
     cleaned,
+    complete,
     config,
     delete,
     doctor,
     enrich,
     export,
+    harvest,
     mark_harvested,
     mark_mem_reviewed,
     mark_reviewed,
@@ -28,6 +30,7 @@ from . import (
     triage,
     wake,
 )
+from . import harvests as harvests_cmd
 
 
 def _reserved(label):
@@ -42,9 +45,10 @@ _SESSION = {
     "refresh": sync.cmd_refresh,
     "set": sync.cmd_set,
     "enrich": enrich.cmd_enrich,
+    "harvest": harvest.cmd_harvest,
     "archive": archive.cmd_archive,
     "delete": delete.cmd_delete,
-    "complete": _reserved("session complete"),
+    "complete": complete.cmd_complete,
     "snooze": snooze.cmd_snooze,
     "wake": wake.cmd_wake,
     "name": name.cmd_name,
@@ -77,6 +81,7 @@ TABLE = {
     "triage": triage.cmd_triage,
     "prune": prune.cmd_prune,
     "doctor": doctor.cmd_doctor,
+    "harvests": harvests_cmd.cmd_harvests,
     # namespaces
     "session": _SESSION,
     "mem": _MEM,

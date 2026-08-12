@@ -40,4 +40,18 @@ def render_conversation(path) -> str:
                 tools = [n for n in tools if n]
                 if tools:
                     out.append(f"_(tools: {', '.join(tools)})_\n")
+            elif t == "response_item":
+                p = o.get("payload", {})
+                if p.get("type") == "message":
+                    role = p.get("role")
+                    content = p.get("content")
+                    txt = (
+                        " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
+                        if isinstance(content, list)
+                        else ""
+                    )
+                    if txt and role == "user":
+                        out.append(f"## USER\n\n{txt}\n")
+                    elif txt and role == "assistant":
+                        out.append(f"## ASSISTANT\n\n{txt}\n")
     return "\n".join(out)

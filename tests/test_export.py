@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from ringleader import export
 from ringleader.export import render_conversation
 
 
@@ -49,3 +50,68 @@ def test_render_tolerates_garbage_and_empty(tmp_path):
     )
     out = render_conversation(f)
     assert "hi" in out
+
+
+def test_render_conversation_handles_codex(tmp_path):
+    f = tmp_path / "rollout.jsonl"
+    f.write_text(
+        "\n".join(
+            json.dumps(x)
+            for x in [
+                {"type": "session_meta", "payload": {"session_id": "s", "cwd": "/p"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "do the thing"}],
+                    },
+                },
+                {"type": "response_item", "payload": {"type": "function_call", "name": "shell"}},
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "done the thing"}],
+                    },
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out = export.render_conversation(f)
+    assert "## USER" in out and "do the thing" in out
+    assert "## ASSISTANT" in out and "done the thing" in out
+
+
+def test_render_conversation_codex_null_content_does_not_crash(tmp_path):
+    f = tmp_path / "rollout.jsonl"
+    f.write_text(
+        "\n".join(
+            json.dumps(x)
+            for x in [
+                {
+                    "type": "response_item",
+                    "payload": {"type": "message", "role": "user", "content": None},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {"type": "message", "role": "assistant"},
+                },
+                {
+                    "type": "response_item",
+                    "payload": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "still works"}],
+                    },
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    out = export.render_conversation(f)
+    assert "## USER" in out and "still works" in out
