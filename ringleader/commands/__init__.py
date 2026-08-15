@@ -13,6 +13,7 @@ from . import (
     enrich,
     export,
     harvest,
+    inbox,
     mark_harvested,
     mark_mem_reviewed,
     mark_reviewed,
@@ -91,6 +92,7 @@ TABLE = {
     "roundup": roundup.cmd_roundup,
     "doctor": doctor.cmd_doctor,
     "harvests": harvests_cmd.cmd_harvests,
+    "inbox": inbox.cmd_inbox,
     # namespaces
     "session": _SESSION,
     "mem": _MEM,

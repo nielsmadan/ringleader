@@ -56,6 +56,41 @@ the skills end to end.
 
 The front-door commands, most useful first.
 
+### `rl inbox [--registry <path>]`
+
+A terminal UI (inbox-zero flow) for blitzing through dormant sessions. Needs the
+optional `[tui]` extra (`pip install ringleader[tui]`); without it, prints an install
+hint and exits non-zero.
+
+On entry, if a roundup hasn't run within `roundup_stale_hours` (config, default 8) —
+or never — it offers to run `rl roundup` first; on **y** it runs on a background
+worker and fires a desktop notification when done, then drops you into the inbox.
+
+Three tabs, cycled with `tab`/`shift+tab`: **inbox** → **selected** → **harvesting**.
+
+- **inbox** — undecided live sessions, one row per session (`project: description`).
+  `j`/`k` move the cursor. `h` harvests (distills) the session — an empty digest
+  archives it immediately, a non-empty digest moves it to **harvesting**. `d` stages
+  a delete, applied on exit; `u` undoes the last staged delete. `s` snoozes for a
+  fuzzy duration (`2h`, `3d`, `2w`, `1mo`, `tomorrow`, `next monday`, or a bare
+  integer = days). `enter` selects the session for today, moving it to **selected**.
+  `;` opens a detail view (project, status, whatItIs, last prompt, git branch,
+  condensed transcript) — `h` returns to the list.
+- **selected** — sessions picked for today; `u`/`enter` un-selects (back to **inbox**).
+- **harvesting** — sessions with an un-integrated digest (harvested but not yet
+  archived), shown with a preview of their digest; `a` marks it integrated and
+  archives it.
+
+### `rl roundup [--yes] [--registry <path>]`
+
+A combined maintenance verb: **refresh** (scan + reconcile), **prune** (delete tiny +
+stale sessions), then **enrich** (LLM-classify the newly-pending sessions), then
+records `lastRoundupAt`. Unlike `rl prune`, a bare `rl roundup` deletes rather than
+previews. `rl inbox` runs this automatically on entry when stale; it's also a
+standalone command. `--yes` is accepted (the inbox passes it after its own
+confirm prompt) but is currently a no-op — `rl roundup` itself never prompts. If no
+model is configured, the enrich step is a no-op and refresh + prune still run.
+
 ### `rl overview [<selector>] [-s] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
 
 The view. Auto-refreshes the registry (a disk scan) before rendering, unless

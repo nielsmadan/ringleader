@@ -38,7 +38,8 @@ repo/memory-layer integration of harvests.
 - **Conditional archive on harvest:** if a harvest yields **nothing durable** (empty
   summary + no gotchas/decisions/whatChanged), the session is archived immediately;
   otherwise it stays live in the harvesting tab, pending integration.
-- **Delete is staged with undo**, applied on exit — the one destructive key is
+- **Delete is staged with undo**, applied on exit with a printed summary (no interactive
+  confirm — the staging + undo is the fat-finger safety) — the one destructive key is
   fat-finger-safe in a fast `j`/`k` flow. Harvest/snooze/select apply immediately
   (snooze and select are reversible; harvest runs live).
 
@@ -80,8 +81,9 @@ run), show a modal: *"Sessions may be stale — refresh, prune & enrich now? [y/
     the *harvesting* tab. Reuses `harvest` + the conditional-archive logic. No model
     configured → a toast telling the user to `rl config`.
   - `d` — **stage delete**: the row is removed from the inbox and queued; `u` un-stages the
-    most recent. Actual `registry` + file deletion is applied **on exit** with a
-    *"deleting N session(s)"* confirm.
+    most recent. Actual `registry` + file deletion is applied **on exit**, printing a
+    *"deleting N session(s)"* summary — no interactive confirm (the staging + `u` undo
+    already provides the fat-finger safety).
   - `s` — **snooze**: a prompt input; the user types a fuzzy duration (§4); on submit the
     session is snoozed (`snooze_thread` with the parsed `until`) and leaves the list.
   - `enter` — **select for the day**: set `selectedForDay = today`, move to the *selected*

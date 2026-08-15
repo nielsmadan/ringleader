@@ -46,6 +46,8 @@ pruning them before the GC clock deletes them.
 ## Commands
 
 ```sh
+rl inbox                            # TUI (needs [tui] extra) to blitz dormant sessions inbox-zero style
+rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot; rl inbox runs it when stale
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions

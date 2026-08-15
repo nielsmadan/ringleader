@@ -14,12 +14,19 @@ authors = [{ name = "Niels Madan" }]
 
 [project.optional-dependencies]
 api = ["llm"]
+tui = ["textual"]
 
 [project.scripts]
 rl = "ringleader.cli:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "mypy>=1.11"]
+dev = [
+    "pytest>=8",
+    "pytest-cov>=5",
+    "ruff>=0.6",
+    "mypy>=1.11",
+    "pytest-asyncio>=1.4.0",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["ringleader"]
@@ -32,6 +39,7 @@ testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-q"
 pythonpath = ["."]
+asyncio_mode = "auto"
 
 [tool.coverage.run]
 source = ["ringleader"]

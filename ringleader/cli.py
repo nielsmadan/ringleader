@@ -6,7 +6,7 @@ from . import commands
 
 TABLE = commands.TABLE
 
-_FLAT = ("overview", "triage", "prune", "roundup", "doctor", "harvests", "config")
+_FLAT = ("overview", "triage", "prune", "roundup", "doctor", "harvests", "config", "inbox")
 _GROUPS = ("session", "mem", "data")
 _RESERVED = set()
 
