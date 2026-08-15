@@ -1,3 +1,5 @@
+import os
+
 from ringleader.commands import skills
 
 
@@ -101,3 +103,41 @@ def test_update_removes_stale_ringleader_link(tmp_path, monkeypatch):
     assert skills.cmd_update(["--yes"]) == 0
     assert not stale.exists()  # removed (ours, not in bundled set)
     assert (home / ".claude" / "skills" / "ringleader-triage").is_symlink()  # kept
+
+
+def test_resolved_shows_symlink_target(tmp_path):
+    real = (tmp_path / "store").resolve()
+    real.mkdir()
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    out = skills._resolved(link)
+    assert "->" in out and str(real) in out
+    assert "->" not in skills._resolved(real)
+
+
+def test_install_reports_permission_failure_gracefully(tmp_path, monkeypatch, capsys):
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skdir = home / ".claude" / "skills"
+    skdir.mkdir()
+    os.chmod(skdir, 0o500)  # read+execute, no write → symlink creation fails
+    try:
+        rc = skills.cmd_install(["--yes"])
+    finally:
+        os.chmod(skdir, 0o700)
+    assert rc == 1  # non-zero when a link fails
+    assert "could not link" in capsys.readouterr().err
+
+
+def test_uninstall_reports_permission_failure_gracefully(tmp_path, monkeypatch, capsys):
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skills.cmd_install(["--yes"])
+    skdir = home / ".claude" / "skills"
+    os.chmod(skdir, 0o500)  # can't unlink entries in a non-writable dir
+    try:
+        rc = skills.cmd_uninstall(["--yes"])
+    finally:
+        os.chmod(skdir, 0o700)
+    assert rc == 1
+    assert "could not remove" in capsys.readouterr().err

@@ -38,6 +38,13 @@ def _unique_dirs(targets: list[tuple[str, Path]]) -> list[Path]:
     return out
 
 
+def _resolved(d: Path) -> str:
+    """Show a target dir, plus its real path when it (or a parent) is a symlink — so
+    installing through e.g. a symlinked ``~/.claude/skills`` is never a surprise."""
+    real = d.resolve()
+    return f"{d} -> {real}" if real != d else f"{d}"
+
+
 def _owned(link: Path) -> bool:
     """A symlink this tool manages: name starts with ``ringleader-`` and its target
     (even if the target no longer exists) lies inside the bundled skills dir."""
@@ -53,7 +60,7 @@ def _owned(link: Path) -> bool:
 def _confirm(targets: list[tuple[str, Path]], skills: list[Path], yes: bool) -> bool:
     print("Will link these skills:")
     for label, d in targets:
-        print(f"  {label}: {d}")
+        print(f"  {label}: {_resolved(d)}")
     for s in skills:
         print(f"  - {s.name}")
     if yes:
@@ -78,21 +85,31 @@ def cmd_install(argv: list[str]) -> int:
         print("aborted")
         return 0
     created = 0
+    failed = 0
     for d in _unique_dirs(targets):
-        d.mkdir(parents=True, exist_ok=True)
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"skip {d}: {e}", file=sys.stderr)
+            failed += 1
+            continue
         for s in bundled:
             link = d / s.name
-            if link.is_symlink():
-                if link.resolve() == s.resolve():
+            try:
+                if link.is_symlink():
+                    if link.resolve() == s.resolve():
+                        continue
+                    link.unlink()
+                elif link.exists():
+                    print(f"skip {link}: a non-symlink already exists there", file=sys.stderr)
                     continue
-                link.unlink()
-            elif link.exists():
-                print(f"skip {link}: a non-symlink already exists there", file=sys.stderr)
-                continue
-            link.symlink_to(s)
-            created += 1
-    print(f"linked {created} skill(s)")
-    return 0
+                link.symlink_to(s)
+                created += 1
+            except OSError as e:
+                print(f"could not link {link}: {e}", file=sys.stderr)
+                failed += 1
+    print(f"linked {created} skill(s)" + (f", {failed} failed" if failed else ""))
+    return 1 if failed else 0
 
 
 def _managed_links(d: Path):
@@ -119,10 +136,17 @@ def cmd_uninstall(argv: list[str]) -> int:
     if not args.yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
         print("aborted")
         return 0
+    removed = 0
+    failed = 0
     for v in victims:
-        v.unlink()
-    print(f"removed {len(victims)} link(s)")
-    return 0
+        try:
+            v.unlink()
+            removed += 1
+        except OSError as e:
+            print(f"could not remove {v}: {e}", file=sys.stderr)
+            failed += 1
+    print(f"removed {removed} link(s)" + (f", {failed} failed" if failed else ""))
+    return 1 if failed else 0
 
 
 def cmd_update(argv: list[str]) -> int:
@@ -133,6 +157,7 @@ def cmd_update(argv: list[str]) -> int:
     bundled = {s.name for s in _bundled_skills()}
     dirs = _unique_dirs(_install_dirs(home))
     stale = [link for d in dirs for link in _managed_links(d) if link.name not in bundled]
+    stale_failed = 0
     if stale:
         print("Will remove stale links:")
         for v in stale:
@@ -141,9 +166,14 @@ def cmd_update(argv: list[str]) -> int:
             print("aborted")
             return 0
         for v in stale:
-            v.unlink()
+            try:
+                v.unlink()
+            except OSError as e:
+                print(f"could not remove {v}: {e}", file=sys.stderr)
+                stale_failed += 1
     # add/repair the current set (reuse install's linking with the same confirm)
-    return cmd_install(["--yes"] if args.yes else [])
+    rc = cmd_install(["--yes"] if args.yes else [])
+    return 1 if (stale_failed or rc) else 0
 
 
 def cmd_status(argv: list[str]) -> int:
@@ -155,7 +185,7 @@ def cmd_status(argv: list[str]) -> int:
         print("no supported agents detected")
         return 0
     for d in _unique_dirs(targets):
-        print(f"{d}:")
+        print(f"{_resolved(d)}:")
         for s in bundled:
             link = d / s.name
             if link.is_symlink() and link.resolve() == s.resolve():
