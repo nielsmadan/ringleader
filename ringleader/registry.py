@@ -102,6 +102,7 @@ def _new_thread(md: dict) -> dict:
         "tags": [],
         "locationPinned": False,
         "snoozedAt": None,
+        "selectedForDay": None,
     }
 
 
@@ -219,6 +220,26 @@ def mark_reviewed(reg: dict, session_id: str, mtime: str | None = None) -> dict:
             t["reviewedAtMtime"] = mtime if mtime is not None else t["mtime"]
             return reg
     raise KeyError(session_id)
+
+
+def select_for_day(reg: dict, session_id: str, day: str) -> dict:
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            t["selectedForDay"] = day
+            return reg
+    raise KeyError(session_id)
+
+
+def clear_selected(reg: dict, session_id: str) -> dict:
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            t["selectedForDay"] = None
+            return reg
+    raise KeyError(session_id)
+
+
+def selected_today(reg: dict, today: str) -> list[dict]:
+    return [t for t in reg["threads"] if t.get("selectedForDay") == today]
 
 
 def archive_session(
