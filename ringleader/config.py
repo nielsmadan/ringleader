@@ -12,6 +12,7 @@ class Config:
     backend: str | None = None
     model: str | None = None
     api_provider: str = "anthropic"
+    roundup_stale_hours: int = 8
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -23,6 +24,7 @@ def load_config(path: Path | None = None) -> Config:
         backend=data.get("backend"),
         model=data.get("model"),
         api_provider=data.get("api_provider", "anthropic"),
+        roundup_stale_hours=data.get("roundup_stale_hours", 8),
     )
 
 

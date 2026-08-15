@@ -24,6 +24,7 @@ from . import (
     overview,
     prune,
     relocate,
+    roundup,
     skills,
     snooze,
     sync,
@@ -87,6 +88,7 @@ TABLE = {
     "overview": overview.cmd_overview,
     "triage": triage.cmd_triage,
     "prune": prune.cmd_prune,
+    "roundup": roundup.cmd_roundup,
     "doctor": doctor.cmd_doctor,
     "harvests": harvests_cmd.cmd_harvests,
     # namespaces

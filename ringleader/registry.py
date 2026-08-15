@@ -37,6 +37,7 @@ def empty_registry() -> dict:
     return {
         "version": REGISTRY_VERSION,
         "lastScan": None,
+        "lastRoundupAt": None,
         "threads": [],
         "tombstones": [],
         "projectsCleanedAt": {},
@@ -52,6 +53,7 @@ def load_registry(path) -> dict:
     data = json.loads(p.read_text(encoding="utf-8"))
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("lastScan", None)
+    data.setdefault("lastRoundupAt", None)
     data.setdefault("threads", [])
     data.setdefault("tombstones", [])
     data.setdefault("projectsCleanedAt", {})
@@ -149,6 +151,7 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
     return {
         "version": REGISTRY_VERSION,
         "lastScan": now_iso,
+        "lastRoundupAt": reg.get("lastRoundupAt"),
         "threads": threads,
         "tombstones": tombstones,
         "projectsCleanedAt": dict(reg.get("projectsCleanedAt", {})),

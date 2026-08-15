@@ -77,6 +77,13 @@ def test_reconcile_tombstones_vanished_sessions():
     assert ts["deletedAt"] == "2026-06-08T00:00:00+00:00"
 
 
+def test_reconcile_preserves_last_roundup_at():
+    reg = empty_registry()
+    reg["lastRoundupAt"] = "2026-06-01T00:00:00+00:00"
+    reg2 = reconcile(reg, [], NOW)
+    assert reg2["lastRoundupAt"] == "2026-06-01T00:00:00+00:00"
+
+
 def test_reconcile_preserves_git_project_when_cwd_vanishes():
     reg = reconcile(
         empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00", git_label="proj")], NOW

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from . import overview
+import shutil
+import sys
+from pathlib import Path
+
+from . import overview, registry
 
 DEFAULT_OLDER_THAN_DAYS = 7
 DEFAULT_MAX_TURNS = 12
@@ -26,3 +30,20 @@ def prune_candidates(
         if small:
             out.append(t)
     return out
+
+
+def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
+    deleted = skipped = 0
+    for t in candidates:
+        f = Path(t["file"])
+        sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+        try:
+            f.unlink(missing_ok=True)
+            shutil.rmtree(sidecar, ignore_errors=True)
+        except OSError as e:
+            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
+            skipped += 1
+            continue
+        registry.prune_session(reg, t["sessionId"], now_iso)
+        deleted += 1
+    return deleted

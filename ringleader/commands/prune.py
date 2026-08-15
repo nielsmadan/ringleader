@@ -1,10 +1,7 @@
 from __future__ import annotations
 
 import argparse
-import shutil
-import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .. import overview, projects, prune, registry
 from . import default_registry
@@ -86,19 +83,8 @@ def cmd_prune(argv: list[str]) -> int:
         print("aborted, nothing deleted")
         return 0
 
-    deleted = skipped = 0
-    for t in cands:
-        f = Path(t["file"])
-        sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
-        try:
-            f.unlink(missing_ok=True)
-            shutil.rmtree(sidecar, ignore_errors=True)
-        except OSError as e:
-            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
-            skipped += 1
-            continue
-        registry.prune_session(reg, t["sessionId"], now)
-        deleted += 1
+    deleted = prune.delete_sessions(reg, cands, now)
+    skipped = len(cands) - deleted
     registry.save_registry(args.registry, reg)
     print(f"deleted {deleted} sessions, skipped {skipped}")
     return 0

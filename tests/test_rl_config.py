@@ -55,7 +55,12 @@ def test_config_set_and_show_roundtrip(tmp_path):
     cfg_path = tmp_path / "ringleader" / "config.json"
     assert cfg_path.exists()
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
-    assert data == {"backend": "api", "model": None, "api_provider": "openai"}
+    assert data == {
+        "backend": "api",
+        "model": None,
+        "api_provider": "openai",
+        "roundup_stale_hours": 8,
+    }
 
 
 def test_config_set_model(tmp_path):
