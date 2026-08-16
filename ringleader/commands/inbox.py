@@ -15,9 +15,11 @@ def cmd_inbox(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     try:
-        import textual  # noqa: F401, PLC0415 -- optional [tui] extra, checked lazily
+        import textual  # noqa: F401, PLC0415 -- core dep; imported lazily to keep other commands fast
     except ImportError:
-        print("rl inbox needs `pip install ringleader[tui]`")
+        print(
+            "rl inbox needs Textual — reinstall ringleader (`uv tool install --force ringleader`)"
+        )
         return 2
 
     from ..inbox.app import InboxApp  # noqa: PLC0415 -- only importable once textual is present

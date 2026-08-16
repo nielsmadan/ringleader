@@ -3,6 +3,6 @@ def test_config_roundtrip(tmp_path):
 
     p = tmp_path / "config.json"
     assert load_config(p) == Config()  # defaults when absent
-    save_config(Config(backend="codex", model="gpt-x"), p)
+    save_config(Config(ai="codex", model="gpt-x"), p)
     got = load_config(p)
-    assert got.backend == "codex" and got.model == "gpt-x"
+    assert got.ai == "codex" and got.model == "gpt-x"

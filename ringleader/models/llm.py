@@ -7,16 +7,16 @@ from .base import ModelError
 
 
 @dataclass
-class ApiModel:
-    name: str = "api"
+class LlmModel:
+    name: str = "llm"
     provider: str = "anthropic"
     model: str | None = None
 
     def _llm(self):
         try:
-            import llm  # noqa: PLC0415 -- optional extra, only imported when the api backend is used
+            import llm  # noqa: PLC0415 -- ships regardless; imported only when the llm engine runs
         except ImportError as e:
-            raise ModelError("the api backend needs `pip install ringleader[api]`") from e
+            raise ModelError("the llm engine needs `pip install llm`") from e
         return llm
 
     def available(self) -> bool:
@@ -37,4 +37,4 @@ class ApiModel:
             resp = model.prompt(prompt, schema=schema)
             return json.loads(resp.text())
         except Exception as e:
-            raise ModelError(f"api backend failed: {e}") from e
+            raise ModelError(f"the llm engine failed: {e}") from e

@@ -5,7 +5,7 @@ import sys
 from ..config import load_config, save_config
 from ..models import active_model
 
-_VALID_BACKENDS = ("claude", "codex", "api")
+_VALID_ENGINES = ("claude", "codex", "llm")
 _SET_ARGC = 2
 
 
@@ -24,9 +24,9 @@ def cmd_config(argv: list[str]) -> int:
 
 def _show() -> int:
     cfg = load_config()
-    print(f"backend: {cfg.backend}")
+    print(f"ai: {cfg.ai}")
     print(f"model: {cfg.model}")
-    print(f"api.provider: {cfg.api_provider}")
+    print(f"llm.provider: {cfg.llm_provider}")
     model = active_model(cfg)
     if model is None:
         print("active model: none — no model configured/available")
@@ -41,19 +41,19 @@ def _set(args: list[str]) -> int:
         return 2
     key, value = args
     cfg = load_config()
-    if key == "backend":
-        if value not in _VALID_BACKENDS:
+    if key == "ai":
+        if value not in _VALID_ENGINES:
             print(
-                f"rl config set backend: invalid value '{value}' "
-                f"(must be one of {', '.join(_VALID_BACKENDS)})",
+                f"rl config set ai: invalid value '{value}' "
+                f"(must be one of {', '.join(_VALID_ENGINES)})",
                 file=sys.stderr,
             )
             return 2
-        cfg.backend = value
+        cfg.ai = value
     elif key == "model":
         cfg.model = value
-    elif key == "api.provider":
-        cfg.api_provider = value
+    elif key == "llm.provider":
+        cfg.llm_provider = value
     else:
         print(f"rl config set: unknown key '{key}'", file=sys.stderr)
         return 2

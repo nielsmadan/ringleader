@@ -9,9 +9,9 @@ from .paths import config_path
 
 @dataclass
 class Config:
-    backend: str | None = None
+    ai: str | None = None
     model: str | None = None
-    api_provider: str = "anthropic"
+    llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
 
 
@@ -20,10 +20,13 @@ def load_config(path: Path | None = None) -> Config:
     if not p.exists():
         return Config()
     data = json.loads(p.read_text(encoding="utf-8"))
+    ai = data.get("ai", data.get("backend"))  # back-compat: the key was once "backend"
+    if ai == "api":  # back-compat: the "api" engine was renamed to "llm"
+        ai = "llm"
     return Config(
-        backend=data.get("backend"),
+        ai=ai,
         model=data.get("model"),
-        api_provider=data.get("api_provider", "anthropic"),
+        llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
     )
 

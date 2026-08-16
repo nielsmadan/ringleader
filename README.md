@@ -58,9 +58,8 @@ The front-door commands, most useful first.
 
 ### `rl inbox [--registry <path>]`
 
-A terminal UI (inbox-zero flow) for blitzing through dormant sessions. Needs the
-optional `[tui]` extra (`pip install ringleader[tui]`); without it, prints an install
-hint and exits non-zero.
+A terminal UI (inbox-zero flow) for blitzing through dormant sessions. Built on
+Textual, which ships as a dependency — no extra to install.
 
 On entry, if a roundup hasn't run within `roundup_stale_hours` (config, default 8) —
 or never — it offers to run `rl roundup` first; on **y** it runs on a background
@@ -170,17 +169,18 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl data export <id> [--out <path>]` | Render a session to markdown. |
 | `rl data tokens` | Report token/size stats. |
 | `rl data migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
-| `rl config show` / `rl config set <key> <value>` | Select the LLM backend for `enrich` (`backend` = `claude`/`codex`/`api`, plus `model`, `api.provider`). Stores no secrets. |
+| `rl config show` / `rl config set <key> <value>` | Select the AI engine for `enrich` (`ai` = `claude`/`codex`/`llm`, plus `model`, `llm.provider`). Stores no secrets. |
 
-## LLM backend
+## AI engine
 
 `rl session enrich` classifies sessions by calling a model through a small `Model`
 seam (`ringleader/models/`). By default it **auto-picks the first installed agent CLI**
 (`claude`, then `codex`) and drives it one-shot, reusing that CLI's own auth — so
-ringleader stores **no API keys or secrets**. `rl config set backend <claude|codex|api>`
-pins a choice. For a direct API backend instead of an agent CLI, install the extra
-(`pip install ringleader[api]`, which pulls in the `llm` library — key managed by `llm`,
-not ringleader) and `rl config set backend api`. When no backend is available, `enrich`
+ringleader stores **no API keys or secrets**. `rl config set ai <claude|codex|llm>`
+pins a choice. The `llm` engine calls a model provider's API directly (via the
+[`llm`](https://llm.datasette.io/) library, using your own key) instead of an agent
+CLI — it is not a dependency, so `pip install llm` first; `rl config set ai llm` then
+reports the install hint if it's missing. When no engine is available, `enrich`
 is a no-op and classifying sessions by hand — the `triage`/`cleanup` skill flow's
 per-session `[SELECT]` step — remains the way to do it.
 

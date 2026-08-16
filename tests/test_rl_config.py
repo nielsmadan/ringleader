@@ -34,31 +34,31 @@ def test_config_show_defaults(tmp_path):
     r = _run("config", "show", env=env)
 
     assert r.returncode == 0, r.stderr
-    assert "backend: None" in r.stdout
-    assert "api.provider: anthropic" in r.stdout
+    assert "ai: None" in r.stdout
+    assert "llm.provider: anthropic" in r.stdout
 
 
 def test_config_set_and_show_roundtrip(tmp_path):
     env = _env(tmp_path)
 
-    r = _run("config", "set", "backend", "api", env=env)
+    r = _run("config", "set", "ai", "llm", env=env)
     assert r.returncode == 0, r.stderr
-    r = _run("config", "set", "api.provider", "openai", env=env)
+    r = _run("config", "set", "llm.provider", "openai", env=env)
     assert r.returncode == 0, r.stderr
 
     r = _run("config", "show", env=env)
 
     assert r.returncode == 0, r.stderr
-    assert "backend: api" in r.stdout
-    assert "api.provider: openai" in r.stdout
+    assert "ai: llm" in r.stdout
+    assert "llm.provider: openai" in r.stdout
 
     cfg_path = tmp_path / "ringleader" / "config.json"
     assert cfg_path.exists()
     data = json.loads(cfg_path.read_text(encoding="utf-8"))
     assert data == {
-        "backend": "api",
+        "ai": "llm",
         "model": None,
-        "api_provider": "openai",
+        "llm_provider": "openai",
         "roundup_stale_hours": 8,
     }
 
@@ -73,10 +73,10 @@ def test_config_set_model(tmp_path):
     assert "model: gpt-x" in r.stdout
 
 
-def test_config_set_invalid_backend_rejected(tmp_path):
+def test_config_set_invalid_engine_rejected(tmp_path):
     env = _env(tmp_path)
 
-    r = _run("config", "set", "backend", "bogus", env=env)
+    r = _run("config", "set", "ai", "bogus", env=env)
 
     assert r.returncode == 2
     assert "bogus" in r.stderr
@@ -93,12 +93,12 @@ def test_config_set_unknown_key_rejected(tmp_path):
     assert "nope" in r.stderr
 
 
-def test_config_show_reports_no_active_model_for_api_backend(tmp_path):
-    # `llm` is an optional extra (see pyproject.toml `api` group) and is not
-    # installed in the test env, so ApiModel.available() is reliably False —
-    # this exercises cmd_config's "no active model" branch deterministically.
+def test_config_show_reports_no_active_model_for_llm_engine(tmp_path):
+    # The `llm` library is not a dependency and is not installed in the test
+    # env, so LlmModel.available() is reliably False — this exercises
+    # cmd_config's "no active model" branch deterministically.
     env = _env(tmp_path)
-    r = _run("config", "set", "backend", "api", env=env)
+    r = _run("config", "set", "ai", "llm", env=env)
     assert r.returncode == 0, r.stderr
 
     r = _run("config", "show", env=env)

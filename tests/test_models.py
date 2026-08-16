@@ -4,10 +4,10 @@ from pathlib import Path
 
 import pytest
 from ringleader import models
-from ringleader.models.api import ApiModel
 from ringleader.models.base import Model, ModelError
 from ringleader.models.claude_cli import ClaudeCliModel
 from ringleader.models.codex_cli import CodexCliModel
+from ringleader.models.llm import LlmModel
 
 SCHEMA = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
 NESTED_SCHEMA = {
@@ -130,7 +130,7 @@ def test_active_model_autopicks_first_available_agent(monkeypatch):
     monkeypatch.setattr("ringleader.models.codex_cli.shutil.which", lambda n: "/bin/codex")
     from ringleader.config import Config
 
-    m = models.active_model(Config())  # no explicit backend
+    m = models.active_model(Config())  # no explicit engine
     assert m is not None and m.name == "codex"
 
 
@@ -142,27 +142,27 @@ def test_active_model_none_when_nothing_available(monkeypatch):
     assert models.active_model(Config()) is None
 
 
-def test_active_model_explicit_backend_unavailable_fails_closed(monkeypatch):
-    # An explicit backend that isn't available must return None, not silently
-    # fall back to auto-picking a different backend.
+def test_active_model_explicit_engine_unavailable_fails_closed(monkeypatch):
+    # An explicit engine that isn't available must return None, not silently
+    # fall back to auto-picking a different engine.
     monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: None)
     from ringleader.config import Config
 
-    assert models.active_model(Config(backend="claude")) is None
+    assert models.active_model(Config(ai="claude")) is None
 
 
-def test_api_missing_extra_is_unavailable_and_raises(monkeypatch):
+def test_llm_missing_library_is_unavailable_and_raises(monkeypatch):
     def raise_modelerror(self):
-        raise ModelError("the api backend needs `pip install ringleader[api]`")
+        raise ModelError("the llm engine needs `pip install llm`")
 
-    monkeypatch.setattr(ApiModel, "_llm", raise_modelerror)
-    m = ApiModel()
+    monkeypatch.setattr(LlmModel, "_llm", raise_modelerror)
+    m = LlmModel()
     assert m.available() is False
     with pytest.raises(ModelError):
         m.complete_json("p", SCHEMA)
 
 
-def test_api_complete_json_success(monkeypatch):
+def test_llm_complete_json_success(monkeypatch):
     captured = {}
 
     class FakeResponse:
@@ -183,18 +183,18 @@ def test_api_complete_json_success(monkeypatch):
             captured["model_name"] = name
             return FakeLlmModel()
 
-    monkeypatch.setattr(ApiModel, "_llm", lambda self: FakeLlm())
-    out = ApiModel().complete_json("classify this", SCHEMA)
+    monkeypatch.setattr(LlmModel, "_llm", lambda self: FakeLlm())
+    out = LlmModel().complete_json("classify this", SCHEMA)
     assert out == {"x": "hi"}
     assert captured["prompt"] == "classify this"
     assert captured["schema"] == SCHEMA
 
 
-def test_api_complete_json_wraps_provider_failure(monkeypatch):
+def test_llm_complete_json_wraps_provider_failure(monkeypatch):
     class FakeLlm:
         def get_model(self, name):
             raise RuntimeError("provider boom")
 
-    monkeypatch.setattr(ApiModel, "_llm", lambda self: FakeLlm())
+    monkeypatch.setattr(LlmModel, "_llm", lambda self: FakeLlm())
     with pytest.raises(ModelError):
-        ApiModel().complete_json("p", SCHEMA)
+        LlmModel().complete_json("p", SCHEMA)

@@ -46,7 +46,7 @@ pruning them before the GC clock deletes them.
 ## Commands
 
 ```sh
-rl inbox                            # TUI (needs [tui] extra) to blitz dormant sessions inbox-zero style
+rl inbox                            # TUI (Textual, shipped as a dep) to blitz dormant sessions inbox-zero style
 rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot; rl inbox runs it when stale
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
@@ -58,7 +58,7 @@ rl session harvest <id> [--dry-run] # distill a finished session into a harvest 
 rl session complete <id>            # harvest, then archive (no-op archive if harvest didn't run)
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
 rl data <sub>                       # export, tokens, migrate
-rl config                           # select the LLM backend for enrich (stores no secrets)
+rl config                           # select the AI engine for enrich (ai=claude/codex/llm; stores no secrets)
 just test                           # tests; pytest config lives in pyproject.toml now
 ```
 
