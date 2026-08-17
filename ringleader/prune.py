@@ -4,7 +4,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from . import overview, registry
+from . import overview, registry, scanner
 
 DEFAULT_OLDER_THAN_DAYS = 7
 DEFAULT_MAX_TURNS = 12
@@ -37,6 +37,13 @@ def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
     for t in candidates:
         f = Path(t["file"])
         sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+        try:
+            scanner.hide_from_picker(t)
+        except RuntimeError as e:
+            # Deleting anyway would strand a live entry in the agent's picker
+            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
+            skipped += 1
+            continue
         try:
             f.unlink(missing_ok=True)
             shutil.rmtree(sidecar, ignore_errors=True)

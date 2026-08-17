@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 
 from .gitinfo import resolve_git_project
-from .sources.base import NormalizedSession
+from .sources.base import NormalizedSession, PickerHidingSource
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
 
@@ -26,6 +26,19 @@ def active_sources() -> list:
 
 def source_by_name(name: str):
     return next((source for source in _new_sources() if source.name == name), None)
+
+
+def hide_from_picker(thread: dict) -> bool:
+    """Clear the agent's own resume-picker entry for a thread, for sources that
+    keep an index alongside the transcripts. Raises if the source has such an
+    index but cannot be updated — callers must not then move or delete the
+    transcript, or the picker is left pointing at a file that is gone."""
+    src = source_by_name(thread.get("source") or "claude-code")
+    if not (
+        src and "hides_from_picker" in src.capabilities and isinstance(src, PickerHidingSource)
+    ):
+        return False
+    return src.hide_from_picker(thread["sessionId"], thread["file"])
 
 
 def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:

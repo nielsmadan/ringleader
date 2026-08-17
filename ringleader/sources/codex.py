@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -13,6 +14,25 @@ from .base import NormalizedSession, RawRef, append_jsonl_line
 
 class CodexSessionIndexError(RuntimeError):
     pass
+
+
+class CodexStateError(RuntimeError):
+    pass
+
+
+def _state_db(codex_home: Path) -> Path | None:
+    """Newest `state_<n>.sqlite` in the Codex home. The suffix is a schema
+    version Codex bumps when it migrates, so pick the highest rather than
+    hardcoding one."""
+    best: tuple[int, Path] | None = None
+    for p in codex_home.glob("state_*.sqlite"):
+        try:
+            version = int(p.stem.removeprefix("state_"))
+        except ValueError:
+            continue
+        if best is None or version > best[0]:
+            best = (version, p)
+    return best[1] if best else None
 
 
 def default_codex_dir() -> Path:
@@ -84,13 +104,33 @@ def _meta(path: Path) -> dict:
     return {}
 
 
+def _thread_id(meta: dict, path: Path) -> str:
+    """The rollout's own thread id. `session_id` is the id of the *root* thread,
+    so for a subagent rollout it names the parent, not this file — keying on it
+    collapses a whole spawn tree onto one id. `id` is always this file's own, and
+    matches the UUID in the filename."""
+    return meta.get("id") or meta.get("session_id") or path.stem
+
+
+def _is_interactive(meta: dict) -> bool:
+    """Codex writes a rollout per thread: interactive sessions, the subagents they
+    spawn, and non-interactive `codex exec` runs alike. Only the first are sessions
+    a human owns and can resume, which is also what `codex resume` lists by default.
+    `source` is a dict for subagents; rollouts old enough to predate the field are
+    all interactive."""
+    source = meta.get("source")
+    return source is None or source == "cli"
+
+
 @dataclass
 class CodexSource:
     sessions_dir: Path = field(default_factory=default_codex_dir)
     session_index_file: Path | None = None
     tail_turns: int = 30
     name: str = "codex"
-    capabilities: frozenset[str] = field(default_factory=lambda: frozenset({"applies_names"}))
+    capabilities: frozenset[str] = field(
+        default_factory=lambda: frozenset({"applies_names", "hides_from_picker"})
+    )
     _names_by_id: dict[str, str | None] | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -111,7 +151,9 @@ class CodexSource:
         for p in sorted(self.sessions_dir.glob("**/*.jsonl")):
             try:
                 st = p.stat()
-            except OSError as e:
+                if not _is_interactive(_meta(p)):
+                    continue
+            except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
             yield RawRef(source=self.name, file=str(p), mtime=_iso_mtime(p), size_bytes=st.st_size)
@@ -119,7 +161,7 @@ class CodexSource:
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = Path(ref.file)
         meta = _meta(path)
-        session_id = meta.get("session_id") or path.stem
+        session_id = _thread_id(meta, path)
         _first, last, count = _message_stats(path)
         tail = last or ""
         return NormalizedSession(
@@ -162,8 +204,7 @@ class CodexSource:
     def apply_name(self, session_id: str, file_path: str, name: str) -> None:
         path = Path(file_path)
         path.stat()
-        actual_session_id = _meta(path).get("session_id")
-        if actual_session_id != session_id:
+        if _thread_id(_meta(path), path) != session_id:
             raise ValueError(f"session id mismatch in {file_path}")
         updated_at = datetime.now(UTC).isoformat().replace("+00:00", "Z")
         line = json.dumps(
@@ -172,3 +213,35 @@ class CodexSource:
         )
         append_jsonl_line(self.session_index_file, line)
         self._names_by_id = None
+
+    def hide_from_picker(self, session_id: str, file_path: str) -> bool:
+        """Set the thread's `archived` flag in Codex's state DB, which is what
+        `codex resume` filters on. Codex's own `archive` subcommand refuses once
+        the rollout file is gone, so this has to run before we move or delete it."""
+        db = _state_db(Path(self.sessions_dir).parent)
+        if db is None:
+            return False
+        try:
+            con = sqlite3.connect(db, timeout=5.0)
+        except sqlite3.Error as e:
+            raise CodexStateError(f"cannot open Codex state db {db}: {e}") from e
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(threads)")}
+            if not {"archived", "archived_at", "rollout_path"} <= columns:
+                raise CodexStateError(
+                    f"{db} has no archivable threads table — Codex's schema moved, "
+                    "so sessions cannot be cleared from its resume picker"
+                )
+            # rollout_path pins the update to this exact transcript: a stale or
+            # mis-derived id then archives nothing rather than some other thread.
+            cur = con.execute(
+                "UPDATE threads SET archived = 1, archived_at = ? "
+                "WHERE id = ? AND rollout_path = ? AND archived = 0",
+                (int(datetime.now(UTC).timestamp()), session_id, str(file_path)),
+            )
+            con.commit()
+            return cur.rowcount > 0
+        except sqlite3.Error as e:
+            raise CodexStateError(f"cannot update Codex state db {db}: {e}") from e
+        finally:
+            con.close()

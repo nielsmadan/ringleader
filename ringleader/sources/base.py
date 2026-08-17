@@ -66,3 +66,13 @@ class Source(Protocol):
 @runtime_checkable
 class NameApplyingSource(Source, Protocol):
     def apply_name(self, session_id: str, file_path: str, name: str) -> None: ...
+
+
+@runtime_checkable
+class PickerHidingSource(Source, Protocol):
+    """A source whose agent keeps its own index of sessions, separate from the
+    transcript files. Moving or deleting a transcript leaves such an index
+    listing a session that no longer exists, so those sources get a hook to
+    clear their entry first. Returns True when an entry was actually cleared."""
+
+    def hide_from_picker(self, session_id: str, file_path: str) -> bool: ...

@@ -7,7 +7,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import registry
+from .. import registry, scanner
 from ..paths import archive_root
 from . import default_registry
 
@@ -62,6 +62,8 @@ def archive_thread(
     sidecar_dest = dest_dir / sidecar.name
     if dest.exists() or sidecar_dest.exists():
         raise RuntimeError(f"{dest_dir} already has {src.name} or its sidecar, aborting")
+
+    scanner.hide_from_picker(thread)
 
     if src.exists():
         shutil.move(str(src), str(dest))
