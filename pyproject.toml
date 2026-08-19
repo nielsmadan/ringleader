@@ -19,7 +19,7 @@ rl = "ringleader.cli:main"
 dev = [
     "pytest>=8",
     "pytest-cov>=5",
-    "ruff>=0.6",
+    "ruff>=0.16.3",
     "mypy>=1.11",
     "pytest-asyncio>=1.4.0",
 ]
