@@ -63,7 +63,25 @@ rl skills uninstall   # remove the symlinks this tool created
 ```
 
 `install` and `uninstall` ask for confirmation before touching anything; pass `--yes` to
-skip the prompt. See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
+skip the prompt. ### Testing the skills from a zero state
+
+`rl` takes every input from the environment, so a throwaway world needs no support from
+the tool:
+
+```sh
+just sandbox              # seeds ~20 claude + 8 codex sessions, empty registry
+```
+
+It prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
+`CODEX_SESSIONS_DIR`, `RINGLEADER_CLAUDE_SETTINGS`). Export them and launch an agent from
+that shell — every `rl` call a skill makes lands in `.sandbox/`, and your real sessions,
+registry and settings are untouched. Re-run `just sandbox` to reset to zero.
+
+Seeded transcripts are copies with **restamped mtimes spread over 30 days**, because
+recency drives triage, prune and `--recent`; without that, archived transcripts all look
+months old and the bounded first pass would be empty.
+
+See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
 the skills end to end.
 
 ## Everyday

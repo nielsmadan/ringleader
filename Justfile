@@ -45,6 +45,10 @@ refresh-local:
 reset-local:
     @uv tool uninstall ringleader
 
+# Build a throwaway world for testing the skills from zero state (re-run to reset).
+sandbox *ARGS:
+    @uv run python scripts/sandbox.py {{ARGS}}
+
 clean:
     @rm -rf .pytest_cache .ruff_cache .coverage htmlcov
 

@@ -234,6 +234,19 @@ one individually (e.g. per session: delete / finished / open).
 then ask the user to reply with the numbers or letters mapped to each choice (e.g.
 `1d, 2f, 3o`).
 
+**Phrase every option as what will happen, never as a command name.** The user has not
+read this playbook and does not know ringleader's vocabulary — "enrich?", "prune?",
+"harvest?" are jargon to them. Say what the option does, to how many sessions, and
+whether it is reversible: *"Have an LLM read the 111 unclassified sessions and give each
+a name and status?"* rather than *"Run enrich?"*. Two specific duties:
+
+- **Say when something costs money or calls a model.** Anything routed through
+  `rl session enrich` / `rl session harvest` / `rl session complete` spends an API call
+  per session; the user should learn that before choosing, not from the bill.
+- **Say when something deletes.** Name the count and whether it can be undone —
+  `rl prune --delete` and `rl session delete` remove transcripts for good, while
+  `rl session archive` only moves them and `rl session unarchive` puts them back.
+
 ### `[FAN-OUT]`
 
 **What it does:** run several independent, read-only extraction tasks concurrently — for
