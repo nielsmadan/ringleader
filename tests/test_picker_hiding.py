@@ -1,8 +1,10 @@
+import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 from ringleader import prune, scanner
+from ringleader.commands import delete
 from ringleader.sources.codex import CodexSource, CodexStateError
 
 NOW = "2026-08-16T00:00:00+00:00"
@@ -136,6 +138,18 @@ def test_prune_clears_the_picker_entry_before_deleting_the_transcript(tmp_path, 
     assert _archived(home, "sess-1")[0] == 1
 
 
+def test_session_delete_clears_the_picker_entry_too(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    reg_path = tmp_path / "registry.json"
+    reg_path.write_text(json.dumps(_reg([_thread("sess-1", str(rollout))])), encoding="utf-8")
+
+    assert delete.cmd_delete(["sess-1", "--registry", str(reg_path)]) == 0
+
+    assert not rollout.exists()
+    assert _archived(home, "sess-1")[0] == 1
+
+
 def test_prune_keeps_the_transcript_when_the_picker_entry_cannot_be_cleared(tmp_path, monkeypatch):
     home = _codex_home(
         tmp_path,
@@ -149,5 +163,5 @@ def test_prune_keeps_the_transcript_when_the_picker_entry_cannot_be_cleared(tmp_
     assert prune.delete_sessions(reg, list(reg["threads"]), NOW) == 0
 
     assert rollout.exists()
-    assert reg["tombstones"] == []
+    assert reg.get("deleted", []) == []
     assert [t["sessionId"] for t in reg["threads"]] == ["sess-1"]

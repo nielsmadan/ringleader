@@ -6,7 +6,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import registry
+from .. import registry, scanner
 from . import default_registry
 
 
@@ -24,6 +24,13 @@ def cmd_delete(argv: list[str]) -> int:
     t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
     if t is None:
         print(f"rl-delete: unknown session {args.id}", file=sys.stderr)
+        return 1
+
+    try:
+        scanner.hide_from_picker(t)
+    except RuntimeError as e:
+        # deleting anyway would strand a live entry in the agent's picker
+        print(f"rl-delete: {e}", file=sys.stderr)
         return 1
 
     f = Path(t["file"])
