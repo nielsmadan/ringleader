@@ -65,7 +65,9 @@ def load_registry(path) -> dict:
 
 
 def save_registry(path, reg) -> None:
-    Path(path).write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8")
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def _as_dict(meta) -> dict:

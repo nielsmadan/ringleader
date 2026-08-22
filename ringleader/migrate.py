@@ -3,7 +3,7 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from .paths import archive_root, default_registry, state_dir
+from .paths import archive_root, default_registry, ensure_state_dir
 
 
 def migrate(old_dir: Path) -> list[str]:
@@ -20,7 +20,7 @@ def migrate(old_dir: Path) -> list[str]:
     if not to_move:
         return []
 
-    state_dir().mkdir(parents=True, exist_ok=True)
+    ensure_state_dir()
     moved: list[str] = []
     for src, dest in to_move:
         shutil.move(str(src), str(dest))
