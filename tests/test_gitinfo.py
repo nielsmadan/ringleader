@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from ringleader.gitinfo import GitProject, normalize_remote, resolve_git_project
 
 
@@ -64,3 +66,12 @@ def test_resolve_returns_none_when_cwd_missing(tmp_path):
         raise AssertionError("runner must not run for a missing cwd")
 
     assert resolve_git_project(missing, runner=boom) is None
+
+
+def test_an_unreadable_cwd_resolves_to_none_instead_of_raising(monkeypatch):
+    # a directory the process cannot stat must not abort the caller's whole scan
+    def boom(self, *a, **k):
+        raise PermissionError(1, "Operation not permitted")
+
+    monkeypatch.setattr(Path, "stat", boom)
+    assert resolve_git_project("/somewhere/unreadable") is None

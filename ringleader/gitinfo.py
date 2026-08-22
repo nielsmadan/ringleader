@@ -52,7 +52,14 @@ def _git(cwd: str, args: list[str], runner) -> str | None:
 
 
 def resolve_git_project(cwd: str | None, runner=None) -> GitProject | None:
-    if not cwd or not Path(cwd).exists():
+    if not cwd:
+        return None
+    try:
+        if not Path(cwd).exists():
+            return None
+    except OSError:
+        # unreadable cwd (restrictive permissions, sandbox, dead mount): the
+        # project is unresolvable, but one such path must not kill a whole scan
         return None
     if runner is None:
         runner = _default_runner
