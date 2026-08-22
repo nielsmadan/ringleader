@@ -78,7 +78,7 @@ def _thread(  # noqa: PLR0913, PLR0917 -- test data-builder helper, one arg per 
 
 
 def _reg(threads, last_scan=NOW):
-    return {"version": 1, "lastScan": last_scan, "threads": threads, "tombstones": []}
+    return {"version": 1, "lastScan": last_scan, "threads": threads, "archived": []}
 
 
 def test_age_days():
@@ -413,13 +413,12 @@ def test_render_rollup_mem_column_shows_age_when_stamped():
 
 
 def test_render_archived_empty_and_populated():
-    assert "no archived" in render_archived({"tombstones": []}).lower()
+    assert "no archived" in render_archived({"archived": []}).lower()
     reg = {
-        "tombstones": [
+        "archived": [
             {
                 "sessionId": "z",
-                "reason": "archived",
-                "deletedAt": "2026-06-01T12:00:00+00:00",
+                "archivedAt": "2026-06-01T12:00:00+00:00",
                 "project": "/p",
                 "summary": "did a thing",
                 "archivePath": "/arc/z.jsonl",

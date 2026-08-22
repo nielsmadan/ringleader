@@ -4,6 +4,8 @@ import argparse
 from datetime import UTC, datetime
 
 from .. import prune, refresh, registry
+from ..config import load_config
+from ..paths import archive_root
 from . import default_registry, enrich
 
 
@@ -24,6 +26,13 @@ def cmd_roundup(argv: list[str]) -> int:
     reg = registry.load_registry(args.registry)
     cands = prune.prune_candidates(reg, now)
     deleted = prune.delete_sessions(reg, cands, now)
+    retention = load_config().archive_retention_days
+    purged = prune.purge_archived(
+        reg,
+        prune.archive_purge_candidates(reg, now, retention_days=retention),
+        now,
+        archive_root_path=str(archive_root()),
+    )
     registry.save_registry(args.registry, reg)
 
     enrich.cmd_enrich(["--registry", args.registry])
@@ -32,5 +41,5 @@ def cmd_roundup(argv: list[str]) -> int:
     reg["lastRoundupAt"] = now
     registry.save_registry(args.registry, reg)
 
-    print(f"refreshed, pruned {deleted}, enriched (see above)")
+    print(f"refreshed, pruned {deleted}, purged {purged} archived, enriched (see above)")
     return 0

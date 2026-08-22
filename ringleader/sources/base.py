@@ -76,3 +76,13 @@ class PickerHidingSource(Source, Protocol):
     clear their entry first. Returns True when an entry was actually cleared."""
 
     def hide_from_picker(self, session_id: str, file_path: str) -> bool: ...
+
+
+@runtime_checkable
+class PickerShowingSource(Source, Protocol):
+    """The inverse of `PickerHidingSource`: restore an entry the tool previously
+    hid, so a session put back on disk becomes resumable again. `file_path` is the
+    transcript's ORIGINAL location — the index still points there — so the file has
+    to be back in place before this runs. Returns True when an entry was restored."""
+
+    def show_in_picker(self, session_id: str, file_path: str) -> bool: ...

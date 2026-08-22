@@ -34,6 +34,11 @@ def age_days(mtime_iso: str, now_iso: str) -> float:
     return (_parse(now_iso) - _parse(mtime_iso)).total_seconds() / 86400.0
 
 
+def is_kept(thread: dict) -> bool:
+    """Kept long-term: out of the triage inbox for good, but still live and resumable."""
+    return thread.get("decision") == "keep"
+
+
 def effective_status(thread: dict, now_iso: str) -> str:
     dec = thread.get("decision")
     if dec == "harvested":
@@ -84,8 +89,11 @@ def compute_metrics(reg: dict, now_iso: str, *, include_snoozed: bool = True) ->
     live = [t for t, es in eff if es in LIVE_STATUSES]
     by_project = Counter(group_key(t) for t in live)
     blocked = [t for t, es in eff if es == "blocked"]
-    stale = [t for t in live if age_days(t["mtime"], now_iso) > ABANDON_AGE_DAYS]
-    oldest = max(live, key=lambda t: age_days(t["mtime"], now_iso), default=None)
+    # kept sessions are deliberately long-lived: they stay in live/by_project, but must
+    # not drive the nag metrics (stale/oldest) or they permanently skew them.
+    nag = [t for t in live if not is_kept(t)]
+    stale = [t for t in nag if age_days(t["mtime"], now_iso) > ABANDON_AGE_DAYS]
+    oldest = max(nag, key=lambda t: age_days(t["mtime"], now_iso), default=None)
     return {
         "by_status": dict(by_status),
         "live_count": len(live),
@@ -95,6 +103,7 @@ def compute_metrics(reg: dict, now_iso: str, *, include_snoozed: bool = True) ->
         "stale_count": len(stale),
         "oldest_age_days": round(age_days(oldest["mtime"], now_iso), 1) if oldest else None,
         "unclassified": by_status.get("unclassified", 0),
+        "kept_count": sum(1 for t in threads if is_kept(t)),
     }
 
 
@@ -180,14 +189,18 @@ def snooze_active(thread: dict, now_iso: str) -> bool:
 
 
 def triage_inbox(threads, now_iso: str) -> list[dict]:
-    """Sessions awaiting a decision: not parked, not harvested, and not reviewed at
-    their current state. A session re-enters once its file changes (reviewedAtMtime
-    no longer matches mtime). Archived/deleted sessions are already gone from threads."""
+    """Sessions awaiting a decision: not parked, not harvested, not kept, and not
+    reviewed at their current state.
+
+    The three ways a session leaves this inbox differ in what brings it back:
+    snoozed returns when its wake date passes, reviewed returns when the file changes
+    (reviewedAtMtime no longer matches mtime), and kept never returns until
+    `rl session unkeep`. Archived/deleted sessions are already gone from threads."""
     out = []
     for t in threads:
         if snooze_active(t, now_iso):
             continue
-        if t.get("decision") == "harvested":
+        if t.get("decision") in ("harvested", "keep"):
             continue
         if t.get("reviewedAtMtime") is not None and t.get("reviewedAtMtime") == t.get("mtime"):
             continue
@@ -384,6 +397,9 @@ def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) 
         bits.append(f"{attn} need a look ⚠")
     if snoozed_total and not include_snoozed:
         bits.append(f"{snoozed_total} snoozed hidden — -a 💤")
+    kept_total = sum(1 for t in reg["threads"] if is_kept(t))
+    if kept_total:
+        bits.append(f"{kept_total} kept — rl overview --kept 📌")
     suffix = f" ({'; '.join(bits)})" if bits else ""
     lines.append("")
     lines.append(f"{len(stats)} projects/dirs with sessions{suffix}")
@@ -391,7 +407,7 @@ def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) 
 
 
 def render_archived(reg, selector: str | None = None) -> str:
-    rows = [ts for ts in reg.get("tombstones", []) if ts.get("reason") == "archived"]
+    rows = list(reg.get("archived", []))
     if selector:
         sel = selector.lower()
         rows = [
@@ -402,10 +418,10 @@ def render_archived(reg, selector: str | None = None) -> str:
         ]
     if not rows:
         return "no archived sessions"
-    rows.sort(key=lambda ts: ts.get("deletedAt") or "")
+    rows.sort(key=lambda ts: ts.get("archivedAt") or "")
     lines = []
     for ts in rows:
-        date = (ts.get("deletedAt") or "")[:10]
+        date = (ts.get("archivedAt") or "")[:10]
         proj = ts.get("project") or "(unknown)"
         lines.append(f"{date}  {proj}  {ts['sessionId']}")
         lines.append(f"    {ts.get('summary') or '(no summary)'}")
@@ -429,4 +445,21 @@ def render_snoozed(threads, now_iso: str) -> str:
         age = round(age_days(mtime, now_iso)) if mtime else 0
         until = t.get("snoozedUntil") or "no wake date"
         lines.append(f"{name} · {age}d · {until}")
+    return "\n".join(lines)
+
+
+def render_kept(threads, now_iso: str) -> str:
+    rows = [t for t in threads if is_kept(t)]
+    if not rows:
+        return "no kept sessions"
+    rows.sort(key=lambda t: t.get("keptAt") or "")
+    lines = []
+    for t in rows:
+        name = t.get("title") or t.get("suggestedName") or (t.get("sessionId") or "")[:8]
+        mtime = t.get("mtime")
+        age = round(age_days(mtime, now_iso)) if mtime else 0
+        project = t.get("gitProjectLabel") or t.get("project") or "—"
+        what = t.get("whatItIs") or ""
+        line = f"{name} · {project} · {age}d"
+        lines.append(f"{line} · {what}" if what else line)
     return "\n".join(lines)

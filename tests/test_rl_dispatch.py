@@ -24,6 +24,8 @@ def test_help_lists_commands(capsys):
         (["session", "delete"], commands.delete.cmd_delete),
         (["session", "snooze"], commands.snooze.cmd_snooze),
         (["session", "wake"], commands.wake.cmd_wake),
+        (["session", "keep"], commands.keep.cmd_keep),
+        (["session", "unkeep"], commands.keep.cmd_unkeep),
         (["session", "refresh"], commands.sync.cmd_refresh),
         (["session", "set"], commands.sync.cmd_set),
         (["session", "name"], commands.name.cmd_name),

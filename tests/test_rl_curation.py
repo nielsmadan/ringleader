@@ -25,7 +25,8 @@ def _registry(tmp, sid, f, *, harvest=None):
             {
                 "version": 1,
                 "lastScan": None,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "threads": [{"sessionId": sid, "file": str(f), "harvestPath": harvest}],
             }
         ),
@@ -59,8 +60,8 @@ def test_archive_moves_files_and_tombstones(tmp_path):
     assert (arc / "unknown" / "a").exists()  # sidecar moved too
     data = json.loads(reg.read_text())
     assert data["threads"] == []
-    ts = data["tombstones"][0]
-    assert ts["reason"] == "archived" and ts["harvestPath"] == ["docs/x.md"]
+    ts = data["archived"][0]
+    assert ts["harvestPath"] == ["docs/x.md"]
     assert ts["archivePath"] == str(archived)
 
 
@@ -72,7 +73,7 @@ def test_delete_removes_files_and_tombstones(tmp_path):
     assert not f.exists() and not (f.parent / "b").exists()
     data = json.loads(reg.read_text())
     assert data["threads"] == []
-    assert data["tombstones"][0]["reason"] == "deleted"
+    assert data["deleted"][0]["reason"] == "deleted"
 
 
 def test_archive_unknown_id_exits_1(tmp_path):
@@ -101,7 +102,8 @@ def test_review_sets_reviewed_at_mtime(tmp_path):
             {
                 "version": 1,
                 "lastScan": None,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "threads": [
                     {
                         "sessionId": "a",
@@ -145,7 +147,8 @@ def test_archive_writes_summary_sidecar_and_records_summary_project(tmp_path):
             {
                 "version": 1,
                 "lastScan": None,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "threads": [
                     {
                         "sessionId": "a",
@@ -169,7 +172,7 @@ def test_archive_writes_summary_sidecar_and_records_summary_project(tmp_path):
     assert r.returncode == 0
     side = arc / "splashdown" / "a.md"  # dest dir now derives from gitProjectLabel
     assert side.exists() and "watch out" in side.read_text()
-    ts = json.loads(reg.read_text())["tombstones"][0]
+    ts = json.loads(reg.read_text())["archived"][0]
     assert ts["summary"] == "fixed the thing" and ts["project"] == "splashdown"
 
 
@@ -187,7 +190,7 @@ def test_archive_summary_falls_back_to_sidecar_heading(tmp_path):
         "rl-session archive", reg, "a", "--archive-root", str(arc), "--summary-file", str(summ)
     )
     assert r.returncode == 0
-    ts = json.loads(reg.read_text())["tombstones"][0]
+    ts = json.loads(reg.read_text())["archived"][0]
     assert ts["summary"] == "release tooling / tag-script"
 
 
@@ -198,7 +201,7 @@ def test_archive_summary_fallback_uses_first_line_without_session_prefix(tmp_pat
     summ.write_text("## Gotchas\n- watch out\n", encoding="utf-8")
     arc = tmp_path / "archive"
     _run("rl-session archive", reg, "a", "--archive-root", str(arc), "--summary-file", str(summ))
-    ts = json.loads(reg.read_text())["tombstones"][0]
+    ts = json.loads(reg.read_text())["archived"][0]
     assert ts["summary"] == "Gotchas"
 
 
@@ -215,7 +218,8 @@ def test_archive_codex_thread_uses_git_project_label_not_parent_dir(tmp_path):
             {
                 "version": 1,
                 "lastScan": None,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "threads": [
                     {
                         "sessionId": "codex-a",
@@ -237,8 +241,8 @@ def test_archive_codex_thread_uses_git_project_label_not_parent_dir(tmp_path):
     assert not f.exists()
     data = json.loads(reg.read_text())
     assert data["threads"] == []
-    ts = data["tombstones"][0]
-    assert ts["reason"] == "archived" and ts["archivePath"] == str(archived)
+    ts = data["archived"][0]
+    assert ts["archivePath"] == str(archived)
 
 
 def test_st_archived_lists_archived_with_project_filter(tmp_path):
@@ -249,26 +253,18 @@ def test_st_archived_lists_archived_with_project_filter(tmp_path):
                 "version": 1,
                 "lastScan": None,
                 "threads": [],
-                "tombstones": [
+                "archived": [
                     {
                         "sessionId": "a",
-                        "deletedAt": "2026-06-24T00:00:00+00:00",
-                        "reason": "archived",
+                        "archivedAt": "2026-06-24T00:00:00+00:00",
                         "archivePath": "archive/enc/a.jsonl",
                         "harvestPath": ["docs/x.md"],
                         "summary": "did A",
                         "project": "splashdown",
                     },
                     {
-                        "sessionId": "b",
-                        "deletedAt": "2026-06-23T00:00:00+00:00",
-                        "reason": "prune",
-                        "harvestPath": None,
-                    },
-                    {
                         "sessionId": "c",
-                        "deletedAt": "2026-06-22T00:00:00+00:00",
-                        "reason": "archived",
+                        "archivedAt": "2026-06-22T00:00:00+00:00",
                         "archivePath": "archive/enc2/c.jsonl",
                         "summary": "did C",
                         "project": "juggler",
@@ -293,7 +289,8 @@ def test_st_cleaned_records_timestamp(tmp_path):
             {
                 "version": 1,
                 "lastScan": None,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "projectsCleanedAt": {},
                 "threads": [
                     {
@@ -317,7 +314,7 @@ def test_st_cleaned_records_timestamp(tmp_path):
 def test_st_cleaned_unknown_selector_exits_1(tmp_path):
     reg = tmp_path / "registry.json"
     reg.write_text(
-        json.dumps({"version": 1, "lastScan": None, "tombstones": [], "threads": []}),
+        json.dumps({"version": 1, "lastScan": None, "archived": [], "deleted": [], "threads": []}),
         encoding="utf-8",
     )
     assert _run("rl-session mark cleaned", reg, "nope").returncode == 1

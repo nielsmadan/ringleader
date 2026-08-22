@@ -213,6 +213,7 @@ class InboxApp(App):
         Binding("h", "harvest", "harvest"),
         Binding("d", "delete", "delete"),
         Binding("s", "snooze", "snooze"),
+        Binding("K", "keep", "keep"),
         # ListView consumes Enter itself (posts Selected); this never fires directly —
         # on_list_view_selected dispatches per-tab instead. Kept for the footer/help text.
         Binding("enter", "select_day", "select today", show=False),
@@ -495,6 +496,20 @@ class InboxApp(App):
         if until is None:
             return
         registry.snooze_thread(self._reg, t["sessionId"], _now_iso(), until=until)
+        registry.save_registry(self.registry_path, self._reg)
+        await self._remove_row(idx)
+
+    # -- keep long-term ----------------------------------------------------
+
+    async def action_keep(self) -> None:
+        """Keep a session long-term: it leaves the inbox for good, unlike snooze
+        (which returns on a date) or leaving it open (which returns on new activity)."""
+        if self._active_tab != "inbox":
+            return
+        idx, t = self._current()
+        if t is None:
+            return
+        registry.keep_thread(self._reg, t["sessionId"], _now_iso())
         registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
 

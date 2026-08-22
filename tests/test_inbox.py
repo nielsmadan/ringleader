@@ -72,7 +72,7 @@ def _seed(tmp_path, n=2, last_roundup_at="fresh"):
                 "harvestPath": None,
             }
         )
-    reg = {"version": 2, "threads": threads, "tombstones": []}
+    reg = {"version": 2, "threads": threads, "archived": [], "deleted": []}
     if last_roundup_at == "fresh":
         reg["lastRoundupAt"] = _fresh_iso()
     elif last_roundup_at is not None:
@@ -135,7 +135,8 @@ def _seed_tabs(tmp_path, monkeypatch):
             {
                 "version": 2,
                 "threads": threads,
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "lastRoundupAt": _fresh_iso(),
             }
         ),
@@ -266,8 +267,7 @@ async def test_harvest_empty_digest_archives(tmp_path, monkeypatch):
 
     saved = json.loads(reg_path.read_text())
     assert [t["sessionId"] for t in saved["threads"]] == ["s1"]
-    tombstones = saved["tombstones"]
-    assert any(ts["sessionId"] == "s0" and ts["reason"] == "archived" for ts in tombstones)
+    assert any(a["sessionId"] == "s0" for a in saved["archived"])
 
 
 async def test_harvest_blank_summary_and_only_empty_list_items_archives(tmp_path, monkeypatch):
@@ -288,8 +288,7 @@ async def test_harvest_blank_summary_and_only_empty_list_items_archives(tmp_path
 
     saved = json.loads(reg_path.read_text())
     assert [t["sessionId"] for t in saved["threads"]] == ["s1"]
-    tombstones = saved["tombstones"]
-    assert any(ts["sessionId"] == "s0" and ts["reason"] == "archived" for ts in tombstones)
+    assert any(a["sessionId"] == "s0" for a in saved["archived"])
     assert harvests.load_harvests() == []
 
 
@@ -422,8 +421,7 @@ async def test_harvesting_tab_a_archives(tmp_path, monkeypatch):
     assert not session2_file.exists()
     saved = json.loads(reg_path.read_text())
     assert [t["sessionId"] for t in saved["threads"]] == ["s0", "s1"]
-    tombstones = saved["tombstones"]
-    assert any(ts["sessionId"] == "s2" and ts["reason"] == "archived" for ts in tombstones)
+    assert any(a["sessionId"] == "s2" for a in saved["archived"])
 
 
 async def test_inbox_destructive_keys_do_not_fire_on_selected_tab(tmp_path, monkeypatch):

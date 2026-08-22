@@ -29,7 +29,7 @@ def _thread(sid, **kw):
     return base
 
 
-def _registry(tmp, threads, tombstones=None):
+def _registry(tmp, threads, archived=None):
     p = tmp / "registry.json"
     p.write_text(
         json.dumps(
@@ -37,7 +37,8 @@ def _registry(tmp, threads, tombstones=None):
                 "version": 1,
                 "lastScan": "2026-07-01T00:00:00+00:00",
                 "threads": threads,
-                "tombstones": tombstones or [],
+                "archived": archived or [],
+                "deleted": [],
                 "projectsCleanedAt": {},
             }
         ),
@@ -95,7 +96,7 @@ def test_archived_flag(tmp_path):
     reg = _registry(
         tmp_path,
         [],
-        tombstones=[
+        archived=[
             {
                 "sessionId": "z",
                 "reason": "archived",
@@ -309,7 +310,8 @@ def _registry_mem(tmp, memory_entries, cleaned_at=None):
                 "version": 2,
                 "lastScan": "2026-07-01T00:00:00+00:00",
                 "threads": [],
-                "tombstones": [],
+                "archived": [],
+                "deleted": [],
                 "projectsCleanedAt": {},
                 "memoryEntries": memory_entries,
                 "memoryProjectsCleanedAt": cleaned_at or {},

@@ -79,7 +79,7 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, NameApplyingSource)
     assert isinstance(src, PickerHidingSource)
     assert src.name == "codex"
-    assert src.capabilities == frozenset({"applies_names", "hides_from_picker"})
+    assert src.capabilities == frozenset({"applies_names", "hides_from_picker", "shows_in_picker"})
 
 
 def test_discover_finds_rollouts(tmp_path):

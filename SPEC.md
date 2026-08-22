@@ -94,7 +94,7 @@ of disk reality, reconciled cheaply on each run:
 2. For each file that is **new** or whose **mtime changed** since last classification:
    read the tail (+ detect `/clear` boundaries), (re)classify, refresh metadata.
    Unchanged files keep their cached classification — no LLM cost.
-3. Files that vanished from disk → moved to `tombstones` (preserving any decision /
+3. Files that vanished from disk → moved to `deleted` (preserving any decision /
    harvest pointer).
 4. **User decisions are never silently overwritten** by re-classification.
 
@@ -157,7 +157,7 @@ command via `ringleader/paths.py`.
     └── memory-triage/
 
 ~/.local/share/ringleader/                # state_dir() — $XDG_DATA_HOME/ringleader if set
-├── registry.json                           # hybrid cache: threads + decisions + tombstones
+├── registry.json                           # hybrid cache: threads + decisions + archived/deleted
 └── archive/                                # archived sessions moved out of ~/.claude/projects/
 ```
 
@@ -202,8 +202,16 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
       "tags": []
     }
   ],
-  "tombstones": [
-    { "sessionId": "uuid", "deletedAt": "<iso>", "reason": "purged|gc|user", "harvestPath": "… or null" }
+  "deleted": [   // transcript is gone; `archived` is the separate, restorable list
+    { "sessionId": "uuid", "reason": "prune|deleted|gc|purged",
+      "deletedAt": "<iso>", "harvestPath": "… or null" }
+  ],
+  // Separate list: the transcript still exists in archive/ and is restorable with
+  // `rl session unarchive`, so these are NOT deletions.
+  "archived": [
+    { "sessionId": "uuid", "archivedAt": "<iso>", "archivePath": "…",
+      "originalPath": "…", "thread": { /* the full record, for restore */ },
+      "summary": "…", "harvestPath": "… or null" }
   ]
 }
 ```
@@ -215,7 +223,7 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
 
 | # | Skill | Does | Maps to |
 |---|-------|------|---------|
-| 1 | `session-sync` | Scan disk, reconcile registry (hybrid C), classify changed sessions, tombstone vanished ones. | engine ① |
+| 1 | `session-sync` | Scan disk, reconcile registry (hybrid C), classify changed sessions, record vanished ones as deleted. | engine ① |
 | 2 | `session-overview` | Render dormant threads grouped by **git project** (worktrees/clones/monorepo-subdirs collapse together; cwd is the fallback) and status; show spread / WIP-debt metrics, oldest-untouched, blocked-waiting-on-me. | #1, ④ |
 | 3 | `session-name` | Propose names for unnamed sessions (batch retroactive + current); surface them for the user to apply via native `/rename` / `claude -n` / `Ctrl+R`. | #2 |
 | 4 | `session-harvest` | Distill a chosen session/thread (what was done, key decisions, files touched, where it stopped, follow-ups) and integrate it into the *target repo's* own docs via the `/doc` skill; record the touched doc paths on `harvestPath` and mark `decision=harvested`. | ②, #3 |

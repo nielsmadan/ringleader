@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import shutil
 import sys
 from pathlib import Path
@@ -54,3 +55,52 @@ def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
         registry.prune_session(reg, t["sessionId"], now_iso)
         deleted += 1
     return deleted
+
+
+def archive_purge_candidates(reg: dict, now_iso: str, *, retention_days: int) -> list[dict]:
+    if retention_days <= 0:
+        return []
+    out = []
+    for ts in reg.get("archived", []):
+        archived = ts.get("archivedAt")
+        if not archived:
+            continue
+        try:
+            aged_out = overview.age_days(archived, now_iso) >= retention_days
+        except ValueError:
+            continue  # unparseable timestamp -> never ages out (safe direction)
+        if aged_out:
+            out.append(ts)
+    return out
+
+
+def purge_archived(
+    reg: dict, candidates: list[dict], now_iso: str, *, archive_root_path: str
+) -> int:
+    root = Path(archive_root_path).resolve()
+    purged = 0
+    for ts in candidates:
+        archive_path = ts.get("archivePath")
+        if archive_path:
+            rp = Path(archive_path).resolve()
+            # Never delete outside the archive tree: registry.json is hand-editable,
+            # and these deletes are irreversible last-copy data.
+            if not rp.is_relative_to(root) or rp.suffix != ".jsonl":
+                print(
+                    f"skipped archived {ts['sessionId']}: {archive_path} is not an "
+                    f"archive-root .jsonl transcript",
+                    file=sys.stderr,
+                )
+                continue
+            # Best-effort per artifact so one undeletable file can't strand the tombstone.
+            for target in (rp, rp.with_suffix(""), rp.with_suffix(".md")):
+                with contextlib.suppress(OSError):
+                    if target.is_dir() and not target.is_symlink():
+                        shutil.rmtree(target, ignore_errors=True)  # <id>/ sidecar dir
+                    else:
+                        target.unlink(missing_ok=True)  # <id>.jsonl / <id>.md
+            with contextlib.suppress(OSError):
+                rp.parent.rmdir()  # drop the slug dir only if it is now empty
+        registry.purge_archived_session(reg, ts["sessionId"], now_iso)
+        purged += 1
+    return purged

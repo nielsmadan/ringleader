@@ -52,7 +52,7 @@ def test_complete_harvests_then_archives(tmp_path, monkeypatch):
     assert rc == 0
     r = json.loads(reg.read_text())
     assert r["threads"] == [] or all(t["sessionId"] != "s1" for t in r["threads"])
-    assert any(ts["sessionId"] == "s1" for ts in r["tombstones"])  # archived
+    assert any(ts["sessionId"] == "s1" for ts in r["archived"])  # archived
     from ringleader import harvests
 
     assert len(harvests.load_harvests()) == 1

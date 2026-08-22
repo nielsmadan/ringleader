@@ -129,7 +129,7 @@ class CodexSource:
     tail_turns: int = 30
     name: str = "codex"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"applies_names", "hides_from_picker"})
+        default_factory=lambda: frozenset({"applies_names", "hides_from_picker", "shows_in_picker"})
     )
     _names_by_id: dict[str, str | None] | None = field(default=None, init=False, repr=False)
 
@@ -238,6 +238,39 @@ class CodexSource:
                 "UPDATE threads SET archived = 1, archived_at = ? "
                 "WHERE id = ? AND rollout_path = ? AND archived = 0",
                 (int(datetime.now(UTC).timestamp()), session_id, str(file_path)),
+            )
+            con.commit()
+            return cur.rowcount > 0
+        except sqlite3.Error as e:
+            raise CodexStateError(f"cannot update Codex state db {db}: {e}") from e
+        finally:
+            con.close()
+
+    def show_in_picker(self, session_id: str, file_path: str) -> bool:
+        """Undo `hide_from_picker`, putting the thread back in `codex resume`.
+
+        Ordering is the reverse of hiding: the guard matches on `rollout_path`, which
+        hiding never rewrote, so the transcript must already be restored to its
+        original location before this runs. Returns False when nothing matched — a
+        thread Codex itself archived (it rewrites rollout_path) or a row that is gone."""
+        db = _state_db(Path(self.sessions_dir).parent)
+        if db is None:
+            return False
+        try:
+            con = sqlite3.connect(db, timeout=5.0)
+        except sqlite3.Error as e:
+            raise CodexStateError(f"cannot open Codex state db {db}: {e}") from e
+        try:
+            columns = {row[1] for row in con.execute("PRAGMA table_info(threads)")}
+            if not {"archived", "archived_at", "rollout_path"} <= columns:
+                raise CodexStateError(
+                    f"{db} has no archivable threads table — Codex's schema moved, "
+                    "so sessions cannot be restored to its resume picker"
+                )
+            cur = con.execute(
+                "UPDATE threads SET archived = 0, archived_at = NULL "
+                "WHERE id = ? AND rollout_path = ? AND archived = 1",
+                (session_id, str(file_path)),
             )
             con.commit()
             return cur.rowcount > 0

@@ -36,6 +36,7 @@ def test_config_show_defaults(tmp_path):
     assert r.returncode == 0, r.stderr
     assert "ai: None" in r.stdout
     assert "llm.provider: anthropic" in r.stdout
+    assert "archive.retention_days: 0" in r.stdout
 
 
 def test_config_set_and_show_roundtrip(tmp_path):
@@ -60,6 +61,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "model": None,
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
+        "archive_retention_days": 0,
     }
 
 
@@ -82,6 +84,28 @@ def test_config_set_invalid_engine_rejected(tmp_path):
     assert "bogus" in r.stderr
     cfg_path = tmp_path / "ringleader" / "config.json"
     assert not cfg_path.exists()
+
+
+def test_config_set_archive_retention_roundtrip(tmp_path):
+    env = _env(tmp_path)
+
+    r = _run("config", "set", "archive.retention_days", "30", env=env)
+    assert r.returncode == 0, r.stderr
+
+    r = _run("config", "show", env=env)
+    assert "archive.retention_days: 30" in r.stdout
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert data["archive_retention_days"] == 30
+
+
+def test_config_set_invalid_archive_retention_rejected(tmp_path):
+    env = _env(tmp_path)
+
+    for bad in ("banana", "-1"):
+        r = _run("config", "set", "archive.retention_days", bad, env=env)
+        assert r.returncode == 2, bad
+        assert bad in r.stderr
+    assert not (tmp_path / "ringleader" / "config.json").exists()
 
 
 def test_config_set_unknown_key_rejected(tmp_path):

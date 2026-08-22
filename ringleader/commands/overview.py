@@ -89,6 +89,9 @@ def _json_view(reg: dict, now: str, args) -> int:
     if args.snoozed:
         print(json.dumps(jsonout.snoozed_json(reg["threads"], now), indent=2))
         return 0
+    if args.kept:
+        print(json.dumps(jsonout.kept_json(reg["threads"], now), indent=2))
+        return 0
     if args.sessions:
         threads = _filter_source_recent(reg["threads"], now, args)
         if not args.all:
@@ -97,6 +100,19 @@ def _json_view(reg: dict, now: str, args) -> int:
         return 0
     print(json.dumps(jsonout.rollup_json(reg, now), indent=2))
     return 0
+
+
+def _alt_view(reg: dict, now: str, args, selectors) -> str | None:
+    """The alternate list views that replace the default rollup, in precedence order.
+    Returns the rendered text, or None to fall through to the normal views.
+    --archived honours a selector; --snoozed/--kept span all threads."""
+    if args.archived:
+        return overview.render_archived(reg, selectors[0] if selectors else None)
+    if args.snoozed:
+        return overview.render_snoozed(reg["threads"], now)
+    if args.kept:
+        return overview.render_kept(reg["threads"], now)
+    return None
 
 
 def cmd_overview(argv: list[str]) -> int:
@@ -131,6 +147,11 @@ def cmd_overview(argv: list[str]) -> int:
         "--snoozed",
         action="store_true",
         help="list currently-snoozed sessions instead of live ones",
+    )
+    ap.add_argument(
+        "--kept",
+        action="store_true",
+        help="list sessions kept long-term (out of triage for good)",
     )
     ap.add_argument(
         "--checkouts", action="store_true", help="rollup only: also list each repo's checkout paths"
@@ -176,15 +197,9 @@ def cmd_overview(argv: list[str]) -> int:
     if args.selector:
         selectors.append(args.selector)
 
-    # --archived wins the view.
-    if args.archived:
-        sel = selectors[0] if selectors else None
-        print(overview.render_archived(reg, sel))
-        return 0
-
-    # --snoozed wins the view too, applied over the registry's threads (not selector-scoped).
-    if args.snoozed:
-        print(overview.render_snoozed(reg["threads"], now))
+    alt = _alt_view(reg, now, args, selectors)
+    if alt is not None:
+        print(alt)
         return 0
 
     # triage bridge (top-level views only, not the selector deep-dive)

@@ -1,6 +1,8 @@
 from ringleader.prune import (
     DEFAULT_MAX_TURNS,
+    archive_purge_candidates,
     prune_candidates,
+    purge_archived,
 )
 
 NOW = "2026-06-30T00:00:00+00:00"
@@ -22,7 +24,7 @@ def _t(sid, mtime=OLD, size=200_000, msgs=50, decision=None):
 
 
 def _reg(threads):
-    return {"version": 1, "lastScan": NOW, "threads": threads, "tombstones": []}
+    return {"version": 1, "lastScan": NOW, "threads": threads, "archived": [], "deleted": []}
 
 
 def _ids(cands):
@@ -84,3 +86,157 @@ def test_custom_thresholds():
     assert prune_candidates(reg, NOW) == []
     got = prune_candidates(reg, NOW, max_turns=20)
     assert _ids(got) == ["a"]
+
+
+ANCIENT = "2020-01-01T00:00:00+00:00"
+
+
+def _archived_ts(sid, archived_at, *, archive_path=None):
+    return {
+        "sessionId": sid,
+        "archivedAt": archived_at,
+        "archivePath": archive_path,
+        "harvestPath": None,
+        "summary": "s",
+        "project": "repo",
+    }
+
+
+def _reg_ts(archived):
+    return {"version": 1, "lastScan": NOW, "threads": [], "archived": archived, "deleted": []}
+
+
+def test_archive_purge_disabled_when_retention_zero():
+    reg = _reg_ts([_archived_ts("a", ANCIENT)])
+    assert archive_purge_candidates(reg, NOW, retention_days=0) == []
+
+
+def test_archive_purge_boundary_exactly_retention_included():
+    reg = _reg_ts([_archived_ts("a", OLD)])  # exactly 7 days before NOW
+    got = archive_purge_candidates(reg, NOW, retention_days=7)
+    assert [ts["sessionId"] for ts in got] == ["a"]
+
+
+def test_archive_purge_recent_excluded():
+    reg = _reg_ts([_archived_ts("a", RECENT)])  # 2 days before NOW
+    assert archive_purge_candidates(reg, NOW, retention_days=7) == []
+
+
+def test_archive_purge_only_considers_archived_records():
+    """Deleted/pruned/gc'd sessions live in a separate list and can never be purge
+    candidates — the list itself is the discriminator, not a `reason` field."""
+    reg = _reg_ts([_archived_ts("a", OLD)])
+    reg["deleted"] = [
+        {"sessionId": "pruned", "reason": "prune", "deletedAt": OLD},
+        {"sessionId": "gced", "reason": "gc", "deletedAt": OLD},
+    ]
+    got = archive_purge_candidates(reg, NOW, retention_days=7)
+    assert [ts["sessionId"] for ts in got] == ["a"]
+
+
+def test_archive_purge_skips_missing_or_unparseable_date():
+    reg = _reg_ts(
+        [
+            {"sessionId": "no-date", "archivePath": None},
+            _archived_ts("bad-date", "not-a-timestamp"),
+        ]
+    )
+    assert archive_purge_candidates(reg, NOW, retention_days=1) == []
+
+
+def test_purge_archived_deletes_files_and_flips_tombstone(tmp_path):
+    slug = tmp_path / "archive" / "repo"
+    slug.mkdir(parents=True)
+    jsonl = slug / "a.jsonl"
+    jsonl.write_text("x")
+    sidecar = slug / "a"
+    sidecar.mkdir()
+    (sidecar / "n.txt").write_text("s")
+    md = slug / "a.md"
+    md.write_text("summary")
+    ts = _archived_ts("a", OLD, archive_path=str(jsonl))
+    reg = _reg_ts([ts])
+
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive"))
+
+    assert n == 1
+    assert not jsonl.exists() and not sidecar.exists() and not md.exists()
+    assert not slug.exists()  # empty slug dir removed
+    assert ts["reason"] == "purged" and ts["purgedAt"] == NOW
+    assert ts["archivedAt"] == OLD  # archive date preserved
+
+
+def test_purge_archived_is_idempotent(tmp_path):
+    root = tmp_path / "archive"
+    root.mkdir()
+    jsonl = root / "a.jsonl"
+    jsonl.write_text("x")
+    ts = _archived_ts("a", OLD, archive_path=str(jsonl))
+    reg = _reg_ts([ts])
+
+    purge_archived(
+        reg, archive_purge_candidates(reg, NOW, retention_days=7), NOW, archive_root_path=str(root)
+    )
+
+    assert archive_purge_candidates(reg, NOW, retention_days=7) == []  # reason now "purged"
+
+
+def test_purge_archived_tolerates_already_gone_files(tmp_path):
+    root = tmp_path / "archive"
+    ts = _archived_ts("a", OLD, archive_path=str(root / "a.jsonl"))
+    reg = _reg_ts([ts])
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(root))
+    assert n == 1 and ts["reason"] == "purged"
+
+
+def test_purge_archived_flips_even_without_archive_path(tmp_path):
+    ts = _archived_ts("a", OLD, archive_path=None)
+    reg = _reg_ts([ts])
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive"))
+    assert n == 1 and ts["reason"] == "purged"
+
+
+def test_purge_archived_preserves_sibling_in_same_slug(tmp_path):
+    slug = tmp_path / "archive" / "repo"
+    slug.mkdir(parents=True)
+    a = slug / "a.jsonl"
+    a.write_text("x")
+    b = slug / "b.jsonl"
+    b.write_text("y")
+    ts_a = _archived_ts("a", OLD, archive_path=str(a))
+    ts_b = _archived_ts("b", OLD, archive_path=str(b))
+    reg = _reg_ts([ts_a, ts_b])
+
+    n = purge_archived(reg, [ts_a], NOW, archive_root_path=str(tmp_path / "archive"))
+
+    assert n == 1
+    assert not a.exists()
+    assert b.exists()  # sibling under the same slug survives
+    assert slug.exists()  # non-empty slug dir kept
+    assert ts_a["reason"] == "purged" and "purgedAt" not in ts_b
+
+
+def test_purge_archived_refuses_path_outside_archive_root(tmp_path):
+    outside = tmp_path / "outside.jsonl"
+    outside.write_text("do not delete")
+    ts = _archived_ts("a", OLD, archive_path=str(outside))
+    reg = _reg_ts([ts])
+
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive"))
+
+    assert n == 0
+    assert outside.exists()  # outside the archive root -> never touched
+    assert "purgedAt" not in ts  # not purged
+
+
+def test_purge_archived_refuses_non_jsonl(tmp_path):
+    root = tmp_path / "archive"
+    root.mkdir()
+    other = root / "a.txt"
+    other.write_text("keep")
+    ts = _archived_ts("a", OLD, archive_path=str(other))
+    reg = _reg_ts([ts])
+
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(root))
+
+    assert n == 0 and other.exists() and "purgedAt" not in ts

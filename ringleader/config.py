@@ -13,6 +13,7 @@ class Config:
     model: str | None = None
     llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
+    archive_retention_days: int = 0  # 0 = keep archived sessions forever
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -28,6 +29,7 @@ def load_config(path: Path | None = None) -> Config:
         model=data.get("model"),
         llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
+        archive_retention_days=data.get("archive_retention_days", 0),
     )
 
 

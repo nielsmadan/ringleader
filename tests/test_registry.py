@@ -70,8 +70,8 @@ def test_reconcile_tombstones_vanished_sessions():
     # next scan no longer includes s1
     reg2 = reconcile(reg, [], "2026-06-08T00:00:00+00:00")
     assert reg2["threads"] == []
-    assert len(reg2["tombstones"]) == 1
-    ts = reg2["tombstones"][0]
+    assert len(reg2["deleted"]) == 1
+    ts = reg2["deleted"][0]
     assert ts["sessionId"] == "s1"
     assert ts["harvestPath"] == "harvests/s1.md"
     assert ts["deletedAt"] == "2026-06-08T00:00:00+00:00"
@@ -237,8 +237,8 @@ def test_prune_session_removes_thread_and_tombstones():
     reg["threads"][0]["harvestPath"] = "harvests/s1.md"
     prune_session(reg, "s1", "2026-06-13T00:00:00+00:00")
     assert reg["threads"] == []
-    assert len(reg["tombstones"]) == 1
-    ts = reg["tombstones"][0]
+    assert len(reg["deleted"]) == 1
+    ts = reg["deleted"][0]
     assert ts["sessionId"] == "s1"
     assert ts["deletedAt"] == "2026-06-13T00:00:00+00:00"
     assert ts["reason"] == "prune"
@@ -250,7 +250,7 @@ def test_prune_session_is_idempotent():
     prune_session(reg, "s1", NOW)
     prune_session(reg, "s1", NOW)  # second call: already gone + tombstoned
     assert [t["sessionId"] for t in reg["threads"]] == ["s2"]  # s2 untouched
-    assert sum(1 for ts in reg["tombstones"] if ts["sessionId"] == "s1") == 1
+    assert sum(1 for ts in reg["deleted"] if ts["sessionId"] == "s1") == 1
 
 
 from ringleader.registry import archive_session, mark_harvested, mark_reviewed
@@ -289,11 +289,11 @@ def test_archive_session_removes_thread_and_tombstones():
     reg["threads"][0]["harvestPath"] = ["docs/x.md"]
     archive_session(reg, "s1", "archive/enc/s1.jsonl", "2026-06-23T00:00:00+00:00")
     assert reg["threads"] == []
-    ts = reg["tombstones"][0]
-    assert ts["sessionId"] == "s1" and ts["reason"] == "archived"
+    ts = reg["archived"][0]
+    assert ts["sessionId"] == "s1"
     assert ts["archivePath"] == "archive/enc/s1.jsonl"
     assert ts["harvestPath"] == ["docs/x.md"]
-    assert ts["deletedAt"] == "2026-06-23T00:00:00+00:00"
+    assert ts["archivedAt"] == "2026-06-23T00:00:00+00:00"
 
 
 def test_mark_helpers_raise_for_unknown_id():
@@ -313,7 +313,7 @@ def test_archive_session_stores_summary_and_project():
         summary="fixed the thing",
         project="splashdown",
     )
-    ts = reg["tombstones"][0]
+    ts = reg["archived"][0]
     assert ts["summary"] == "fixed the thing"
     assert ts["project"] == "splashdown"
 
@@ -449,7 +449,7 @@ def test_reconcile_memory_drops_gone_entries_no_tombstone():
     reg = registry.reconcile_memory(reg, [_entry("/m/a.md", "/p", "t")], "now")
     reg = registry.reconcile_memory(reg, [], "now2")  # a.md no longer scanned
     assert reg["memoryEntries"] == []
-    assert reg["tombstones"] == []
+    assert reg["deleted"] == []
 
 
 def test_session_reconcile_preserves_memory_keys():
@@ -496,7 +496,7 @@ def test_reconcile_backfills_source_on_legacy_thread():
     # matched (not duplicated / tombstoned) and stamped with source
     assert len(reg["threads"]) == 1
     assert reg["threads"][0]["source"] == "claude-code"
-    assert reg["tombstones"] == []
+    assert reg["deleted"] == []
 
 
 def test_reconcile_distinguishes_same_id_across_sources():
@@ -532,7 +532,7 @@ def test_apply_name_targets_source_when_ids_collide():
 def test_select_and_clear_for_day():
     from ringleader import registry
 
-    reg = {"threads": [{"sessionId": "s1"}], "tombstones": []}
+    reg = {"threads": [{"sessionId": "s1"}], "archived": [], "deleted": []}
     registry.select_for_day(reg, "s1", "2026-01-01")
     assert reg["threads"][0]["selectedForDay"] == "2026-01-01"
     assert [t["sessionId"] for t in registry.selected_today(reg, "2026-01-01")] == ["s1"]

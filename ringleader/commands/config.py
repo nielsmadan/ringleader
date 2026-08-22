@@ -27,6 +27,7 @@ def _show() -> int:
     print(f"ai: {cfg.ai}")
     print(f"model: {cfg.model}")
     print(f"llm.provider: {cfg.llm_provider}")
+    print(f"archive.retention_days: {cfg.archive_retention_days}")
     model = active_model(cfg)
     if model is None:
         print("active model: none — no model configured/available")
@@ -54,6 +55,19 @@ def _set(args: list[str]) -> int:
         cfg.model = value
     elif key == "llm.provider":
         cfg.llm_provider = value
+    elif key == "archive.retention_days":
+        try:
+            days = int(value)
+        except ValueError:
+            days = -1
+        if days < 0:
+            print(
+                f"rl config set archive.retention_days: invalid value '{value}' "
+                "(must be a non-negative integer; 0 = keep forever)",
+                file=sys.stderr,
+            )
+            return 2
+        cfg.archive_retention_days = days
     else:
         print(f"rl config set: unknown key '{key}'", file=sys.stderr)
         return 2

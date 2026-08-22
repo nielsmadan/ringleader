@@ -39,7 +39,8 @@ def empty_registry() -> dict:
         "lastScan": None,
         "lastRoundupAt": None,
         "threads": [],
-        "tombstones": [],
+        "archived": [],
+        "deleted": [],
         "projectsCleanedAt": {},
         "memoryEntries": [],
         "memoryProjectsCleanedAt": {},
@@ -55,7 +56,8 @@ def load_registry(path) -> dict:
     data.setdefault("lastScan", None)
     data.setdefault("lastRoundupAt", None)
     data.setdefault("threads", [])
-    data.setdefault("tombstones", [])
+    data.setdefault("archived", [])
+    data.setdefault("deleted", [])
     data.setdefault("projectsCleanedAt", {})
     data.setdefault("memoryEntries", [])
     data.setdefault("memoryProjectsCleanedAt", {})
@@ -102,6 +104,7 @@ def _new_thread(md: dict) -> dict:
         "tags": [],
         "locationPinned": False,
         "snoozedAt": None,
+        "keptAt": None,
         "selectedForDay": None,
     }
 
@@ -135,12 +138,13 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
         else:
             threads.append(_new_thread(md))
 
-    tombstones = list(reg.get("tombstones", []))
-    tombstoned = {ts["sessionId"] for ts in tombstones}
+    deleted = list(reg.get("deleted", []))
+    archived = list(reg.get("archived", []))
+    gone = {x["sessionId"] for x in deleted} | {x["sessionId"] for x in archived}
     for t in reg["threads"]:
         sid = t["sessionId"]
-        if _key(t) not in seen and sid not in tombstoned:
-            tombstones.append(
+        if _key(t) not in seen and sid not in gone:
+            deleted.append(
                 {
                     "sessionId": sid,
                     "deletedAt": now_iso,
@@ -154,7 +158,8 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
         "lastScan": now_iso,
         "lastRoundupAt": reg.get("lastRoundupAt"),
         "threads": threads,
-        "tombstones": tombstones,
+        "archived": archived,
+        "deleted": deleted,
         "projectsCleanedAt": dict(reg.get("projectsCleanedAt", {})),
         "memoryEntries": list(reg.get("memoryEntries", [])),
         "memoryProjectsCleanedAt": dict(reg.get("memoryProjectsCleanedAt", {})),
@@ -253,20 +258,24 @@ def archive_session(
 ) -> dict:
     threads = reg["threads"]
     idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
-    harvest = threads[idx].get("harvestPath") if idx is not None else None
-    if idx is not None:
-        threads.pop(idx)
-    tombstones = reg.setdefault("tombstones", [])
-    if not any(ts["sessionId"] == session_id for ts in tombstones):
-        tombstones.append(
+    thread = threads.pop(idx) if idx is not None else None
+    harvest = thread.get("harvestPath") if thread else None
+    archived = reg.setdefault("archived", [])
+    if not any(a["sessionId"] == session_id for a in archived):
+        archived.append(
             {
                 "sessionId": session_id,
-                "deletedAt": archived_at,
-                "reason": "archived",
+                "archivedAt": archived_at,
                 "archivePath": archive_path,
                 "harvestPath": harvest,
                 "summary": summary,
                 "project": project,
+                # where the transcript lived before the move: restoring puts it back
+                # here, and the agent's picker index still points at this path.
+                "originalPath": thread.get("file") if thread else None,
+                # the whole record, so a restore doesn't come back stripped of its
+                # classification and need re-enriching.
+                "thread": thread,
             }
         )
     return reg
@@ -297,6 +306,45 @@ def wake_thread(reg: dict, session_id: str) -> dict:
     raise KeyError(session_id)
 
 
+def keep_thread(reg: dict, session_id: str, when: str) -> str | None:
+    """Mark a session as kept long-term: it stays live and resumable but leaves the
+    triage inbox permanently, regardless of later activity. Returns the decision it
+    replaced (None if there wasn't one) so the caller can report it."""
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            previous = t.get("decision")
+            t["decision"] = "keep"
+            t["keptAt"] = when
+            return previous if previous != "keep" else None
+    raise KeyError(session_id)
+
+
+def unkeep_thread(reg: dict, session_id: str) -> bool:
+    """Undo `keep_thread`, returning the session to the triage inbox. Returns False if
+    the session wasn't kept — a non-"keep" decision (e.g. "harvested") is left alone."""
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            if t.get("decision") != "keep":
+                return False
+            t["decision"] = None
+            t["keptAt"] = None
+            return True
+    raise KeyError(session_id)
+
+
+def restore_session(reg: dict, session_id: str, file_path: str) -> dict:
+    """Reverse an archive at the registry level: drop the archived record so the next scan
+    re-discovers the transcript at `file_path`. Returns the archived record that was removed.
+
+    The record holds only a summary of the thread, so the thread row is not rebuilt
+    here — reconcile re-creates it in full from the restored transcript."""
+    archived = reg.setdefault("archived", [])
+    idx = next((i for i, a in enumerate(archived) if a["sessionId"] == session_id), None)
+    if idx is None:
+        raise KeyError(session_id)
+    return archived.pop(idx)
+
+
 def relocate_thread(reg: dict, session_id: str, new_project: str, git: dict | None = None) -> dict:
     """Pin a thread to a new cwd/git identity after its directory moved on disk.
     The transcript's baked-in cwd is stale, so `locationPinned` tells reconcile to
@@ -319,9 +367,9 @@ def prune_session(reg: dict, session_id: str, deleted_at: str, *, reason: str = 
     harvest = threads[idx].get("harvestPath") if idx is not None else None
     if idx is not None:
         threads.pop(idx)
-    tombstones = reg.setdefault("tombstones", [])
-    if not any(ts["sessionId"] == session_id for ts in tombstones):
-        tombstones.append(
+    deleted = reg.setdefault("deleted", [])
+    if not any(d["sessionId"] == session_id for d in deleted):
+        deleted.append(
             {
                 "sessionId": session_id,
                 "deletedAt": deleted_at,
@@ -329,6 +377,21 @@ def prune_session(reg: dict, session_id: str, deleted_at: str, *, reason: str = 
                 "harvestPath": harvest,
             }
         )
+    return reg
+
+
+def purge_archived_session(reg: dict, session_id: str, purged_at: str) -> dict:
+    """Archive retention removed the archived copy: the transcript is now really gone,
+    so the record moves out of `archived` and into `deleted`."""
+    archived = reg.setdefault("archived", [])
+    idx = next((i for i, a in enumerate(archived) if a["sessionId"] == session_id), None)
+    if idx is None:
+        return reg
+    rec = archived.pop(idx)
+    rec["reason"] = "purged"
+    rec["purgedAt"] = purged_at
+    rec.setdefault("deletedAt", purged_at)
+    reg.setdefault("deleted", []).append(rec)
     return reg
 
 

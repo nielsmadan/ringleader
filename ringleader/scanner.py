@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 
 from .gitinfo import resolve_git_project
-from .sources.base import NormalizedSession, PickerHidingSource
+from .sources.base import NormalizedSession, PickerHidingSource, PickerShowingSource
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
 
@@ -39,6 +39,16 @@ def hide_from_picker(thread: dict) -> bool:
     ):
         return False
     return src.hide_from_picker(thread["sessionId"], thread["file"])
+
+
+def show_in_picker(thread: dict, original_path: str) -> bool:
+    """Restore a picker entry hidden by `hide_from_picker`. `original_path` is where
+    the transcript lived when it was hidden — the index still points there — so the
+    file must be back at that path before calling this."""
+    src = source_by_name(thread.get("source") or "claude-code")
+    if not (src and "shows_in_picker" in src.capabilities and isinstance(src, PickerShowingSource)):
+        return False
+    return src.show_in_picker(thread["sessionId"], original_path)
 
 
 def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:
