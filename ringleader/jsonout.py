@@ -14,6 +14,7 @@ def _session_json(t: dict, now_iso: str) -> dict:
         "mtime": mtime,
         "age_days": round(overview.age_days(mtime, now_iso), 1) if mtime else None,
         "size_bytes": t.get("sizeBytes"),
+        "kept": overview.is_kept(t),
     }
 
 
@@ -27,6 +28,16 @@ def snoozed_json(threads, now_iso: str) -> list[dict]:
         if overview.snooze_active(t, now_iso):
             row = _session_json(t, now_iso)
             row["snoozed_until"] = t.get("snoozedUntil")
+            out.append(row)
+    return out
+
+
+def kept_json(threads, now_iso: str) -> list[dict]:
+    out = []
+    for t in threads:
+        if overview.is_kept(t):
+            row = _session_json(t, now_iso)
+            row["kept_at"] = t.get("keptAt")
             out.append(row)
     return out
 
@@ -57,4 +68,5 @@ def rollup_json(reg: dict, now_iso: str) -> dict:
         "blocked": m["blocked_count"],
         "stale": m["stale_count"],
         "oldest_age_days": m["oldest_age_days"],
+        "kept": m["kept_count"],
     }

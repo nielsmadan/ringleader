@@ -84,8 +84,14 @@ def project_summary(
             if not t.get("title"):
                 g["unnamed"] += 1
         ca = g["cleaned_at"]
-        # snoozed sessions are deliberately set aside — don't let them raise the flag
-        if not snoozed and ca and t.get("mtime") and overview.newer_than(t["mtime"], ca):
+        # snoozed and kept sessions are deliberately set aside — don't let them raise the flag
+        if (
+            not snoozed
+            and not overview.is_kept(t)
+            and ca
+            and t.get("mtime")
+            and overview.newer_than(t["mtime"], ca)
+        ):
             g["fresh_since_clean"] = True
 
     stats = [
