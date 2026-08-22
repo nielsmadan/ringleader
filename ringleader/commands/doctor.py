@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 
 MIN_RETENTION_DAYS = 30
@@ -34,7 +35,9 @@ def cmd_doctor(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl doctor")
     ap.add_argument(
         "--settings",
-        default=str(Path.home() / ".claude" / "settings.json"),
+        # flag wins, then the sandbox/skill-driven env override, then the real file
+        default=os.environ.get("RINGLEADER_CLAUDE_SETTINGS")
+        or str(Path.home() / ".claude" / "settings.json"),
     )
     args = ap.parse_args(argv)
     r = check_claude_retention(args.settings)

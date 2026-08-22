@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .memory import parse_frontmatter
-from .paths import state_dir
+from .paths import ensure_state_dir, state_dir
 
 
 def harvests_dir() -> Path:
@@ -37,6 +37,7 @@ def write_harvest(
     harvested_at: str,
     content: str,
 ) -> Path:
+    ensure_state_dir()
     d = harvests_dir()
     d.mkdir(parents=True, exist_ok=True)
     fm = (
