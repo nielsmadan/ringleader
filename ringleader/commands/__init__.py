@@ -14,6 +14,7 @@ from . import (
     export,
     harvest,
     inbox,
+    keep,
     mark_harvested,
     mark_mem_reviewed,
     mark_reviewed,
@@ -31,6 +32,8 @@ from . import (
     sync,
     tokens,
     triage,
+    unarchive,
+    usage,
     wake,
 )
 from . import harvests as harvests_cmd
@@ -50,10 +53,13 @@ _SESSION = {
     "enrich": enrich.cmd_enrich,
     "harvest": harvest.cmd_harvest,
     "archive": archive.cmd_archive,
+    "unarchive": unarchive.cmd_unarchive,
     "delete": delete.cmd_delete,
     "complete": complete.cmd_complete,
     "snooze": snooze.cmd_snooze,
     "wake": wake.cmd_wake,
+    "keep": keep.cmd_keep,
+    "unkeep": keep.cmd_unkeep,
     "name": name.cmd_name,
     "relocate": relocate.cmd_relocate,
     "mark": {
@@ -90,6 +96,7 @@ TABLE = {
     "triage": triage.cmd_triage,
     "prune": prune.cmd_prune,
     "roundup": roundup.cmd_roundup,
+    "usage": usage.cmd_usage,
     "doctor": doctor.cmd_doctor,
     "harvests": harvests_cmd.cmd_harvests,
     "inbox": inbox.cmd_inbox,
