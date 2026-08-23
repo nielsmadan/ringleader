@@ -161,11 +161,17 @@ stop here. If the user picks an action, do it; the run is not over until they ha
 A session leaves the inbox in one of three ways, and they differ **only** in what brings
 it back. Pick by asking the user what should happen next, not by how finished it looks:
 
-| choice | command | comes back when |
-|---|---|---|
-| open | `rl session set …`, then `rl session mark reviewed ID` | the session gets **new activity** |
-| snooze | `rl session snooze ID --for N` | **N days** pass (it auto-wakes) |
-| keep | `rl session keep ID` | **never** — only `rl session unkeep`, or `rl overview --kept` to look |
+| outcome | command | what happens to the transcript | comes back when |
+|---|---|---|---|
+| done | `rl session complete ID` | harvested into the docs, then moved out of the picker | never (it's archived; `rl session unarchive` undoes it) |
+| still going | `rl session set …` + `rl session mark reviewed ID` | untouched, stays resumable | the session gets **new activity** |
+| remind me | `rl session snooze ID --for N` | untouched, stays resumable | **N days** pass (it auto-wakes) |
+| keep long-term | `rl session keep ID` | untouched, stays resumable | **never** — only `rl session unkeep`, or `rl overview --kept` to look |
+| delete | `rl session delete ID` | **gone for good, nothing harvested** | never |
+
+Two of these are one-way and worth stating out loud when you offer them: **delete**
+destroys the transcript and harvests nothing first, and **done** takes the session out of
+the user's resume picker. The other three leave it exactly where it was.
 
 Use **open** for "still going, ping me when it moves", **snooze** for "not now, ask me
 again on a date", and **keep** for "I want this thread around indefinitely; stop asking".
@@ -229,7 +235,8 @@ the fallback below if no better mechanism is available.
 ### `[SELECT]`
 
 **What it does:** present a batch of items to the user and collect their choice for each
-one individually (e.g. per session: delete / finished / open).
+one individually (e.g. per session: done / still going / remind me / keep / delete —
+see § Leaving the triage inbox for what each one does).
 
 **Fallback:** print the batch as a numbered list with the available choices spelled out,
 then ask the user to reply with the numbers or letters mapped to each choice (e.g.

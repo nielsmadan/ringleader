@@ -1,6 +1,6 @@
 ---
 name: ringleader-triage
-description: Recurring cleanup of dormant agent sessions from the last few days — decide delete/finished/open/snooze/keep per session, harvest what's finished, name and review what's open. Use when the user says "triage sessions", "triage my sessions", "clean up my sessions", or invokes triage.
+description: Recurring cleanup of dormant agent sessions from the last few days — decide per session whether to archive, keep going, snooze, keep long-term or delete, harvest what's finished, name and review what's open. Use when the user says "triage sessions", "triage my sessions", "clean up my sessions", or invokes triage.
 ---
 
 # Triage
@@ -12,7 +12,7 @@ the `cleanup` skill instead; it runs this same flow without the bound. `triage` 
 
 This skill uses two mechanisms your agent provides. `[SELECT]`: use your native
 structured-choice tool (Claude Code: `AskUserQuestion`) to get a per-item decision (one
-question per session, offering delete/finished/open); if you have none, present a
+question per session, offering the five outcomes in step 4); if you have none, present a
 **numbered list** and read back the choices. `[FAN-OUT]`: run the harvest sub-protocol's
 extract phase for the finished sessions **in parallel** if your agent supports subagents,
 otherwise **sequentially, one at a time**. Everything else — calling `rl`, strategic
@@ -36,19 +36,34 @@ this file only adds the flow.
    `project` field.
 
 4. **Per project, with the progress tally.** Working project by project, oldest activity
-   first (see `references/playbook.md` § Strategic ordering), `[SELECT]` **delete /
-   finished / open / snooze / keep** for each session in the project.
+   first (see `references/playbook.md` § Strategic ordering), `[SELECT]` one of five
+   outcomes for each session.
+
+   **Present them in this order, every time** — a stable list is what lets someone answer
+   quickly without re-reading, and it keeps the irreversible option away from the default
+   position. Mark your suggestion with "(recommended)" on the option itself rather than by
+   reordering:
+
+   1. **Done — harvest and archive it.** Pull anything worth keeping into the docs, then
+      move the transcript out of the resume picker.
+   2. **Still going — leave it open.** Stays in the picker; comes back to this inbox when
+      the session next changes.
+   3. **Not now — remind me in N days.** Drops out until then, and returns on its own.
+   4. **Keep long-term.** Stays live and resumable, but never comes back to this inbox.
+   5. **Delete it permanently.** Removes the transcript for good. **Nothing is harvested
+      first** — pick "Done" instead if any of it is worth keeping.
+
+   Say what each session is about before asking, and never present a bare status word
+   ("finished", "open") as the choice — see `references/playbook.md` § `[SELECT]`.
 
 5. **Apply the choices.**
-   - *delete* → `rl session delete <id>` now.
-   - *finished* → add to this run's harvest queue (don't archive yet).
-   - *open* → classify it: `rl session set --session <id> --status <status> --what
+   - *done* → add to this run's harvest queue (don't archive yet — step 6 does both).
+   - *still going* → classify it: `rl session set --session <id> --status <status> --what
      "<what>" --name "<name>"`.
-   - *snooze* → not now, ask again on a date: `rl session snooze <id> --for <days>`
-     (ask how many days).
-   - *keep* → wanted long-term, stop asking: `rl session keep <id>`. It stays live and
-     resumable but never returns to the inbox — see `references/playbook.md`
-     § Leaving the triage inbox for how the three differ.
+   - *remind me* → `rl session snooze <id> --for <days>` (ask how many days).
+   - *keep long-term* → `rl session keep <id>`. It stays live and resumable but never
+     returns to the inbox — see `references/playbook.md` § Leaving the triage inbox.
+   - *delete* → `rl session delete <id>` now. Irreversible, and harvests nothing.
 
 6. **Harvest the finished set.** Follow the harvest sub-protocol in `references/playbook.md`.
    When a model is configured, that means `rl session complete <id>` per finished session
