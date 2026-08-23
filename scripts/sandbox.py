@@ -6,11 +6,14 @@ from the tool itself — just a directory and four exported variables.
 
 Two steps, deliberately separate:
 
-  freeze  — pick N real sessions out of your archive and copy them into `.fixture/`.
-            Run once. The fixture never changes afterwards, so it stays reproducible
-            even as you archive and prune, and nothing real is committed to git.
   build   — rebuild `.sandbox/` from the frozen fixture and reset the registry to
-            empty. Run whenever you want to start a skill run from zero.
+            empty. Run this whenever you want to start a skill run from zero. On the
+            first run it freezes a fixture automatically, so this is the only command
+            you normally need.
+  freeze  — re-pick which real sessions the fixture holds (`--freeze`). The fixture is
+            otherwise fixed for good, which is what keeps runs comparable as you keep
+            archiving and pruning. Real transcripts are full of client names, home paths
+            and pasted secrets, so it stays local and gitignored — never committed.
 
 Mtimes are restamped on every build: recency drives nearly every decision `rl` makes,
 and archived transcripts are all months old.
@@ -80,15 +83,17 @@ def freeze(n_claude: int, n_codex: int, seed: int) -> int:
     size = sum(f.stat().st_size for f in FIXTURE.rglob("*.jsonl"))
     print(f"froze {n} real sessions into {FIXTURE}  ({size / 1024 / 1024:.1f} MB)")
     print("  this fixture is now fixed — `just sandbox` rebuilds from it every time.")
-    print("  re-run `just sandbox-freeze` only when you want a different set.")
+    print("  re-run `just sandbox-refreeze` only when you want a different set.")
     return 0
 
 
-def build(span: int, retention: int) -> int:
+def build(span: int, retention: int, freeze_args: tuple[int, int, int]) -> int:
     if not FIXTURE.is_dir():
-        print("no fixture yet — run `just sandbox-freeze` first (it picks real sessions")
-        print("out of your archive and freezes a copy).")
-        return 1
+        # first run: pick the sessions and freeze them, so `just sandbox` is the only
+        # command anyone needs to remember. Re-freezing is the deliberate act.
+        print("no frozen fixture yet — picking one now\n")
+        freeze(*freeze_args)
+        print()
 
     if SANDBOX.exists():
         shutil.rmtree(SANDBOX)
@@ -131,7 +136,7 @@ def main() -> int:
     args = ap.parse_args()
     if args.freeze:
         return freeze(args.claude, args.codex, args.seed)
-    return build(args.span, args.retention)
+    return build(args.span, args.retention, (args.claude, args.codex, args.seed))
 
 
 if __name__ == "__main__":

@@ -66,27 +66,31 @@ rl skills uninstall   # remove the symlinks this tool created
 skip the prompt. ### Testing the skills from a zero state
 
 `rl` takes every input from the environment, so a throwaway world needs no support from
-the tool. Two steps:
+the tool:
 
 ```sh
-just sandbox-freeze       # once: copy 20 real sessions out of your archive into .fixture/
-just sandbox              # rebuild .sandbox/ from that fixture, registry empty
+just sandbox              # rebuild a zero-state world and reset the registry
 ```
 
-`sandbox` prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
+It prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
 `CODEX_SESSIONS_DIR`, `RINGLEADER_CLAUDE_SETTINGS`). Export them and launch an agent from
 that shell — every `rl` call a skill makes lands in `.sandbox/`, and your real sessions,
 registry and settings are untouched. Re-run `just sandbox` to reset to zero.
 
-The two steps are separate on purpose. **Freezing** copies real transcripts once, so the
-set stays fixed as you keep archiving and pruning — two runs a month apart still compare.
-**Building** is cheap and repeatable, and restamps mtimes across 30 days (`--span`),
-because recency drives triage, prune and `--recent`; archived transcripts are all months
-old, so without it the bounded first pass would be empty.
+On the first run it copies real sessions out of your archive into `.fixture/` and then
+leaves that set alone. Freezing is what keeps runs comparable: the fixture stays fixed as
+you carry on archiving and pruning, so a run a month from now faces the same sessions.
+`just sandbox-refreeze` (with `--seed N`, `-n`, `--codex`) picks a different set.
 
-Both `.fixture/` and `.sandbox/` are gitignored — the sessions are real work and far too
-large to commit. Re-run `just sandbox-freeze` (optionally `--seed N`, `-n`, `--codex`)
-only when you want a different set.
+Each build restamps mtimes across 30 days (`--span`), because recency drives triage,
+prune and `--recent` — archived transcripts are all months old, so without it the bounded
+first pass would be empty.
+
+**Neither directory is committed, and they can't be.** Real transcripts are dense with
+client names, home paths, email addresses and pasted credentials — a scan of one 28-session
+fixture found thousands of each. That is fine on your own disk and unacceptable in a public
+repo, and no amount of scrubbing makes it safe when a single miss is permanent in git
+history. Hence a local fixture rather than a committed one.
 
 See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
 the skills end to end.
