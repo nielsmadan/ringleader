@@ -1,5 +1,6 @@
 import pytest
 from ringleader.overview import (
+    StatusSelection,
     age_days,
     age_human,
     compute_metrics,
@@ -257,7 +258,7 @@ def test_render_all_flag_lists_finished():
     live = _thread("b", "blocked", "2026-06-21T00:00:00+00:00")
     reg = _reg([fin, live])
     default = render(reg, NOW)
-    allout = render(reg, NOW, show_all=True)
+    allout = render(reg, NOW, selection=StatusSelection.all())
     assert "f-name" not in default  # finished hidden by default
     assert "f-name" in allout  # listed with --all
     assert "b-name" in default and "b-name" in allout
@@ -269,7 +270,7 @@ def test_project_detail_all_flag_lists_finished_and_unclassified():
     blk = _thread("b", "blocked", "2026-06-21T00:00:00+00:00")
     reg = _reg([fin, unc, blk])
     default = project_detail(reg, NOW)
-    allout = project_detail(reg, NOW, show_all=True)
+    allout = project_detail(reg, NOW, selection=StatusSelection.all())
     assert "f-name" not in default and "not shown" in default
     assert "f-name" in allout and "u-name" in allout  # both now listed
     assert "not shown" not in allout

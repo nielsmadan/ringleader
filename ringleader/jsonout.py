@@ -55,10 +55,19 @@ def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> li
     return [_session_json(t, now_iso) for t in inbox]
 
 
-def rollup_json(reg: dict, now_iso: str) -> dict:
-    """JSON-safe view of the overview rollup metrics — hides currently-snoozed
-    sessions the same way `render_rollup`/`project_summary` do by default."""
-    m = overview.compute_metrics(reg, now_iso, include_snoozed=False)
+def rollup_json(
+    reg: dict,
+    now_iso: str,
+    *,
+    selection: overview.StatusSelection = overview.DEFAULT_STATUS_SELECTION,
+) -> dict:
+    scoped = dict(reg)
+    scoped["threads"] = overview.filter_by_status(reg["threads"], now_iso, selection)
+    m = overview.compute_metrics(
+        scoped,
+        now_iso,
+        include_snoozed=selection.mode is not overview.StatusMode.DEFAULT,
+    )
     return {
         "live_count": m["live_count"],
         "spread_projects": m["spread_projects"],

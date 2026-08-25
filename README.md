@@ -133,7 +133,7 @@ standalone command. `--yes` is accepted (the inbox passes it after its own
 confirm prompt) but is currently a no-op — `rl roundup` itself never prompts. If no
 model is configured, the enrich step is a no-op and refresh + prune still run.
 
-### `rl overview [<selector>] [-s] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
+### `rl overview [<selector>] [-s] [--status STATUS] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
 
 The view. Auto-refreshes the registry (a disk scan) before rendering, unless
 `--no-scan` is passed. Prints a `⚠ N awaiting triage` header when the inbox
@@ -143,14 +143,19 @@ is non-empty.
   `rl session mark cleaned` (session triage); `mem` is the last
   `rl mem mark cleaned` (memory triage), showing `—` where the project has no
   memory entries at all.
-- `-s`, `--sessions` — flat per-session list of live threads instead of the rollup.
+- `-s`, `--sessions` — flat per-session list instead of the rollup.
 - `<selector>` — one-repo deep-dive (a git project label like `juggler`, or a cwd path).
+- `--status STATUS` — filter by effective status; repeat it to match any selected status.
+  Accepted values are `active`, `unfinished`, `blocked`, `finished`, `abandoned`,
+  `harvested`, `unclassified`, and `all`. `all` includes every non-archived session,
+  including snoozed and kept sessions.
+- `-a`, `--all` — legacy alias for `--status all`.
 - `--archived` — list archived sessions instead of live ones.
-- `-a`, `--all` — include parked/snoozed sessions and every status.
 - `--checkouts` — rollup only: also list each repo's checkout paths.
 - `--no-scan` — skip the auto-scan, report from the registry as-is.
-- `--json` — print the registry-wide rollup as JSON instead of text; ignores the
-  selector and other view flags.
+- `--json` — print the registry-wide rollup as JSON instead of text, or a session
+  array with `--sessions`, `--snoozed`, or `--kept`; normal and `--sessions` views
+  honor `--status`, while JSON ignores the selector and `--archived`.
 
 For the memory rollup instead of the session rollup, use `rl mem overview`
 (same flags: `[<selector>] [--no-scan]`).

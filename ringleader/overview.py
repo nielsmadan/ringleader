@@ -2,12 +2,42 @@ from __future__ import annotations
 
 import os
 from collections import Counter, defaultdict
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import Enum
 
 LIVE_STATUSES = ("active", "unfinished", "blocked")
+FILTERABLE_STATUSES = (*LIVE_STATUSES, "finished", "abandoned", "harvested", "unclassified")
 ABANDON_AGE_DAYS = 21
 
 PROJECT_W = 30
+
+
+class StatusMode(Enum):
+    DEFAULT = "default"
+    FILTERED = "filtered"
+    ALL = "all"
+
+
+@dataclass(frozen=True)
+class StatusSelection:
+    mode: StatusMode
+    statuses: tuple[str, ...] = ()
+
+    @classmethod
+    def default(cls) -> StatusSelection:
+        return cls(StatusMode.DEFAULT)
+
+    @classmethod
+    def filtered(cls, statuses) -> StatusSelection:
+        return cls(StatusMode.FILTERED, tuple(dict.fromkeys(statuses)))
+
+    @classmethod
+    def all(cls) -> StatusSelection:
+        return cls(StatusMode.ALL)
+
+
+DEFAULT_STATUS_SELECTION = StatusSelection.default()
 
 
 def _wrap(s: str, w: int = PROJECT_W) -> list[str]:
@@ -51,6 +81,15 @@ def effective_status(thread: dict, now_iso: str) -> str:
     if st == "unfinished" and age_days(thread["mtime"], now_iso) > ABANDON_AGE_DAYS:
         return "abandoned"
     return st
+
+
+def filter_by_status(
+    threads, now_iso: str, selection: StatusSelection = DEFAULT_STATUS_SELECTION
+) -> list[dict]:
+    if selection.mode is not StatusMode.FILTERED:
+        return list(threads)
+    wanted = set(selection.statuses)
+    return [t for t in threads if effective_status(t, now_iso) in wanted]
 
 
 def filter_recent(threads, now_iso: str, days: int | None):
@@ -132,8 +171,16 @@ def _size_suffix(thread: dict) -> str:
     return f", {_human_size(b)}" if b else ""
 
 
-def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None = None) -> str:
-    m = compute_metrics(reg, now_iso)
+def render(
+    reg: dict,
+    now_iso: str,
+    selection: StatusSelection = DEFAULT_STATUS_SELECTION,
+    cleaned: dict | None = None,
+) -> str:
+    scoped = dict(reg)
+    scoped["threads"] = filter_by_status(reg["threads"], now_iso, selection)
+    m = compute_metrics(scoped, now_iso)
+    show_all = selection.mode is not StatusMode.DEFAULT
     lines = []
     lines.append("=== ringleader overview ===")
     lines.append(
@@ -145,14 +192,11 @@ def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None
         lines.append(f"Oldest live thread: {m['oldest_age_days']} days untouched")
     if m["unclassified"]:
         lines.append(f"(! {m['unclassified']} unclassified — run session-sync)")
-    if show_all:
-        lines.append("(--all: listing every status, not just live)")
     lines.append("")
 
-    # group threads by git project (fallback: cwd); live-only unless --all
     groups: dict[str, list[tuple[dict, str]]] = defaultdict(list)
     labels: dict[str, str] = {}
-    for t in reg["threads"]:
+    for t in scoped["threads"]:
         es = effective_status(t, now_iso)
         if show_all or es in LIVE_STATUSES:
             k = group_key(t)
@@ -175,9 +219,8 @@ def render(reg: dict, now_iso: str, show_all: bool = False, cleaned: dict | None
             )
         lines.append("")
 
-    # status breakdown footer
     breakdown = ", ".join(f"{k}:{v}" for k, v in sorted(m["by_status"].items()))
-    lines.append(f"All sessions by status: {breakdown}")
+    lines.append(f"Sessions by status: {breakdown}")
     return "\n".join(lines)
 
 
@@ -300,17 +343,25 @@ def staleness_banner(reg: dict, now_iso: str, max_age_minutes: float = 60) -> st
     )
 
 
-def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
+def project_detail(
+    reg: dict,
+    now_iso: str,
+    selection: StatusSelection = DEFAULT_STATUS_SELECTION,
+) -> str:
     """A deep, single-repo report. `reg` should already be filtered to one project."""
-    threads = reg["threads"]
-    if not threads:
+    selected_threads = reg["threads"]
+    if not selected_threads:
         return "(no sessions for that selector)"
+    threads = filter_by_status(selected_threads, now_iso, selection)
+    if selection.mode is StatusMode.FILTERED and not threads:
+        return f"(no sessions matching --status {', '.join(selection.statuses)})"
 
     label = Counter(group_label(t) for t in threads).most_common(1)[0][0]
     checkouts = sorted({t["project"] for t in threads if t.get("project")})
     eff = [(t, effective_status(t, now_iso)) for t in threads]
     by_status = Counter(es for _, es in eff)
 
+    show_all = selection.mode is not StatusMode.DEFAULT
     if show_all:
         interesting = list(eff)
     else:
@@ -336,7 +387,10 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
         lines.append("  duplicates: " + ", ".join(f"{n} x{c}" for n, c in dupes.items()))
     lines.append("")
 
-    heading = "all threads" if show_all else "live/abandoned threads"
+    if selection.mode is StatusMode.FILTERED:
+        heading = "matching threads"
+    else:
+        heading = "all threads" if show_all else "live/abandoned threads"
     lines.append(f"{heading} ({len(interesting)}), oldest first:")
     for t, es in interesting:
         age = round(age_days(t["mtime"], now_iso))
@@ -361,10 +415,19 @@ def project_detail(reg: dict, now_iso: str, show_all: bool = False) -> str:
     return "\n".join(lines)
 
 
-def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) -> str:
+def render_rollup(
+    reg,
+    now_iso: str,
+    *,
+    selection: StatusSelection = DEFAULT_STATUS_SELECTION,
+    checkouts=False,
+) -> str:
     from . import projects  # noqa: PLC0415 -- projects imports overview at module level; circular
 
-    stats = projects.project_summary(reg, now_iso, include_snoozed=include_snoozed)
+    scoped = dict(reg)
+    scoped["threads"] = filter_by_status(reg["threads"], now_iso, selection)
+    include_snoozed = selection.mode is not StatusMode.DEFAULT
+    stats = projects.project_summary(scoped, now_iso, include_snoozed=include_snoozed)
     lines = [
         f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
         f"{'chk':>4} {'cleaned':>9} {'mem':>9}"
@@ -391,13 +454,13 @@ def render_rollup(reg, now_iso: str, *, include_snoozed=False, checkouts=False) 
         if checkouts:
             lines += [f"    {tilde(path)}" for path in s.checkouts]
     attn = sum(1 for s in stats if s.needs_attention)
-    snoozed_total = sum(1 for t in reg["threads"] if snooze_active(t, now_iso))
+    snoozed_total = sum(1 for t in scoped["threads"] if snooze_active(t, now_iso))
     bits = []
     if attn:
         bits.append(f"{attn} need a look ⚠")
     if snoozed_total and not include_snoozed:
-        bits.append(f"{snoozed_total} snoozed hidden — -a 💤")
-    kept_total = sum(1 for t in reg["threads"] if is_kept(t))
+        bits.append(f"{snoozed_total} snoozed hidden — --status all 💤")
+    kept_total = sum(1 for t in scoped["threads"] if is_kept(t))
     if kept_total:
         bits.append(f"{kept_total} kept — rl overview --kept 📌")
     suffix = f" ({'; '.join(bits)})" if bits else ""

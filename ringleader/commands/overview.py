@@ -85,7 +85,16 @@ def _filter_source_recent(threads, now: str, args) -> list[dict]:
     return overview.filter_recent(threads, now, args.recent)
 
 
-def _json_view(reg: dict, now: str, args) -> int:
+def _status_selection(args) -> overview.StatusSelection:
+    statuses = tuple(args.status or ())
+    if args.all or "all" in statuses:
+        return overview.StatusSelection.all()
+    if statuses:
+        return overview.StatusSelection.filtered(statuses)
+    return overview.StatusSelection.default()
+
+
+def _json_view(reg: dict, now: str, args, selection: overview.StatusSelection) -> int:
     if args.snoozed:
         print(json.dumps(jsonout.snoozed_json(reg["threads"], now), indent=2))
         return 0
@@ -94,11 +103,12 @@ def _json_view(reg: dict, now: str, args) -> int:
         return 0
     if args.sessions:
         threads = _filter_source_recent(reg["threads"], now, args)
-        if not args.all:
+        threads = overview.filter_by_status(threads, now, selection)
+        if selection.mode is overview.StatusMode.DEFAULT:
             threads = [t for t in threads if not overview.snooze_active(t, now)]
         print(json.dumps(jsonout.sessions_json(threads, now), indent=2))
         return 0
-    print(json.dumps(jsonout.rollup_json(reg, now), indent=2))
+    print(json.dumps(jsonout.rollup_json(reg, now, selection=selection), indent=2))
     return 0
 
 
@@ -115,7 +125,20 @@ def _alt_view(reg: dict, now: str, args, selectors) -> str | None:
     return None
 
 
-def cmd_overview(argv: list[str]) -> int:
+def _print_sessions_view(reg: dict, now: str, args, selection: overview.StatusSelection) -> None:
+    threads = _filter_source_recent(reg["threads"], now, args)
+    snoozed_total = sum(1 for t in threads if overview.snooze_active(t, now))
+    scoped = dict(reg)
+    if selection.mode is overview.StatusMode.DEFAULT:
+        scoped["threads"] = [t for t in threads if not overview.snooze_active(t, now)]
+    else:
+        scoped["threads"] = threads
+    print(overview.render(scoped, now, selection=selection))
+    if selection.mode is overview.StatusMode.DEFAULT and snoozed_total:
+        print(f"\n({snoozed_total} snoozed hidden — rl overview -s --status all)")
+
+
+def _overview_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
         prog="rl overview",
         description="The session view: project rollup (default), --sessions list, "
@@ -138,7 +161,16 @@ def cmd_overview(argv: list[str]) -> int:
         "-s", "--sessions", action="store_true", help="flat per-session list of live threads"
     )
     ap.add_argument(
-        "-a", "--all", action="store_true", help="include parked/snoozed sessions and every status"
+        "--status",
+        action="append",
+        choices=(*overview.FILTERABLE_STATUSES, "all"),
+        help="filter by effective status; repeatable (OR), or 'all' for every non-archived session",
+    )
+    ap.add_argument(
+        "-a",
+        "--all",
+        action="store_true",
+        help="legacy alias for --status all",
     )
     ap.add_argument(
         "--archived", action="store_true", help="list archived sessions instead of live ones"
@@ -170,7 +202,7 @@ def cmd_overview(argv: list[str]) -> int:
     ap.add_argument(
         "--json",
         action="store_true",
-        help="print JSON instead of text: the per-session list with -s/--snoozed, "
+        help="print JSON instead of text: a session array with --sessions/--snoozed/--kept, "
         "otherwise the registry-wide rollup; ignores the selector and --archived",
     )
     ap.add_argument(
@@ -180,7 +212,12 @@ def cmd_overview(argv: list[str]) -> int:
         metavar="DAYS",
         help="only sessions active within the last DAYS",
     )
-    args = ap.parse_args(argv)
+    return ap
+
+
+def cmd_overview(argv: list[str]) -> int:
+    args = _overview_parser().parse_args(argv)
+    selection = _status_selection(args)
 
     now = _now()
     if args.no_scan:
@@ -191,7 +228,7 @@ def cmd_overview(argv: list[str]) -> int:
             print(note + "\n")
 
     if args.json:
-        return _json_view(reg, now, args)
+        return _json_view(reg, now, args, selection)
 
     selectors = list(args.project or [])
     if args.selector:
@@ -211,20 +248,9 @@ def cmd_overview(argv: list[str]) -> int:
     if selectors:
         scoped = dict(reg)
         scoped["threads"] = projects.filter_by_projects(reg["threads"], selectors)
-        print(overview.project_detail(scoped, now, show_all=args.all))
+        print(overview.project_detail(scoped, now, selection=selection))
     elif args.sessions:
-        threads = _filter_source_recent(reg["threads"], now, args)
-        snoozed_total = sum(1 for t in threads if overview.snooze_active(t, now))
-        if args.all:
-            scoped = dict(reg)
-            scoped["threads"] = threads
-            print(overview.render(scoped, now, show_all=args.all))
-        else:
-            scoped = dict(reg)
-            scoped["threads"] = [t for t in threads if not overview.snooze_active(t, now)]
-            print(overview.render(scoped, now, show_all=args.all))
-            if snoozed_total:
-                print(f"\n({snoozed_total} snoozed hidden — rl overview -s -a)")
+        _print_sessions_view(reg, now, args, selection)
     else:
-        print(overview.render_rollup(reg, now, include_snoozed=args.all, checkouts=args.checkouts))
+        print(overview.render_rollup(reg, now, selection=selection, checkouts=args.checkouts))
     return 0

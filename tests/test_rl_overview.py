@@ -92,6 +92,15 @@ def test_selector_gives_deep_report(tmp_path):
     assert "checkouts" in r.stdout
 
 
+def test_selector_status_filter_distinguishes_no_matches(tmp_path):
+    reg = _registry(tmp_path, [_thread("active")])
+
+    r = _run(reg, "repo", "--status", "finished", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "no sessions matching --status finished" in r.stdout
+
+
 def test_archived_flag(tmp_path):
     reg = _registry(
         tmp_path,
@@ -141,6 +150,43 @@ def test_sessions_flag_hides_snoozed_unless_all(tmp_path):
     r_all = _run(reg, "-s", "-a", "--no-scan")
     assert r_all.returncode == 0
     assert "does beta" in r_all.stdout
+
+
+def test_sessions_text_filters_by_status(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active"),
+            _thread("finished", status="finished"),
+        ],
+    )
+
+    r = _run(reg, "--sessions", "--status", "finished", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "does finished" in r.stdout
+    assert "does active" not in r.stdout
+
+
+def test_rollup_text_filters_by_status(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active", gitProjectKey="active-k", gitProjectLabel="active-repo"),
+            _thread(
+                "finished",
+                status="finished",
+                gitProjectKey="finished-k",
+                gitProjectLabel="finished-repo",
+            ),
+        ],
+    )
+
+    r = _run(reg, "--status", "finished", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "finished-repo" in r.stdout
+    assert "active-repo" not in r.stdout
 
 
 def test_sessions_flag_auto_wakes_after_until(tmp_path):
@@ -236,6 +282,38 @@ def test_json_rollup_hides_snoozed_but_counts_auto_woken(tmp_path):
     assert data["by_project"] == {"repo-k": 2}
 
 
+def test_json_rollup_filters_by_status(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active"),
+            _thread("finished", status="finished"),
+        ],
+    )
+
+    r = _run(reg, "--json", "--status", "finished", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    data = json.loads(r.stdout)
+    assert data["by_status"] == {"finished": 1}
+    assert data["live_count"] == 0
+
+
+def test_json_rollup_status_all_includes_snoozed(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active"),
+            _thread("snoozed", snoozedAt="2026-07-02T00:00:00+00:00"),
+        ],
+    )
+
+    r = _run(reg, "--json", "--status", "all", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["live_count"] == 2
+
+
 def test_sessions_flag_json_emits_session_array(tmp_path):
     reg = _registry(tmp_path, [_thread("a")])
     r = _run(reg, "-s", "--json", "--no-scan")
@@ -243,6 +321,43 @@ def test_sessions_flag_json_emits_session_array(tmp_path):
     data = json.loads(r.stdout)
     assert isinstance(data, list)
     assert data[0]["session_id"] == "a"
+
+
+def test_sessions_json_filters_by_status(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active"),
+            _thread("finished", status="finished"),
+        ],
+    )
+
+    r = _run(reg, "-s", "--json", "--status", "finished", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert [row["session_id"] for row in json.loads(r.stdout)] == ["finished"]
+
+
+def test_sessions_status_filter_uses_effective_status(tmp_path):
+    unclassified = _thread("unclassified")
+    unclassified.pop("status")
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("abandoned", status="unfinished", mtime="2020-01-01T00:00:00+00:00"),
+            _thread("harvested", decision="harvested"),
+            unclassified,
+        ],
+    )
+
+    for status, expected in (
+        ("abandoned", "abandoned"),
+        ("harvested", "harvested"),
+        ("unclassified", "unclassified"),
+    ):
+        r = _run(reg, "--sessions", "--json", "--status", status, "--no-scan")
+        assert r.returncode == 0, r.stderr
+        assert [row["session_id"] for row in json.loads(r.stdout)] == [expected]
 
 
 def test_snoozed_json_excludes_expired_includes_active(tmp_path):
