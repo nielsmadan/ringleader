@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 from .. import jsonout, overview, projects, refresh, registry
 from . import default_registry
@@ -85,6 +86,15 @@ def _filter_source_recent(threads, now: str, args) -> list[dict]:
     return overview.filter_recent(threads, now, args.recent)
 
 
+def _scope_to_cwd(reg: dict, now: str, args) -> dict:
+    selector = str(Path.cwd().resolve())
+    scoped = dict(reg)
+    for key in ("threads", "archived"):
+        items = projects.filter_by_projects(reg.get(key, []), [selector])
+        scoped[key] = _filter_source_recent(items, now, args)
+    return scoped
+
+
 def _status_selection(args) -> overview.StatusSelection:
     statuses = tuple(args.status or ())
     if args.all or "all" in statuses:
@@ -158,8 +168,11 @@ def _overview_parser() -> argparse.ArgumentParser:
         help="repo/dir selector; repeatable (alias for the positional selector)",
     )
     ap.add_argument(
-        "-s", "--sessions", action="store_true", help="flat per-session list of live threads"
+        "--cwd",
+        action="store_true",
+        help="scope the report to the current directory and its descendants",
     )
+    ap.add_argument("-s", "--sessions", action="store_true", help="flat per-session list")
     ap.add_argument(
         "--status",
         action="append",
@@ -216,7 +229,10 @@ def _overview_parser() -> argparse.ArgumentParser:
 
 
 def cmd_overview(argv: list[str]) -> int:
-    args = _overview_parser().parse_args(argv)
+    parser = _overview_parser()
+    args = parser.parse_args(argv)
+    if args.cwd and (args.selector or args.project):
+        parser.error("--cwd cannot be combined with a selector or --project")
     selection = _status_selection(args)
 
     now = _now()
@@ -226,6 +242,9 @@ def cmd_overview(argv: list[str]) -> int:
         reg, note = refresh.auto_refresh(args.registry, now)
         if note:
             print(note + "\n")
+
+    if args.cwd:
+        reg = _scope_to_cwd(reg, now, args)
 
     if args.json:
         return _json_view(reg, now, args, selection)
@@ -245,7 +264,9 @@ def cmd_overview(argv: list[str]) -> int:
         if n:
             print(f"⚠ {n} awaiting triage — rl triage\n")
 
-    if selectors:
+    if args.cwd:
+        _print_sessions_view(reg, now, args, selection)
+    elif selectors:
         scoped = dict(reg)
         scoped["threads"] = projects.filter_by_projects(reg["threads"], selectors)
         print(overview.project_detail(scoped, now, selection=selection))

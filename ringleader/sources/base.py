@@ -27,6 +27,7 @@ class RawRef:
     file: str  # absolute transcript path
     mtime: str
     size_bytes: int
+    fingerprint: str | None = None
 
 
 @dataclass
@@ -52,6 +53,9 @@ class NormalizedSession:
     git_project_label: str | None = None
     git_root: str | None = None
     git_remote: str | None = None
+    cache_version: int | None = None
+    file_fingerprint: str | None = None
+    git_resolved: bool = False
 
 
 @runtime_checkable
@@ -61,6 +65,17 @@ class Source(Protocol):
 
     def discover(self) -> Iterator[RawRef]: ...  # cheap: paths + mtime/size, no parse
     def parse(self, ref: RawRef) -> NormalizedSession: ...  # read tail, extract fields
+
+
+def stat_fingerprint(st) -> str:
+    return ":".join(
+        str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+    )
+
+
+@runtime_checkable
+class CachedMetadataSource(Protocol):
+    def refresh_cached_metadata(self, session: NormalizedSession) -> None: ...
 
 
 @runtime_checkable

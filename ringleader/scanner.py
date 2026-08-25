@@ -2,8 +2,14 @@ from __future__ import annotations
 
 import sys
 
+from . import registry
 from .gitinfo import resolve_git_project
-from .sources.base import NormalizedSession, PickerHidingSource, PickerShowingSource
+from .sources.base import (
+    CachedMetadataSource,
+    NormalizedSession,
+    PickerHidingSource,
+    PickerShowingSource,
+)
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
 
@@ -51,20 +57,33 @@ def show_in_picker(thread: dict, original_path: str) -> bool:
     return src.show_in_picker(thread["sessionId"], original_path)
 
 
-def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:
+def scan(sources=None, git_resolver=None, cached_threads=None) -> list[NormalizedSession]:
     if sources is None:
         sources = SOURCES
     if git_resolver is None:
         git_resolver = resolve_git_project
+    threads_by_ref = {
+        (thread.get("source") or "claude-code", thread.get("file")): thread
+        for thread in cached_threads or []
+        if thread.get("file")
+    }
     cache: dict[str, object] = {}  # cwd -> GitProject|None, resolved once per cwd
     out: list[NormalizedSession] = []
     for src in sources:
         for ref in src.discover():
-            try:
-                ns = src.parse(ref)
-            except OSError as e:
-                print(f"skipped {ref.file}: {e}", file=sys.stderr)
-                continue
+            thread = threads_by_ref.get((ref.source, ref.file))
+            parser_version = getattr(src, "parser_version", None)
+            ns = registry.cached_session(thread, ref, parser_version)
+            if ns is None:
+                try:
+                    ns = src.parse(ref)
+                except OSError as e:
+                    print(f"skipped {ref.file}: {e}", file=sys.stderr)
+                    continue
+                ns.cache_version = parser_version
+                ns.file_fingerprint = ref.fingerprint
+            elif isinstance(src, CachedMetadataSource):
+                src.refresh_cached_metadata(ns)
             if ns.cwd is not None:
                 if ns.cwd not in cache:
                     cache[ns.cwd] = git_resolver(ns.cwd)
@@ -74,5 +93,6 @@ def scan(sources=None, git_resolver=None) -> list[NormalizedSession]:
                     ns.git_project_label = gp.label
                     ns.git_root = gp.root
                     ns.git_remote = gp.remote
+                    ns.git_resolved = True
             out.append(ns)
     return out

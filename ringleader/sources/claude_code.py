@@ -6,10 +6,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
 from ..naming import title_line
 from ..transcript import parse_transcript
-from .base import NormalizedSession, RawRef, append_jsonl_line
+from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
 
 def default_projects_dir() -> Path:
@@ -33,6 +34,7 @@ def _iso_mtime(p: Path) -> str:
 
 @dataclass
 class ClaudeCodeSource:
+    parser_version: ClassVar[int] = 1
     projects_dir: Path = field(default_factory=default_projects_dir)
     tail_turns: int = 30
     name: str = "claude-code"
@@ -52,7 +54,13 @@ class ClaudeCodeSource:
             except OSError as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
-            yield RawRef(source=self.name, file=str(p), mtime=_iso_mtime(p), size_bytes=st.st_size)
+            yield RawRef(
+                source=self.name,
+                file=str(p),
+                mtime=_iso_mtime(p),
+                size_bytes=st.st_size,
+                fingerprint=stat_fingerprint(st),
+            )
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = Path(ref.file)

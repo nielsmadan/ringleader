@@ -168,11 +168,11 @@ repo's own docs (via the `/doc` skill) and records the resulting doc paths on th
 `harvestPath`, rather than writing a ringleader-local copy. `rl data migrate` moves any
 pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on install.
 
-## registry.json schema (v1)
+## registry.json schema (v2)
 
 ```jsonc
 {
-  "version": 1,
+  "version": 2,
   "lastScan": "<iso timestamp, passed in by caller>",
   "threads": [
     {
@@ -190,6 +190,8 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
       "mtime": "<iso>",
       "sizeBytes": 0,
       "messageCount": 0,
+      "cacheVersion": 1,
+      "fileFingerprint": "<source-derived fingerprint or null>",
       "clearBoundaries": 0,                 // count of /clear within the file (Phase 2)
       "status": "active|unfinished|blocked|finished|abandoned",
       "statusConfidence": 0.0,

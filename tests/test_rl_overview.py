@@ -47,11 +47,12 @@ def _registry(tmp, threads, archived=None):
     return p
 
 
-def _run(reg, *args):
+def _run(reg, *args, cwd=REPO):
     env = dict(os.environ, SESSION_TRACKER_PROJECTS_DIR=str(reg.parent / "empty"))
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (str(REPO), env.get("PYTHONPATH")) if part)
     return subprocess.run(
         [sys.executable, "-m", "ringleader", "overview", "--registry", str(reg), *args],
-        cwd=str(REPO),
+        cwd=str(cwd),
         capture_output=True,
         text=True,
         check=False,
@@ -99,6 +100,226 @@ def test_selector_status_filter_distinguishes_no_matches(tmp_path):
 
     assert r.returncode == 0, r.stderr
     assert "no sessions matching --status finished" in r.stdout
+
+
+def test_cwd_selects_sessions_under_current_directory(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("inside", project=str(REPO / "nested")),
+            _thread("outside", project=str(REPO.parent / "other")),
+        ],
+    )
+    r = _run(reg, "--cwd", "--all", "--no-scan")
+    assert r.returncode == 0
+    assert "Live threads: 1" in r.stdout
+    assert "does inside" in r.stdout
+    assert "does outside" not in r.stdout
+
+
+def test_cwd_uses_invocation_directory_and_git_root(tmp_path):
+    invocation = tmp_path / "workspace" / "nested"
+    invocation.mkdir(parents=True)
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("child", project=str(invocation / "child")),
+            _thread("parent-sibling", project=str(invocation.parent / "sibling")),
+            _thread(
+                "git-root",
+                project="/elsewhere/checkout",
+                gitRoot=str(invocation),
+            ),
+        ],
+    )
+
+    r = _run(reg, "--cwd", "--status", "all", "--no-scan", cwd=invocation)
+
+    assert r.returncode == 0, r.stderr
+    assert "does child" in r.stdout
+    assert "does git-root" in r.stdout
+    assert "does parent-sibling" not in r.stdout
+
+
+def test_cwd_status_all_lists_every_scoped_thread(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active", project=str(REPO / "nested")),
+            _thread("finished", project=str(REPO / "nested"), status="finished"),
+            _thread(
+                "snoozed",
+                project=str(REPO / "nested"),
+                snoozedAt="2026-07-02T00:00:00+00:00",
+            ),
+            _thread("kept", project=str(REPO / "nested"), decision="keep"),
+            _thread("outside", project=str(REPO.parent / "other")),
+        ],
+    )
+
+    r = _run(reg, "--cwd", "--status", "all", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "Sessions by status: active:3, finished:1" in r.stdout
+    assert "does active" in r.stdout
+    assert "does finished" in r.stdout
+    assert "does snoozed" in r.stdout
+    assert "does kept" in r.stdout
+
+
+def test_cwd_repeated_statuses_list_matching_sessions(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active", project=str(REPO / "nested")),
+            _thread(
+                "unfinished",
+                project=str(REPO / "nested"),
+                status="unfinished",
+                decision="keep",
+            ),
+            _thread(
+                "blocked",
+                project=str(REPO / "nested"),
+                status="blocked",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+            ),
+            _thread("finished", project=str(REPO / "nested"), status="finished"),
+        ],
+    )
+
+    r = _run(
+        reg,
+        "--cwd",
+        "--status",
+        "unfinished",
+        "--status",
+        "blocked",
+        "--no-scan",
+    )
+
+    assert r.returncode == 0, r.stderr
+    assert "Sessions by status: blocked:1, unfinished:1" in r.stdout
+    assert "does unfinished" in r.stdout
+    assert "does blocked" in r.stdout
+    assert "does active" not in r.stdout
+    assert "does finished" not in r.stdout
+
+
+def test_cwd_does_not_imply_all_statuses(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("active", project=str(REPO / "nested")),
+            _thread("finished", project=str(REPO / "nested"), status="finished"),
+        ],
+    )
+
+    live = _run(reg, "--cwd", "--no-scan")
+    all_statuses = _run(reg, "--cwd", "--all", "--no-scan")
+
+    assert "does active" in live.stdout
+    assert "does finished" not in live.stdout
+    assert "does active" in all_statuses.stdout
+    assert "does finished" in all_statuses.stdout
+
+
+def test_cwd_scopes_json_sessions(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("inside", project=str(REPO / "nested")),
+            _thread("outside", project=str(REPO.parent / "other")),
+        ],
+    )
+
+    r = _run(reg, "--cwd", "--sessions", "--json", "--status", "all", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert [row["session_id"] for row in json.loads(r.stdout)] == ["inside"]
+
+
+def test_cwd_scopes_kept_and_snoozed_views(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread(
+                "inside",
+                project=str(REPO / "nested"),
+                decision="keep",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+            ),
+            _thread(
+                "outside",
+                project=str(REPO.parent / "other"),
+                decision="keep",
+                snoozedAt="2026-07-02T00:00:00+00:00",
+            ),
+        ],
+    )
+
+    kept = _run(reg, "--cwd", "--kept", "--json", "--no-scan")
+    snoozed = _run(reg, "--cwd", "--snoozed", "--json", "--no-scan")
+
+    assert [row["session_id"] for row in json.loads(kept.stdout)] == ["inside"]
+    assert [row["session_id"] for row in json.loads(snoozed.stdout)] == ["inside"]
+
+
+def test_cwd_scopes_archived_view(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [],
+        archived=[
+            _thread("inside-archive", project=str(REPO / "nested"), summary="inside archive"),
+            _thread(
+                "outside-archive",
+                project=str(REPO.parent / "other"),
+                summary="outside archive",
+            ),
+        ],
+    )
+
+    r = _run(reg, "--cwd", "--archived", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "inside archive" in r.stdout
+    assert "outside archive" not in r.stdout
+
+
+def test_cwd_renders_multiple_projects_as_separate_groups(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread(
+                "alpha",
+                project=str(REPO / "alpha"),
+                gitProjectKey="alpha-k",
+                gitProjectLabel="alpha-repo",
+            ),
+            _thread(
+                "beta",
+                project=str(REPO / "beta"),
+                gitProjectKey="beta-k",
+                gitProjectLabel="beta-repo",
+            ),
+        ],
+    )
+
+    r = _run(reg, "--cwd", "--status", "all", "--no-scan")
+
+    assert r.returncode == 0, r.stderr
+    assert "## alpha-repo" in r.stdout
+    assert "## beta-repo" in r.stdout
+
+
+def test_cwd_rejects_explicit_project_selectors(tmp_path):
+    reg = _registry(tmp_path, [_thread("inside", project=str(REPO / "nested"))])
+
+    positional = _run(reg, "repo", "--cwd", "--no-scan")
+    option = _run(reg, "--project", "repo", "--cwd", "--no-scan")
+
+    assert positional.returncode == 2
+    assert option.returncode == 2
 
 
 def test_archived_flag(tmp_path):

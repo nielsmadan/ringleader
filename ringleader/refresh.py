@@ -29,7 +29,11 @@ def auto_refresh(
             sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=projects_root)]
         else:
             sources = scanner.active_sources()
-    scanned = scanner.scan(sources=sources, git_resolver=git_resolver)
+    scanned = scanner.scan(
+        sources=sources,
+        git_resolver=git_resolver,
+        cached_threads=reg["threads"],
+    )
     reg = registry.reconcile(reg, scanned, now_iso)
     registry.save_registry(registry_path, reg)
     after = {t["sessionId"] for t in reg["threads"]}

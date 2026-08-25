@@ -8,8 +8,9 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import ClassVar
 
-from .base import NormalizedSession, RawRef, append_jsonl_line
+from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
 
 class CodexSessionIndexError(RuntimeError):
@@ -124,6 +125,7 @@ def _is_interactive(meta: dict) -> bool:
 
 @dataclass
 class CodexSource:
+    parser_version: ClassVar[int] = 1
     sessions_dir: Path = field(default_factory=default_codex_dir)
     session_index_file: Path | None = None
     tail_turns: int = 30
@@ -156,7 +158,13 @@ class CodexSource:
             except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
-            yield RawRef(source=self.name, file=str(p), mtime=_iso_mtime(p), size_bytes=st.st_size)
+            yield RawRef(
+                source=self.name,
+                file=str(p),
+                mtime=_iso_mtime(p),
+                size_bytes=st.st_size,
+                fingerprint=stat_fingerprint(st),
+            )
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = Path(ref.file)
@@ -200,6 +208,9 @@ class CodexSource:
                 names[session_id] = thread_name.strip() or None
         self._names_by_id = names
         return names
+
+    def refresh_cached_metadata(self, session: NormalizedSession) -> None:
+        session.custom_title = self._thread_names().get(session.session_id)
 
     def apply_name(self, session_id: str, file_path: str, name: str) -> None:
         path = Path(file_path)

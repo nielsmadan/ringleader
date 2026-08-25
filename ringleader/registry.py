@@ -5,6 +5,7 @@ from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
 from . import overview
+from .sources.base import NormalizedSession, RawRef
 
 REGISTRY_VERSION = 2
 
@@ -21,6 +22,8 @@ _METADATA_FIELDS = {
     "sizeBytes": "size_bytes",
     "messageCount": "message_count",
     "gitBranch": "git_branch",  # from transcript; always available, refresh freely
+    "cacheVersion": "cache_version",
+    "fileFingerprint": "file_fingerprint",
 }
 
 # Git-project identity needs the live filesystem, so a vanished cwd resolves to None.
@@ -75,40 +78,56 @@ def _as_dict(meta) -> dict:
 
 
 def _new_thread(md: dict) -> dict:
-    return {
-        "sessionId": md["session_id"],
-        "source": md["source"],
-        "file": md["file"],
-        "project": md["cwd"],
-        "title": md["custom_title"],
-        "aiTitle": md["ai_title"],
-        "summary": md["summary"],
-        "lastPrompt": md["last_prompt"],
-        "mtime": md["mtime"],
-        "sizeBytes": md["size_bytes"],
-        "messageCount": md["message_count"],
-        "gitBranch": md["git_branch"],
-        "gitProjectKey": md["git_project_key"],
-        "gitProjectLabel": md["git_project_label"],
-        "gitRoot": md["git_root"],
-        "gitRemote": md["git_remote"],
-        "status": "unclassified",
-        "statusConfidence": 0.0,
-        "whatItIs": None,
-        "suggestedName": None,
-        "appliedName": None,
-        "namedAtMtime": None,
-        "reviewedAtMtime": None,
-        "classifiedAtMtime": None,
-        "decision": None,
-        "harvestPath": None,
-        "todoId": None,
-        "tags": [],
-        "locationPinned": False,
-        "snoozedAt": None,
-        "keptAt": None,
-        "selectedForDay": None,
-    }
+    thread = {rk: md.get(mk) for rk, mk in _METADATA_FIELDS.items()}
+    thread.update({rk: md.get(mk) for rk, mk in _GIT_PROJECT_FIELDS.items()})
+    thread.update(
+        {
+            "sessionId": md["session_id"],
+            "status": "unclassified",
+            "statusConfidence": 0.0,
+            "whatItIs": None,
+            "suggestedName": None,
+            "appliedName": None,
+            "namedAtMtime": None,
+            "reviewedAtMtime": None,
+            "classifiedAtMtime": None,
+            "decision": None,
+            "harvestPath": None,
+            "todoId": None,
+            "tags": [],
+            "locationPinned": False,
+            "snoozedAt": None,
+            "keptAt": None,
+            "selectedForDay": None,
+        }
+    )
+    return thread
+
+
+def cached_session(
+    thread: dict | None,
+    ref: RawRef,
+    parser_version: int | None,
+) -> NormalizedSession | None:
+    if (
+        thread is None
+        or parser_version is None
+        or ref.fingerprint is None
+        or thread.get("cacheVersion") != parser_version
+        or thread.get("fileFingerprint") != ref.fingerprint
+    ):
+        return None
+    values = {mk: thread.get(rk) for rk, mk in _METADATA_FIELDS.items()}
+    values.update({mk: thread.get(rk) for rk, mk in _GIT_PROJECT_FIELDS.items()})
+    values.update(
+        source=ref.source,
+        session_id=thread["sessionId"],
+        file=ref.file,
+        mtime=ref.mtime,
+        size_bytes=ref.size_bytes,
+        message_count=thread.get("messageCount") or 0,
+    )
+    return NormalizedSession(**values)
 
 
 def _key(rec: dict) -> tuple:
@@ -131,11 +150,15 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
             for rk, mk in _METADATA_FIELDS.items():
                 if pinned and rk == "project":  # relocated: keep the pinned cwd
                     continue
-                existing[rk] = md[mk]
+                existing[rk] = md.get(mk)
             if not pinned:  # relocated: keep the pinned git identity
-                for rk, mk in _GIT_PROJECT_FIELDS.items():
-                    if md[mk]:  # else keep cached value when cwd is gone
-                        existing[rk] = md[mk]
+                if md.get("git_resolved"):
+                    for rk, mk in _GIT_PROJECT_FIELDS.items():
+                        existing[rk] = md.get(mk)
+                else:
+                    for rk, mk in _GIT_PROJECT_FIELDS.items():
+                        if md.get(mk):  # else keep cached value when cwd is gone
+                            existing[rk] = md[mk]
             threads.append(existing)
         else:
             threads.append(_new_thread(md))

@@ -134,11 +134,12 @@ standalone command. `--yes` is accepted (the inbox passes it after its own
 confirm prompt) but is currently a no-op — `rl roundup` itself never prompts. If no
 model is configured, the enrich step is a no-op and refresh + prune still run.
 
-### `rl overview [<selector>] [-s] [--status STATUS] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
+### `rl overview [<selector>] [--cwd] [-s] [--status STATUS] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
 
 The view. Auto-refreshes the registry (a disk scan) before rendering, unless
-`--no-scan` is passed. Prints a `⚠ N awaiting triage` header when the inbox
-is non-empty.
+`--no-scan` is passed. Unchanged transcripts are reused when their source parser
+version and filesystem fingerprint still match; Git identity is refreshed separately.
+Prints a `⚠ N awaiting triage` header when the inbox is non-empty.
 
 - (no args) — project rollup, the default. The `cleaned` column is the last
   `rl session mark cleaned` (session triage); `mem` is the last
@@ -146,6 +147,10 @@ is non-empty.
   memory entries at all.
 - `-s`, `--sessions` — flat per-session list instead of the rollup.
 - `<selector>` — one-repo deep-dive (a git project label like `juggler`, or a cwd path).
+- `--cwd` — scope every view to sessions whose cwd/git root is the current directory or
+  below it. The default is a grouped session list; combine with normal view flags such as
+  `--sessions`, `--json`, `--snoozed`, or `--kept`. It cannot be combined with a positional
+  selector or `--project`.
 - `--status STATUS` — filter by effective status; repeat it to match any selected status.
   Accepted values are `active`, `unfinished`, `blocked`, `finished`, `abandoned`,
   `harvested`, `unclassified`, and `all`. `all` includes every non-archived session,
@@ -156,7 +161,15 @@ is non-empty.
 - `--no-scan` — skip the auto-scan, report from the registry as-is.
 - `--json` — print the registry-wide rollup as JSON instead of text, or a session
   array with `--sessions`, `--snoozed`, or `--kept`; normal and `--sessions` views
-  honor `--status`, while JSON ignores the selector and `--archived`.
+  honor `--status`. JSON honors `--cwd` but ignores positional/`--project` selectors and
+  `--archived`.
+
+Examples:
+
+```sh
+rl overview --cwd --status all
+rl overview --cwd --status unfinished --status blocked
+```
 
 For the memory rollup instead of the session rollup, use `rl mem overview`
 (same flags: `[<selector>] [--no-scan]`).
