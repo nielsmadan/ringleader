@@ -75,22 +75,23 @@ just sandbox              # rebuild a zero-state world and reset the registry
 It prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
 `CODEX_SESSIONS_DIR`, `RINGLEADER_CLAUDE_SETTINGS`). Export them and launch an agent from
 that shell — every `rl` call a skill makes lands in `.sandbox/`, and your real sessions,
-registry and settings are untouched. Re-run `just sandbox` to reset to zero.
+registry and settings are untouched. Re-run `just sandbox` to reset to zero; the world is
+identical every time and on every machine.
 
-On the first run it copies real sessions out of your archive into `.fixture/` and then
-leaves that set alone. Freezing is what keeps runs comparable: the fixture stays fixed as
-you carry on archiving and pruning, so a run a month from now faces the same sessions.
-`just sandbox-refreeze` (with `--seed N`, `-n`, `--codex`) picks a different set.
+It builds from `tests/fixtures/sandbox/`, which **is committed** — 28 sessions in ~157 KB.
+That works because `rl` only ever reads a session's `cwd`, `gitBranch`, message *count*
+and title/summary lines, never the prose. So each fixture session keeps a real session's
+**shape** — turn count, whether it was named, whether it had a summary — with invented
+paths and placeholder text. Structure comes from real sessions; no real content ships.
 
-Each build restamps mtimes across 30 days (`--span`), because recency drives triage,
-prune and `--recent` — archived transcripts are all months old, so without it the bounded
-first pass would be empty.
+That distinction is load-bearing: real transcripts carry client names, home paths, email
+addresses and pasted credentials in their thousands, and this repo is public.
+`tests/test_sandbox_fixture.py` fails the build if the fixture ever contains any of them.
 
-**Neither directory is committed, and they can't be.** Real transcripts are dense with
-client names, home paths, email addresses and pasted credentials — a scan of one 28-session
-fixture found thousands of each. That is fine on your own disk and unacceptable in a public
-repo, and no amount of scrubbing makes it safe when a single miss is permanent in git
-history. Hence a local fixture rather than a committed one.
+Each build restamps mtimes across 30 days (`--span`), because recency drives triage, prune
+and `--recent`. Turn counts span prune's `--max-turns` gate so the tiny-session path is
+actually exercised. `just sandbox-refreeze` regenerates the fixture from your own archive
+— rarely needed, and it refuses to write anything that fails the leak check.
 
 See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
 the skills end to end.

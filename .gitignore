@@ -14,6 +14,5 @@ docs/superpowers/
 dist/
 build/
 *.egg-info/
-# frozen real sessions + the throwaway world built from them
-.fixture/
+# throwaway world built by `just sandbox` (the fixture it builds from IS committed)
 .sandbox/

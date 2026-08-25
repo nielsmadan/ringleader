@@ -25,7 +25,9 @@ Read-only except the snooze action in Step 5.
    skill now versus continue the overview first.
 
 3. **Recent open sessions.** Run `rl overview -s --recent 3 --json` to list open sessions
-   active in the last 3 days. For each, summarize what it is and what was last worked on,
+   active in the last 3 days. List them in the shape given in `references/playbook.md`
+   § Presenting a batch — one per numbered entry, never several per sentence. For each,
+   say what it is and what was last worked on,
    using the JSON's classification and timestamp fields.
 
 4. **Parked sessions.** Run `rl overview --snoozed` and list each with its wake time.

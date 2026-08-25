@@ -45,9 +45,9 @@ refresh-local:
 reset-local:
     @uv tool uninstall ringleader
 
-# Re-pick which real sessions the frozen fixture holds.
+# Regenerate the committed sandbox fixture from your own archive (rarely needed).
 sandbox-refreeze *ARGS:
-    @uv run python scripts/sandbox.py --freeze {{ARGS}}
+    @uv run python scripts/sandbox.py --refreeze {{ARGS}}
 
 # Throwaway world for testing the skills from zero state (freezes real sessions on first run).
 sandbox *ARGS:

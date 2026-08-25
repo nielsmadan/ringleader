@@ -255,6 +255,41 @@ a name and status?"* rather than *"Run enrich?"*. Two specific duties:
   `rl prune --delete` and `rl session delete` remove transcripts for good, while
   `rl session archive` only moves them and `rl session unarchive` puts them back.
 
+### Presenting a batch
+
+Before asking for decisions, list the sessions. **One session per entry, never several
+per sentence** — running prose like *"two finished: `a` (1.9d — did X, Y and Z) and `b`
+(1.7d — did P and Q). Plus four unfinished: …"* is unreadable at terminal width, because
+the structure disappears the moment it wraps.
+
+Use a stable shape, and keep entries short enough not to wrap:
+
+```
+notes/home — 6 awaiting a decision
+
+  1. shopping-1 · 1.9d · finished
+     Jina proxy flags verified, Reddit guidance updated
+
+  2. add-antoine-dufour-records · 1.7d · finished
+     five solo albums added with metadata and Qobuz links
+
+  3. shopping-2 · 2.4d · unfinished
+     desk speaker research; open question about the recording
+```
+
+The rules that matter:
+
+- **A heading per project**, with how many are in this batch.
+- **A numbered entry per session** — the number is what the user answers with if
+  `[SELECT]` falls back to a numbered list.
+- **First line: name · age · status.** Nothing else; it must not wrap.
+- **Second line: one clause** on what the session was about, ~70 characters. If it needs
+  a semicolon list of everything that happened, it is too long — say the part that
+  informs the decision, not a summary of the work.
+- **Blank line between entries.** The whitespace is what makes it scannable.
+- **At most 8 entries per batch.** More than that is a wall regardless of formatting;
+  split the project across batches and let the tally show the progress.
+
 ### `[FAN-OUT]`
 
 **What it does:** run several independent, read-only extraction tasks concurrently — for

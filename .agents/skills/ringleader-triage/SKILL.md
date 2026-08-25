@@ -53,8 +53,10 @@ this file only adds the flow.
    5. **Delete it permanently.** Removes the transcript for good. **Nothing is harvested
       first** — pick "Done" instead if any of it is worth keeping.
 
-   Say what each session is about before asking, and never present a bare status word
-   ("finished", "open") as the choice — see `references/playbook.md` § `[SELECT]`.
+   List the sessions before asking, one per numbered entry, in the shape given in
+   `references/playbook.md` § Presenting a batch — never several sessions per sentence,
+   and at most 8 per batch. Never present a bare status word ("finished", "open") as the
+   choice itself — see `references/playbook.md` § `[SELECT]`.
 
 5. **Apply the choices.**
    - *done* → add to this run's harvest queue (don't archive yet — step 6 does both).
