@@ -3,14 +3,18 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 
-from .base import UsageRecord
+from .base import UsageReader, UsageRecord
 from .claude import ClaudeUsageReader
 from .codex import CodexUsageReader
 from .opencode import OpenCodeUsageReader
 from .pi import PiUsageReader
 from .pricing import estimate
 
-READERS = {
+# Each reader's constructor takes its own reader-specific kwargs (e.g. ClaudeUsageReader's
+# projects_dir), so this can't be typed any more precisely than "produces a UsageReader" --
+# callers that need a specific reader's own kwargs should import that reader directly
+# instead of going through this registry.
+READERS: dict[str, Callable[..., UsageReader]] = {
     "claude": ClaudeUsageReader,
     "codex": CodexUsageReader,
     "opencode": OpenCodeUsageReader,

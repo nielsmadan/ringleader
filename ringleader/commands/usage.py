@@ -6,7 +6,9 @@ from datetime import UTC, date, datetime, timedelta
 
 from ..paths import archive_root
 from ..usage import aggregate
-from ..usage.base import UsageRecord, window_is_current
+from ..usage.base import UsageRecord, WindowSnapshot, window_is_current
+from ..usage.claude import ClaudeUsageReader
+from ..usage.codex import CodexUsageReader
 
 _AMBIGUOUS_LIMIT = 10
 
@@ -33,7 +35,7 @@ def collect(sources, dirs=None) -> list[UsageRecord]:
 
 
 def collect_archived() -> list[UsageRecord]:
-    reader = aggregate.READERS["claude"](projects_dir=archive_root())
+    reader = ClaudeUsageReader(projects_dir=archive_root())
     return list(reader.records()) if reader.available() else []
 
 
@@ -136,18 +138,18 @@ def _cmd_session(argv: list[str], prog: str) -> int:
     return 0
 
 
-def collect_windows():
-    reader = aggregate.READERS["codex"]()
+def collect_windows() -> list[WindowSnapshot]:
+    reader = CodexUsageReader()
     return list(reader.windows()) if reader.available() else []
 
 
-def collect_claude_windows():
+def collect_claude_windows() -> list[WindowSnapshot]:
     from ..usage import claude_limits  # noqa: PLC0415
 
     return claude_limits.read_windows(claude_limits.default_capture_path(), _now())
 
 
-def _window_json(w) -> dict:
+def _window_json(w: WindowSnapshot) -> dict:
     return {
         "used_percent": w.used_percent,
         "window_minutes": w.window_minutes,
@@ -163,7 +165,7 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
     args = ap.parse_args(argv)
 
     now = _now()
-    latest: dict[str, object] = {}
+    latest: dict[str, WindowSnapshot] = {}
     for w in collect_windows():
         cur = latest.get(w.window)
         if cur is None or w.timestamp > cur.timestamp:
@@ -171,7 +173,7 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
     current = {k: w for k, w in latest.items() if window_is_current(w, now)}
     expired = {k: w for k, w in latest.items() if k not in current}
 
-    claude_latest: dict[str, object] = {}
+    claude_latest: dict[str, WindowSnapshot] = {}
     for w in collect_claude_windows():
         cur = claude_latest.get(w.window)
         if cur is None or w.timestamp > cur.timestamp:
@@ -199,11 +201,11 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
         plan = next(iter(latest.values())).plan_type or "?"
         print(f"codex subscription windows (plan: {plan})")
         for kind in ("5h", "weekly"):
-            w = current.get(kind)
-            if w is not None:
+            snap = current.get(kind)
+            if snap is not None:
                 print(
-                    f"  {kind:<7} {w.used_percent:>5.1f}% used   resets {w.resets_at[:16]}"
-                    f"   (as of {w.timestamp[:16]})"
+                    f"  {kind:<7} {snap.used_percent:>5.1f}% used   resets {snap.resets_at[:16]}"
+                    f"   (as of {snap.timestamp[:16]})"
                 )
                 continue
             old = expired.get(kind)
@@ -215,11 +217,11 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
     else:
         print("claude subscription windows")
         for kind in ("5h", "weekly"):
-            w = claude_current.get(kind)
-            if w is not None:
+            snap = claude_current.get(kind)
+            if snap is not None:
                 print(
-                    f"  {kind:<7} {w.used_percent:>5.1f}% used   resets {w.resets_at[:16]}"
-                    f"   (as of {w.timestamp[:16]})"
+                    f"  {kind:<7} {snap.used_percent:>5.1f}% used   resets {snap.resets_at[:16]}"
+                    f"   (as of {snap.timestamp[:16]})"
                 )
                 continue
             old = claude_expired.get(kind)

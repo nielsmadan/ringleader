@@ -233,6 +233,13 @@ nothing priced reports `null`, never `0`.
 - `rl usage export [--out PATH]` / `rl usage --merge <dir>` — combine usage from
   several machines (file-based, no sync service).
 
+  Two known limits on the project column. A harness that records no working directory
+  (OpenCode) groups under `(unknown)`. And where a project name is recovered from an
+  encoded directory name rather than a recorded cwd, a directory containing a hyphen
+  cannot be told apart from a nested path — `foo-bar` and `foo/bar` encode identically —
+  so such a project can appear as two rows. Both are reporting artifacts, not
+  double-counted tokens: the totals are right, only the grouping splits.
+
 `rl data tokens` remains as an alias for `rl usage --source claude`.
 
 ### `rl harvests [--json]`

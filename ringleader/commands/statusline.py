@@ -116,6 +116,17 @@ def _string_end(text: str, quote_start: int) -> int:
     raise ValueError("unterminated JSON string")
 
 
+def _ws_end(text: str, pos: int) -> int:
+    """Index just past the whitespace run starting at ``pos``.
+
+    ``_WS_RE`` matches zero-or-more chars, so ``.match`` always succeeds for any ``pos``
+    in ``[0, len(text)]`` -- every call site here passes such a position, so this is
+    never ``None`` in practice."""
+    m = _WS_RE.match(text, pos)
+    assert m is not None
+    return m.end()
+
+
 def _object_key_span(text: str, key: str) -> tuple[int, int] | None:
     """Span ``(start, end)`` of ``key``'s value in the JSON object opening at the start of
     ``text``, or ``None`` if ``text`` doesn't open with an object or has no such key at
@@ -130,12 +141,12 @@ def _object_key_span(text: str, key: str) -> tuple[int, int] | None:
     (plain dict access, no notion of "the wrong nested one").
     """
     decoder = JSONDecoder()
-    i = _WS_RE.match(text, 0).end()
+    i = _ws_end(text, 0)
     if i >= len(text) or text[i] != "{":
         return None
     i += 1
     while True:
-        i = _WS_RE.match(text, i).end()
+        i = _ws_end(text, i)
         if i >= len(text) or text[i] == "}":
             return None
         if text[i] != '"':
@@ -145,17 +156,17 @@ def _object_key_span(text: str, key: str) -> tuple[int, int] | None:
             this_key = json.loads(text[i:key_end])
         except json.JSONDecodeError:
             return None
-        i = _WS_RE.match(text, key_end).end()
+        i = _ws_end(text, key_end)
         if i >= len(text) or text[i] != ":":
             return None
-        i = _WS_RE.match(text, i + 1).end()
+        i = _ws_end(text, i + 1)
         try:
             _, value_end = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
             return None
         if this_key == key:
             return i, value_end
-        i = _WS_RE.match(text, value_end).end()
+        i = _ws_end(text, value_end)
         if i < len(text) and text[i] == ",":
             i += 1
             continue
@@ -170,13 +181,13 @@ def _top_level_key_count(text: str, key: str) -> int:
     ``data.get("statusLine")`` reports the other one as live. Callers refuse rather than
     guess which occurrence is real."""
     decoder = JSONDecoder()
-    i = _WS_RE.match(text, 0).end()
+    i = _ws_end(text, 0)
     if i >= len(text) or text[i] != "{":
         return 0
     i += 1
     count = 0
     while True:
-        i = _WS_RE.match(text, i).end()
+        i = _ws_end(text, i)
         if i >= len(text) or text[i] == "}":
             return count
         if text[i] != '"':
@@ -188,15 +199,15 @@ def _top_level_key_count(text: str, key: str) -> int:
             return count
         if this_key == key:
             count += 1
-        i = _WS_RE.match(text, key_end).end()
+        i = _ws_end(text, key_end)
         if i >= len(text) or text[i] != ":":
             return count
-        i = _WS_RE.match(text, i + 1).end()
+        i = _ws_end(text, i + 1)
         try:
             _, value_end = decoder.raw_decode(text, i)
         except json.JSONDecodeError:
             return count
-        i = _WS_RE.match(text, value_end).end()
+        i = _ws_end(text, value_end)
         if i < len(text) and text[i] == ",":
             i += 1
             continue
@@ -417,7 +428,7 @@ def cmd_status(argv: list[str]) -> int:
         installed = MARKER in script_raw
     else:
         print("target: inline command" if command else "target: none")
-        installed = bool(command) and MARKER in command
+        installed = command is not None and MARKER in command
     print(f"snippet: {'installed' if installed else 'not installed'}")
 
     capture = default_capture_path()
