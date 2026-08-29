@@ -314,3 +314,35 @@ def test_an_unwritable_pth_is_reported_rather_than_silently_skipped(tmp_path, mo
     finally:
         pth.parent.chmod(0o755)
         pth.chmod(0o644)
+
+
+def test_a_cached_git_root_moves_with_the_tree():
+    # the destination had no git identity, so pin_thread_location kept the cached
+    # root; it must still name the new location rather than the vanished one.
+    t = {"gitRoot": "/ws/proj/.claude/worktrees/gone"}
+    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
+    assert t["gitRoot"] == "/ws/new/dev1/.claude/worktrees/gone"
+
+
+def test_a_git_root_equal_to_the_moved_dir_is_remapped():
+    t = {"gitRoot": "/ws/proj"}
+    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
+    assert t["gitRoot"] == "/ws/new/dev1"
+
+
+def test_a_git_root_outside_the_moved_tree_is_untouched():
+    t = {"gitRoot": "/ws/other"}
+    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    assert t["gitRoot"] == "/ws/other"
+
+
+def test_a_sibling_with_a_shared_prefix_is_not_remapped():
+    t = {"gitRoot": "/ws/proj-two"}
+    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    assert t["gitRoot"] == "/ws/proj-two"
+
+
+def test_a_thread_without_a_git_root_is_left_alone():
+    t = {}
+    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    assert "gitRoot" not in t

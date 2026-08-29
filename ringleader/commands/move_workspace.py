@@ -270,6 +270,20 @@ def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[
     return moved, stranded
 
 
+def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
+    """Carry a cached `gitRoot` across with the tree.
+
+    `pin_thread_location` keeps the cached git fields when the destination has no
+    resolvable git identity — a deleted worktree, say. That is right for the
+    identity itself, but the cached root is a path, and left alone it names a
+    location that no longer exists. Remapping keeps the identity and makes the
+    path true.
+    """
+    root = thread.get("gitRoot")
+    if isinstance(root, str) and (root == old or is_beneath(root, old)):
+        thread["gitRoot"] = new + root[len(old):]
+
+
 def _retarget_registry(
     registry_path: str, old: str, new: str, moved: dict, sources: dict, stranded: set[str]
 ) -> _Plan:
@@ -279,12 +293,14 @@ def _retarget_registry(
         plan.threads = [t for t in plan.threads if t[0]["sessionId"] not in stranded]
         for thread, new_project in plan.threads:
             registry.pin_thread_location(thread, new_project, _git_for(new_project))
+            remap_cached_git_root(thread, old, new)
             if thread.get("file") in moved:
                 thread["file"] = moved[thread["file"]]
         for record, new_project in plan.arch:
             embedded = record["thread"]
             was = embedded["project"]
             registry.pin_thread_location(embedded, new_project, _git_for(new_project))
+            remap_cached_git_root(embedded, old, new)
             # the tombstone's own `project` is often a git label, not a path
             if record.get("project") == was:
                 record["project"] = new_project
