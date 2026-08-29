@@ -8,6 +8,7 @@ file. The sweep therefore waits for quiet before archiving.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -21,6 +22,29 @@ from . import default_registry
 GRACE_SECONDS = 120
 QUIET_TIMEOUT = 3.0
 QUIET_INTERVAL = 0.25
+
+# Per the design's agent survey (docs/specs/2026-08-28-finish-session-design.md),
+# Claude Code and Codex both put the id in a top-level "session_id" field, with a
+# near-identical flat schema. "sessionId" is accepted defensively alongside it but
+# is unverified against any real agent's payload. A nested "payload.session_id" is
+# deliberately NOT accepted: ringleader/sources/codex.py notes that field names the
+# *root* thread for a subagent rollout, not the exiting session — trusting it here
+# could silently archive the wrong session.
+_SESSION_ID_KEYS = ("session_id", "sessionId")
+
+
+def _session_id_from_hook_payload(raw: str) -> str | None:
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    for key in _SESSION_ID_KEYS:
+        val = payload.get(key)
+        if isinstance(val, str) and val:
+            return val
+    return None
 
 
 def _mtime(path: str) -> float | None:
@@ -72,12 +96,21 @@ def _archive(reg: dict, threads: list[dict], registry_path: str) -> int:
 def cmd_sweep(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session sweep")
     ap.add_argument("--session", help="archive this session now (the session-end hook form)")
+    ap.add_argument(
+        "--from-hook",
+        action="store_true",
+        help="read a session-end hook payload as JSON on stdin and archive the session it names",
+    )
     ap.add_argument("--current", action="store_true")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--grace", type=int, default=GRACE_SECONDS)
     args = ap.parse_args(argv)
 
     session_id = args.session
+    if args.from_hook:
+        session_id = _session_id_from_hook_payload(sys.stdin.read())
+        if session_id is None:
+            return 0
     if args.current:
         found = current_session()
         if found is None:

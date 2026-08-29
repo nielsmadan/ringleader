@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 
-from . import skills, statusline
+from . import hooks, skills, statusline
 
 # noun -> verb -> command. A noun simply omits a verb it has no meaning for
 # (the statusline has nothing to re-sync), and `all` skips it with a note.
@@ -15,6 +15,11 @@ NOUNS = {
     "statusline": {
         "install": statusline.cmd_install,
         "uninstall": statusline.cmd_uninstall,
+    },
+    "hooks": {
+        "install": hooks.cmd_install,
+        "update": hooks.cmd_update,
+        "uninstall": hooks.cmd_uninstall,
     },
 }
 

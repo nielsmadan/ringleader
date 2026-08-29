@@ -5,7 +5,7 @@ import json
 import os
 from pathlib import Path
 
-from . import skills, statusline
+from . import hooks, skills, statusline
 
 MIN_RETENTION_DAYS = 30
 
@@ -51,6 +51,7 @@ def cmd_doctor(argv: list[str]) -> int:
     for label, run, run_argv in (
         ("skills", skills.cmd_status, []),
         ("statusline", statusline.cmd_status, ["--settings", args.settings]),
+        ("hooks", hooks.cmd_status, []),
     ):
         print(f"\n--- {label} ---")
         run(run_argv)

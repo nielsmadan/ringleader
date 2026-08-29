@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import time
@@ -95,6 +96,103 @@ def test_session_form_is_silent_for_an_unknown_session(tmp_path, monkeypatch, ca
 
     out = json.loads(reg.read_text())
     assert [t["sessionId"] for t in out["threads"]] == ["s1"]
+
+
+def test_from_hook_archives_the_session_named_by_a_top_level_session_id(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert not transcript.exists()
+
+
+def test_from_hook_archives_the_session_named_by_a_camelcase_session_id(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"sessionId": "s1"})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert not transcript.exists()
+
+
+def test_from_hook_ignores_a_nested_payload_session_id(tmp_path, monkeypatch, capsys):
+    # A nested payload.session_id is deliberately not a recognised key: per
+    # ringleader/sources/codex.py, that field names the *root* thread of a subagent
+    # rollout, not the exiting session — trusting it could archive the wrong session.
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"payload": {"session_id": "s1"}})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_from_hook_is_silent_on_unparseable_stdin(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO("not json"))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_from_hook_is_silent_on_empty_stdin(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(""))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_from_hook_is_silent_when_no_recognised_key_is_present(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"reason": "quit"})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_from_hook_is_silent_for_an_unknown_session_id(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "no-such-session"})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_from_hook_is_silent_for_an_unmarked_session_id(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=False, age_seconds=0)
+    monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"session_id": "s1"})))
+
+    assert sweep.cmd_sweep(["--from-hook", "--registry", str(reg)]) == 0
+    assert transcript.exists()
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_sweep_persists_a_partial_success_when_one_thread_collides(tmp_path, monkeypatch, capsys):
