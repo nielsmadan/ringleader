@@ -15,8 +15,9 @@ def test_install_links_into_agents_dirs(tmp_path, monkeypatch, capsys):
     assert skills.cmd_install(["--yes"]) == 0
     # claude gets ~/.claude/skills, codex the shared ~/.agents/skills
     for base in (home / ".claude" / "skills", home / ".agents" / "skills"):
-        link = base / "ringleader-triage"
-        assert link.is_symlink() and (link / "SKILL.md").exists()
+        for name in ("ringleader-triage", "ringleader-publish"):
+            link = base / name
+            assert link.is_symlink() and (link / "SKILL.md").exists()
 
 
 def test_install_is_idempotent(tmp_path, monkeypatch):

@@ -8,6 +8,7 @@ SKILLS = [
     "ringleader-cleanup",
     "ringleader-overview",
     "ringleader-usage",
+    "ringleader-publish",
 ]
 
 
@@ -20,6 +21,7 @@ def test_frontmatter_only_spec_fields():
         fm = _body(name).split("---")[1]
         keys = set(re.findall(r"^([a-z-]+):", fm, re.M))
         assert keys <= {"name", "description"}, f"{name}: non-spec frontmatter {keys}"
+        assert {"name", "description"} <= keys, f"{name}: missing required frontmatter"
         assert f"name: {name}" in fm
 
 
