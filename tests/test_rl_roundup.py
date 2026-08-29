@@ -1,4 +1,6 @@
 import json
+import os
+import time
 
 from ringleader.commands import roundup as roundup_mod
 
@@ -60,3 +62,42 @@ def test_roundup_purges_expired_archives(tmp_path, monkeypatch):
     assert rc == 0
     assert not jsonl.exists()
     assert json.loads(reg.read_text())["deleted"][0]["reason"] == "purged"
+
+
+def test_roundup_archives_a_session_marked_finish_on_exit(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    projects = tmp_path / "projects" / "-w-x"
+    projects.mkdir(parents=True)
+    transcript = projects / "s1.jsonl"
+    transcript.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    when = time.time() - 600
+    os.utime(transcript, (when, when))
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "archived": [],
+                "deleted": [],
+                "threads": [
+                    {
+                        "sessionId": "s1",
+                        "file": str(transcript),
+                        "project": "/w/x",
+                        "source": "claude-code",
+                        "decision": "harvested",
+                        "finishOnExit": True,
+                    }
+                ],
+            }
+        )
+    )
+
+    roundup_mod.cmd_roundup(["--registry", str(reg), "--yes"])
+
+    out = json.loads(reg.read_text())
+    assert [a["sessionId"] for a in out["archived"]] == ["s1"]
+    assert not transcript.exists()

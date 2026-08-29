@@ -2,6 +2,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -339,6 +340,48 @@ def test_archived_flag(tmp_path):
     )
     r = _run(reg, "--archived", "--no-scan")
     assert r.returncode == 0 and "old work" in r.stdout
+
+
+def test_overview_scan_does_not_archive_a_finished_session(tmp_path):
+    projects = tmp_path / "projects" / "-w-x"
+    projects.mkdir(parents=True)
+    transcript = projects / "s1.jsonl"
+    transcript.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    when = time.time() - 600
+    os.utime(transcript, (when, when))
+
+    reg = _registry(
+        tmp_path,
+        [
+            _thread(
+                "s1",
+                file=str(transcript),
+                project="/w/x",
+                decision="harvested",
+                finishOnExit=True,
+            )
+        ],
+    )
+
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path / "home"),
+        SESSION_TRACKER_PROJECTS_DIR=str(tmp_path / "projects"),
+    )
+    env["PYTHONPATH"] = os.pathsep.join(part for part in (str(REPO), env.get("PYTHONPATH")) if part)
+    r = subprocess.run(
+        [sys.executable, "-m", "ringleader", "overview", "--registry", str(reg)],
+        cwd=str(REPO),
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert r.returncode == 0, r.stderr
+    out = json.loads(reg.read_text())
+    assert out.get("archived", []) == []
+    assert transcript.exists()
 
 
 def test_triage_header_shows_when_inbox_nonempty(tmp_path):

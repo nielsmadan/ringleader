@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -62,6 +63,61 @@ def test_session_refresh_project_filter_is_reachable(tmp_path):
 
     assert r.returncode == 0, r.stderr
     assert '"pendingCount"' in r.stdout
+
+
+def test_session_refresh_keeps_stdout_pure_json_when_sweeping(tmp_path):
+    projects = tmp_path / "projects" / "-w-x"
+    projects.mkdir(parents=True)
+    transcript = projects / "s1.jsonl"
+    transcript.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    when = time.time() - 600
+    os.utime(transcript, (when, when))
+    empty_codex = tmp_path / "empty-codex"
+    empty_codex.mkdir()
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "archived": [],
+                "deleted": [],
+                "threads": [
+                    {
+                        "sessionId": "s1",
+                        "file": str(transcript),
+                        "project": "/w/x",
+                        "source": "claude-code",
+                        "decision": "harvested",
+                        "finishOnExit": True,
+                        "gitProjectLabel": None,
+                        "gitBranch": None,
+                        "title": None,
+                        "aiTitle": None,
+                        "lastPrompt": None,
+                        "messageCount": 0,
+                    }
+                ],
+            }
+        )
+    )
+    env = {
+        **os.environ,
+        "XDG_DATA_HOME": str(tmp_path / "data"),
+        "SESSION_TRACKER_PROJECTS_DIR": str(tmp_path / "projects"),
+        "CODEX_SESSIONS_DIR": str(empty_codex),
+    }
+
+    r = _run("session", "refresh", "--registry", str(reg), env=env)
+
+    assert r.returncode == 0, r.stderr
+    payload = json.loads(r.stdout)  # fails if the sweep's note leaked onto stdout
+    assert "pendingCount" in payload
+    assert "archived s1" in r.stderr
+
+    out = json.loads(reg.read_text())
+    assert [a["sessionId"] for a in out["archived"]] == ["s1"]
+    assert not transcript.exists()
 
 
 def test_session_set_honors_registry_and_applies_classification(tmp_path):

@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from datetime import UTC, datetime
 
 from .. import projects, registry, scanner
-from . import default_registry
+from . import default_registry, sweep
 
 
 def _now() -> str:
@@ -83,8 +84,13 @@ def cmd_refresh(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session refresh")
     ap.add_argument("--registry", default=str(default_registry()))
     _add_scan_opts(ap)
-    cmd_scan(ap.parse_args(argv))
-    return 0
+    args = ap.parse_args(argv)
+    cmd_scan(args)
+    # cmd_scan's JSON blob is a machine-readable contract on stdout — the sweep's
+    # human-readable "archived ..." notes must not land after it, so redirect them to
+    # stderr instead of dropping them.
+    with contextlib.redirect_stdout(sys.stderr):
+        return sweep.cmd_sweep(["--registry", args.registry])
 
 
 def cmd_set(argv: list[str]) -> int:

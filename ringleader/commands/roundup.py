@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from .. import prune, refresh, registry
 from ..config import load_config
 from ..paths import archive_root
-from . import default_registry, enrich
+from . import default_registry, enrich, sweep
 
 
 def _now() -> str:
@@ -22,6 +22,7 @@ def cmd_roundup(argv: list[str]) -> int:
     now = _now()
 
     refresh.auto_refresh(args.registry, now)
+    swept = sweep.cmd_sweep(["--registry", args.registry])
 
     reg = registry.load_registry(args.registry)
     cands = prune.prune_candidates(reg, now)
@@ -42,4 +43,4 @@ def cmd_roundup(argv: list[str]) -> int:
     registry.save_registry(args.registry, reg)
 
     print(f"refreshed, pruned {deleted}, purged {purged} archived, enriched (see above)")
-    return 0
+    return swept
