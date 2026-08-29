@@ -1,9 +1,9 @@
 # ringleader PLAYBOOK
 
 Shared, agent-neutral conventions for the `ringleader` skills (`overview`, `triage`,
-`cleanup`, `init`, `usage`). Every skill's per-agent wrapper points back here for the WHAT; the
-wrapper itself only supplies the HOW for the two enhancement points below. The separate
-`ringleader-publish` collection-root workflow owns its own protocol reference.
+`cleanup`, `init`, `usage`, `finish`). Every skill's per-agent wrapper points back here for
+the WHAT; the wrapper itself only supplies the HOW for the two enhancement points below. The
+separate `ringleader-publish` collection-root workflow owns its own protocol reference.
 
 This file must stay agent-neutral: no mechanism names, only the two placeholders
 `[SELECT]` and `[FAN-OUT]`, defined below. A per-agent wrapper maps each placeholder to
@@ -231,6 +231,14 @@ Use this when the user wants knowledge integrated into the target repo's **livin
 collection-root workflow for central queue items: it skips dirty or ambiguous checkouts,
 may offer one safe clone, commits verified documentation locally as `chore: update docs`,
 and never pushes.
+
+### From inside the session (`ringleader-finish`)
+
+When the session being harvested is the one you are running in, write the harvest from
+your own context and store it with `rl session harvest --current --from-file -`. Do not
+re-read the transcript and do not spend a model call: you have better information than
+either. Archiving is deferred — `rl session finish --current` records the intent and the
+sweep does the move once the transcript goes quiet.
 
 ## Enhancement placeholders
 

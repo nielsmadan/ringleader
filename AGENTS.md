@@ -29,14 +29,16 @@ pruning them before the GC clock deletes them.
   grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
   meant to be called by the skills in `.agents/skills/` (session track) or
   `.claude/skills/` (`memory-triage`), not by hand.
-- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Five skills —
+- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Six skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
-  `ringleader-usage` — each ship an agent-neutral `SKILL.md` plus a bundled
-  `references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
+  `ringleader-usage`, `ringleader-finish` — each ship an agent-neutral `SKILL.md` plus a
+  bundled `references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
   (`just sync-playbook`). The first four replace the old, single-purpose session skills
   (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
-  these four; `ringleader-usage` is new, explaining where tokens went. `memory-triage` is
-  untouched and still lives in `.claude/skills/`. Wire them into an agent with `rl install
+  these four; `ringleader-usage` explains where tokens went; `ringleader-finish` finishes
+  the session you're currently in, harvesting it from live context instead of waiting for
+  triage to read the transcript later. `memory-triage` is untouched and still lives in
+  `.claude/skills/`. Wire them into an agent with `rl install
   skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi)
   and `~/.claude/skills` (Claude Code); `rl update`/`rl uninstall` round out the surface,
   and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer

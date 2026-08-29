@@ -58,6 +58,6 @@ clean:
     @rm -rf .pytest_cache .ruff_cache .coverage htmlcov
 
 sync-playbook:
-    @for s in init triage cleanup overview usage; do \
+    @for s in init triage cleanup overview usage finish; do \
       cp .agents/skills/PLAYBOOK.md ".agents/skills/ringleader-$s/references/playbook.md"; \
     done

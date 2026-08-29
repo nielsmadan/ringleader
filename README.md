@@ -34,7 +34,7 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 
 `.agents/skills/` ships six agent skills that drive `rl` instead of raw commands —
 `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
-`ringleader-usage`, `ringleader-publish`:
+`ringleader-usage`, `ringleader-finish`, `ringleader-publish`:
 
 - **`ringleader-overview`** — the morning read: what's in flight, what's stale and
   awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
@@ -50,13 +50,16 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 - **`ringleader-usage`** — explain where an agent session's tokens went and how to spend
   fewer: survey usage, drill into heavy sessions, read the transcript around the expensive
   turns, and give concrete advice. Read-only.
+- **`ringleader-finish`** — finish the session you are currently in: harvest what it
+  learned from its own live context (not a model reading the transcript later) and mark it
+  to be archived once you quit, so it never reaches triage.
 - **`ringleader-publish`** — drain pending tool-native harvests into the living docs of
   matching repositories from a checkout collection. It skips dirty or ambiguous checkouts,
   may offer a clone, commits locally only after verified integration, and never pushes.
 
-The five session-track skills share an agent-neutral `SKILL.md` plus a bundled
+The six session-track skills share an agent-neutral `SKILL.md` plus a bundled
 `references/playbook.md` (synced from the canonical `.agents/skills/PLAYBOOK.md`).
-`ringleader-publish` owns its focused publishing protocol. All six read natively in Claude
+`ringleader-publish` owns its focused publishing protocol. All seven read natively in Claude
 Code, Codex, OpenCode, and Pi — no per-agent plugin format required. Wire them into your
 agent(s) with:
 
