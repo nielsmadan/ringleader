@@ -39,5 +39,7 @@ and read back the answer. Everything else — calling `rl`, the harvest sub-prot
 4. **Mark it.** Run `rl session finish --current`.
 
 5. **Say what happens next.** The session leaves triage immediately. Its transcript is
-   archived once it goes quiet, at the next `rl roundup` (or `rl session refresh`) — either
-   way it will not appear in triage in the meantime.
+   archived once it goes quiet — within seconds of quitting if session-end hooks are
+   installed (`rl install hooks`), otherwise at the next `rl roundup` (or `rl session
+   refresh`); `rl doctor` reports which applies. Either way it will not appear in triage in
+   the meantime.

@@ -17,6 +17,9 @@ pruning them before the GC clock deletes them.
   by hand (README → "Restoring an archived session"), at the cost of the thread's registry
   record. Once the retention cutoff passes, `rl prune`/`rl roundup` purges the archived files
   for good.
+- **`rl session finish` does not archive anything on its own.** It marks the session;
+  `rl session sweep` archives it once the transcript is quiet, because moving a live
+  transcript is undone by the agent's next write.
 - **`rl` is an installed console command, not a repo-local script.** `just install-local`
   (or `uv tool install .`) puts it on `PATH`; from a source checkout without installing,
   use `uv run rl <sub>` instead. Its state — `registry.json` and `archive/` — lives under

@@ -113,9 +113,12 @@ specified rather than left to the implementation.
 
 The hook artifacts themselves:
 
-- **Claude Code and Codex** share one shell script that runs
-  `rl session sweep --session "$id"`, registered into `settings.json` and `hooks.json`
-  respectively. The schemas differ only in file location and casing.
+- **Claude Code and Codex** share one shell script, registered into `settings.json` and
+  `hooks.json` respectively, that pipes the hook's JSON payload on stdin to
+  `rl session sweep --from-hook`. Claude Code puts the session id in a top-level
+  `session_id` field, verified on 2.1.245; Codex's schema is near-identical and
+  *assumed* to match, unverified against a real payload. The schemas otherwise differ
+  only in file location and casing.
 - **Pi** gets a small TypeScript extension in `~/.pi/agent/extensions/`, subscribing to
   `session_shutdown` and acting when `reason === "quit"`.
 - **OpenCode** gets nothing and falls back to the sweep. `rl doctor` says so explicitly

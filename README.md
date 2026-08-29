@@ -39,8 +39,8 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 - **`ringleader-overview`** — the morning read: what's in flight, what's stale and
   awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
 - **`ringleader-init`** — onboard a machine: verify `rl` is installed, check
-  session-retention settings (`rl doctor`), offer to wire the skills into your agent(s),
-  and run a small, bounded first triage pass (`--recent 7`).
+  session-retention settings (`rl doctor`), and run a small, bounded first triage pass
+  (`--recent 7`).
 - **`ringleader-triage`** — recurring cleanup of the last few days of sessions:
   delete/finished/open per session, integrate finished work directly into repo docs or leave
   it in the tool-native pending queue for later publishing, then name and review what's open.
@@ -64,7 +64,7 @@ Code, Codex, OpenCode, and Pi — no per-agent plugin format required. Wire them
 agent(s) with:
 
 ```sh
-rl install            # wire up everything ringleader installs (skills, statusline)
+rl install            # wire up everything ringleader installs (skills, statusline, hooks)
 rl install skills     # or just one
 rl update all         # re-sync what's already wired, after a repo change
 rl uninstall skills   # remove what this tool created
@@ -127,6 +127,22 @@ cleanup still face a realistic backlog.
 
 See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
 the skills end to end.
+
+## Finishing a session
+
+`ringleader-finish` runs *inside* the session it finishes: it harvests durable knowledge
+from the agent's own live context (`rl session harvest --current --from-file -`), which no
+later triage pass can do since a model reading the transcript afterward never saw what you
+actually decided — then marks it with `rl session finish --current` so it leaves the
+triage inbox immediately.
+
+Marking is not archiving: a live transcript can't be moved while its agent still owns it
+(the next write would just recreate the file), so the actual move happens later, via
+`rl session sweep`. `rl install hooks` wires a session-end hook into Claude Code, Codex
+and Pi that runs the sweep within seconds of quitting. Without the hook installed — or on
+OpenCode, which has no session-end event to hook — the sweep still runs, from `rl roundup`
+and `rl session refresh`, so the session is archived at the next roundup at the latest.
+`rl doctor` reports, per agent, whether the hook is installed.
 
 ## Everyday
 
@@ -324,7 +340,11 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
 | `rl session delete <id>` | Delete one session (files + a `deleted` record). |
 | `rl session harvest <id> [--dry-run]` | Distill a finished session into a durable markdown harvest (summary/gotchas/decisions/whatChanged) with a configured LLM, store it, and mark the session harvested. `--dry-run` prints the markdown instead of writing it. No-op if no model is configured. |
+| `rl session harvest --current --from-file <path\|->` | Store agent-authored harvest markdown as-is, skipping the model — what `ringleader-finish` uses from inside the live session. |
 | `rl session complete <id>` | Harvest, then archive — the tool-native "I'm done with this session" verb. Does not archive if the harvest was a no-op (no model configured). |
+| `rl session finish [<id>\|--current] [--force]` | Mark a harvested session `finishOnExit`: leaves triage now, archives once `rl session sweep` finds its transcript quiet. Refuses an unharvested session unless `--force`. Does not archive by itself. |
+| `rl session sweep [--session <id>] [--from-hook] [--current]` | Archive every `finishOnExit` thread whose transcript has stopped changing. Bare form runs from `rl roundup`/`rl session refresh`; `--from-hook` reads a session-end hook payload from stdin (installed by `rl install hooks`) for the seconds-after-exit path. |
+| `rl session whoami` | Print the agent source and session id `rl` resolves for the session it's running inside, or fail if it can't tell. Used by `--current` flags and for debugging. |
 | `rl session snooze <id>` | Park a session (hide from default views). |
 | `rl session wake <id>` | Un-snooze a session. |
 | `rl session keep <id> [--yes]` | Keep a session long-term: stays live and resumable, but leaves the triage inbox for good (even on new activity). |
