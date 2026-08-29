@@ -14,5 +14,5 @@ docs/superpowers/
 dist/
 build/
 *.egg-info/
-# throwaway world built by `just sandbox` (the fixture it builds from IS committed)
+# throwaway world built by `just sandbox`
 .sandbox/

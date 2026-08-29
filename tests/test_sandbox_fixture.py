@@ -1,51 +1,182 @@
-"""The sandbox fixture is committed to a public repo, so its contents are a standing
-disclosure risk. These tests are the guard: they fail if a refreeze ever ships real
-paths, addresses or credential-shaped strings.
-"""
-
+import hashlib
 import importlib.util
 import json
+import re
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
-FIXTURE = REPO / "tests" / "fixtures" / "sandbox"
+import pytest
 
+REPO = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("sandbox", REPO / "scripts" / "sandbox.py")
 sandbox = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(sandbox)
 
 
-def _files():
-    return sorted(FIXTURE.rglob("*.jsonl"))
+def test_committed_descriptor_pins_local_fixture():
+    descriptor = json.loads(sandbox.DESCRIPTOR.read_text(encoding="utf-8"))
+
+    assert descriptor["fixture_version"] == "init-v1"
+    assert sum(descriptor["session_counts"].values()) == 100
+    assert re.fullmatch(r"[0-9a-f]{64}", descriptor["manifest_sha256"])
+    assert not {"repository", "release_tag", "asset_name", "encrypted_sha256"} & descriptor.keys()
+    assert not (REPO / "tests" / "fixtures" / "sandbox").exists()
 
 
-def test_fixture_exists_and_covers_both_sources():
-    claude = [f for f in _files() if "claude" in f.parts]
-    codex = [f for f in _files() if "codex" in f.parts]
-    assert claude, "no claude sessions in the fixture"
-    assert codex, "no codex sessions in the fixture"
+def _sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def test_fixture_leaks_nothing():
-    problems = sandbox.verify(FIXTURE)
-    assert not problems, "fixture contains data that must not be public:\n" + "\n".join(problems)
+def _fixture(tmp_path: Path) -> tuple[Path, dict]:
+    root = tmp_path / "fixture"
+    claude = root / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
+    codex = root / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl"
+    index = root / "session_index.jsonl"
+    claude.parent.mkdir(parents=True)
+    codex.parent.mkdir(parents=True)
+    claude.write_bytes(b'{"type":"user","message":{"content":"exact claude"}}\n')
+    codex.write_bytes(b'{"type":"session_meta","payload":{"id":"two"}}\n')
+    index.write_bytes(b'{"id":"two","thread_name":"real title"}\n')
+    files = [
+        {
+            "path": claude.relative_to(root).as_posix(),
+            "kind": "session",
+            "source": "claude-code",
+            "sha256": _sha256(claude),
+            "age_days": 2,
+            "bucket": "tiny",
+            "message_count": 4,
+        },
+        {
+            "path": codex.relative_to(root).as_posix(),
+            "kind": "session",
+            "source": "codex",
+            "sha256": _sha256(codex),
+            "age_days": 14,
+            "bucket": "medium",
+            "message_count": 14,
+        },
+        {
+            "path": index.relative_to(root).as_posix(),
+            "kind": "codex-index",
+            "sha256": _sha256(index),
+        },
+    ]
+    manifest = {"schema_version": 1, "fixture_version": "test-v1", "files": files}
+    manifest_path = root / "manifest.json"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    descriptor = {
+        "schema_version": 1,
+        "fixture_version": "test-v1",
+        "manifest_sha256": _sha256(manifest_path),
+        "session_counts": {"claude-code": 1, "codex": 1},
+        "raw_bytes": sum(path.stat().st_size for path in (claude, codex, index)),
+    }
+    return root, descriptor
 
 
-def test_fixture_stays_small():
-    """It is committed, so it has to stay a rounding error in the repo."""
-    total = sum(f.stat().st_size for f in _files())
-    assert total < 512 * 1024, f"fixture grew to {total // 1024} KB"
+def test_build_restores_exact_fixture_state(tmp_path, capsys):
+    fixture, descriptor = _fixture(tmp_path)
+    target = tmp_path / ".sandbox"
+    (target / "old-data").mkdir(parents=True)
+
+    fingerprint = sandbox.build(
+        fixture,
+        target,
+        descriptor,
+        now=2_000_000_000,
+        retention=7,
+    )
+
+    assert (target / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl").read_bytes() == (
+        fixture / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
+    ).read_bytes()
+    assert (target / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl").read_bytes() == (
+        fixture / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl"
+    ).read_bytes()
+    assert (target / "session_index.jsonl").read_bytes() == (
+        fixture / "session_index.jsonl"
+    ).read_bytes()
+    assert json.loads((target / "claude-settings.json").read_text()) == {"cleanupPeriodDays": 7}
+    assert list((target / "data").iterdir()) == []
+    assert not (target / "old-data").exists()
+    assert (
+        target / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
+    ).stat().st_mtime == pytest.approx(2_000_000_000 - 2 * sandbox.DAY)
+    assert (
+        target / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl"
+    ).stat().st_mtime == pytest.approx(2_000_000_000 - 14 * sandbox.DAY)
+    assert fingerprint in capsys.readouterr().out
 
 
-def test_fixture_spans_the_prune_gate():
-    """Sessions either side of prune's --max-turns default, or the sandbox can't
-    exercise the tiny-session gate at all."""
-    counts = []
-    for f in _files():
-        n = sum(
-            1
-            for line in f.read_text().splitlines()
-            if json.loads(line).get("type") in ("user", "assistant", "response_item")
+def test_build_rejects_fixture_inside_sandbox(tmp_path):
+    target = tmp_path / ".sandbox"
+    fixture, descriptor = _fixture(target)
+
+    with pytest.raises(sandbox.FixtureError, match="fixture cannot live inside"):
+        sandbox.build(fixture, target, descriptor)
+
+
+def test_fixture_rejects_unmanifested_files(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    extra = fixture / "claude" / "-Users-dev-wrksp-oss-project" / "extra.jsonl"
+    extra.write_text('{"type":"user"}\n', encoding="utf-8")
+
+    with pytest.raises(sandbox.FixtureError, match="unexpected file"):
+        sandbox.validate_fixture(fixture, descriptor)
+
+
+def test_fixture_rejects_paths_outside_root(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    manifest_path = fixture / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"][0]["path"] = "../outside.jsonl"
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    descriptor["manifest_sha256"] = _sha256(manifest_path)
+
+    with pytest.raises(sandbox.FixtureError, match="unsafe fixture path"):
+        sandbox.validate_fixture(fixture, descriptor)
+
+
+def test_fixture_rejects_manifest_fingerprint_mismatch(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    descriptor["manifest_sha256"] = "0" * 64
+
+    with pytest.raises(sandbox.FixtureError, match="manifest fingerprint"):
+        sandbox.validate_fixture(fixture, descriptor)
+
+
+def test_fixture_rejects_wrong_message_bucket(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    manifest_path = fixture / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["files"][0]["message_count"] = 12
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+    descriptor["manifest_sha256"] = _sha256(manifest_path)
+
+    with pytest.raises(sandbox.FixtureError, match="message bucket"):
+        sandbox.validate_fixture(fixture, descriptor)
+
+
+def test_build_command_ignores_sandbox_xdg_data_home(tmp_path, monkeypatch):
+    _fixture_root, descriptor = _fixture(tmp_path)
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    seen = {}
+
+    def build(fixture_root, sandbox_root, loaded, *, retention):
+        seen.update(
+            fixture_root=fixture_root,
+            sandbox_root=sandbox_root,
+            descriptor=loaded,
+            retention=retention,
         )
-        counts.append(n)
-    assert min(counts) < 12 < max(counts), f"turn counts do not span the gate: {sorted(counts)}"
+
+    monkeypatch.setattr(sandbox, "DESCRIPTOR", descriptor_path)
+    monkeypatch.setattr(sandbox, "build", build)
+    monkeypatch.delenv("RINGLEADER_SANDBOX_FIXTURE_DIR", raising=False)
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / ".sandbox" / "data"))
+
+    assert sandbox.main([]) == 0
+    assert seen["fixture_root"] == (
+        Path.home() / ".local" / "share" / "ringleader" / "fixtures" / "test-v1"
+    )

@@ -63,7 +63,9 @@ rl skills uninstall   # remove the symlinks this tool created
 ```
 
 `install` and `uninstall` ask for confirmation before touching anything; pass `--yes` to
-skip the prompt. ### Testing the skills from a zero state
+skip the prompt.
+
+### Testing the skills from a zero state
 
 `rl` takes every input from the environment, so a throwaway world needs no support from
 the tool:
@@ -75,23 +77,27 @@ just sandbox              # rebuild a zero-state world and reset the registry
 It prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
 `CODEX_SESSIONS_DIR`, `RINGLEADER_CLAUDE_SETTINGS`). Export them and launch an agent from
 that shell — every `rl` call a skill makes lands in `.sandbox/`, and your real sessions,
-registry and settings are untouched. Re-run `just sandbox` to reset to zero; the world is
-identical every time and on every machine.
+registry and settings are untouched. Re-run `just sandbox` to restore the same bytes,
+relative ages, and empty registry.
 
-It builds from `tests/fixtures/sandbox/`, which **is committed** — 28 sessions in ~157 KB.
-That works because `rl` only ever reads a session's `cwd`, `gitBranch`, message *count*
-and title/summary lines, never the prose. So each fixture session keeps a real session's
-**shape** — turn count, whether it was named, whether it had a summary — with invented
-paths and placeholder text. Structure comes from real sessions; no real content ships.
+The fixture contains 100 verbatim sessions from nine verified public repositories: 70
+Claude Code and 30 Codex, split evenly between named and unnamed sessions. Its workload
+mix is 10 tiny, 41 medium, and 49 long sessions. The selected transcripts were scanned in
+full for client identifiers and credible credential shapes, then their prompts and titles
+were reviewed semantically. They are not generated, shortened, redacted, or promoted from
+subagent rollouts.
 
-That distinction is load-bearing: real transcripts carry client names, home paths, email
-addresses and pasted credentials in their thousands, and this repo is public.
-`tests/test_sandbox_fixture.py` fails the build if the fixture ever contains any of them.
+The raw transcripts stay out of git under
+`~/.local/share/ringleader/fixtures/init-v1` with private permissions. That is the directory
+to zip and store in Proton Drive. To restore it, extract the archive so
+`~/.local/share/ringleader/fixtures/init-v1/manifest.json` exists, then run `just sandbox`.
+The committed descriptor pins the manifest fingerprint, source counts, and byte count, so
+an incomplete or different extraction is rejected before `.sandbox/` is touched.
 
-Each build restamps mtimes across 30 days (`--span`), because recency drives triage, prune
-and `--recent`. Turn counts span prune's `--max-turns` gate so the tiny-session path is
-actually exercised. `just sandbox-refreeze` regenerates the fixture from your own archive
-— rarely needed, and it refuses to write anything that fails the leak check.
+Each build gives eight sessions ages of 1–6 days, ten genuine tiny sessions ages of 9–50
+days, and 82 older non-tiny sessions ages of 8–90 days. It also sets Claude Code's
+`cleanupPeriodDays` to 7. That keeps init's first seven-day pass bounded while overview and
+cleanup still face a realistic backlog.
 
 See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
 the skills end to end.

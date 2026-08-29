@@ -1,0 +1,10 @@
+{
+  "fixture_version": "init-v1",
+  "manifest_sha256": "c931d72d418a23262e7418a9fa8952192121d230d5eee77331cd8b8cd0b2aec8",
+  "raw_bytes": 122024174,
+  "schema_version": 1,
+  "session_counts": {
+    "claude-code": 70,
+    "codex": 30
+  }
+}
