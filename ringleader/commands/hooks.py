@@ -305,7 +305,7 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
         print(f"  pi: {pi_target / _pi_extension().name}")
     if not yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
         print("aborted")
-        return 0
+        return 1 if failed else 0
 
     changed = 0
     for _label, path, _raw, text in json_plan:

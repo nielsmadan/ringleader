@@ -234,3 +234,18 @@ def test_malformed_json_is_preserved_across_every_verb(tmp_path, monkeypatch):
 
     hooks.cmd_uninstall(["--yes"])
     assert settings.read_text() == original
+
+
+def test_declining_still_reports_a_malformed_config(tmp_path, monkeypatch):
+    """The planning-time failure is found before the prompt; declining the *other*
+    target must not swallow its exit code."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    (tmp_path / ".claude" / "settings.json").write_text('{"hooks": "nope"}')
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "hooks.json").write_text("{}")
+    monkeypatch.setattr("builtins.input", lambda *_: "n")
+
+    assert hooks.cmd_install([]) == 1
+
+    assert json.loads((tmp_path / ".codex" / "hooks.json").read_text()) == {}
