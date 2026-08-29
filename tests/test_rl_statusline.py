@@ -1,4 +1,5 @@
 import json
+import stat
 
 from ringleader.commands import statusline
 from ringleader.paths import state_dir
@@ -305,3 +306,28 @@ def test_status_refuses_on_non_string_command(tmp_path, capsys):
 
     assert rc != 0
     assert "not a string" in capsys.readouterr().err.lower()
+
+
+def test_script_install_preserves_the_scripts_mode(tmp_path):
+    script = _script(tmp_path)
+    script.chmod(0o755)
+    p = _settings_for_script(tmp_path, script)
+
+    rc = statusline.cmd_install(["--settings", str(p), "--yes"])
+
+    assert rc == 0
+    assert stat.S_IMODE(script.stat().st_mode) == 0o755
+
+
+def test_install_writes_through_a_symlinked_settings_file(tmp_path):
+    dotfiles = tmp_path / "dotfiles"
+    dotfiles.mkdir()
+    real = _settings(dotfiles)
+    link = tmp_path / "settings.json"
+    link.symlink_to(real)
+
+    rc = statusline.cmd_install(["--settings", str(link), "--yes"])
+
+    assert rc == 0
+    assert link.is_symlink()
+    assert "ringleader-capture" in json.loads(real.read_text())["statusLine"]["command"]
