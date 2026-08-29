@@ -41,18 +41,36 @@ def _unique_dirs(targets: list[tuple[str, Path]]) -> list[Path]:
 def _resolved(d: Path) -> str:
     """Show a target dir, plus its real path when it (or a parent) is a symlink — so
     installing through e.g. a symlinked ``~/.claude/skills`` is never a surprise."""
-    real = d.resolve()
+    try:
+        real = d.resolve()
+    except OSError:
+        return f"{d} (unreadable)"
     return f"{d} -> {real}" if real != d else f"{d}"
+
+
+def _link_state(link: Path, target: Path) -> str:
+    """``linked`` / ``broken/wrong`` / ``missing`` / ``unreadable`` for one candidate
+    skill symlink. A stat failure (e.g. a sandbox that grants the containing dir but
+    denies this specific entry) must read as ``unreadable``, not silently as
+    ``missing`` — those mean different things to someone debugging their setup."""
+    try:
+        if link.is_symlink():
+            return "linked" if link.resolve() == target.resolve() else "broken/wrong"
+        return "missing"
+    except OSError as e:
+        return f"unreadable ({e.strerror or e})"
 
 
 def _owned(link: Path) -> bool:
     """A symlink this tool manages: name starts with ``ringleader-`` and its target
     (even if the target no longer exists) lies inside the bundled skills dir."""
-    if not link.name.startswith(PREFIX) or not link.is_symlink():
+    if not link.name.startswith(PREFIX):
         return False
     try:
+        if not link.is_symlink():
+            return False
         target = link.resolve()
-    except (OSError, RuntimeError):  # e.g. a symlink loop
+    except (OSError, RuntimeError):  # e.g. a symlink loop, or the entry is unreadable
         return False
     return target.is_relative_to(bundled_skills_dir().resolve())
 
@@ -69,7 +87,7 @@ def _confirm(targets: list[tuple[str, Path]], skills: list[Path], yes: bool) -> 
 
 
 def cmd_install(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl skills install")
+    ap = argparse.ArgumentParser(prog="rl install skills")
     ap.add_argument("--yes", "-y", action="store_true", help="skip the confirmation prompt")
     args = ap.parse_args(argv)
     home = Path.home()
@@ -86,12 +104,17 @@ def cmd_install(argv: list[str]) -> int:
         return 0
     created = 0
     failed = 0
+    unreadable = 0
     for d in _unique_dirs(targets):
         try:
             d.mkdir(parents=True, exist_ok=True)
         except OSError as e:
-            print(f"skip {d}: {e}", file=sys.stderr)
-            failed += 1
+            # the directory itself is inaccessible (e.g. a sandbox hiding part of
+            # $HOME). Report it, but keep it out of `failed`: nonzero is reserved for
+            # a link that should have been created and wasn't, so an unattended
+            # `rl update all --yes` isn't failed by an environment condition.
+            print(f"  {d}: unreadable ({e.strerror or e})", file=sys.stderr)
+            unreadable += 1
             continue
         for s in bundled:
             link = d / s.name
@@ -108,27 +131,46 @@ def cmd_install(argv: list[str]) -> int:
             except OSError as e:
                 print(f"could not link {link}: {e}", file=sys.stderr)
                 failed += 1
-    print(f"linked {created} skill(s)" + (f", {failed} failed" if failed else ""))
+    print(
+        f"linked {created} skill(s)"
+        + (f", {failed} failed" if failed else "")
+        + (f", {unreadable} dir(s) unreadable" if unreadable else "")
+    )
     return 1 if failed else 0
 
 
-def _managed_links(d: Path):
-    if not d.is_dir():
-        return
-    for link in sorted(d.iterdir()):
-        if _owned(link):
-            yield link
+def _managed_links(d: Path) -> list[Path] | None:
+    """Owned symlinks inside ``d``, or ``None`` if ``d`` itself could not be read.
+
+    A directory that denies access must be reported as unreadable, not silently
+    treated as empty — an empty list there would read as "nothing installed", which is
+    a different (and possibly false) claim. Both ``is_dir()`` and ``iterdir()`` can
+    raise here: pathlib's stat-based predicates only swallow ENOENT-shaped errors and
+    re-raise a permission denial (e.g. a sandboxed ``$HOME``), so both calls need the
+    same guard."""
+    try:
+        if not d.is_dir():
+            return []
+        entries = sorted(d.iterdir())
+    except OSError as e:
+        print(f"  {d}: unreadable ({e.strerror or e})", file=sys.stderr)
+        return None
+    return [link for link in entries if _owned(link)]
 
 
 def cmd_uninstall(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl skills uninstall")
+    ap = argparse.ArgumentParser(prog="rl uninstall skills")
     ap.add_argument("--yes", "-y", action="store_true")
     args = ap.parse_args(argv)
     home = Path.home()
     dirs = _unique_dirs(_install_dirs(home))
-    victims = [link for d in dirs for link in _managed_links(d)]
+    per_dir = [_managed_links(d) for d in dirs]
+    unreadable = any(r is None for r in per_dir)
+    victims = [link for r in per_dir if r is not None for link in r]
     if not victims:
-        print("nothing installed")
+        # an unreadable directory is an environment condition, not a failure of the
+        # remove the caller asked for — report it above, but don't fail the run over it
+        print("nothing readable to remove" if unreadable else "nothing installed")
         return 0
     print("Will remove:")
     for v in victims:
@@ -150,7 +192,7 @@ def cmd_uninstall(argv: list[str]) -> int:
 
 
 def cmd_update(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl skills update")
+    ap = argparse.ArgumentParser(prog="rl update skills")
     ap.add_argument("--yes", "-y", action="store_true")
     args = ap.parse_args(argv)
     home = Path.home()
@@ -158,9 +200,16 @@ def cmd_update(argv: list[str]) -> int:
     dirs = _unique_dirs(_install_dirs(home))
     # update syncs what's already wired up; it never opts an agent in for the first
     # time, so it's safe to run unattended (e.g. from an install recipe).
-    linked = [link for d in dirs for link in _managed_links(d)]
+    per_dir = [_managed_links(d) for d in dirs]
+    unreadable = any(r is None for r in per_dir)
+    linked = [link for r in per_dir if r is not None for link in r]
     if not linked:
-        print("no ringleader skills installed — run `rl skills install` to wire them up")
+        # an unreadable directory is an environment condition, not a failure of the
+        # sync the caller asked for — report it above, but don't fail the run over it
+        if unreadable:
+            print("some skills directories could not be read; nothing else to sync")
+        else:
+            print("no ringleader skills installed — run `rl install skills` to wire them up")
         return 0
     stale = [link for link in linked if link.name not in bundled]
     stale_failed = 0
@@ -183,7 +232,7 @@ def cmd_update(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    argparse.ArgumentParser(prog="rl skills status").parse_args(argv)
+    argparse.ArgumentParser(prog="rl doctor").parse_args(argv)
     home = Path.home()
     bundled = _bundled_skills()
     targets = _install_dirs(home)
@@ -193,12 +242,5 @@ def cmd_status(argv: list[str]) -> int:
     for d in _unique_dirs(targets):
         print(f"{_resolved(d)}:")
         for s in bundled:
-            link = d / s.name
-            if link.is_symlink() and link.resolve() == s.resolve():
-                state = "linked"
-            elif link.is_symlink():
-                state = "broken/wrong"
-            else:
-                state = "missing"
-            print(f"  {s.name}: {state}")
+            print(f"  {s.name}: {_link_state(d / s.name, s)}")
     return 0

@@ -108,7 +108,7 @@ def test_text_output_points_claude_at_the_installer_when_absent(fake_windows, ca
 
     text = capsys.readouterr().out
     assert "47" in text and "weekly" in text
-    assert "rl statusline install" in text
+    assert "rl install statusline" in text
 
 
 def test_empty_state_when_no_codex_data(fake_windows, capsys):
@@ -149,7 +149,7 @@ def test_claude_absent_points_at_the_installer(monkeypatch, capsys):
 
     usage_cmd.cmd_usage(["windows"])
 
-    assert "rl statusline install" in capsys.readouterr().out
+    assert "rl install statusline" in capsys.readouterr().out
 
 
 def test_expired_claude_window_is_not_shown_as_current(monkeypatch, capsys):

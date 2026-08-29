@@ -213,7 +213,7 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
                 print(f"  {kind:<7} no current snapshot (last one expired {old.resets_at[:16]})")
     print()
     if not claude_latest:
-        print("claude: no windows captured yet — run `rl statusline install` to start capturing")
+        print("claude: no windows captured yet — run `rl install statusline` to start capturing")
     else:
         print("claude subscription windows")
         for kind in ("5h", "weekly"):

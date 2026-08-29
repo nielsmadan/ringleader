@@ -27,9 +27,8 @@ from . import (
     prune,
     relocate,
     roundup,
-    skills,
+    setup,
     snooze,
-    statusline,
     sync,
     tokens,
     triage,
@@ -84,18 +83,6 @@ _DATA = {
     "tokens": tokens.cmd_tokens,
     "migrate": migrate.cmd_migrate,
 }
-_SKILLS = {
-    "install": skills.cmd_install,
-    "status": skills.cmd_status,
-    "update": skills.cmd_update,
-    "uninstall": skills.cmd_uninstall,
-}
-_STATUSLINE = {
-    "install": statusline.cmd_install,
-    "status": statusline.cmd_status,
-    "uninstall": statusline.cmd_uninstall,
-}
-
 TABLE = {
     # flat daily verbs
     "overview": overview.cmd_overview,
@@ -106,11 +93,12 @@ TABLE = {
     "doctor": doctor.cmd_doctor,
     "harvests": harvests_cmd.cmd_harvests,
     "inbox": inbox.cmd_inbox,
+    "install": setup.cmd_install,
+    "update": setup.cmd_update,
+    "uninstall": setup.cmd_uninstall,
     # namespaces
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
-    "skills": _SKILLS,
-    "statusline": _STATUSLINE,
     "config": config.cmd_config,
 }

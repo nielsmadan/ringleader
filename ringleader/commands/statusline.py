@@ -319,7 +319,7 @@ def _confirm_and_write(path: Path, raw_before: str, raw_after: str, yes: bool, v
 
 
 def cmd_install(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl statusline install")
+    ap = argparse.ArgumentParser(prog="rl install statusline")
     _add_settings_arg(ap)
     ap.add_argument("--yes", "-y", action="store_true")
     args = ap.parse_args(argv)
@@ -367,7 +367,7 @@ def cmd_install(argv: list[str]) -> int:
 
 
 def cmd_uninstall(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl statusline uninstall")
+    ap = argparse.ArgumentParser(prog="rl uninstall statusline")
     _add_settings_arg(ap)
     ap.add_argument("--yes", "-y", action="store_true")
     args = ap.parse_args(argv)
@@ -402,7 +402,7 @@ def cmd_uninstall(argv: list[str]) -> int:
 
 
 def cmd_status(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl statusline status")
+    ap = argparse.ArgumentParser(prog="rl doctor")
     _add_settings_arg(ap)
     args = ap.parse_args(argv)
     path = Path(args.settings)

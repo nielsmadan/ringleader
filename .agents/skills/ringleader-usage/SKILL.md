@@ -15,7 +15,7 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
    the prompt cache is missing.
 2. **Windows.** If the user is asking about limits, run `rl usage windows`. It reports
    Codex's 5h/weekly consumption directly (no setup needed), and Claude's too once
-   captured. If Claude shows as uncaptured, tell the user to run `rl statusline install`
+   captured. If Claude shows as uncaptured, tell the user to run `rl install statusline`
    (one-time, wires a capture snippet into their statusLine command) rather than falling
    back to `claude /usage`.
 3. **Drill in.** For each heavy session, run `rl usage session <id> --json`: turns, the

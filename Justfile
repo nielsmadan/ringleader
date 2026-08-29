@@ -28,19 +28,19 @@ typecheck:
 install-local:
     @uv run rl data migrate
     @uv tool install .
-    @rl skills update --yes
+    @rl update all --yes
     @echo "Installed: $(which rl)"
 
 # Install `rl` editable: it tracks the working tree, so it never goes stale.
 install-editable:
     @uv run rl data migrate
     @uv tool install --reinstall --force -e .
-    @rl skills update --yes
+    @rl update all --yes
     @echo "Installed (editable): $(which rl)"
 
 refresh-local:
     @uv tool install --reinstall --force .
-    @rl skills update --yes
+    @rl update all --yes
 
 reset-local:
     @uv tool uninstall ringleader

@@ -36,12 +36,11 @@ pruning them before the GC clock deletes them.
   (`just sync-playbook`). The first four replace the old, single-purpose session skills
   (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
   these four; `ringleader-usage` is new, explaining where tokens went. `memory-triage` is
-  untouched and still lives in `.claude/skills/`. Wire them into an agent with `rl skills
-  install`, which
-  symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi) and
-  `~/.claude/skills` (Claude Code); `rl skills status`/`update`/`uninstall` round out the
-  surface. The old Claude-only plugin manifest and installer are gone. See
-  `.agents/skills/SMOKE.md` for the manual smoke checklist.
+  untouched and still lives in `.claude/skills/`. Wire them into an agent with `rl install
+  skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi)
+  and `~/.claude/skills` (Claude Code); `rl update`/`rl uninstall` round out the surface,
+  and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer
+  are gone. See `.agents/skills/SMOKE.md` for the manual smoke checklist.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
   `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage
@@ -58,7 +57,7 @@ rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
 rl usage session <id>               # where one session's tokens went
 rl usage windows                    # 5h/weekly limits: codex from disk, claude if captured
-rl statusline install               # capture claude's 5h/weekly limits via the statusLine hook
+rl install statusline               # capture claude's 5h/weekly limits via the statusLine hook
 rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
 rl session keep <id>                # keep long-term: out of triage for good (unkeep to undo)

@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 
 from ringleader.commands import skills
 
@@ -42,6 +43,138 @@ def test_status_reports_linked(tmp_path, monkeypatch, capsys):
     skills.cmd_status([])
     out = capsys.readouterr().out
     assert "ringleader-triage" in out and "linked" in out.lower()
+
+
+def test_status_reports_unreadable_entries_without_crashing(tmp_path, monkeypatch, capsys):
+    """A sandbox that grants the skills dir itself but denies stat on a specific entry
+    inside it (the real shape of this machine's nono sandbox) must not crash `rl doctor`
+    — and must say `unreadable`, not `missing`, since those mean different things."""
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skills.cmd_install(["--yes"])
+    skdir = home / ".claude" / "skills"
+    os.chmod(skdir, 0o000)  # no execute bit -> children can't be lstat'd
+    try:
+        rc = skills.cmd_status([])
+    finally:
+        os.chmod(skdir, 0o700)
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "unreadable" in out.lower()
+    assert "ringleader-triage" in out
+
+
+def test_uninstall_and_update_do_not_crash_on_unreadable_entries(tmp_path, monkeypatch):
+    """`_owned` (reached via `_managed_links`) moved its `is_symlink()` call inside its
+    try/except so a per-entry stat denial can't crash it — but unlike `cmd_status`,
+    `_managed_links` must list the directory successfully first, so a plain chmod on the
+    dir can't reproduce "listing works, one entry's stat doesn't" (chmod bits gate both
+    the same way). Monkeypatch one entry's `is_symlink()` instead, matching this
+    machine's real nono sandbox shape where a directory is listable but a specific named
+    path inside it is denied."""
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skills.cmd_install(["--yes"])
+
+    real_is_symlink = Path.is_symlink
+
+    def flaky_is_symlink(self):
+        if self.name == "ringleader-triage":
+            raise PermissionError(1, "Operation not permitted")
+        return real_is_symlink(self)
+
+    monkeypatch.setattr(Path, "is_symlink", flaky_is_symlink)
+
+    assert isinstance(skills.cmd_update(["--yes"]), int)
+    assert isinstance(skills.cmd_uninstall(["--yes"]), int)
+
+
+def test_uninstall_and_update_report_unreadable_directory(tmp_path, monkeypatch, capsys):
+    """A directory that denies *listing* (not just per-entry stat) must not crash
+    `rl uninstall skills` / `rl update skills`, and must be reported as unreadable —
+    not silently treated as "nothing installed", which is a different (and possibly
+    false) claim. This matters because `just install-local` ends in an unattended
+    `rl update all --yes`.
+
+    An unreadable directory is an environment condition, not a failure of the
+    operation the caller asked for — it must not turn the exit code nonzero on its
+    own, or that same unattended `rl update all --yes` fails the whole install
+    recipe over a sandbox that simply hides part of $HOME."""
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skills.cmd_install(["--yes"])
+    skdir = home / ".claude" / "skills"
+    os.chmod(skdir, 0o000)  # no read/execute -> iterdir() itself fails
+    try:
+        rc_uninstall = skills.cmd_uninstall(["--yes"])
+        out_uninstall = capsys.readouterr()
+        rc_update = skills.cmd_update(["--yes"])
+        out_update = capsys.readouterr()
+    finally:
+        os.chmod(skdir, 0o700)
+
+    assert rc_uninstall == 0
+    assert "unreadable" in out_uninstall.err.lower()
+    assert "nothing installed" not in out_uninstall.out.lower()
+
+    assert rc_update == 0
+    assert "unreadable" in out_update.err.lower()
+    assert "no ringleader skills installed" not in out_update.out.lower()
+
+
+def test_update_reports_unreadable_target_directory_without_crashing(tmp_path, monkeypatch, capsys):
+    """The actual crash seen live: pathlib's `is_dir()`/`iterdir()` only swallow
+    ENOENT-shaped errors and re-raise a genuine permission denial, so a directory the
+    sandbox blocks outright (not just its listing) raised straight out of
+    `_managed_links`'s `d.is_dir()` check before `cmd_update` ever reached `iterdir()`
+    — this is the exact path `just install-local`'s trailing `rl update all --yes` hit.
+    Reproduced by stripping traversal permission on the *parent* of the target skills
+    dir: `is_dir()` on the child then fails to stat at all, without touching the
+    child's own permission bits (chmod on the child itself can't produce this shape,
+    since stat only needs execute permission on the parent)."""
+    home = _fake_home(tmp_path, ".codex")  # sole target: the shared ~/.agents/skills
+    monkeypatch.setenv("HOME", str(home))
+    shared_parent = home / ".agents"
+    shared_parent.mkdir()
+    target = shared_parent / "skills"
+    os.chmod(shared_parent, 0o000)
+    try:
+        rc = skills.cmd_update(["--yes"])
+    finally:
+        os.chmod(shared_parent, 0o700)
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "unreadable" in err.lower()
+    assert str(target) in err
+
+
+def test_update_succeeds_when_only_one_target_directory_is_unreadable(
+    tmp_path, monkeypatch, capsys
+):
+    """The mixed case: one readable target dir holding owned links, plus one the
+    sandbox hides. The readable dir carries `cmd_update` past its early return into
+    the relink step, where the hidden dir's own `mkdir` denial used to be counted as a
+    link failure and turned `rl update all --yes` nonzero. An unreadable directory is
+    an environment condition — it must be named, but never fail the run."""
+    home = _fake_home(tmp_path, ".claude", ".codex")
+    monkeypatch.setenv("HOME", str(home))
+    assert skills.cmd_install(["--yes"]) == 0
+    assert (home / ".claude" / "skills" / "ringleader-triage").is_symlink()
+
+    shared_parent = home / ".agents"  # the codex/opencode/pi target's parent
+    target = shared_parent / "skills"
+    os.chmod(shared_parent, 0o000)
+    try:
+        rc = skills.cmd_update(["--yes"])
+    finally:
+        os.chmod(shared_parent, 0o700)
+
+    assert rc == 0
+    err = capsys.readouterr().err
+    assert "unreadable" in err.lower()
+    assert str(target) in err
+    assert (home / ".claude" / "skills" / "ringleader-triage").is_symlink()
 
 
 def test_owned(tmp_path, monkeypatch):

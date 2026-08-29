@@ -18,12 +18,12 @@ from a source checkout without installing, use `uv run rl <command>`.
 **Working on ringleader itself?** Use `just install-editable` instead. A normal install
 copies the source, so the global `rl` silently falls behind the checkout until you
 reinstall; an editable one tracks the working tree, so `rl` is always what you last
-edited — and `rl skills` resolves to the repo's own `.agents/skills/`.
+edited — and `rl install skills` resolves to the repo's own `.agents/skills/`.
 
-All three install recipes finish with `rl skills update --yes`, so if you've wired the
-skills into your agents they stay in sync with the repo (new skills linked, removed ones
-cleaned up). If you haven't, it's a no-op — `update` never opts an agent in on its own;
-that's what `rl skills install` is for.
+All three install recipes finish with `rl update all --yes`, so if you've wired the
+skills (and statusline) into your agents they stay in sync with the repo (new skills
+linked, removed ones cleaned up). If you haven't, it's a no-op — `update` never opts an
+agent in on its own; that's what `rl install skills` is for.
 
 State (the registry, archive, and pending harvest queue) lives under `~/.local/share/ringleader/`
 (or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
@@ -61,16 +61,15 @@ Code, Codex, OpenCode, and Pi — no per-agent plugin format required. Wire them
 agent(s) with:
 
 ```sh
-rl skills install     # symlink the bundled skills into ~/.claude/skills and ~/.agents/skills
-rl skills status      # show what's linked for each detected agent
-rl skills update      # re-sync after the bundled skill set changes
-rl skills uninstall   # remove the symlinks this tool created
+rl install            # wire up everything ringleader installs (skills, statusline)
+rl install skills     # or just one
+rl update all         # re-sync what's already wired, after a repo change
+rl uninstall skills   # remove what this tool created
+rl doctor             # what's linked, registered, and how retention is set
 ```
 
 `install` and `uninstall` ask for confirmation before touching anything; pass `--yes` to
 skip the prompt.
-
-### Testing the skills from a zero state
 
 To publish a collection of completed tool-native harvests from a checkout collection:
 
@@ -78,6 +77,8 @@ To publish a collection of completed tool-native harvests from a checkout collec
 cd ~/wrksp/all
 /ringleader-publish using the /doc skill
 ```
+
+### Testing the skills from a zero state
 
 `rl` takes every input from the environment, so a throwaway world needs no support from
 the tool:
@@ -240,9 +241,9 @@ nothing priced reports `null`, never `0`.
   several sessions is refused rather than silently merged.
 - `rl usage windows` — 5h/weekly subscription-window consumption. Codex needs no setup:
   it persists its rate limits to disk and ringleader reads them directly. Claude needs a
-  one-time `rl statusline install` (see below) — Claude Code (**v2.1.80+, Pro/Max only**)
+  one-time `rl install statusline` (see below) — Claude Code (**v2.1.80+, Pro/Max only**)
   exposes `rate_limits` only through the statusLine hook payload, never to disk on its
-  own, and only after the first API response in a session; `rl statusline install` wires
+  own, and only after the first API response in a session; `rl install statusline` wires
   a snippet into your statusLine command that captures it. Each window (5h, weekly) can
   be independently present or absent. OpenCode and Pi have no subscription-window
   concept, so they never appear here. In both codex/claude sections, only snapshots
@@ -258,15 +259,15 @@ nothing priced reports `null`, never `0`.
     several Claude accounts on one machine, the capture reflects whichever account
     rendered the statusLine last, and there's no way to tell which — a reading can be
     wrong and look completely normal.
-- `rl statusline install | status | uninstall [--settings PATH] [--yes]` — manage the
-  capture snippet in `~/.claude/settings.json` (path resolution: `--settings PATH` →
-  `RINGLEADER_CLAUDE_SETTINGS` → `~/.claude/settings.json`). `install` shows a diff of
-  the change and asks for confirmation (`--yes` skips the prompt), backs up the file to
-  `settings.json.bak` first, and only inserts the snippet into the existing statusLine
-  command — nothing else in the file is touched. Running it again is a no-op
-  ("already installed"); `uninstall` removes exactly what `install` added, restoring the
-  original command. `status` reports which target is in use, whether the snippet is
-  installed, and whether a current capture exists.
+- `rl install statusline [--settings PATH] [--yes]` / `rl uninstall statusline [--settings
+  PATH] [--yes]` — manage the capture snippet in `~/.claude/settings.json` (path
+  resolution: `--settings PATH` → `RINGLEADER_CLAUDE_SETTINGS` → `~/.claude/settings.json`).
+  `install` shows a diff of the change and asks for confirmation (`--yes` skips the
+  prompt), backs up the file to `settings.json.bak` first, and only inserts the snippet
+  into the existing statusLine command — nothing else in the file is touched. Running it
+  again is a no-op ("already installed"); `uninstall` removes exactly what `install`
+  added, restoring the original command. `rl doctor` reports which target is in use,
+  whether the snippet is installed, and whether a current capture exists.
 
   Both statusLine shapes are supported. If `statusLine.command` is an **inline command**,
   the snippet goes into that command. If it is a **path to a script** (as the official

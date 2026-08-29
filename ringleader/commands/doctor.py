@@ -5,6 +5,8 @@ import json
 import os
 from pathlib import Path
 
+from . import skills, statusline
+
 MIN_RETENTION_DAYS = 30
 
 
@@ -45,4 +47,12 @@ def cmd_doctor(argv: list[str]) -> int:
     print(f"{mark} {r['harness']} {r['setting']}={r['value']}")
     if not r["ok"]:
         print(f"  {r['advice']}")
+
+    for label, run, run_argv in (
+        ("skills", skills.cmd_status, []),
+        ("statusline", statusline.cmd_status, ["--settings", args.settings]),
+    ):
+        print(f"\n--- {label} ---")
+        run(run_argv)
+
     return 0
