@@ -1,5 +1,6 @@
 import json
 
+from ringleader import harvests
 from ringleader.commands import harvest as harvest_mod
 from ringleader.models.base import ModelError
 
@@ -97,3 +98,73 @@ def test_harvest_appends_to_existing_session_queue(tmp_path, monkeypatch):
     assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg)]) == 0
     assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg)]) == 0
     assert len(json.loads(reg.read_text())["threads"][0]["harvestPath"]) == 2
+
+
+def _registry(tmp_path, session_id="s1"):
+    p = tmp_path / "registry.json"
+    p.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [
+                    {
+                        "sessionId": session_id,
+                        "file": str(tmp_path / "t.jsonl"),
+                        "title": "wired the sweep",
+                        "project": "/w/ringleader",
+                        "gitRoot": "/w/ringleader",
+                        "gitRemote": None,
+                    }
+                ],
+                "archived": [],
+                "deleted": [],
+            }
+        )
+    )
+    return p
+
+
+def test_from_file_stores_content_verbatim_without_a_model(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg = _registry(tmp_path)
+    md = tmp_path / "h.md"
+    md.write_text("# wired the sweep\n\n## Summary\n\nmtime polling beats an fd.\n")
+
+    assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg), "--from-file", str(md)]) == 0
+
+    stored = harvests.load_harvests()
+    assert len(stored) == 1
+    assert "mtime polling beats an fd." in stored[0].content
+    assert json.loads(reg.read_text())["threads"][0]["decision"] == "harvested"
+
+
+def test_from_file_reads_stdin(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg = _registry(tmp_path)
+    monkeypatch.setattr("sys.stdin", __import__("io").StringIO("# t\n\nfrom a pipe.\n"))
+
+    assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg), "--from-file", "-"]) == 0
+    assert "from a pipe." in harvests.load_harvests()[0].content
+
+
+def test_from_file_rejects_empty_content(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg = _registry(tmp_path)
+    md = tmp_path / "h.md"
+    md.write_text("   \n")
+
+    assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg), "--from-file", str(md)]) == 1
+    assert harvests.load_harvests() == []
+
+
+def test_current_resolves_the_session_id(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s1")
+    reg = _registry(tmp_path)
+    md = tmp_path / "h.md"
+    md.write_text("# t\n\nresolved.\n")
+
+    assert (
+        harvest_mod.cmd_harvest(["--current", "--registry", str(reg), "--from-file", str(md)]) == 0
+    )
+    assert "resolved." in harvests.load_harvests()[0].content

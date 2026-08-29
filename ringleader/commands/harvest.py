@@ -10,6 +10,7 @@ from ..config import load_config
 from ..models import active_model
 from ..models.base import ModelError
 from ..stateio import publish_lock
+from ..session_env import current_session
 from . import default_registry
 
 HARVEST_SCHEMA = {
@@ -94,17 +95,39 @@ def _save_harvest_unlocked(session_id: str, registry_path: str, markdown: str) -
     registry.save_registry(registry_path, reg)
     return thread, path
 
+def _read_from_file(path: str) -> str:
+    return sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+
 
 def cmd_harvest(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session harvest")
-    ap.add_argument("id")
+    ap.add_argument("id", nargs="?")
+    ap.add_argument("--current", action="store_true", help="the session rl is running inside")
+    ap.add_argument("--from-file", help="markdown to store as-is ('-' for stdin); skips the model")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
 
-    rc, markdown = _prepare_harvest(args.id, args.registry)
-    if rc != 0 or markdown is None:
-        return rc
+    session_id = args.id
+    if args.current:
+        found = current_session()
+        if found is None:
+            print("rl-harvest: not inside a recognised agent session", file=sys.stderr)
+            return 1
+        session_id = found[1]
+    if not session_id:
+        print("rl-harvest: need a session id, or --current", file=sys.stderr)
+        return 1
+
+    if args.from_file is not None:
+        markdown = _read_from_file(args.from_file)
+        if not markdown.strip():
+            print("rl-harvest: refusing to store an empty harvest", file=sys.stderr)
+            return 1
+    else:
+        rc, markdown = _prepare_harvest(session_id, args.registry)
+        if rc != 0 or markdown is None:
+            return rc
 
     if args.dry_run:
         sys.stdout.write(markdown + "\n")
@@ -112,9 +135,9 @@ def cmd_harvest(argv: list[str]) -> int:
 
     with publish_lock():
         try:
-            thread, path = _save_harvest_unlocked(args.id, args.registry, markdown)
+            thread, path = _save_harvest_unlocked(session_id, args.registry, markdown)
         except KeyError:
-            print(f"rl-harvest: unknown session {args.id}", file=sys.stderr)
+            print(f"rl-harvest: unknown session {session_id}", file=sys.stderr)
             return 1
     print(f"harvested {thread['sessionId']} -> {path}")
     return 0

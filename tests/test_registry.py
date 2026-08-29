@@ -595,3 +595,29 @@ def test_select_and_clear_for_day():
     assert registry.selected_today(reg, "2026-01-02") == []
     registry.clear_selected(reg, "s1")
     assert reg["threads"][0]["selectedForDay"] is None
+
+
+def test_mark_finish_on_exit_sets_the_fields():
+    from ringleader import registry
+
+    reg = {"threads": [{"sessionId": "s1", "decision": "harvested"}]}
+    t = registry.mark_finish_on_exit(reg, "s1", "2026-08-28T10:00:00+00:00")
+    assert t["finishOnExit"] is True
+    assert t["finishedAt"] == "2026-08-28T10:00:00+00:00"
+
+
+def test_mark_finish_on_exit_is_idempotent():
+    from ringleader import registry
+
+    reg = {"threads": [{"sessionId": "s1", "decision": "harvested"}]}
+    registry.mark_finish_on_exit(reg, "s1", "2026-08-28T10:00:00+00:00")
+    registry.mark_finish_on_exit(reg, "s1", "2026-08-28T11:00:00+00:00")
+    assert reg["threads"][0]["finishedAt"] == "2026-08-28T11:00:00+00:00"
+
+
+def test_mark_finish_on_exit_raises_for_an_unknown_session():
+    import pytest
+    from ringleader import registry
+
+    with pytest.raises(KeyError):
+        registry.mark_finish_on_exit({"threads": []}, "nope", "2026-08-28T10:00:00+00:00")

@@ -12,6 +12,7 @@ from . import (
     doctor,
     enrich,
     export,
+    finish,
     harvest,
     inbox,
     keep,
@@ -35,6 +36,7 @@ from . import (
     unarchive,
     usage,
     wake,
+    whoami,
 )
 from . import harvests as harvests_cmd
 
@@ -52,6 +54,7 @@ _SESSION = {
     "set": sync.cmd_set,
     "enrich": enrich.cmd_enrich,
     "harvest": harvest.cmd_harvest,
+    "finish": finish.cmd_finish,
     "archive": archive.cmd_archive,
     "unarchive": unarchive.cmd_unarchive,
     "delete": delete.cmd_delete,
@@ -62,6 +65,7 @@ _SESSION = {
     "unkeep": keep.cmd_unkeep,
     "name": name.cmd_name,
     "relocate": relocate.cmd_relocate,
+    "whoami": whoami.cmd_whoami,
     "mark": {
         "harvested": mark_harvested.cmd_mark_harvested,
         "reviewed": mark_reviewed.cmd_mark_reviewed,

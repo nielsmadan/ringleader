@@ -405,6 +405,18 @@ def keep_thread(reg: dict, session_id: str, when: str) -> str | None:
     raise KeyError(session_id)
 
 
+def mark_finish_on_exit(reg: dict, session_id: str, when: str) -> dict:
+    """Mark a session to be archived once its transcript goes quiet. The transcript
+    cannot be moved while the agent is still writing to it, so `rl session sweep`
+    does the archiving later; this only records the intent."""
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            t["finishOnExit"] = True
+            t["finishedAt"] = when
+            return t
+    raise KeyError(session_id)
+
+
 def unkeep_thread(reg: dict, session_id: str) -> bool:
     """Undo `keep_thread`, returning the session to the triage inbox. Returns False if
     the session wasn't kept — a non-"keep" decision (e.g. "harvested") is left alone."""
