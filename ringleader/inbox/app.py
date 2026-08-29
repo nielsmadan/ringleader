@@ -442,7 +442,21 @@ class InboxApp(App):
                 _has_content(k) for k in ("gotchas", "decisions", "whatChanged")
             )
             if empty:
-                archive_cmd.archive_thread(self._reg, t, archive_root_path=archive_root())
+                with publish_lock():
+                    self._reg = registry.load_registry(self.registry_path)
+                    thread = next(
+                        (
+                            item
+                            for item in self._reg["threads"]
+                            if item["sessionId"] == t["sessionId"]
+                        ),
+                        None,
+                    )
+                    if thread is not None:
+                        archive_cmd.archive_thread(
+                            self._reg, thread, archive_root_path=archive_root()
+                        )
+                        registry.save_registry(self.registry_path, self._reg)
             else:
                 md = harvest_cmd._render_md(t, data)
                 with publish_lock():
@@ -461,8 +475,6 @@ class InboxApp(App):
         except Exception as e:
             self.notify(f"harvest failed: {e}", title="rl inbox", severity="error")
             return
-        if empty:
-            registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
 
     # -- delete / undo --------------------------------------------------
@@ -557,8 +569,15 @@ class InboxApp(App):
         idx, t = self._current()
         if t is None:
             return
-        archive_cmd.archive_thread(self._reg, t, archive_root_path=str(archive_root()))
-        registry.save_registry(self.registry_path, self._reg)
+        with publish_lock():
+            self._reg = registry.load_registry(self.registry_path)
+            thread = next(
+                (item for item in self._reg["threads"] if item["sessionId"] == t["sessionId"]),
+                None,
+            )
+            if thread is not None:
+                archive_cmd.archive_thread(self._reg, thread, archive_root_path=str(archive_root()))
+                registry.save_registry(self.registry_path, self._reg)
         self._harvest_by_session.pop(t["sessionId"], None)
         await self._remove_row(idx)
 

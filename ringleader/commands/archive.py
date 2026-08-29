@@ -9,6 +9,7 @@ from pathlib import Path
 
 from .. import registry, scanner
 from ..paths import archive_root
+from ..stateio import publish_lock
 from . import default_registry
 
 _SESSION_HEADING = re.compile(r"(?i)^session\s+[0-9a-f-]+\s*[—-]\s*(.+)$")
@@ -56,12 +57,21 @@ def archive_thread(
         or "unknown"
     )
     dest_dir = Path(archive_root_path) / slug
-    dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / src.name
     sidecar = src.with_suffix("")
     sidecar_dest = dest_dir / sidecar.name
-    if dest.exists() or sidecar_dest.exists():
+    summary_source = Path(summary_file) if summary_file else None
+    summary_dest = dest_dir / (src.stem + ".md") if summary_source else None
+    summary_already_copied = False
+    if not src.exists() and not dest.exists():
+        raise RuntimeError(f"{src.name} is missing from both source and archive destination")
+    if (src.exists() and dest.exists()) or (sidecar.exists() and sidecar_dest.exists()):
         raise RuntimeError(f"{dest_dir} already has {src.name} or its sidecar, aborting")
+    if summary_source and summary_source.exists() and summary_dest and summary_dest.exists():
+        summary_already_copied = summary_source.read_bytes() == summary_dest.read_bytes()
+        if not summary_already_copied:
+            raise RuntimeError(f"{summary_dest} already exists, aborting")
+    dest_dir.mkdir(parents=True, exist_ok=True)
 
     scanner.hide_from_picker(thread)
 
@@ -72,12 +82,14 @@ def archive_thread(
     if sidecar.exists():
         shutil.move(str(sidecar), str(sidecar_dest))
 
-    summary_path = None
-    if summary_file and Path(summary_file).exists():
-        summary_path = dest_dir / (src.stem + ".md")
-        shutil.copyfile(summary_file, summary_path)
+    summary_path = summary_dest if summary_dest and summary_dest.exists() else None
+    if summary_source and summary_source.exists() and summary_dest and not summary_already_copied:
+        shutil.copyfile(summary_source, summary_dest)
+        summary_path = summary_dest
 
-    summary = thread.get("whatItIs") or _summary_from_file(summary_file)
+    summary = thread.get("whatItIs") or _summary_from_file(
+        str(summary_path) if summary_path else summary_file
+    )
     registry.archive_session(
         reg,
         thread["sessionId"],
@@ -101,24 +113,25 @@ def cmd_archive(argv: list[str]) -> int:
     )
     args = ap.parse_args(argv)
 
-    reg = registry.load_registry(args.registry)
-    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
-    if t is None:
-        print(f"rl-archive: unknown session {args.id}", file=sys.stderr)
-        return 1
+    with publish_lock():
+        reg = registry.load_registry(args.registry)
+        t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+        if t is None:
+            print(f"rl-archive: unknown session {args.id}", file=sys.stderr)
+            return 1
 
-    try:
-        dest = archive_thread(
-            reg,
-            t,
-            archive_root_path=args.archive_root,
-            summary_file=args.summary_file,
-        )
-    except RuntimeError as e:
-        print(f"rl-archive: {e}", file=sys.stderr)
-        return 1
+        try:
+            dest = archive_thread(
+                reg,
+                t,
+                archive_root_path=args.archive_root,
+                summary_file=args.summary_file,
+            )
+        except RuntimeError as e:
+            print(f"rl-archive: {e}", file=sys.stderr)
+            return 1
 
-    registry.save_registry(args.registry, reg)
+        registry.save_registry(args.registry, reg)
     summary_path = Path(dest).with_suffix(".md")
     extra = f" (+summary {summary_path.name})" if summary_path.exists() else ""
     print(f"archived {args.id} -> {dest}{extra}")

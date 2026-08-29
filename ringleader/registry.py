@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
@@ -74,11 +75,44 @@ def save_registry(path, reg) -> None:
     atomic_write_text(p, json.dumps(reg, indent=2, ensure_ascii=False))
 
 
-def reconcile_harvest_paths(reg: dict, paths_by_session: dict[str, list[str]]) -> dict:
+def reconcile_harvest_paths(
+    reg: dict,
+    paths_by_session: dict[str, list[str]],
+    *,
+    pending_root: str | Path | None = None,
+    recorded_pending_paths: dict[str, list[str]] | None = None,
+) -> dict:
+    root = (
+        Path(os.path.normpath(Path(pending_root).absolute())) if pending_root is not None else None
+    )
+    recorded = {
+        session_id: set(paths) for session_id, paths in (recorded_pending_paths or {}).items()
+    }
+
+    def is_pending_path(session_id: str, value: str) -> bool:
+        if value in recorded.get(session_id, set()):
+            return True
+        candidate = Path(value)
+        if root is None or not candidate.is_absolute():
+            return False
+        normalized = Path(os.path.normpath(candidate))
+        return normalized.is_relative_to(root)
+
     def update(record: dict) -> None:
         session_id = record.get("sessionId")
         if session_id in paths_by_session:
-            record["harvestPath"] = paths_by_session[session_id] or None
+            if root is None and not recorded_pending_paths:
+                paths = paths_by_session[session_id]
+            else:
+                existing = record.get("harvestPath")
+                existing_paths = [existing] if isinstance(existing, str) else existing or []
+                direct_paths = [
+                    path
+                    for path in existing_paths
+                    if isinstance(path, str) and not is_pending_path(session_id, path)
+                ]
+                paths = list(dict.fromkeys([*direct_paths, *paths_by_session[session_id]]))
+            record["harvestPath"] = paths or None
         embedded = record.get("thread")
         if isinstance(embedded, dict):
             update(embedded)

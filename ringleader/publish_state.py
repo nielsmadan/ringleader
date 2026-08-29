@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import stat
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
@@ -271,9 +272,27 @@ def _receipt_data(receipt: PublishReceipt) -> dict[str, object]:
 
 
 def _load_receipt_path(path: Path) -> PublishReceipt:
+    flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        fd = os.open(path, flags)
+    except FileNotFoundError:
+        raise
+    except OSError as error:
+        raise PublishStateError("receipt cannot be read") from error
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise PublishStateError("receipt is not a regular file")
+        with os.fdopen(fd, "rb") as handle:
+            fd = -1
+            raw = handle.read()
+    except OSError as error:
+        raise PublishStateError("receipt cannot be read") from error
+    finally:
+        if fd >= 0:
+            os.close(fd)
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
         raise PublishStateError("invalid JSON") from error
     return _receipt_from_data(data)
 
@@ -282,10 +301,8 @@ def _load_receipt_unlocked(receipt_id: str) -> PublishReceipt:
     path = _receipt_path(receipt_id)
     try:
         receipt = _load_receipt_path(path)
-    except PublishStateError:
-        if not path.exists():
-            raise PublishStateError("receipt not found") from None
-        raise
+    except FileNotFoundError:
+        raise PublishStateError("receipt not found") from None
     if path.stem != receipt.receipt_id or receipt.receipt_id != receipt_id:
         raise PublishStateError("receipt ID does not match path")
     return receipt
@@ -369,15 +386,20 @@ def _list_receipts_unlocked() -> tuple[tuple[PublishReceipt, ...], tuple[Receipt
         return (), ()
     candidates: list[tuple[Path, PublishReceipt]] = []
     reasons: dict[Path, list[str]] = defaultdict(list)
+
+    def add_reason(path: Path, message: str) -> None:
+        if message not in reasons[path]:
+            reasons[path].append(message)
+
     for path in sorted(directory.glob("*.json")):
         try:
             receipt = _load_receipt_path(path)
         except PublishStateError as error:
-            reasons[path].append(str(error))
+            add_reason(path, str(error))
             continue
         candidates.append((path, receipt))
         if path.stem != receipt.receipt_id:
-            reasons[path].append("receipt filename does not match receiptId")
+            add_reason(path, "receipt filename does not match receiptId")
     ids: dict[str, list[Path]] = defaultdict(list)
     tokens: dict[str, list[Path]] = defaultdict(list)
     for path, receipt in candidates:
@@ -387,11 +409,11 @@ def _list_receipts_unlocked() -> tuple[tuple[PublishReceipt, ...], tuple[Receipt
     for paths in ids.values():
         if len(paths) > 1:
             for path in paths:
-                reasons[path].append("duplicate receipt ID")
+                add_reason(path, "duplicate receipt ID")
     for paths in tokens.values():
         if len(paths) > 1:
             for path in paths:
-                reasons[path].append("duplicate item token")
+                add_reason(path, "duplicate item token")
     problems = [
         ReceiptProblem(path=path, message="; ".join(messages))
         for path, messages in sorted(reasons.items())
@@ -515,28 +537,6 @@ def prepare_publish(
         )
 
 
-def mark_finishing(receipt_id: str, commit: str | None) -> PublishReceipt:
-    with publish_lock():
-        receipt = load_receipt(receipt_id)
-        if receipt.state == "finishing":
-            if receipt.commit == commit:
-                return receipt
-            if receipt.outcome == "no-change" and commit is not None:
-                raise PublishStateError("no-change outcome cannot have a commit")
-            raise PublishStateError("finishing receipt has a different commit")
-        if receipt.state != "prepared":
-            raise PublishStateError("only prepared receipts can be marked finishing")
-        if receipt.outcome == "changed":
-            if not _is_oid(commit):
-                raise PublishStateError("changed outcome requires a commit")
-        elif receipt.outcome == "no-change":
-            if commit is not None:
-                raise PublishStateError("no-change outcome cannot have a commit")
-        else:
-            raise PublishStateError("prepared receipt has no outcome")
-        return _replace_receipt_unlocked(receipt, state="finishing", commit=commit)
-
-
 def abandon_receipt(receipt_id: str) -> None:
     with publish_lock():
         receipt = _load_receipt_unlocked(receipt_id)
@@ -585,28 +585,44 @@ def _paths_by_session(
     return paths
 
 
-def _validate_consume_contract(receipt: PublishReceipt, commit: str | None) -> None:
+def _recorded_pending_paths(receipt: PublishReceipt) -> dict[str, list[str]]:
+    paths: dict[str, list[str]] = defaultdict(list)
+    for item in receipt.items:
+        paths[item.session_id].extend(
+            (item.relative_path, str(harvests_dir() / item.relative_path))
+        )
+    return paths
+
+
+def _validate_consume_argument(receipt: PublishReceipt, commit: str | None) -> None:
     if receipt.outcome == "changed":
         if commit is None:
             raise PublishStateError("changed outcome requires a commit")
-        verify_published_commit(receipt, commit)
     elif receipt.outcome == "no-change":
         if commit is not None:
             raise PublishStateError("no-change outcome does not accept a commit")
-        require_clean_base(receipt.checkout, branch=receipt.branch, head=receipt.base_commit)
     else:
         raise PublishStateError("only prepared receipts can be consumed")
+    if receipt.state == "finishing" and receipt.commit != commit:
+        raise PublishStateError("finishing receipt has a different commit")
+
+
+def _verify_prepared_outcome(receipt: PublishReceipt, commit: str | None) -> None:
+    if receipt.outcome == "changed":
+        assert commit is not None
+        verify_published_commit(receipt, commit)
+    else:
+        require_clean_base(receipt.checkout, branch=receipt.branch, head=receipt.base_commit)
 
 
 def consume_publish(receipt_id: str, *, commit: str | None) -> ConsumeResult:
-    _validate_consume_contract(load_receipt(receipt_id), commit)
     with publish_lock():
         receipt = _load_receipt_unlocked(receipt_id)
         if receipt.state not in {"prepared", "finishing"}:
             raise PublishStateError("only prepared receipts can be consumed")
-        if receipt.state == "finishing" and receipt.commit != commit:
-            raise PublishStateError("finishing receipt has a different commit")
-        _validate_consume_contract(receipt, commit)
+        _validate_consume_argument(receipt, commit)
+        if receipt.state == "prepared":
+            _verify_prepared_outcome(receipt, commit)
         selected = _reload_receipt_items(receipt, allow_missing=receipt.state == "finishing")
         reg = registry.load_registry(receipt.registry_path)
         remaining = _remaining_items_after(receipt)
@@ -630,7 +646,12 @@ def consume_publish(receipt_id: str, *, commit: str | None) -> ConsumeResult:
         finally:
             os.close(harvest_directory_fd)
         remaining = _remaining_items_after(receipt)
-        registry.reconcile_harvest_paths(reg, _paths_by_session(remaining, receipt.items))
+        registry.reconcile_harvest_paths(
+            reg,
+            _paths_by_session(remaining, receipt.items),
+            pending_root=harvests_dir(),
+            recorded_pending_paths=_recorded_pending_paths(receipt),
+        )
         registry.save_registry(receipt.registry_path, reg)
         _remove_receipt_unlocked(receipt.receipt_id)
         return ConsumeResult(

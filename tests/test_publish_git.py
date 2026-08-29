@@ -372,6 +372,34 @@ def test_verify_published_commit_requires_expected_parent_tree_and_subject(repo,
     assert verified == commit
 
 
+def test_prepared_recovery_accepts_verified_commit_after_recorded_branch_advances(repo, receipt):
+    (repo.path / "README.md").write_text("changed\n")
+    prepared = _prepared_receipt(repo, receipt, ("README.md",))
+    commit = commit_index(repo.path, "chore: update docs")
+    run_git(repo.path, "commit", "--allow-empty", "-m", "later ordinary work")
+
+    assert verify_published_commit(prepared, commit) == commit
+
+
+@pytest.mark.parametrize("mutation", ("advanced", "other-branch", "dirty"))
+def test_immediate_post_commit_check_requires_exact_head_branch_and_clean(repo, receipt, mutation):
+    (repo.path / "README.md").write_text("changed\n")
+    prepared = _prepared_receipt(repo, receipt, ("README.md",))
+    commit = commit_index(repo.path, "chore: update docs")
+    if mutation == "advanced":
+        run_git(repo.path, "commit", "--allow-empty", "-m", "later ordinary work")
+        message = "HEAD"
+    elif mutation == "other-branch":
+        run_git(repo.path, "checkout", "-b", "other")
+        message = "branch"
+    else:
+        (repo.path / "ordinary-work.txt").write_text("later work\n")
+        message = "clean"
+
+    with pytest.raises(PublishGitError, match=message):
+        require_clean_base(repo.path, branch=prepared.branch, head=commit)
+
+
 def test_verify_published_commit_rejects_integrator_created_commit(repo, receipt):
     (repo.path / "README.md").write_text("changed\n")
     prepared = _prepared_receipt(repo, receipt, ("README.md",))

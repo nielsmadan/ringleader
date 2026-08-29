@@ -13,6 +13,10 @@ from .memory import parse_frontmatter
 from .paths import state_dir
 from .stateio import atomic_write_bytes, publish_lock
 
+_FRONTMATTER_UNSAFE = frozenset(
+    ("\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029", "\x00")
+)
+
 
 def harvests_dir() -> Path:
     return state_dir() / "harvests"
@@ -66,6 +70,11 @@ def _slug(name: str, session_id: str) -> str:
 def _legacy_id(path: Path) -> str:
     relative_path = path.relative_to(harvests_dir()).as_posix().encode("utf-8")
     return f"legacy-{hashlib.sha256(relative_path).hexdigest()}"
+
+
+def _validate_frontmatter_value(field: str, value: str | None) -> None:
+    if value is not None and any(character in value for character in _FRONTMATTER_UNSAFE):
+        raise ValueError(f"unsafe {field}")
 
 
 def _parse_harvest(path: Path, raw: bytes) -> Harvest:
@@ -130,6 +139,15 @@ def _write_harvest_unlocked(  # noqa: PLR0913
     content: str,
     clone_url: str | None = None,
 ) -> Path:
+    for field, value in (
+        ("session_id", session_id),
+        ("name", name),
+        ("folder_path", folder_path),
+        ("repo_url", repo_url),
+        ("clone_url", clone_url),
+        ("harvested_at", harvested_at),
+    ):
+        _validate_frontmatter_value(field, value)
     harvest_id = uuid.uuid4().hex
     fields = [
         "---",

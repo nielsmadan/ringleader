@@ -20,14 +20,17 @@ recorded checkout, branch, base, tree, paths, and commit.
 
 - `begun`: if checkout is clean at the recorded base, run `rl harvests abandon <receipt-id>`;
   otherwise report and stop.
-- `prepared changed`: if the expected commit is a direct child on the recorded branch with the
-  recorded parent, tree, and subject, archive then consume. If no commit exists, resume it
-  only when the recorded branch is at base, the index tree is expected, the worktree has no
+- `prepared changed`: if the expected commit has the recorded parent, tree, and subject and
+  remains reachable from the recorded branch, archive then consume. The branch may have
+  advanced after the exact commit was created; recovery verifies the commit as a reachable
+  ancestor, not as the current branch tip. If no commit exists, resume it only when the
+  recorded branch is at base, the index tree is expected, the checkout has no
   unstaged/untracked residue, and report paths match; otherwise report and stop.
 - `prepared no-change`: only when branch, HEAD, and clean state are still recorded, archive
   then consume; otherwise report and stop.
-- `finishing`: resume archive/consume idempotently from the receipt; report and stop on any
-  failure or ambiguity.
+- `finishing`: resume archive/consume idempotently with the receipt's exact persisted commit
+  argument. Do not require the checkout's later branch, HEAD, or clean state; report and stop
+  on an item-integrity, archive, registry, or receipt-removal failure.
 
 Never run the adapter again for a receipt whose commit or accepted no-change result is
 verifiable. Whenever recovery reaches archiving, use the receipt's recorded registry path:
@@ -131,7 +134,8 @@ git -C "$checkout" commit -m 'chore: update docs'
 ```
 
 `prepare` must complete before commit. Keep ordinary hooks enabled; never use `--no-verify`.
-Before archiving or consuming, verify the raw commit rather than deferring to `consume`:
+Immediately after committing and before the first archive/consume attempt, verify the raw
+commit rather than deferring to `consume`:
 
 Run each command independently as shown; the environment assignment does not carry across
 commands:
@@ -147,7 +151,10 @@ GIT_NO_REPLACE_OBJECTS=1 git -C "$checkout" status --porcelain=v1 -z --untracked
 Parse the raw commit headers: require exactly one `parent` equal to base, the expected `tree`,
 and the exact first message line `chore: update docs`. Require `rev-parse` to equal the commit,
 `merge-base` to succeed, `symbolic-ref` to equal the recorded attached branch, and status to be
-empty, including untracked files and submodules.
+empty, including untracked files and submodules. These exact branch-tip, selected-branch, and
+clean-checkout requirements apply to this immediate post-commit path. Prepared recovery uses
+the Recovery rules above and accepts the same verified commit when it remains a reachable
+ancestor after ordinary later commits.
 
 A hook that aborts, edits, or creates another commit is uncertain state: retain and stop.
 
@@ -179,8 +186,10 @@ rl harvests consume "$receipt_id" --commit "$commit"  # changed
 rl harvests consume "$receipt_id"                      # accepted no-change
 ```
 
-If consumption is partial or fails, stop; recovery resumes its finishing receipt. Successful
-handled items are deleted/consumed. Skipped and failed items remain.
+The first consume verifies Git while the receipt is prepared, then durably records the exact
+result as finishing before deletion. If consumption is partial or fails, stop; recovery
+resumes that finishing receipt without rechecking later checkout state. Successful handled
+items are deleted/consumed. Skipped and failed items remain.
 
 ## Final report
 

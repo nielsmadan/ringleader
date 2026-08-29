@@ -1,4 +1,7 @@
+import pytest
 from ringleader import harvests
+
+LINE_BOUNDARIES = ("\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029")
 
 
 def test_write_and_load_harvest(tmp_path, monkeypatch):
@@ -109,3 +112,65 @@ def test_snapshot_reports_malformed_file_and_keeps_valid_items(tmp_path, monkeyp
     snapshot = harvests.snapshot_harvests()
     assert len(snapshot.items) == 1
     assert [problem.path for problem in snapshot.problems] == [bad]
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("session_id", "name", "folder_path", "repo_url", "clone_url", "harvested_at"),
+)
+@pytest.mark.parametrize("unsafe", (*LINE_BOUNDARIES, "\x00"))
+def test_write_rejects_line_unsafe_metadata_before_creating_an_item(
+    tmp_path, monkeypatch, field, unsafe
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    values = {
+        "session_id": "session-1",
+        "name": "safe-name",
+        "folder_path": "/repo",
+        "repo_url": "github.com/me/repo",
+        "clone_url": "git@github.com:me/repo.git",
+        "harvested_at": "2026-08-29T00:00:00+00:00",
+    }
+    values[field] = f"before{unsafe}after"
+
+    with pytest.raises(ValueError, match=field):
+        harvests.write_harvest(content="arbitrary\n---\nMarkdown", **values)
+
+    assert harvests.snapshot_harvests().items == ()
+    assert not harvests.harvests_dir().exists()
+
+
+@pytest.mark.parametrize("separator", LINE_BOUNDARIES)
+def test_write_rejects_frontmatter_identity_injection(tmp_path, monkeypatch, separator):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+
+    with pytest.raises(ValueError, match="session_id"):
+        harvests.write_harvest(
+            session_id=(f"trusted{separator}sessionId: attacker{separator}harvestId: attacker"),
+            name="safe-name",
+            folder_path="/repo",
+            repo_url="github.com/me/repo",
+            clone_url=None,
+            harvested_at="2026-08-29T00:00:00+00:00",
+            content="body",
+        )
+
+    assert harvests.snapshot_harvests().items == ()
+    assert not harvests.harvests_dir().exists()
+
+
+def test_write_preserves_line_boundaries_inside_markdown_content(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    content = f"before{''.join(LINE_BOUNDARIES)}after"
+
+    path = harvests.write_harvest(
+        session_id="trusted",
+        name="safe-name",
+        folder_path="/repo",
+        repo_url="github.com/me/repo",
+        clone_url=None,
+        harvested_at="2026-08-29T00:00:00+00:00",
+        content=content,
+    )
+
+    assert harvests.load_harvest_path(path).content == content

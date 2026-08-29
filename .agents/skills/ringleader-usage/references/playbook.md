@@ -2,7 +2,8 @@
 
 Shared, agent-neutral conventions for the `ringleader` skills (`overview`, `triage`,
 `cleanup`, `init`, `usage`). Every skill's per-agent wrapper points back here for the WHAT; the
-wrapper itself only supplies the HOW for the two enhancement points below.
+wrapper itself only supplies the HOW for the two enhancement points below. The separate
+`ringleader-publish` collection-root workflow owns its own protocol reference.
 
 This file must stay agent-neutral: no mechanism names, only the two placeholders
 `[SELECT]` and `[FAN-OUT]`, defined below. A per-agent wrapper maps each placeholder to
@@ -34,7 +35,8 @@ Flat commands:
   setting so live sessions aren't garbage-collected before you get to them.
 - `rl config show` / `rl config set …` — select the LLM backend used by
   `rl session enrich` and `rl session harvest`. Stores no secrets.
-- `rl harvests` — list what tool-native harvesting has put in the harvest store.
+- `rl harvests` — list the pending tool-native harvest queue. `snapshot`, `begin`,
+  `prepare`, `consume`, `abandon`, and `recover` are publisher plumbing, not triage commands.
 
 Session subcommands (`rl session <sub>`):
 
@@ -65,7 +67,7 @@ Session subcommands (`rl session <sub>`):
 - `rl session mark cleaned SELECTOR [--at ISO]` — record that a project was just triaged.
 
 Memory subcommands (`rl mem <sub>`) — used by the separate memory track, not by these
-four skills, but part of the same CLI surface: `rl mem refresh`, `rl mem prune
+five session-track skills, but part of the same CLI surface: `rl mem refresh`, `rl mem prune
 [--delete]`, `rl mem triage`, `rl mem overview`, `rl mem mark reviewed|cleaned`.
 
 Data subcommands (`rl data <sub>`): `rl data export ID [--out PATH]`, `rl data tokens
@@ -163,7 +165,7 @@ it back. Pick by asking the user what should happen next, not by how finished it
 
 | outcome | command | what happens to the transcript | comes back when |
 |---|---|---|---|
-| done | `rl session complete ID` | harvested into the docs, then moved out of the picker | never (it's archived; `rl session unarchive` undoes it) |
+| done | `rl session complete ID` | leaves a pending central harvest item, then moves the transcript out of the picker | never (it's archived; `rl session unarchive` undoes it) |
 | still going | `rl session set …` + `rl session mark reviewed ID` | untouched, stays resumable | the session gets **new activity** |
 | remind me | `rl session snooze ID --for N` | untouched, stays resumable | **N days** pass (it auto-wakes) |
 | keep long-term | `rl session keep ID` | untouched, stays resumable | **never** — only `rl session unkeep`, or `rl overview --kept` to look |
@@ -187,16 +189,16 @@ are two ways to do it — choose per the user's setup.
 ### Preferred: tool-native (`rl session complete`)
 
 When a model is configured (`rl config show`), run **`rl session complete <id>`** per
-finished session. It extracts the session's durable knowledge into ringleader's harvest
-store via that model and archives the session, in one step — no agent extraction, no
-checkout, no `[FAN-OUT]`. It both harvests and archives, so **do not** also call
-`rl session mark harvested` / `rl session archive` for that session. Browse the results
-with `rl harvests`. If no model is configured, `complete` does nothing and says so — fall
-back to the agent-driven flow below.
+finished session. It extracts durable knowledge into the central pending queue and archives
+the session in one step — no agent extraction, no checkout, no `[FAN-OUT]`. It both harvests
+and archives, so **do not** also call `rl session mark harvested` / `rl session archive` for
+that session. Browse the pending results with `rl harvests`; run `ringleader-publish` later
+from a checkout collection to integrate and consume them. If no model is configured,
+`complete` does nothing and says so — fall back to the agent-driven flow below.
 
-Prefer this whenever the harvest store is where the user wants durable knowledge kept.
+Prefer this when the central queue is the desired staging point before later publication.
 
-### Alternative: agent-driven, into the repo's own docs
+### Alternative: agent-driven, immediately into the repo's own docs
 
 Use this when the user wants knowledge integrated into the target repo's **living docs**
 (their `/doc` setup) rather than the harvest store, or when no model is configured.
@@ -206,11 +208,11 @@ Use this when the user wants knowledge integrated into the target repo's **livin
    `/doc` skill, keeping its existing layout. Whatever the user picks, treat it as the run's
    harvest method — do not hardcode a single tool as the only option, since other users of
    this playbook may answer differently.
-2. **Where to write — reuse-clean, else fresh worktree.** Locate a checkout of the
+2. **Where to write — clean checkout only.** Locate a checkout of the
    session's repo (the registry's recorded `cwd`/`gitRoot`, or `rl overview --checkouts`).
    - If a checkout exists and its working tree is **clean**, write the doc edits there.
-   - If it's **dirty, or no checkout exists**, create an isolated `git worktree` in a
-     temporary directory, write the edits there, and report the path to the user.
+   - If it is dirty, missing, or ambiguous, skip and report it. This triage flow never
+     creates a worktree fallback.
    - Either way, **confirm with the user before writing**, and leave the edits
      **uncommitted** for their review — this playbook never commits on the user's behalf.
 3. **Two phases, in order:**
@@ -224,6 +226,11 @@ Use this when the user wants knowledge integrated into the target repo's **livin
    - **Record and close out.** For each harvested session: `rl session mark harvested <id>
      --paths <comma-separated doc paths>`, then `rl session archive <id> --summary-file
      <path to its extracted notes>`.
+
+`ringleader-publish` is not a fallback for this triage flow. It is the separate
+collection-root workflow for central queue items: it skips dirty or ambiguous checkouts,
+may offer one safe clone, commits verified documentation locally as `chore: update docs`,
+and never pushes.
 
 ## Enhancement placeholders
 

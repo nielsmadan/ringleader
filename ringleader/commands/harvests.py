@@ -13,7 +13,6 @@ from ..publish_git import (
     read_report_paths,
     require_clean_base,
     validate_prepared_changes,
-    verify_published_commit,
 )
 from ..publish_state import (
     PublishStateError,
@@ -149,15 +148,6 @@ def _cmd_consume(argv: list[str]) -> int:
     ap.add_argument("receipt_id")
     ap.add_argument("--commit")
     args = ap.parse_args(argv)
-    receipt = load_receipt(args.receipt_id)
-    if receipt.outcome == "changed":
-        if args.commit is None:
-            raise PublishStateError("changed outcome requires a commit")
-        verify_published_commit(receipt, args.commit)
-    elif receipt.outcome == "no-change":
-        if args.commit is not None:
-            raise PublishStateError("no-change outcome does not accept a commit")
-        require_clean_base(receipt.checkout, branch=receipt.branch, head=receipt.base_commit)
     result = consume_publish(args.receipt_id, commit=args.commit)
     return _write_json(
         {

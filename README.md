@@ -25,16 +25,16 @@ skills into your agents they stay in sync with the repo (new skills linked, remo
 cleaned up). If you haven't, it's a no-op — `update` never opts an agent in on its own;
 that's what `rl skills install` is for.
 
-State (the registry and `archive/`) lives under `~/.local/share/ringleader/`
+State (the registry, archive, and pending harvest queue) lives under `~/.local/share/ringleader/`
 (or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
 runs `rl data migrate` first to move any pre-existing repo-root `registry.json` /
 `archive/` into that location.
 
 ## Skills
 
-`.agents/skills/` ships five agent skills that drive `rl` instead of raw commands —
+`.agents/skills/` ships six agent skills that drive `rl` instead of raw commands —
 `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
-`ringleader-usage`:
+`ringleader-usage`, `ringleader-publish`:
 
 - **`ringleader-overview`** — the morning read: what's in flight, what's stale and
   awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
@@ -42,18 +42,23 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
   session-retention settings (`rl doctor`), offer to wire the skills into your agent(s),
   and run a small, bounded first triage pass (`--recent 7`).
 - **`ringleader-triage`** — recurring cleanup of the last few days of sessions:
-  delete/finished/open per session, harvest what's finished into the repo's docs, name and
-  review what's open.
+  delete/finished/open per session, integrate finished work directly into repo docs or leave
+  it in the tool-native pending queue for later publishing, then name and review what's open.
 - **`ringleader-cleanup`** — the same flow as triage over the *entire* backlog instead of a
   recent window; resumable across runs, since the registry records what's already been
   triaged.
 - **`ringleader-usage`** — explain where an agent session's tokens went and how to spend
   fewer: survey usage, drill into heavy sessions, read the transcript around the expensive
   turns, and give concrete advice. Read-only.
+- **`ringleader-publish`** — drain pending tool-native harvests into the living docs of
+  matching repositories from a checkout collection. It skips dirty or ambiguous checkouts,
+  may offer a clone, commits locally only after verified integration, and never pushes.
 
-Each is an agent-neutral `SKILL.md` plus a bundled `references/playbook.md` (synced from
-the canonical `.agents/skills/PLAYBOOK.md`), so they read natively in Claude Code, Codex,
-OpenCode, and Pi — no per-agent plugin format required. Wire them into your agent(s) with:
+The five session-track skills share an agent-neutral `SKILL.md` plus a bundled
+`references/playbook.md` (synced from the canonical `.agents/skills/PLAYBOOK.md`).
+`ringleader-publish` owns its focused publishing protocol. All six read natively in Claude
+Code, Codex, OpenCode, and Pi — no per-agent plugin format required. Wire them into your
+agent(s) with:
 
 ```sh
 rl skills install     # symlink the bundled skills into ~/.claude/skills and ~/.agents/skills
@@ -66,6 +71,13 @@ rl skills uninstall   # remove the symlinks this tool created
 skip the prompt.
 
 ### Testing the skills from a zero state
+
+To publish a collection of completed tool-native harvests from a checkout collection:
+
+```text
+cd ~/wrksp/all
+/ringleader-publish using the /doc skill
+```
 
 `rl` takes every input from the environment, so a throwaway world needs no support from
 the tool:
@@ -279,12 +291,18 @@ nothing priced reports `null`, never `0`.
 
 ### `rl harvests [--json]`
 
-Lists the durable knowledge harvested out of completed sessions (`rl session
-harvest`/`rl session complete`) — folder path, repo url, and content for
-each. `--json` prints the full list (including `content`) as JSON instead of
-text. Harvests are stored as markdown files under `state_dir()/harvests/`
-(`~/.local/share/ringleader/harvests/` by default); `rl harvests` is the
-inbox the `ringleader-*` skills read from to fold that knowledge into a repo's docs.
+Lists the pending, tool-native harvest queue created by `rl session harvest` and
+`rl session complete` — folder path, repository URL, and content for each. `--json`
+prints the full human-facing list (including `content`) as JSON. Queue items live under
+`state_dir()/harvests/`; they remain durable only until verified integration into living
+docs, when the exact handled items are deleted.
+
+`ringleader-publish` uses separate plumbing: `snapshot` reads metadata and exact tokens
+without bodies; `begin` claims an exact set and creates a private bundle and recovery
+receipt; `prepare` records a verified changed or accepted no-change outcome; `consume`
+deletes exactly the handled items; `abandon` safely releases a begun receipt; and `recover`
+lists temporary unresolved receipts. A changed target receives the local commit
+`chore: update docs` only after integration verifies; the skill never pushes.
 
 ## Plumbing
 
@@ -354,8 +372,9 @@ name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
 
 This only works **before** the retention cutoff: once `archive.retention_days` is set and
 `rl prune`/`rl roundup` has purged a session, its archived files are deleted and it is gone
-for good (the record moves to `deleted` as `purged`). Any harvested knowledge still survives in
-`harvests/`.
+for good (the record moves to `deleted` as `purged`). Pending central queue files survive
+archive purge only until successful publication; afterward the durable knowledge is in the
+living repository docs and the handled queue items are deleted.
 
 1. Move **both** `archive/<slug>/<id>.jsonl` and its sidecar directory
    `archive/<slug>/<id>/` back into `~/.claude/projects/<slug>/`. Leaving the sidecar

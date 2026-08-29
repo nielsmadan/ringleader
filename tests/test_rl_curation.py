@@ -1,9 +1,43 @@
 import json
 import subprocess
 import sys
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 
+import pytest
+from ringleader.commands import archive as archive_mod
+from ringleader.commands import harvest as harvest_mod
+
 REPO = Path(__file__).resolve().parent.parent
+
+
+class ControlledPublishLock:
+    def __init__(self, writer_name):
+        self.writer_name = writer_name
+        self.writer_attempted = threading.Event()
+        self.lock = threading.Lock()
+        self.owner = None
+
+    @contextmanager
+    def __call__(self):
+        if threading.current_thread().name == self.writer_name:
+            self.writer_attempted.set()
+        self.lock.acquire()
+        self.owner = threading.get_ident()
+        try:
+            yield
+        finally:
+            self.owner = None
+            self.lock.release()
+
+    def owned_by_current_thread(self):
+        return self.owner == threading.get_ident()
+
+
+class FakeModel:
+    def complete_json(self, prompt, schema):
+        return {"summary": "writer summary"}
 
 
 def _session(tmp, sid="a"):
@@ -63,6 +97,157 @@ def test_archive_moves_files_and_tombstones(tmp_path):
     ts = data["archived"][0]
     assert ts["harvestPath"] == ["docs/x.md"]
     assert ts["archivePath"] == str(archived)
+
+
+def test_archive_cli_retries_after_move_when_registry_save_failed(tmp_path, monkeypatch, capsys):
+    f = _session(tmp_path, "crash")
+    reg = _registry(tmp_path, "crash", f)
+    arc = tmp_path / "archive"
+    summary = tmp_path / "summary.md"
+    summary.write_text("# Crash recovery\n")
+    real_save = archive_mod.registry.save_registry
+    monkeypatch.setattr(
+        archive_mod.registry,
+        "save_registry",
+        lambda *args: (_ for _ in ()).throw(OSError("registry save failed")),
+    )
+
+    with pytest.raises(OSError, match="registry save failed"):
+        archive_mod.cmd_archive(
+            [
+                "crash",
+                "--registry",
+                str(reg),
+                "--archive-root",
+                str(arc),
+                "--summary-file",
+                str(summary),
+            ]
+        )
+
+    assert not f.exists()
+    assert (arc / "unknown" / "crash.jsonl").exists()
+    assert (arc / "unknown" / "crash.md").read_text() == "# Crash recovery\n"
+    monkeypatch.setattr(archive_mod.registry, "save_registry", real_save)
+
+    assert (
+        archive_mod.cmd_archive(
+            [
+                "crash",
+                "--registry",
+                str(reg),
+                "--archive-root",
+                str(arc),
+                "--summary-file",
+                str(summary),
+            ]
+        )
+        == 0
+    )
+    assert "archived crash" in capsys.readouterr().out
+    saved = json.loads(reg.read_text())
+    assert saved["threads"] == []
+    assert [item["sessionId"] for item in saved["archived"]] == ["crash"]
+
+
+def test_archive_rejects_missing_source_and_destination_without_mutating_registry(tmp_path):
+    transcript = _session(tmp_path, "missing")
+    reg = _registry(tmp_path, "missing", transcript)
+    before = reg.read_bytes()
+    transcript.unlink()
+    sidecar = transcript.with_suffix("")
+    arc = tmp_path / "archive"
+
+    result = _run("rl-session archive", reg, "missing", "--archive-root", str(arc))
+
+    assert result.returncode == 1
+    assert "missing from both" in result.stderr
+    assert reg.read_bytes() == before
+    assert sidecar.exists()
+
+
+def test_archive_and_harvest_writer_serialize_registry_updates(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    first = _session(tmp_path, "archive-me")
+    second = _session(tmp_path, "harvest-me")
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [
+                    {
+                        "sessionId": "archive-me",
+                        "file": str(first),
+                        "project": "/repo",
+                        "gitProjectLabel": "repo",
+                    },
+                    {
+                        "sessionId": "harvest-me",
+                        "file": str(second),
+                        "project": "/repo",
+                        "gitProjectLabel": "repo",
+                        "title": "writer",
+                    },
+                ],
+                "archived": [],
+                "deleted": [],
+            }
+        )
+    )
+    monkeypatch.setattr(harvest_mod, "active_model", lambda cfg: FakeModel())
+    monkeypatch.setattr(harvest_mod.export, "render_conversation", lambda path: "hi")
+    controlled_lock = ControlledPublishLock("harvest-writer")
+    monkeypatch.setattr(archive_mod, "publish_lock", controlled_lock, raising=False)
+    monkeypatch.setattr(harvest_mod, "publish_lock", controlled_lock)
+    archive_loaded = threading.Event()
+    writer_done = threading.Event()
+    real_load = archive_mod.registry.load_registry
+
+    def controlled_load(path):
+        loaded = real_load(path)
+        if threading.current_thread().name == "archive" and not archive_loaded.is_set():
+            archive_loaded.set()
+            assert controlled_lock.writer_attempted.wait(3)
+            if not controlled_lock.owned_by_current_thread():
+                assert writer_done.wait(3)
+        return loaded
+
+    monkeypatch.setattr(archive_mod.registry, "load_registry", controlled_load)
+    results = {}
+
+    def run_archive():
+        results["archive"] = archive_mod.cmd_archive(
+            [
+                "archive-me",
+                "--registry",
+                str(reg),
+                "--archive-root",
+                str(tmp_path / "archive"),
+            ]
+        )
+
+    def run_writer():
+        try:
+            assert archive_loaded.wait(3)
+            results["writer"] = harvest_mod.cmd_harvest(["harvest-me", "--registry", str(reg)])
+        finally:
+            writer_done.set()
+
+    archive_thread = threading.Thread(target=run_archive, name="archive")
+    writer_thread = threading.Thread(target=run_writer, name="harvest-writer")
+    archive_thread.start()
+    writer_thread.start()
+    archive_thread.join(5)
+    writer_thread.join(5)
+
+    assert not archive_thread.is_alive()
+    assert not writer_thread.is_alive()
+    assert results == {"archive": 0, "writer": 0}
+    saved = real_load(reg)
+    assert [item["sessionId"] for item in saved["archived"]] == ["archive-me"]
+    writer = next(item for item in saved["threads"] if item["sessionId"] == "harvest-me")
+    assert len(writer["harvestPath"]) == 1
 
 
 def test_delete_removes_files_and_tombstones(tmp_path):

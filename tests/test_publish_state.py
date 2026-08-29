@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 from ringleader import harvests, publish_state, registry
 from ringleader.commands import harvest as harvest_command
+from ringleader.publish_git import PublishGitError
 from ringleader.publish_state import (
     PublishStateError,
     abandon_receipt,
@@ -19,7 +20,6 @@ from ringleader.publish_state import (
     consume_publish,
     list_receipts,
     load_receipt,
-    mark_finishing,
     prepare_publish,
 )
 
@@ -81,6 +81,60 @@ def _clean_checkout(tmp_path):
         text=True,
     ).stdout.strip()
     return checkout, branch, base_commit
+
+
+def _prepare_changed_receipt(selected, tmp_path):
+    checkout, branch, base_commit = _clean_checkout(tmp_path)
+    receipt = begin_publish(
+        repo_key=selected.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base_commit,
+        registry_path=str(tmp_path / "registry.json"),
+        tokens=[selected.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+    (checkout / "README.md").write_text("published\n")
+    subprocess.run(["git", "-C", str(checkout), "add", "README.md"], check=True)
+    tree = subprocess.run(
+        ["git", "-C", str(checkout), "write-tree"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    prepare_publish(
+        receipt.receipt_id,
+        outcome="changed",
+        expected_tree=tree,
+        changed_paths=("README.md",),
+    )
+    subprocess.run(["git", "-C", str(checkout), "commit", "-qm", "chore: update docs"], check=True)
+    commit = subprocess.run(
+        ["git", "-C", str(checkout), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    return receipt, checkout, commit
+
+
+def _interrupt_after_finishing(receipt, item_path, commit, monkeypatch):
+    original_unlink = Path.unlink
+
+    def fail_selected_unlink(path, *args, **kwargs):
+        if path == item_path:
+            raise OSError("interrupted after finishing")
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "unlink", fail_selected_unlink)
+    with pytest.raises(OSError, match="interrupted after finishing"):
+        consume_publish(receipt.receipt_id, commit=commit)
+    monkeypatch.setattr(Path, "unlink", original_unlink)
+    finishing = load_receipt(receipt.receipt_id)
+    assert finishing.state == "finishing"
+    assert finishing.commit == commit
+    assert item_path.exists()
+    return finishing
 
 
 class ControlledPublishLock:
@@ -317,8 +371,11 @@ def test_consume_removes_exact_items_and_keeps_a_newer_same_session_item(store, 
     reg["archived"] = [
         {
             "sessionId": selected.session_id,
-            "harvestPath": [str(selected.path)],
-            "thread": {"sessionId": selected.session_id, "harvestPath": [str(selected.path)]},
+            "harvestPath": ["docs/architecture.md", str(selected.path)],
+            "thread": {
+                "sessionId": selected.session_id,
+                "harvestPath": ["docs/architecture.md", str(selected.path)],
+            },
         }
     ]
     registry.save_registry(receipt.registry_path, reg)
@@ -328,8 +385,8 @@ def test_consume_removes_exact_items_and_keeps_a_newer_same_session_item(store, 
     assert result.consumed == 1
     assert [item.token for item in harvests.snapshot_harvests().items] == [newer.token]
     archived = registry.load_registry(receipt.registry_path)["archived"][0]
-    assert archived["harvestPath"] == [str(newer.path)]
-    assert archived["thread"]["harvestPath"] == [str(newer.path)]
+    assert archived["harvestPath"] == ["docs/architecture.md", str(newer.path)]
+    assert archived["thread"]["harvestPath"] == ["docs/architecture.md", str(newer.path)]
 
 
 def test_consume_resumes_after_an_interrupted_unlink(store, tmp_path, monkeypatch):
@@ -373,7 +430,7 @@ def test_consume_resumes_after_an_interrupted_unlink(store, tmp_path, monkeypatc
     assert harvests.snapshot_harvests().items == ()
 
 
-def test_finishing_consume_rejects_a_malformed_selected_path(store, tmp_path):
+def test_finishing_consume_rejects_a_malformed_selected_path(store, tmp_path, monkeypatch):
     selected = store("github.com/me/repo", ["selected"])[0]
     checkout, branch, base_commit = _clean_checkout(tmp_path)
     receipt = begin_publish(
@@ -386,8 +443,8 @@ def test_finishing_consume_rejects_a_malformed_selected_path(store, tmp_path):
         bundle_path=tmp_path / "bundle.md",
     )
     prepare_publish(receipt.receipt_id, outcome="no-change")
-    mark_finishing(receipt.receipt_id, None)
     registry.save_registry(receipt.registry_path, registry.empty_registry())
+    _interrupt_after_finishing(receipt, selected.path, None, monkeypatch)
     selected.path.write_bytes(b"\xff")
 
     with pytest.raises(PublishStateError, match="missing or changed"):
@@ -535,8 +592,8 @@ def test_receipt_removal_fsync_failure_does_not_raise_after_consumption(
         bundle_path=tmp_path / "bundle.md",
     )
     prepare_publish(receipt.receipt_id, outcome="no-change")
-    mark_finishing(receipt.receipt_id, None)
     registry.save_registry(receipt.registry_path, registry.empty_registry())
+    _interrupt_after_finishing(receipt, selected.path, None, monkeypatch)
     real_fsync = publish_state.os.fsync
     receipt_directory = publish_state.publish_receipts_dir().stat()
 
@@ -567,8 +624,8 @@ def test_receipt_removal_close_failure_after_unlink_does_not_raise(store, tmp_pa
         bundle_path=tmp_path / "bundle.md",
     )
     prepare_publish(receipt.receipt_id, outcome="no-change")
-    mark_finishing(receipt.receipt_id, None)
     registry.save_registry(receipt.registry_path, registry.empty_registry())
+    _interrupt_after_finishing(receipt, selected.path, None, monkeypatch)
     receipt_directory = publish_state.publish_receipts_dir().stat()
     real_close = publish_state.os.close
     failed_close = False
@@ -791,6 +848,65 @@ def test_consume_without_registry_record_is_retry_safe_after_registry_save_failu
     assert consume_publish(receipt.receipt_id, commit=None).consumed == 1
 
 
+@pytest.mark.parametrize("outcome", ("changed", "no-change"))
+def test_finishing_retry_ignores_later_checkout_state(store, tmp_path, monkeypatch, outcome):
+    selected = store("github.com/me/repo", ["selected"])[0]
+    if outcome == "changed":
+        receipt, checkout, commit = _prepare_changed_receipt(selected, tmp_path)
+    else:
+        checkout, branch, base = _clean_checkout(tmp_path)
+        receipt = begin_publish(
+            repo_key=selected.repo_key,
+            checkout=str(checkout),
+            branch=branch,
+            base_commit=base,
+            registry_path=str(tmp_path / "registry.json"),
+            tokens=[selected.token],
+            bundle_path=tmp_path / "bundle.md",
+        )
+        prepare_publish(receipt.receipt_id, outcome="no-change")
+        commit = None
+    registry.save_registry(receipt.registry_path, registry.empty_registry())
+    real_save = publish_state.registry.save_registry
+    monkeypatch.setattr(
+        publish_state.registry,
+        "save_registry",
+        lambda *args: (_ for _ in ()).throw(OSError("save failed")),
+    )
+    with pytest.raises(OSError, match="save failed"):
+        consume_publish(receipt.receipt_id, commit=commit)
+    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+    assert load_receipt(receipt.receipt_id).state == "finishing"
+    assert not selected.path.exists()
+    (checkout / "ordinary-work.txt").write_text("later work\n")
+
+    def unexpected_git_verification(*args, **kwargs):
+        raise PublishGitError("finishing retry rechecked Git")
+
+    monkeypatch.setattr(publish_state, "verify_published_commit", unexpected_git_verification)
+    monkeypatch.setattr(publish_state, "require_clean_base", unexpected_git_verification)
+
+    assert consume_publish(receipt.receipt_id, commit=commit).consumed == 1
+
+
+def test_finishing_changed_retry_rejects_a_different_commit(store, tmp_path, monkeypatch):
+    selected = store("github.com/me/repo", ["selected"])[0]
+    receipt, _checkout, commit = _prepare_changed_receipt(selected, tmp_path)
+    registry.save_registry(receipt.registry_path, registry.empty_registry())
+    real_save = publish_state.registry.save_registry
+    monkeypatch.setattr(
+        publish_state.registry,
+        "save_registry",
+        lambda *args: (_ for _ in ()).throw(OSError("save failed")),
+    )
+    with pytest.raises(OSError, match="save failed"):
+        consume_publish(receipt.receipt_id, commit=commit)
+    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+
+    with pytest.raises(PublishStateError, match="different commit"):
+        consume_publish(receipt.receipt_id, commit="d" * 40)
+
+
 def test_receipt_unlink_failure_keeps_a_discoverable_finishing_receipt(
     store, tmp_path, monkeypatch
 ):
@@ -838,48 +954,60 @@ def test_prepare_only_transitions_a_begun_receipt(receipt):
         prepare_publish(receipt.receipt_id, outcome="no-change")
 
 
-def test_finishing_requires_prepared_and_is_idempotent(receipt):
-    with pytest.raises(PublishStateError, match="prepared"):
-        mark_finishing(receipt.receipt_id, None)
+def test_publish_state_does_not_expose_an_unverified_finishing_transition():
+    assert not hasattr(publish_state, "mark_finishing")
 
-    prepare_publish(
-        receipt.receipt_id, outcome="changed", expected_tree="b" * 40, changed_paths=("README.md",)
+
+def test_no_change_finishing_retry_rejects_a_commit(store, tmp_path, monkeypatch):
+    selected = store("github.com/me/repo", ["selected"])[0]
+    checkout, branch, base_commit = _clean_checkout(tmp_path)
+    receipt = begin_publish(
+        repo_key=selected.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base_commit,
+        registry_path=str(tmp_path / "registry.json"),
+        tokens=[selected.token],
+        bundle_path=tmp_path / "bundle.md",
     )
-    first = mark_finishing(receipt.receipt_id, "c" * 40)
-    again = mark_finishing(receipt.receipt_id, "c" * 40)
-
-    assert first == again
-    assert first.state == "finishing"
-    assert first.commit == "c" * 40
-    with pytest.raises(PublishStateError, match="commit"):
-        mark_finishing(receipt.receipt_id, "d" * 40)
-
-
-def test_no_change_finishing_requires_no_commit(receipt):
     prepare_publish(receipt.receipt_id, outcome="no-change")
+    registry.save_registry(receipt.registry_path, registry.empty_registry())
+    _interrupt_after_finishing(receipt, selected.path, None, monkeypatch)
 
-    finished = mark_finishing(receipt.receipt_id, None)
-
-    assert finished.state == "finishing"
     with pytest.raises(PublishStateError, match="no-change"):
-        mark_finishing(receipt.receipt_id, "c" * 40)
+        consume_publish(receipt.receipt_id, commit="c" * 40)
 
 
-@pytest.mark.parametrize("state", ["begun", "prepared", "finishing"])
+@pytest.mark.parametrize("state", ["begun", "prepared"])
 def test_abandon_only_removes_begun_receipts(receipt, state):
     if state == "prepared":
         prepare_publish(receipt.receipt_id, outcome="no-change")
-        with pytest.raises(PublishStateError, match="begun"):
-            abandon_receipt(receipt.receipt_id)
-    elif state == "finishing":
-        prepare_publish(receipt.receipt_id, outcome="no-change")
-        mark_finishing(receipt.receipt_id, None)
         with pytest.raises(PublishStateError, match="begun"):
             abandon_receipt(receipt.receipt_id)
     else:
         abandon_receipt(receipt.receipt_id)
         with pytest.raises(PublishStateError, match="not found"):
             load_receipt(receipt.receipt_id)
+
+
+def test_abandon_rejects_a_verified_finishing_receipt(store, tmp_path, monkeypatch):
+    selected = store("github.com/me/repo", ["selected"])[0]
+    checkout, branch, base_commit = _clean_checkout(tmp_path)
+    receipt = begin_publish(
+        repo_key=selected.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base_commit,
+        registry_path=str(tmp_path / "registry.json"),
+        tokens=[selected.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    registry.save_registry(receipt.registry_path, registry.empty_registry())
+    _interrupt_after_finishing(receipt, selected.path, None, monkeypatch)
+
+    with pytest.raises(PublishStateError, match="begun"):
+        abandon_receipt(receipt.receipt_id)
 
 
 def test_list_reports_malformed_receipts_without_trusting_them(receipt, tmp_path, monkeypatch):
@@ -893,6 +1021,49 @@ def test_list_reports_malformed_receipts_without_trusting_them(receipt, tmp_path
 
     assert [item.receipt_id for item in receipts] == [receipt.receipt_id]
     assert [(problem.path, problem.message) for problem in problems] == [(bad, "invalid JSON")]
+
+
+def test_list_reports_a_receipt_symlink_without_distrusting_its_target(receipt):
+    from ringleader.paths import publish_receipts_dir
+
+    target = publish_receipts_dir() / f"{receipt.receipt_id}.json"
+    link = publish_receipts_dir() / "linked.json"
+    os.symlink(target.name, link)
+
+    receipts, problems = list_receipts()
+
+    assert [item.receipt_id for item in receipts] == [receipt.receipt_id]
+    assert [problem.path for problem in problems] == [link]
+    assert "read" in problems[0].message or "regular file" in problems[0].message
+
+
+def test_recover_reports_a_receipt_fifo_promptly(receipt):
+    from ringleader.paths import publish_receipts_dir
+
+    fifo = publish_receipts_dir() / "blocked.json"
+    os.mkfifo(fifo)
+    script = """
+from ringleader.commands.harvests import cmd_harvests
+
+raise SystemExit(cmd_harvests(["recover", "--json"]))
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=3)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+        pytest.fail("receipt listing blocked while opening the FIFO")
+
+    assert process.returncode == 0, (stdout, stderr)
+    payload = json.loads(stdout)
+    assert [item["receiptId"] for item in payload["receipts"]] == [receipt.receipt_id]
+    assert [problem["path"] for problem in payload["problems"]] == [str(fifo)]
 
 
 def test_load_rejects_unsafe_and_unknown_receipt_data(receipt):
@@ -944,7 +1115,6 @@ def test_load_rejects_unsafe_or_duplicate_changed_paths(receipt, changed_paths):
     [
         ("baseCommit", "not-an-oid"),
         ("expectedTree", "not-an-oid"),
-        ("commit", "not-an-oid"),
     ],
 )
 def test_load_rejects_invalid_oids_and_state_combinations(receipt, field, value):
@@ -954,8 +1124,6 @@ def test_load_rejects_invalid_oids_and_state_combinations(receipt, field, value)
         expected_tree="b" * 40,
         changed_paths=("README.md",),
     )
-    if field == "commit":
-        prepared = mark_finishing(prepared.receipt_id, "c" * 40)
     from ringleader.paths import publish_receipts_dir
 
     path = publish_receipts_dir() / f"{prepared.receipt_id}.json"
@@ -965,6 +1133,24 @@ def test_load_rejects_invalid_oids_and_state_combinations(receipt, field, value)
 
     with pytest.raises(PublishStateError, match=r"invalid|illegal|requires"):
         load_receipt(prepared.receipt_id)
+
+
+def test_load_rejects_an_invalid_commit_in_a_verified_finishing_receipt(
+    store, tmp_path, monkeypatch
+):
+    selected = store("github.com/me/repo", ["selected"])[0]
+    receipt, _checkout, commit = _prepare_changed_receipt(selected, tmp_path)
+    registry.save_registry(receipt.registry_path, registry.empty_registry())
+    finishing = _interrupt_after_finishing(receipt, selected.path, commit, monkeypatch)
+    from ringleader.paths import publish_receipts_dir
+
+    path = publish_receipts_dir() / f"{finishing.receipt_id}.json"
+    raw = json.loads(path.read_text())
+    raw["commit"] = "not-an-oid"
+    path.write_text(json.dumps(raw))
+
+    with pytest.raises(PublishStateError, match=r"invalid|illegal|requires"):
+        load_receipt(finishing.receipt_id)
 
 
 def test_load_rejects_an_illegal_no_change_state_combination(receipt):
@@ -1024,6 +1210,44 @@ def test_list_distrusts_original_when_a_wrongly_named_copy_claims_its_items(rece
 
     assert receipts == ()
     assert {problem.path for problem in problems} == {path, copy}
+
+
+def test_list_distrusts_a_wrong_filename_with_a_fresh_id_sharing_only_the_token(receipt):
+    from ringleader.paths import publish_receipts_dir
+
+    original = publish_receipts_dir() / f"{receipt.receipt_id}.json"
+    raw = json.loads(original.read_text())
+    raw["receiptId"] = uuid.uuid4().hex
+    collision = publish_receipts_dir() / "wrong-name.json"
+    collision.write_text(json.dumps(raw))
+
+    receipts, problems = list_receipts()
+
+    assert receipts == ()
+    assert {problem.path: problem.message for problem in problems} == {
+        original: "duplicate item token",
+        collision: "receipt filename does not match receiptId; duplicate item token",
+    }
+
+
+def test_list_deduplicates_repeated_collision_reasons_in_first_seen_order(store, tmp_path):
+    items = store("github.com/me/repo", ["first", "second"])
+    receipt = _begin(items[0], tmp_path, tokens=[item.token for item in items])
+    from ringleader.paths import publish_receipts_dir
+
+    original = publish_receipts_dir() / f"{receipt.receipt_id}.json"
+    raw = json.loads(original.read_text())
+    raw["receiptId"] = uuid.uuid4().hex
+    collision = publish_receipts_dir() / "wrong-name.json"
+    collision.write_text(json.dumps(raw))
+
+    receipts, problems = list_receipts()
+
+    assert receipts == ()
+    assert {problem.path: problem.message for problem in problems} == {
+        original: "duplicate item token",
+        collision: "receipt filename does not match receiptId; duplicate item token",
+    }
 
 
 def test_load_rejects_distinct_items_with_the_same_harvest_relative_path(store, tmp_path):

@@ -158,15 +158,23 @@ command via `ringleader/paths.py`.
 
 ~/.local/share/ringleader/                # state_dir() — $XDG_DATA_HOME/ringleader if set
 ├── registry.json                           # hybrid cache: threads + decisions + archived/deleted
-└── archive/                                # archived sessions moved out of ~/.claude/projects/
+├── archive/                                # archived sessions moved out of ~/.claude/projects/
+├── harvests/                               # pending tool-native harvest queue
+└── publish/                                # temporary recovery state while publishing
+    └── receipts/
 ```
 
-`registry.json` and `archive/` are machine-local, derived data — never committed, and no
-longer inside the repo at all (no `.gitignore` entry needed for them there). There is no
-`harvests/` directory: `session-harvest` integrates knowledge directly into the *target*
-repo's own docs (via the `/doc` skill) and records the resulting doc paths on the thread's
-`harvestPath`, rather than writing a ringleader-local copy. `rl data migrate` moves any
-pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on install.
+`registry.json`, `archive/`, the harvest queue, and recovery receipts are machine-local
+state — never committed, and no longer inside the repo. Tool-native harvesting creates an
+item under `state_dir()/harvests/`; the queue is durable only until successful integration.
+`ringleader-publish` drains central items into living documentation using temporary recovery
+receipts. Immediate agent-driven integration may still write directly into repository docs.
+`harvestPath` is an array of paths or `null` and may contain both kinds at once: tool-native
+harvesting records remaining pending queue item paths, while direct agent-driven integration
+records the living document paths it wrote. After publishing, reconciliation uses the
+explicit harvest-store root and receipt paths to replace or clear only pending queue entries;
+living-document paths remain. `rl data migrate` moves any pre-refactor
+repo-root `registry.json`/`archive/` into `state_dir()` once, on install.
 
 ## registry.json schema (v2)
 
@@ -199,21 +207,23 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
       "suggestedName": "kebab-case-name or null",
       "classifiedAtMtime": "<iso mtime when last classified>",
       "decision": "keep|abandon|harvested|null",   // user decision; never auto-overwritten
-      "harvestPath": "comma-joined target-repo doc paths, or null",
+      "harvestPath": ["<path>"], // pending queue or directly integrated doc paths; or null
       "todoId": "todoist id or null",       // reserved for Phase 3
       "tags": []
     }
   ],
   "deleted": [   // transcript is gone; `archived` is the separate, restorable list
     { "sessionId": "uuid", "reason": "prune|deleted|gc|purged",
-      "deletedAt": "<iso>", "harvestPath": "… or null" }
+      "deletedAt": "<iso>", "harvestPath": ["<path>"] // or null
+    }
   ],
   // Separate list: the transcript still exists in archive/ and is restorable with
   // `rl session unarchive`, so these are NOT deletions.
   "archived": [
     { "sessionId": "uuid", "archivedAt": "<iso>", "archivePath": "…",
       "originalPath": "…", "thread": { /* the full record, for restore */ },
-      "summary": "…", "harvestPath": "… or null" }
+      "summary": "…", "harvestPath": ["<path>"] // or null
+    }
   ]
 }
 ```
@@ -228,7 +238,7 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
 | 1 | `session-sync` | Scan disk, reconcile registry (hybrid C), classify changed sessions, record vanished ones as deleted. | engine ① |
 | 2 | `session-overview` | Render dormant threads grouped by **git project** (worktrees/clones/monorepo-subdirs collapse together; cwd is the fallback) and status; show spread / WIP-debt metrics, oldest-untouched, blocked-waiting-on-me. | #1, ④ |
 | 3 | `session-name` | Propose names for unnamed sessions (batch retroactive + current); surface them for the user to apply via native `/rename` / `claude -n` / `Ctrl+R`. | #2 |
-| 4 | `session-harvest` | Distill a chosen session/thread (what was done, key decisions, files touched, where it stopped, follow-ups) and integrate it into the *target repo's* own docs via the `/doc` skill; record the touched doc paths on `harvestPath` and mark `decision=harvested`. | ②, #3 |
+| 4 | `session-harvest` | Distill a chosen session/thread (what was done, key decisions, files touched, where it stopped, follow-ups) into a pending central harvest item; `ringleader-publish` integrates it later, while agent-driven triage may still integrate directly into target docs. | ②, #3 |
 | 5 | `session-triage` | Guided cleanup: run `rl prune` for the tiny+stale junk, then walk the triage inbox (`rl triage`) session-by-session to delete, harvest, or leave open. | #3 |
 | 6 | `memory-triage` | Per-project curation: auto-prune obsolete memory entries via `rl mem prune`, classify survivors, integrate durable items into repo's `CLAUDE.md`/`AGENTS.md`, mark project cleaned. Flags global-worthy items for manual integration. | #5 |
 
@@ -238,7 +248,8 @@ pre-refactor repo-root `registry.json`/`archive/` into `state_dir()` once, on in
   never silently deletes anything.
 - Replace time-based loss with **deliberate curation**: `session-harvest` captures the
   knowledge, then `session-prune` removes the raw transcript on purpose.
-- Valuable threads persist (as harvests, forever); dead threads get culled intentionally.
+- Valuable knowledge persists once integrated into living docs; central harvest items are
+  temporary queue entries, then consumed after verified integration.
 
 ### Memory curation (Phase 2+)
 
@@ -276,10 +287,8 @@ and `rl triage` commands.
   having run (proposal: overview triggers a sync if registry is stale).
   **Resolved:** `rl overview` and `rl triage` now auto-refresh (a structural disk scan)
   on every read, unless `--no-scan` is passed.
-- `.gitignore` policy confirmation. **Resolved (superseded):** `registry.json` and
-  `archive/` moved out of the repo entirely, into `~/.local/share/ringleader/` (see
-  Homes above); there is no `harvests/` to decide on, since harvesting now writes into
-  the target repo's own docs instead of a ringleader-local copy.
+- `.gitignore` policy confirmation. **Resolved:** `registry.json`, `archive/`, pending
+  harvests, and temporary publishing receipts live under `state_dir()`, outside the repo.
 
 ## Parked
 

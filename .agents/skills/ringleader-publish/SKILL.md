@@ -26,8 +26,9 @@ unavailable or cannot meet the contract. For example:
    invoke the selected adapter once, and accept only its explicit outcome. Prepare the
    verified changed or accepted no-change result before any commit.
 4. For a changed result, make at most one local commit with the exact subject
-   `chore: update docs`; verify it before archiving still-live sessions and consuming the
-   exact receipt. For no change, prepare, archive, and consume without an empty commit.
+   `chore: update docs`; immediately verify exact branch, `HEAD`, and clean status before
+   archiving still-live sessions and first consuming the exact receipt. For no change,
+   prepare, archive, and consume without an empty commit.
 5. Retain skipped or failed items. Continue after clean per-repository skips and failures;
    stop after uncertain Git state or interrupted finishing. Do not push and do not create a
    worktree. Finish with one report row per repository.

@@ -2,6 +2,7 @@ from ringleader.registry import (
     empty_registry,
     load_registry,
     reconcile,
+    reconcile_harvest_paths,
     save_registry,
 )
 from ringleader.sources.base import NormalizedSession
@@ -323,6 +324,54 @@ def test_archive_session_stores_summary_and_project():
     ts = reg["archived"][0]
     assert ts["summary"] == "fixed the thing"
     assert ts["project"] == "splashdown"
+
+
+def test_reconcile_harvest_paths_preserves_direct_docs_and_replaces_pending_queue(
+    tmp_path,
+):
+    pending_root = tmp_path / "harvests"
+    consumed = pending_root / "consumed.md"
+    remaining = pending_root / "remaining.md"
+    escaped_direct = pending_root / ".." / "repo" / "docs" / "architecture.md"
+    reg = empty_registry()
+    reg["archived"] = [
+        {
+            "sessionId": "s1",
+            "harvestPath": [
+                "docs/architecture.md",
+                str(escaped_direct),
+                str(consumed),
+                str(remaining),
+            ],
+            "thread": {
+                "sessionId": "s1",
+                "harvestPath": [
+                    "docs/architecture.md",
+                    str(escaped_direct),
+                    str(consumed),
+                    str(remaining),
+                ],
+            },
+        }
+    ]
+
+    reconcile_harvest_paths(
+        reg,
+        {"s1": [str(remaining)]},
+        pending_root=pending_root,
+        recorded_pending_paths={"s1": [str(consumed)]},
+    )
+
+    assert reg["archived"][0]["harvestPath"] == [
+        "docs/architecture.md",
+        str(escaped_direct),
+        str(remaining),
+    ]
+    assert reg["archived"][0]["thread"]["harvestPath"] == [
+        "docs/architecture.md",
+        str(escaped_direct),
+        str(remaining),
+    ]
 
 
 def test_mark_reviewed_accepts_explicit_mtime():
