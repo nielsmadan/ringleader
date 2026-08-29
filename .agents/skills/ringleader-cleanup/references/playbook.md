@@ -81,7 +81,8 @@ the `usage` skill:
   turns, and context growth. An ambiguous id prefix is refused, not merged.
 - `rl usage windows [--json]` — Codex's 5h/weekly subscription consumption. Only current
   snapshots are reported; an expired one is named as having none, never shown as live.
-  Claude does not persist its windows to disk, so it is always reported as unavailable.
+  Claude windows are reported once captured via `rl statusline install`; a stale or
+  expired capture reports "no current snapshot", never a stale percentage.
 - `rl usage export [--out PATH]` — write this machine's records for `--merge` on another.
 - `rl data tokens` is the Claude-only alias of `rl usage`.
 

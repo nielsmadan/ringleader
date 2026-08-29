@@ -14,8 +14,10 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
    input/cache_read/output split. A very low `cache_read` share relative to `input` means
    the prompt cache is missing.
 2. **Windows.** If the user is asking about limits, run `rl usage windows`. It reports
-   Codex's 5h/weekly consumption. Claude's windows are not on disk — say so and point at
-   `claude /usage` rather than guessing.
+   Codex's 5h/weekly consumption directly (no setup needed), and Claude's too once
+   captured. If Claude shows as uncaptured, tell the user to run `rl statusline install`
+   (one-time, wires a capture snippet into their statusLine command) rather than falling
+   back to `claude /usage`.
 3. **Drill in.** For each heavy session, run `rl usage session <id> --json`: turns, the
    full token split, cache hit rate, the top turns, and context growth.
 4. **Explain.** Read the session transcript around the top turns (`rl data export <id>`)

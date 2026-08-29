@@ -57,7 +57,8 @@ rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
 rl usage session <id>               # where one session's tokens went
-rl usage windows                    # codex 5h/weekly limits (claude's aren't on disk)
+rl usage windows                    # 5h/weekly limits: codex from disk, claude if captured
+rl statusline install               # capture claude's 5h/weekly limits via the statusLine hook
 rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
 rl session keep <id>                # keep long-term: out of triage for good (unkeep to undo)

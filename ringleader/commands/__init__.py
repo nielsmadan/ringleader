@@ -29,6 +29,7 @@ from . import (
     roundup,
     skills,
     snooze,
+    statusline,
     sync,
     tokens,
     triage,
@@ -89,6 +90,11 @@ _SKILLS = {
     "update": skills.cmd_update,
     "uninstall": skills.cmd_uninstall,
 }
+_STATUSLINE = {
+    "install": statusline.cmd_install,
+    "status": statusline.cmd_status,
+    "uninstall": statusline.cmd_uninstall,
+}
 
 TABLE = {
     # flat daily verbs
@@ -105,5 +111,6 @@ TABLE = {
     "mem": _MEM,
     "data": _DATA,
     "skills": _SKILLS,
+    "statusline": _STATUSLINE,
     "config": config.cmd_config,
 }

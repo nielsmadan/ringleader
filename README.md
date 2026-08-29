@@ -180,10 +180,45 @@ nothing priced reports `null`, never `0`.
 - `rl usage session <id>` — where one session's tokens went: turn count, the full
   split, cache hit rate, top turns, and context growth. An id prefix matching
   several sessions is refused rather than silently merged.
-- `rl usage windows` — Codex 5h/weekly subscription windows. Only snapshots whose
-  window has not yet reset are reported as current; an expired one is listed under
-  `codex_expired` in JSON and as "no current snapshot" in text. Claude's windows are
-  not written to disk; use `claude /usage` for those.
+- `rl usage windows` — 5h/weekly subscription-window consumption. Codex needs no setup:
+  it persists its rate limits to disk and ringleader reads them directly. Claude needs a
+  one-time `rl statusline install` (see below) — Claude Code (**v2.1.80+, Pro/Max only**)
+  exposes `rate_limits` only through the statusLine hook payload, never to disk on its
+  own, and only after the first API response in a session; `rl statusline install` wires
+  a snippet into your statusLine command that captures it. Each window (5h, weekly) can
+  be independently present or absent. OpenCode and Pi have no subscription-window
+  concept, so they never appear here. In both codex/claude sections, only snapshots
+  whose window has not yet reset are reported as current; an expired one is listed under
+  `codex_expired`/`claude_expired` in JSON and as "no current snapshot" in text.
+
+  Two limitations worth knowing before you rely on this:
+  - **Freshness is bounded by usage.** Claude's numbers are only as fresh as the last
+    statusLine render (capped at a 10-minute TTL) — there's no way to poll Claude Code
+    for a fresh reading on demand. A stale capture reports "no current snapshot", not a
+    stale percentage.
+  - **Multi-account ambiguity.** The statusLine payload carries no account identity. With
+    several Claude accounts on one machine, the capture reflects whichever account
+    rendered the statusLine last, and there's no way to tell which — a reading can be
+    wrong and look completely normal.
+- `rl statusline install | status | uninstall [--settings PATH] [--yes]` — manage the
+  capture snippet in `~/.claude/settings.json` (path resolution: `--settings PATH` →
+  `RINGLEADER_CLAUDE_SETTINGS` → `~/.claude/settings.json`). `install` shows a diff of
+  the change and asks for confirmation (`--yes` skips the prompt), backs up the file to
+  `settings.json.bak` first, and only inserts the snippet into the existing statusLine
+  command — nothing else in the file is touched. Running it again is a no-op
+  ("already installed"); `uninstall` removes exactly what `install` added, restoring the
+  original command. `status` reports which target is in use, whether the snippet is
+  installed, and whether a current capture exists.
+
+  Both statusLine shapes are supported. If `statusLine.command` is an **inline command**,
+  the snippet goes into that command. If it is a **path to a script** (as the official
+  docs and tools like `claude-pace` recommend), `install` reads the script, splices the
+  snippet in after the line that captures stdin, and backs the script up first — the same
+  diff/confirm/insert-only/reversible contract, applied to the script instead of
+  `settings.json`. If the referenced file does not exist, or neither target has a
+  recognizable stdin capture, `install` refuses rather than guessing and prints the
+  snippet for you to paste yourself, right after the line that reads stdin
+  (e.g. `input=$(cat)`).
 - `rl usage export [--out PATH]` / `rl usage --merge <dir>` — combine usage from
   several machines (file-based, no sync service).
 

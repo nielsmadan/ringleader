@@ -141,6 +141,12 @@ def collect_windows():
     return list(reader.windows()) if reader.available() else []
 
 
+def collect_claude_windows():
+    from ..usage import claude_limits  # noqa: PLC0415
+
+    return claude_limits.read_windows(claude_limits.default_capture_path(), _now())
+
+
 def _window_json(w) -> dict:
     return {
         "used_percent": w.used_percent,
@@ -165,14 +171,22 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
     current = {k: w for k, w in latest.items() if window_is_current(w, now)}
     expired = {k: w for k, w in latest.items() if k not in current}
 
+    claude_latest: dict[str, object] = {}
+    for w in collect_claude_windows():
+        cur = claude_latest.get(w.window)
+        if cur is None or w.timestamp > cur.timestamp:
+            claude_latest[w.window] = w
+    claude_current = {k: w for k, w in claude_latest.items() if window_is_current(w, now)}
+    claude_expired = {k: w for k, w in claude_latest.items() if k not in claude_current}
+
     if args.json:
         print(
             json.dumps(
                 {
                     "codex": {k: _window_json(w) for k, w in current.items()},
                     "codex_expired": {k: _window_json(w) for k, w in expired.items()},
-                    # claude never writes window state to disk; see the design doc
-                    "claude": {"available": False, "reason": "not persisted to disk"},
+                    "claude": {k: _window_json(w) for k, w in claude_current.items()},
+                    "claude_expired": {k: _window_json(w) for k, w in claude_expired.items()},
                 },
                 indent=2,
             )
@@ -196,7 +210,21 @@ def _cmd_windows(argv: list[str], prog: str) -> int:
             if old is not None:
                 print(f"  {kind:<7} no current snapshot (last one expired {old.resets_at[:16]})")
     print()
-    print("claude: 5h/weekly windows are not persisted to disk — run `claude /usage`")
+    if not claude_latest:
+        print("claude: no windows captured yet — run `rl statusline install` to start capturing")
+    else:
+        print("claude subscription windows")
+        for kind in ("5h", "weekly"):
+            w = claude_current.get(kind)
+            if w is not None:
+                print(
+                    f"  {kind:<7} {w.used_percent:>5.1f}% used   resets {w.resets_at[:16]}"
+                    f"   (as of {w.timestamp[:16]})"
+                )
+                continue
+            old = claude_expired.get(kind)
+            if old is not None:
+                print(f"  {kind:<7} no current snapshot (last one expired {old.resets_at[:16]})")
     return 0
 
 
