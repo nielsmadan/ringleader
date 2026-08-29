@@ -369,6 +369,42 @@ def test_prune_delete_removes_a_resurrected_archived_transcript(tmp_path, monkey
     assert [a["sessionId"] for a in data["archived"]] == ["s1"]
 
 
+def test_prune_delete_reports_a_stub_it_cannot_unlink(tmp_path, monkeypatch, capsys):
+    projects_dir = tmp_path / "projects" / "-w-x"
+    projects_dir.mkdir(parents=True)
+    stub = projects_dir / "s1.jsonl"
+    stub.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    real_unlink = Path.unlink
+
+    def denied(self, *a, **kw):
+        if self.name == "s1.jsonl":
+            raise OSError(13, "Permission denied")
+        return real_unlink(self, *a, **kw)
+
+    monkeypatch.setattr(Path, "unlink", denied)
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [],
+                "deleted": [],
+                "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+            }
+        )
+    )
+
+    assert prune.cmd_prune(["--registry", str(reg), "--delete"]) == 0
+    captured = capsys.readouterr()
+    assert "skipped s1" in captured.err
+    assert "removed 0 resurrected" in captured.out
+    assert stub.exists()
+
+
 def test_prune_scopes_resurrected_stubs_by_project(tmp_path, monkeypatch, capsys):
     proj_a = tmp_path / "projects" / "-w-a"
     proj_b = tmp_path / "projects" / "-w-b"

@@ -77,8 +77,12 @@ def _delete_stubs(stubs: list) -> int:
         except RuntimeError as e:
             print(f"skipped {s.session_id}: {e}", file=sys.stderr)
             continue
-        f.unlink(missing_ok=True)
-        shutil.rmtree(sidecar, ignore_errors=True)
+        try:
+            f.unlink(missing_ok=True)
+            shutil.rmtree(sidecar, ignore_errors=True)
+        except OSError as e:
+            print(f"skipped {s.session_id}: {e}", file=sys.stderr)
+            continue
         removed += 1
     return removed
 
