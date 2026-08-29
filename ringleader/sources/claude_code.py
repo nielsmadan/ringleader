@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -9,6 +10,7 @@ from pathlib import Path
 from typing import ClassVar
 
 from ..naming import title_line
+from ..slug import normalize, slugify
 from ..transcript import parse_transcript
 from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
@@ -38,7 +40,9 @@ class ClaudeCodeSource:
     projects_dir: Path = field(default_factory=default_projects_dir)
     tail_turns: int = 30
     name: str = "claude-code"
-    capabilities: frozenset[str] = field(default_factory=lambda: frozenset({"applies_names"}))
+    capabilities: frozenset[str] = field(
+        default_factory=lambda: frozenset({"applies_names", "relocates_workspace"})
+    )
 
     def __post_init__(self) -> None:
         self.projects_dir = Path(self.projects_dir)
@@ -46,6 +50,37 @@ class ClaudeCodeSource:
     @property
     def root(self) -> Path:
         return self.projects_dir
+
+    def storage_for(self, cwd: str) -> Path:
+        return self.projects_dir / slugify(normalize(cwd))
+
+    def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]:
+        """Rename the whole slug directory for `old_cwd`. Every session launched
+        there moves with it, so the caller must own all of them."""
+        src, dst = self.storage_for(old_cwd), self.storage_for(new_cwd)
+        if not src.is_dir():
+            return {}
+        if dst.exists():
+            raise RuntimeError(f"{dst} already exists")
+        names = [p.name for p in src.glob("*.jsonl")]
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        return {str(src / n): str(dst / n) for n in names}
+
+    def relocate_session(self, file_path: str, new_cwd: str) -> str:
+        """Move one transcript, and the `<sessionId>/` sidecar dir if it has one,
+        into the slug directory for `new_cwd`."""
+        src = Path(file_path)
+        dst_dir = self.storage_for(new_cwd)
+        dst = dst_dir / src.name
+        sidecar = src.with_suffix("")
+        if dst.exists() or (sidecar.is_dir() and (dst_dir / sidecar.name).exists()):
+            raise RuntimeError(f"{dst} already exists")
+        dst_dir.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(src), str(dst))
+        if sidecar.is_dir():
+            shutil.move(str(sidecar), str(dst_dir / sidecar.name))
+        return str(dst)
 
     def discover(self) -> Iterator[RawRef]:
         for p in _iter_session_files(self.projects_dir):

@@ -11,9 +11,10 @@ from . import default_registry
 def cmd_relocate(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl session relocate",
-        description="Re-point a session to a new directory after you moved it on disk. "
-        "The transcript's baked-in cwd is stale; this pins the new location "
-        "so scans don't revert it.",
+        description="Re-point ONE session's registry record to a new directory after you "
+        "moved it on disk. This does not move the agent's session storage, so the session "
+        "stays unresumable from the new path — use `rl workspace retarget` for a whole "
+        "directory, which does both.",
     )
     ap.add_argument("id")
     ap.add_argument("path", help="the session's new directory (absolute)")

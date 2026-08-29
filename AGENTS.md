@@ -46,6 +46,14 @@ pruning them before the GC clock deletes them.
   and `~/.claude/skills` (Claude Code); `rl update`/`rl uninstall` round out the surface,
   and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer
   are gone. See `.agents/skills/SMOKE.md` for the manual smoke checklist.
+- **`rl workspace move` changes three things at once.** The directory on disk, the
+  agent's session storage (Claude Code keys it by the cwd a session was *launched*
+  in, so the slug dir is renamed), and the registry — which is then pinned, or the
+  next scan reverts it from the transcript's stale baked-in cwd. It previews and
+  confirms, and **refuses rather than merges** when the destination already holds
+  session storage, because merging would rewrite a sessionId — the registry's key.
+  `rl workspace retarget` does the last two halves, for a directory you moved by
+  hand, and is what makes `move` re-runnable after a partial failure.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
   `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage

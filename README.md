@@ -351,7 +351,9 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl session unkeep <id>` | Undo a keep; the session returns to the triage inbox. |
 | `rl session unarchive <id>` | Put an archived transcript back where it was so the agent can resume it again. |
 | `rl session name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
-| `rl session relocate <id> <path>` | Re-point a session after moving its dir. |
+| `rl session relocate <id> <path>` | Re-point one session's record. Registry only — does not move session storage. |
+| `rl workspace move <old> <new>` | Move a directory, its session storage, and the registry. |
+| `rl workspace retarget <old> <new>` | Same, when you already moved the directory yourself. |
 | `rl session mark harvested <id> [--paths a,b]` | Mark a session harvested (records docs). |
 | `rl session mark reviewed <id>` | Mark an open session reviewed (skip until it changes). |
 | `rl session mark cleaned <selector>` | Record a project as just-triaged. |

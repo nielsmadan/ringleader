@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import argparse
+import os
+import stat
 import sys
 from pathlib import Path
 
@@ -54,9 +56,15 @@ def _link_state(link: Path, target: Path) -> str:
     denies this specific entry) must read as ``unreadable``, not silently as
     ``missing`` — those mean different things to someone debugging their setup."""
     try:
-        if link.is_symlink():
-            return "linked" if link.resolve() == target.resolve() else "broken/wrong"
+        mode = os.lstat(link).st_mode
+    except FileNotFoundError:
         return "missing"
+    except OSError as e:
+        return f"unreadable ({e.strerror or e})"
+    if not stat.S_ISLNK(mode):
+        return "missing"
+    try:
+        return "linked" if link.resolve() == target.resolve() else "broken/wrong"
     except OSError as e:
         return f"unreadable ({e.strerror or e})"
 
@@ -144,14 +152,14 @@ def _managed_links(d: Path) -> list[Path] | None:
 
     A directory that denies access must be reported as unreadable, not silently
     treated as empty — an empty list there would read as "nothing installed", which is
-    a different (and possibly false) claim. Both ``is_dir()`` and ``iterdir()`` can
-    raise here: pathlib's stat-based predicates only swallow ENOENT-shaped errors and
-    re-raise a permission denial (e.g. a sandboxed ``$HOME``), so both calls need the
-    same guard."""
+    a different (and possibly false) claim. Stats explicitly for the reason given in
+    `paths.exists_or_report`; ``iterdir()`` can fail separately, so both stay guarded."""
     try:
-        if not d.is_dir():
+        if not stat.S_ISDIR(os.stat(d).st_mode):
             return []
         entries = sorted(d.iterdir())
+    except FileNotFoundError:
+        return []
     except OSError as e:
         print(f"  {d}: unreadable ({e.strerror or e})", file=sys.stderr)
         return None

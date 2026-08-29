@@ -37,19 +37,21 @@ def test_install_no_agents_is_noop(tmp_path, monkeypatch, capsys):
 
 
 def test_agent_detection_survives_a_stat_denial(tmp_path, monkeypatch, capsys):
-    """`Path.exists()` re-raises EACCES, so an unstattable `~/.pi` used to crash
-    `rl doctor` and `rl update all --yes` out of the agent-detection probe."""
+    """An unstattable `~/.pi` used to crash `rl doctor` and `rl update all --yes`.
+
+    Mocked rather than chmod'd because no permission bit makes one sibling
+    unstattable while another stays readable — stat is gated by the shared parent."""
     home = _fake_home(tmp_path, ".claude")
     monkeypatch.setenv("HOME", str(home))
-    real_exists = Path.exists
-    denied = home / ".pi"
+    real_stat = os.stat
+    denied = str(home / ".pi")
 
-    def fake_exists(self, *args, **kwargs):
-        if self == denied:
+    def fake_stat(path, *args, **kwargs):
+        if str(path) == denied:
             raise PermissionError(13, "Permission denied")
-        return real_exists(self, *args, **kwargs)
+        return real_stat(path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "exists", fake_exists)
+    monkeypatch.setattr(os, "stat", fake_stat)
 
     assert skills.cmd_status([]) == 0
     out = capsys.readouterr()
@@ -81,8 +83,9 @@ def test_status_reports_unreadable_entries_without_crashing(tmp_path, monkeypatc
         os.chmod(skdir, 0o700)
     assert rc == 0
     out = capsys.readouterr().out
-    assert "unreadable" in out.lower()
-    assert "ringleader-triage" in out
+    # the per-skill line, not a substring of the whole output: pytest names the temp dir
+    # after the test, so "unreadable" appears in every printed path regardless
+    assert "ringleader-triage: unreadable" in out
 
 
 def test_uninstall_and_update_do_not_crash_on_unreadable_entries(tmp_path, monkeypatch):

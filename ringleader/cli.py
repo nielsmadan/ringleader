@@ -20,7 +20,7 @@ _FLAT = (
     "update",
     "uninstall",
 )
-_GROUPS = ("session", "mem", "data")
+_GROUPS = ("session", "mem", "data", "workspace")
 _RESERVED = set()
 
 

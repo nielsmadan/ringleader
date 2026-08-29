@@ -95,6 +95,23 @@ class PickerHidingSource(Source, Protocol):
 
 
 @runtime_checkable
+class WorkspaceRelocatingSource(Source, Protocol):
+    """A source whose agent keys session storage by the directory a session was
+    launched in, so moving a workspace leaves its sessions unreachable from the new
+    path until the storage moves too. Both methods raise RuntimeError rather than
+    merge when the destination is occupied — the caller checks up front and refuses,
+    so a move never half-completes.
+
+    `relocate_storage` moves every session launched at `old_cwd`; `relocate_session`
+    moves one, for a session whose recorded cwd has drifted from its launch dir.
+    Both return the old->new transcript paths the registry must follow."""
+
+    def storage_for(self, cwd: str) -> Path: ...
+    def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]: ...
+    def relocate_session(self, file_path: str, new_cwd: str) -> str: ...
+
+
+@runtime_checkable
 class PickerShowingSource(Source, Protocol):
     """The inverse of `PickerHidingSource`: restore an entry the tool previously
     hid, so a session put back on disk becomes resumable again. `file_path` is the

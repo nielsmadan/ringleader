@@ -23,6 +23,7 @@ from . import (
     mem_prune,
     mem_scan,
     migrate,
+    move_workspace,
     name,
     overview,
     prune,
@@ -89,6 +90,11 @@ _DATA = {
     "tokens": tokens.cmd_tokens,
     "migrate": migrate.cmd_migrate,
 }
+_WORKSPACE = {
+    "move": move_workspace.cmd_move,
+    "retarget": move_workspace.cmd_retarget,
+}
+
 TABLE = {
     # flat daily verbs
     "overview": overview.cmd_overview,
@@ -103,6 +109,7 @@ TABLE = {
     "update": setup.cmd_update,
     "uninstall": setup.cmd_uninstall,
     # namespaces
+    "workspace": _WORKSPACE,
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,

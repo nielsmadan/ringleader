@@ -6,16 +6,20 @@ from pathlib import Path
 
 
 def exists_or_report(p: Path) -> bool:
-    """Whether `p` exists, reporting a stat failure instead of raising it.
+    """Whether `p` exists, reporting a stat failure instead of raising or hiding it.
 
-    `Path.exists()` swallows only ENOENT/ENOTDIR/EBADF/ELOOP, so an unreadable
-    `~/.pi` raises EACCES straight out of an agent-detection probe and takes down
-    whatever ran it (`rl doctor`, an unattended `rl update all --yes`)."""
+    Stats directly because `Path.exists()` is not stable across the supported
+    Pythons — 3.13 re-raises EACCES, 3.14 answers False — so it would either crash
+    a probe or erase the difference between "absent" and "unreadable". `os.stat`
+    raises on both."""
     try:
-        return p.exists()
+        os.stat(p)
+    except FileNotFoundError:
+        return False
     except OSError as e:
         print(f"{p}: unreadable ({e.strerror or e})", file=sys.stderr)
         return False
+    return True
 
 
 def state_dir() -> Path:

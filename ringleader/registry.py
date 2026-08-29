@@ -460,19 +460,29 @@ def restore_session(reg: dict, session_id: str, file_path: str) -> dict:
     return archived.pop(idx)
 
 
+def pin_thread_location(t: dict, new_project: str, git: dict | None = None) -> None:
+    """Pin one thread dict to a new cwd/git identity. `locationPinned` is what tells
+    reconcile to keep these instead of re-deriving them from the transcript's stale
+    baked-in cwd — and it is permanent, since reconcile never refreshes a pinned
+    thread's git fields again."""
+    t["project"] = new_project
+    t["locationPinned"] = True
+    if git is None:
+        # the new path has no resolvable git identity (a deleted subdir, say). Keep the
+        # cached one, as reconcile does — pinning would otherwise make the loss permanent.
+        return
+    t["gitProjectKey"] = git.get("key")
+    t["gitProjectLabel"] = git.get("label")
+    t["gitRoot"] = git.get("root")
+    t["gitRemote"] = git.get("remote")
+    t["gitCloneUrl"] = git.get("clone_url")
+
+
 def relocate_thread(reg: dict, session_id: str, new_project: str, git: dict | None = None) -> dict:
-    """Pin a thread to a new cwd/git identity after its directory moved on disk.
-    The transcript's baked-in cwd is stale, so `locationPinned` tells reconcile to
-    keep these values instead of re-deriving them from the (old) transcript."""
+    """Pin a thread to a new cwd/git identity after its directory moved on disk."""
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
-            t["project"] = new_project
-            t["locationPinned"] = True
-            t["gitProjectKey"] = (git or {}).get("key")
-            t["gitProjectLabel"] = (git or {}).get("label")
-            t["gitRoot"] = (git or {}).get("root")
-            t["gitRemote"] = (git or {}).get("remote")
-            t["gitCloneUrl"] = (git or {}).get("clone_url")
+            pin_thread_location(t, new_project, git)
             return reg
     raise KeyError(session_id)
 
