@@ -408,10 +408,11 @@ living repository docs and the handled queue items are deleted.
 2. Delete the session's entry from `archived` in `registry.json`. **Not optional.**
    A scan skips any session that still carries an `archived` record — that is what stops
    an agent from undoing an archive by recreating its transcript — so leaving the record
-   in place means `rl session refresh` reports `total: 0` and the session is never
-   re-registered. `rl prune` then lists the file you just moved back as a resurrected
-   stub, and `rl prune --delete` unlinks it. Since restoring *moves* the transcript out
-   of `archive/`, that is the only copy.
+   in place means `rl session refresh` never mentions the restored session at all: it is
+   absent from `pending` and uncounted in `total`, and never re-registered. `rl prune`
+   then lists the file you just moved back as a resurrected stub, and `rl prune --delete`
+   unlinks it. Since restoring *moves* the transcript out of `archive/`, that is the only
+   copy.
 3. Re-scan — `rl overview`, or any command run without `--no-scan`.
 4. Optionally delete the leftover `archive/<slug>/<id>.md` harvest summary and the emptied
    archive directory.
