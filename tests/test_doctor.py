@@ -55,3 +55,18 @@ def test_doctor_reports_every_setup_surface(tmp_path, monkeypatch, capsys):
     assert "cleanupPeriodDays" in out
     assert "skills" in out.lower()
     assert "statusline" in out.lower()
+
+
+def test_doctor_reports_absent_claude_settings_as_not_installed(tmp_path, monkeypatch, capsys):
+    """`rl doctor` is step 3 of `ringleader-init`, and a Codex-only machine has no
+    ~/.claude/settings.json at all — that reads as "not installed", not an error."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+    settings = tmp_path / ".claude" / "settings.json"
+
+    assert doctor.cmd_doctor(["--settings", str(settings)]) == 0
+
+    captured = capsys.readouterr()
+    assert f"target: none ({settings} does not exist)" in captured.out
+    assert "snippet: not installed" in captured.out
+    assert "could not read" not in captured.err

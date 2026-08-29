@@ -1,7 +1,21 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
+
+
+def exists_or_report(p: Path) -> bool:
+    """Whether `p` exists, reporting a stat failure instead of raising it.
+
+    `Path.exists()` swallows only ENOENT/ENOTDIR/EBADF/ELOOP, so an unreadable
+    `~/.pi` raises EACCES straight out of an agent-detection probe and takes down
+    whatever ran it (`rl doctor`, an unattended `rl update all --yes`)."""
+    try:
+        return p.exists()
+    except OSError as e:
+        print(f"{p}: unreadable ({e.strerror or e})", file=sys.stderr)
+        return False
 
 
 def state_dir() -> Path:

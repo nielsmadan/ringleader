@@ -243,3 +243,20 @@ def test_sweep_persists_a_partial_success_when_one_thread_collides(tmp_path, mon
     assert [a["sessionId"] for a in out["archived"]] == ["good"]
     assert bad.exists()
     assert not good.exists()
+
+
+def test_sweep_reports_an_oserror_instead_of_propagating_it(tmp_path, monkeypatch, capsys):
+    """An OSError from the move must not escape and abort the rest of a roundup."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg, transcript = _world(tmp_path, mark=True, age_seconds=600)
+
+    def boom(*_a, **_kw):
+        raise OSError(13, "Permission denied")
+
+    monkeypatch.setattr("ringleader.commands.archive.shutil.move", boom)
+
+    assert sweep.cmd_sweep(["--registry", str(reg)]) == 1
+    captured = capsys.readouterr()
+    assert "s1" in captured.err
+    assert "Permission denied" in captured.err
+    assert transcript.exists()

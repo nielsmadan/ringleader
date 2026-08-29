@@ -410,3 +410,71 @@ def test_prune_scopes_resurrected_stubs_by_project(tmp_path, monkeypatch, capsys
     assert prune.cmd_prune(["--registry", str(reg), "--project", "/w/a", "--delete"]) == 0
     assert not stub_a.exists()
     assert stub_b.exists()  # other project's resurrected stub untouched
+
+
+def test_stub_deletion_clears_the_picker_entry_first(tmp_path, monkeypatch, capsys):
+    """Same order as `prune.delete_sessions`: unlinking first strands a picker entry."""
+    projects_dir = tmp_path / "projects" / "-w-x"
+    projects_dir.mkdir(parents=True)
+    stub = projects_dir / "s1.jsonl"
+    stub.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    calls = []
+
+    def record(thread):
+        calls.append((thread["sessionId"], thread["source"], Path(thread["file"]).exists()))
+        return True
+
+    monkeypatch.setattr("ringleader.scanner.hide_from_picker", record)
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [],
+                "deleted": [],
+                "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+            }
+        )
+    )
+
+    assert prune.cmd_prune(["--registry", str(reg), "--delete"]) == 0
+    assert calls == [("s1", "claude-code", True)]  # called while the transcript is still there
+    assert not stub.exists()
+
+
+def test_stub_deletion_skips_a_transcript_whose_picker_entry_survives(
+    tmp_path, monkeypatch, capsys
+):
+    projects_dir = tmp_path / "projects" / "-w-x"
+    projects_dir.mkdir(parents=True)
+    stub = projects_dir / "s1.jsonl"
+    stub.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    def refuse(_thread):
+        raise RuntimeError("picker index is read-only")
+
+    monkeypatch.setattr("ringleader.scanner.hide_from_picker", refuse)
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [],
+                "deleted": [],
+                "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+            }
+        )
+    )
+
+    assert prune.cmd_prune(["--registry", str(reg), "--delete"]) == 0
+    captured = capsys.readouterr()
+    assert "picker index is read-only" in captured.err
+    assert "removed 0 resurrected" in captured.out
+    assert stub.exists()

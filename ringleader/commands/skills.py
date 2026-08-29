@@ -4,7 +4,7 @@ import argparse
 import sys
 from pathlib import Path
 
-from ..paths import bundled_skills_dir
+from ..paths import bundled_skills_dir, exists_or_report
 
 PREFIX = "ringleader-"
 
@@ -19,11 +19,11 @@ def _bundled_skills() -> list[Path]:
 def _install_dirs(home: Path) -> list[tuple[str, Path]]:
     """(agent label, skills dir) for each detected agent."""
     out: list[tuple[str, Path]] = []
-    if (home / ".claude").exists():
+    if exists_or_report(home / ".claude"):
         out.append(("claude", home / ".claude" / "skills"))
     shared = home / ".agents" / "skills"
     for label, probe in (("codex", ".codex"), ("opencode", ".config/opencode"), ("pi", ".pi")):
-        if (home / probe).exists():
+        if exists_or_report(home / probe):
             out.append((label, shared))
     return out
 

@@ -350,6 +350,8 @@ def archive_session(
     threads = reg["threads"]
     idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
     thread = threads.pop(idx) if idx is not None else None
+    if thread is not None:
+        thread = without_finish_mark(thread)
     harvest = thread.get("harvestPath") if thread else None
     archived = reg.setdefault("archived", [])
     if not any(a["sessionId"] == session_id for a in archived):
@@ -420,6 +422,16 @@ def mark_finish_on_exit(reg: dict, session_id: str, when: str) -> dict:
             t["finishedAt"] = when
             return t
     raise KeyError(session_id)
+
+
+def without_finish_mark(thread: dict) -> dict:
+    """A copy of `thread` with the finish mark dropped. The mark means "archive this
+    once it goes quiet", so it must not survive the archive that consumed it — a
+    restored thread carrying it is swept straight back out, live agent or not."""
+    out = dict(thread)
+    out.pop("finishOnExit", None)
+    out.pop("finishedAt", None)
+    return out
 
 
 def unkeep_thread(reg: dict, session_id: str) -> bool:

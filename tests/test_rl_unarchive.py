@@ -1,10 +1,12 @@
 import json
+import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import pytest
-from ringleader.commands import unarchive
+from ringleader.commands import sweep, unarchive
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -117,3 +119,66 @@ def test_restore_missing_archived_file_is_refused(tmp_path):
     }
     with pytest.raises(RuntimeError, match="gone"):
         unarchive.restore(reg, ts)
+
+
+def test_restored_thread_is_not_swept_again(tmp_path, monkeypatch):
+    """A session archived by the finish path comes back unmarked, so the next sweep
+    leaves it alone — otherwise unarchiving re-arms the archive it just undid."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    transcript = proj / "s1.jsonl"
+    transcript.write_text('{"type":"user"}\n')
+    old = time.time() - 600
+    os.utime(transcript, (old, old))
+    reg_path = tmp_path / "registry.json"
+    reg_path.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [
+                    {
+                        "sessionId": "s1",
+                        "source": "claude-code",
+                        "file": str(transcript),
+                        "project": str(proj),
+                        "decision": "harvested",
+                        "finishOnExit": True,
+                        "finishedAt": "2026-08-28T00:00:00+00:00",
+                    }
+                ],
+                "archived": [],
+                "deleted": [],
+            }
+        )
+    )
+
+    assert sweep.cmd_sweep(["--registry", str(reg_path)]) == 0
+    assert not transcript.exists()
+    stored = json.loads(reg_path.read_text())["archived"][0]["thread"]
+    assert "finishOnExit" not in stored
+    assert "finishedAt" not in stored
+
+    assert unarchive.cmd_unarchive(["s1", "--registry", str(reg_path)]) == 0
+    restored = json.loads(reg_path.read_text())["threads"][0]
+    assert restored.get("finishOnExit") is None
+
+    assert sweep.cmd_sweep(["--registry", str(reg_path)]) == 0
+    after = json.loads(reg_path.read_text())
+    assert [t["sessionId"] for t in after["threads"]] == ["s1"]
+    assert after["archived"] == []
+    assert transcript.exists()
+
+
+def test_restore_strips_a_finish_mark_left_by_an_older_build(tmp_path):
+    """Records archived before the mark was cleared at archive time still carry it."""
+    reg, _original = _setup(tmp_path)
+    data = json.loads(reg.read_text())
+    data["archived"][0]["thread"]["finishOnExit"] = True
+    data["archived"][0]["thread"]["finishedAt"] = "2026-08-28T00:00:00+00:00"
+    reg.write_text(json.dumps(data))
+
+    assert unarchive.cmd_unarchive(["s1", "--registry", str(reg)]) == 0
+    t = json.loads(reg.read_text())["threads"][0]
+    assert t.get("finishOnExit") is None
+    assert t.get("finishedAt") is None

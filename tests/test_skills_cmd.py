@@ -36,6 +36,27 @@ def test_install_no_agents_is_noop(tmp_path, monkeypatch, capsys):
     assert "no supported agents" in capsys.readouterr().out.lower()
 
 
+def test_agent_detection_survives_a_stat_denial(tmp_path, monkeypatch, capsys):
+    """`Path.exists()` re-raises EACCES, so an unstattable `~/.pi` used to crash
+    `rl doctor` and `rl update all --yes` out of the agent-detection probe."""
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    real_exists = Path.exists
+    denied = home / ".pi"
+
+    def fake_exists(self, *args, **kwargs):
+        if self == denied:
+            raise PermissionError(13, "Permission denied")
+        return real_exists(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "exists", fake_exists)
+
+    assert skills.cmd_status([]) == 0
+    out = capsys.readouterr()
+    assert "unreadable" in (out.out + out.err).lower()
+    assert str(home / ".claude" / "skills") in out.out  # the readable agent still detected
+
+
 def test_status_reports_linked(tmp_path, monkeypatch, capsys):
     home = _fake_home(tmp_path, ".claude")
     monkeypatch.setenv("HOME", str(home))

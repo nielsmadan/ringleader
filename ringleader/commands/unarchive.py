@@ -51,7 +51,9 @@ def restore(reg: dict, ts: dict) -> tuple[str, bool]:
 
     registry.restore_session(reg, session_id, str(dest))
     if ts.get("thread"):
-        restored = dict(ts["thread"])
+        # belt and braces: `archive_session` strips the finish mark before storing, but
+        # a record archived by an earlier build still carries it
+        restored = registry.without_finish_mark(ts["thread"])
         restored["file"] = str(dest)
         reg["threads"].append(restored)
     return str(dest), shown

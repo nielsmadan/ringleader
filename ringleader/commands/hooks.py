@@ -14,6 +14,9 @@ import json
 import sys
 from pathlib import Path
 
+from .. import safe_write
+from ..paths import exists_or_report
+
 HOOK_EVENT = "SessionEnd"
 TIMEOUT_SECONDS = 5
 
@@ -30,32 +33,24 @@ def _pi_extension() -> Path:
     return bundled_dir() / "pi-ringleader-finish.ts"
 
 
-def _exists(p: Path) -> bool:
-    try:
-        return p.exists()
-    except OSError as e:
-        print(f"{p}: unreadable ({e.strerror or e})", file=sys.stderr)
-        return False
-
-
 def _json_agents(home: Path) -> list[tuple[str, Path]]:
     """(agent label, hooks-config path) for each detected JSON-hook agent."""
     out: list[tuple[str, Path]] = []
-    if _exists(home / ".claude"):
+    if exists_or_report(home / ".claude"):
         out.append(("claude", home / ".claude" / "settings.json"))
-    if _exists(home / ".codex"):
+    if exists_or_report(home / ".codex"):
         out.append(("codex", home / ".codex" / "hooks.json"))
     return out
 
 
 def _pi_dir(home: Path) -> Path | None:
-    if _exists(home / ".pi"):
+    if exists_or_report(home / ".pi"):
         return home / ".pi" / "agent" / "extensions"
     return None
 
 
 def _opencode_detected(home: Path) -> bool:
-    return _exists(home / ".config" / "opencode")
+    return exists_or_report(home / ".config" / "opencode")
 
 
 def _is_ours(command: object) -> bool:
@@ -69,12 +64,14 @@ def _is_ours(command: object) -> bool:
         return False
 
 
-def _load_json_or_none(path: Path) -> dict | None:
-    """The parsed JSON object at `path`, `{}` if the file doesn't exist yet, or `None`
-    if it exists but can't be read or parsed as a JSON object — the signal to leave it
-    untouched rather than risk clobbering something we can't understand.
+def _load_json_raw(path: Path) -> tuple[str, dict] | None:
+    """The file's own text plus the JSON object it holds — `("", {})` if the file
+    doesn't exist yet, or `None` if it exists but can't be read or parsed as a JSON
+    object, the signal to leave it untouched rather than risk clobbering something we
+    can't understand. The raw text is what the diff is shown against, so a re-indent
+    of the whole file is visible rather than silent.
 
-    Deliberately does not pre-check with `_exists()`/`.exists()`: a sandbox can grant
+    Deliberately does not pre-check with `exists_or_report()`/`.exists()`: a sandbox can grant
     read and write on a path separately, so "cannot stat" and "does not exist" are not
     the same fact. Only `FileNotFoundError` from the actual read means "absent" — any
     other `OSError` (permission denied, etc.) must fall through to `None`, never `{}`,
@@ -83,12 +80,12 @@ def _load_json_or_none(path: Path) -> dict | None:
     try:
         raw = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return "", {}
     except OSError as e:
         print(f"{path}: unreadable ({e.strerror or e})", file=sys.stderr)
         return None
     if not raw.strip():
-        return {}
+        return raw, {}
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
@@ -97,7 +94,12 @@ def _load_json_or_none(path: Path) -> dict | None:
     if not isinstance(data, dict):
         print(f"{path}: top-level JSON is not an object; leaving untouched", file=sys.stderr)
         return None
-    return data
+    return raw, data
+
+
+def _load_json_or_none(path: Path) -> dict | None:
+    loaded = _load_json_raw(path)
+    return None if loaded is None else loaded[1]
 
 
 def _has_our_entry(data: dict) -> bool:
@@ -176,18 +178,16 @@ def _without_our_entries(data: dict) -> tuple[dict, int]:
     return new_data, removed
 
 
-def _sync_json(path: Path, data: dict) -> tuple[int, int]:
-    """Ensure `data` carries our entry and write it back if that changed anything.
-    Returns (changed, failed)."""
+def _planned_text(data: dict) -> str | None:
+    """The full text to write once our entry is in `data`, or None if it is already
+    there. Raises `ValueError` (caller skips the file) on a wrong-shaped `hooks` key."""
     before = json.dumps(data, indent=2)
-    try:
-        new_data = _with_our_entry(data)
-    except ValueError as e:
-        print(f"{path}: {e}; leaving untouched", file=sys.stderr)
-        return 0, 1
-    after = json.dumps(new_data, indent=2)
-    if after == before:
-        return 0, 0
+    after = json.dumps(_with_our_entry(data), indent=2)
+    return None if after == before else after + "\n"
+
+
+def _write_json(path: Path, text: str) -> tuple[int, int]:
+    """Write `text` to `path`, backed up and atomically. Returns (changed, failed)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as e:
@@ -199,10 +199,11 @@ def _sync_json(path: Path, data: dict) -> tuple[int, int]:
         print(f"  {path.parent}: unreadable ({e.strerror or e})", file=sys.stderr)
         return 0, 0
     try:
-        path.write_text(after + "\n", encoding="utf-8")
+        backup = safe_write.backup_and_write(path, text)
     except OSError as e:
         print(f"could not write {path}: {e}", file=sys.stderr)
         return 0, 1
+    print(f"  wrote {path}" + (f" (backup: {backup})" if backup else ""))
     return 1, 0
 
 
@@ -248,6 +249,28 @@ def _sync_pi(pi_dir: Path) -> tuple[int, int]:
         return 0, 1
 
 
+def _json_plan(
+    candidates: list[tuple[str, Path]], *, opt_in: bool
+) -> tuple[list[tuple[str, Path, str, str | None]], int]:
+    """(label, path, current text, text to write or None if already installed) per
+    writable target, plus a count of targets skipped as malformed."""
+    plan: list[tuple[str, Path, str, str | None]] = []
+    failed = 0
+    for label, path in candidates:
+        loaded = _load_json_raw(path)
+        if loaded is None:
+            continue
+        raw, data = loaded
+        if not (opt_in or _has_our_entry(data)):
+            continue
+        try:
+            plan.append((label, path, raw, _planned_text(data)))
+        except ValueError as e:
+            print(f"{path}: {e}; leaving untouched", file=sys.stderr)
+            failed += 1
+    return plan, failed
+
+
 def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
     """Shared body for `install` (opt_in=True: wires up every detected agent) and
     `update` (opt_in=False: re-syncs only agents that already carry our entry, and
@@ -259,13 +282,7 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
         print("no supported agents detected (~/.claude, ~/.codex, ~/.pi)")
         return 0
 
-    json_plan: list[tuple[str, Path, dict]] = []
-    for label, path in candidates:
-        data = _load_json_or_none(path)
-        if data is None:
-            continue
-        if opt_in or _has_our_entry(data):
-            json_plan.append((label, path, data))
+    json_plan, failed = _json_plan(candidates, opt_in=opt_in)
 
     pi_target = None
     if pi_dir is not None:
@@ -275,11 +292,15 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
 
     if not json_plan and pi_target is None:
         print("nothing to do" if opt_in else "no agents currently carry the ringleader hook")
-        return 0
+        return 1 if failed else 0
 
     print("Will register the session-end hook for:")
-    for label, path, _data in json_plan:
+    for label, path, raw, text in json_plan:
+        if text is None:
+            print(f"  {label}: {path} (already installed)")
+            continue
         print(f"  {label}: {path}")
+        print(safe_write.diff(path, raw, text), end="")
     if pi_target is not None:
         print(f"  pi: {pi_target / _pi_extension().name}")
     if not yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
@@ -287,9 +308,10 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
         return 0
 
     changed = 0
-    failed = 0
-    for _label, path, data in json_plan:
-        c, f = _sync_json(path, data)
+    for _label, path, _raw, text in json_plan:
+        if text is None:
+            continue
+        c, f = _write_json(path, text)
         changed += c
         failed += f
     if pi_target is not None:
@@ -321,11 +343,15 @@ def cmd_uninstall(argv: list[str]) -> int:
     args = ap.parse_args(argv)
     home = Path.home()
 
-    json_victims: list[tuple[str, Path, dict]] = []
+    json_victims: list[tuple[str, Path, str, str]] = []
     for label, path in _json_agents(home):
-        data = _load_json_or_none(path)
-        if data is not None and _has_our_entry(data):
-            json_victims.append((label, path, data))
+        loaded = _load_json_raw(path)
+        if loaded is None or not _has_our_entry(loaded[1]):
+            continue
+        raw, data = loaded
+        new_data, removed = _without_our_entries(data)
+        if removed:
+            json_victims.append((label, path, raw, json.dumps(new_data, indent=2) + "\n"))
 
     pi_dir = _pi_dir(home)
     pi_link = None
@@ -339,8 +365,9 @@ def cmd_uninstall(argv: list[str]) -> int:
         return 0
 
     print("Will remove:")
-    for label, path, _data in json_victims:
+    for label, path, raw, text in json_victims:
         print(f"  {label}: {path}")
+        print(safe_write.diff(path, raw, text), end="")
     if pi_link is not None:
         print(f"  pi: {pi_link}")
     if not args.yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
@@ -348,15 +375,9 @@ def cmd_uninstall(argv: list[str]) -> int:
         return 0
 
     failed = 0
-    for _label, path, data in json_victims:
-        new_data, removed = _without_our_entries(data)
-        if removed == 0:
-            continue
-        try:
-            path.write_text(json.dumps(new_data, indent=2) + "\n", encoding="utf-8")
-        except OSError as e:
-            print(f"could not write {path}: {e}", file=sys.stderr)
-            failed += 1
+    for _label, path, _raw, text in json_victims:
+        _c, f = _write_json(path, text)
+        failed += f
 
     if pi_link is not None:
         try:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -67,6 +68,15 @@ def _delete_stubs(stubs: list) -> int:
     for s in stubs:
         f = Path(s.file)
         sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+        try:
+            # same order as prune.delete_sessions: deleting first would strand a live
+            # entry in the agent's picker, pointing at a transcript that is gone
+            scanner.hide_from_picker(
+                {"source": s.source, "sessionId": s.session_id, "file": s.file}
+            )
+        except RuntimeError as e:
+            print(f"skipped {s.session_id}: {e}", file=sys.stderr)
+            continue
         f.unlink(missing_ok=True)
         shutil.rmtree(sidecar, ignore_errors=True)
         removed += 1

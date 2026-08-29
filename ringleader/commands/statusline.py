@@ -1,17 +1,16 @@
 from __future__ import annotations
 
 import argparse
-import difflib
 import json
 import os
 import re
 import shlex
-import shutil
 import sys
 from datetime import UTC, datetime
 from json.decoder import JSONDecoder
 from pathlib import Path
 
+from .. import safe_write
 from ..paths import ensure_state_dir
 from ..usage.claude_limits import default_capture_path, read_windows
 
@@ -299,22 +298,12 @@ def _uninstall_script(script: Path, yes: bool) -> int:
 
 
 def _confirm_and_write(path: Path, raw_before: str, raw_after: str, yes: bool, verb: str) -> int:
-    diff = "".join(
-        difflib.unified_diff(
-            raw_before.splitlines(keepends=True),
-            raw_after.splitlines(keepends=True),
-            fromfile=str(path),
-            tofile=str(path),
-        )
-    )
-    print(diff, end="")
+    print(safe_write.diff(path, raw_before, raw_after), end="")
     if not yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
         print("aborted")
         return 0
-    backup = path.with_name(path.name + ".bak")
-    shutil.copy2(path, backup)
-    path.write_text(raw_after, encoding="utf-8")
-    print(f"{verb} -> {path} (backup: {backup})")
+    backup = safe_write.backup_and_write(path, raw_after)
+    print(f"{verb} -> {path}" + (f" (backup: {backup})" if backup else ""))
     return 0
 
 
@@ -409,6 +398,13 @@ def cmd_status(argv: list[str]) -> int:
 
     try:
         raw, data = _read(path)
+    except FileNotFoundError:
+        # `rl doctor` runs this on every machine, including Codex-only ones that have
+        # no Claude settings at all. Absent is "not installed", the same answer the
+        # skills and hooks rows give — not an error.
+        print(f"target: none ({path} does not exist)")
+        print("snippet: not installed")
+        return 0
     except (OSError, json.JSONDecodeError) as e:
         print(f"could not read {path}: {e}", file=sys.stderr)
         return 1

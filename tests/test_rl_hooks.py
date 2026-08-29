@@ -17,6 +17,62 @@ def test_install_registers_a_claude_session_end_hook(tmp_path, monkeypatch):
     assert any("session_end.sh" in h["command"] for group in entries for h in group["hooks"])
 
 
+def test_install_previews_a_diff_and_keeps_a_backup(tmp_path, monkeypatch, capsys):
+    """The same file `rl install statusline` edits, so the same convention: show the
+    change, keep the old bytes."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    settings = tmp_path / ".claude" / "settings.json"
+    original = '{\n    "cleanupPeriodDays": 30\n}\n'
+    settings.write_text(original)
+
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    out = capsys.readouterr().out
+    assert f"--- {settings}" in out and f"+++ {settings}" in out
+    assert '+  "cleanupPeriodDays": 30,' in out  # the re-indent is shown, not silent
+    assert '+            "type": "command",' in out
+    backup = settings.with_name("settings.json.bak")
+    assert backup.read_text() == original
+    assert "backup" in out
+
+
+def test_install_prompts_before_showing_nothing_to_change(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    settings = tmp_path / ".claude" / "settings.json"
+    settings.write_text("{}")
+    hooks.cmd_install(["--yes"])
+    capsys.readouterr()
+
+    assert hooks.cmd_install(["--yes"]) == 0
+    out = capsys.readouterr().out
+    assert "already installed" in out
+    assert "synced 0 target(s)" in out
+    assert not settings.with_name("settings.json.bak.bak").exists()
+
+
+def test_a_failed_write_leaves_the_original_config_intact(tmp_path, monkeypatch, capsys):
+    """The write is temp-file + os.replace, so an interrupted or failing write can
+    never leave the user's settings truncated."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".claude").mkdir()
+    settings = tmp_path / ".claude" / "settings.json"
+    original = '{\n    "cleanupPeriodDays": 30\n}\n'
+    settings.write_text(original)
+
+    def boom(*_a, **_kw):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr("ringleader.safe_write.os.replace", boom)
+
+    assert hooks.cmd_install(["--yes"]) == 1
+    assert settings.read_text() == original
+    assert "could not write" in capsys.readouterr().err
+    leftovers = [p.name for p in (tmp_path / ".claude").iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == []
+
+
 def test_install_preserves_a_foreign_hook(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     (tmp_path / ".claude").mkdir()

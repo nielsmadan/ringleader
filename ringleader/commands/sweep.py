@@ -83,7 +83,9 @@ def _archive(reg: dict, threads: list[dict], registry_path: str) -> int:
     for t in threads:
         try:
             dest = archive_cmd.archive_thread(reg, t, archive_root_path=str(archive_root()))
-        except RuntimeError as e:
+        # OSError too: the sweep runs unattended inside roundup, where a failed move
+        # must not abort the prune and enrich phases that follow it
+        except (RuntimeError, OSError) as e:
             print(f"rl-sweep: {t['sessionId']}: {e}", file=sys.stderr)
             failed += 1
             continue
