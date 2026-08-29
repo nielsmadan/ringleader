@@ -71,14 +71,23 @@ skip the prompt.
 the tool:
 
 ```sh
-just sandbox              # rebuild a zero-state world and reset the registry
+just sandbox              # link the skills and enter the isolated sandbox shell
 ```
 
-It prints four `export` lines (`XDG_DATA_HOME`, `SESSION_TRACKER_PROJECTS_DIR`,
-`CODEX_SESSIONS_DIR`, `RINGLEADER_CLAUDE_SETTINGS`). Export them and launch an agent from
-that shell — every `rl` call a skill makes lands in `.sandbox/`, and your real sessions,
-registry and settings are untouched. Re-run `just sandbox` to restore the same bytes,
-relative ages, and empty registry.
+The first run builds `.sandbox/` from the frozen fixture; later runs preserve whatever the
+test changed. The command also links the bundled skills, opens an interactive child shell,
+and puts the checkout's `rl` on `PATH`. Start an agent there and invoke the skill — every
+`rl` call lands in `.sandbox/`, and your real sessions, registry and settings are untouched.
+Exit the child shell when finished.
+
+Reset all test progress explicitly before a new scenario:
+
+```sh
+just sandbox-reset
+```
+
+This restores the same transcript bytes, relative ages, settings, and empty registry. Run
+`just sandbox` afterward to enter the fresh sandbox.
 
 The fixture contains 100 verbatim sessions from nine verified public repositories: 70
 Claude Code and 30 Codex, split evenly between named and unnamed sessions. Its workload
@@ -90,9 +99,10 @@ subagent rollouts.
 The raw transcripts stay out of git under
 `~/.local/share/ringleader/fixtures/init-v1` with private permissions. That is the directory
 to zip and store in Proton Drive. To restore it, extract the archive so
-`~/.local/share/ringleader/fixtures/init-v1/manifest.json` exists, then run `just sandbox`.
-The committed descriptor pins the manifest fingerprint, source counts, and byte count, so
-an incomplete or different extraction is rejected before `.sandbox/` is touched.
+`~/.local/share/ringleader/fixtures/init-v1/manifest.json` exists, then run
+`just sandbox-reset`. The committed descriptor pins the manifest fingerprint, source
+counts, and byte count, so an incomplete or different extraction is rejected before
+`.sandbox/` is touched.
 
 Each build gives eight sessions ages of 1–6 days, ten genuine tiny sessions ages of 9–50
 days, and 82 older non-tiny sessions ages of 8–90 days. It also sets Claude Code's

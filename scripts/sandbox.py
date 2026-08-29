@@ -9,6 +9,7 @@ import json
 import os
 import shutil
 import time
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
 REPO = Path(__file__).resolve().parent.parent
@@ -17,6 +18,7 @@ SANDBOX = REPO / ".sandbox"
 DAY = 86400
 TINY_MESSAGE_CEILING = 12
 MEDIUM_MESSAGE_CEILING = 50
+ExecProcess = Callable[[str, list[str], dict[str, str]], None]
 
 
 class FixtureError(RuntimeError):
@@ -151,9 +153,58 @@ def build(
     return fingerprint
 
 
-def main(argv: list[str] | None = None) -> int:
+def ensure_sandbox(
+    fixture_root: Path,
+    sandbox_root: Path,
+    descriptor: dict,
+    *,
+    retention: int = 7,
+) -> None:
+    directories = ("data", "claude", "codex")
+    if (
+        all((sandbox_root / name).is_dir() for name in directories)
+        and (sandbox_root / "claude-settings.json").is_file()
+    ):
+        return
+    build(fixture_root, sandbox_root, descriptor, retention=retention)
+
+
+def shell_environment(sandbox_root: Path, base: dict[str, str] | None = None) -> dict[str, str]:
+    environment = dict(os.environ if base is None else base)
+    current_path = environment.get("PATH")
+    environment["PATH"] = str(REPO / ".venv" / "bin")
+    if current_path:
+        environment["PATH"] += os.pathsep + current_path
+    environment.update(
+        XDG_DATA_HOME=str(sandbox_root / "data"),
+        SESSION_TRACKER_PROJECTS_DIR=str(sandbox_root / "claude"),
+        CODEX_SESSIONS_DIR=str(sandbox_root / "codex"),
+        RINGLEADER_CLAUDE_SETTINGS=str(sandbox_root / "claude-settings.json"),
+    )
+    return environment
+
+
+def enter_shell(
+    sandbox_root: Path,
+    *,
+    base: dict[str, str] | None = None,
+    exec_process: ExecProcess = os.execvpe,
+) -> None:
+    environment = shell_environment(sandbox_root, base)
+    shell = environment.get("SHELL") or "/bin/sh"
+    print(f"sandbox: entering isolated shell at {sandbox_root}")
+    print("  start an agent, then invoke the ringleader skill; exit when finished")
+    exec_process(shell, [shell, "-i"], environment)
+
+
+def main(
+    argv: list[str] | None = None,
+    *,
+    exec_process: ExecProcess = os.execvpe,
+) -> int:
     parser = argparse.ArgumentParser(prog="sandbox", description=__doc__)
     parser.add_argument("--retention", type=int, default=7)
+    parser.add_argument("--shell", action="store_true")
     args = parser.parse_args(argv)
     try:
         descriptor = _load_json(DESCRIPTOR)
@@ -167,7 +218,11 @@ def main(argv: list[str] | None = None) -> int:
             / "fixtures"
             / descriptor["fixture_version"]
         )
-        build(fixture_root, SANDBOX, descriptor, retention=args.retention)
+        if args.shell:
+            ensure_sandbox(fixture_root, SANDBOX, descriptor, retention=args.retention)
+            enter_shell(SANDBOX, exec_process=exec_process)
+        else:
+            build(fixture_root, SANDBOX, descriptor, retention=args.retention)
     except FixtureError as error:
         print(f"sandbox: {error}")
         return 1

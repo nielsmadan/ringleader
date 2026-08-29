@@ -45,8 +45,13 @@ refresh-local:
 reset-local:
     @uv tool uninstall ringleader
 
-# Rebuild the throwaway skill-testing world from the frozen fixture.
-sandbox *ARGS:
+# Enter the throwaway skill-testing world without resetting its state.
+sandbox:
+    @uv run rl skills install --yes
+    @uv run python scripts/sandbox.py --shell
+
+# Reset the sandbox to the frozen fixture and empty registry.
+sandbox-reset *ARGS:
     @uv run python scripts/sandbox.py {{ARGS}}
 
 clean:

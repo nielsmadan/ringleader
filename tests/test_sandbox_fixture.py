@@ -2,6 +2,7 @@ import hashlib
 import importlib.util
 import json
 import re
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -108,6 +109,85 @@ def test_build_restores_exact_fixture_state(tmp_path, capsys):
     assert fingerprint in capsys.readouterr().out
 
 
+def test_ensure_sandbox_preserves_existing_test_progress(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    target = tmp_path / ".sandbox"
+    sandbox.build(fixture, target, descriptor, now=2_000_000_000)
+    progress = target / "data" / "ringleader" / "registry.json"
+    progress.parent.mkdir(parents=True)
+    progress.write_text('{"triaged": true}', encoding="utf-8")
+
+    sandbox.ensure_sandbox(fixture, target, descriptor)
+
+    assert progress.read_text(encoding="utf-8") == '{"triaged": true}'
+
+
+def test_ensure_sandbox_rebuilds_incomplete_state(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    target = tmp_path / ".sandbox"
+    target.mkdir()
+
+    sandbox.ensure_sandbox(fixture, target, descriptor)
+
+    assert (
+        target / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
+    ).read_bytes() == b'{"type":"user","message":{"content":"exact claude"}}\n'
+    assert json.loads((target / "claude-settings.json").read_text()) == {"cleanupPeriodDays": 7}
+
+
+def test_shell_environment_isolates_every_ringleader_input(tmp_path):
+    target = tmp_path / ".sandbox"
+    base = {
+        "HOME": "/Users/tester",
+        "PATH": "/usr/bin",
+        "SHELL": "/bin/zsh",
+        "XDG_DATA_HOME": "/real/data",
+        "SESSION_TRACKER_PROJECTS_DIR": "/real/claude",
+        "CODEX_SESSIONS_DIR": "/real/codex",
+        "RINGLEADER_CLAUDE_SETTINGS": "/real/settings.json",
+    }
+
+    environment = sandbox.shell_environment(target, base)
+
+    assert environment == {
+        "HOME": "/Users/tester",
+        "PATH": f"{REPO / '.venv' / 'bin'}:/usr/bin",
+        "SHELL": "/bin/zsh",
+        "XDG_DATA_HOME": str(target / "data"),
+        "SESSION_TRACKER_PROJECTS_DIR": str(target / "claude"),
+        "CODEX_SESSIONS_DIR": str(target / "codex"),
+        "RINGLEADER_CLAUDE_SETTINGS": str(target / "claude-settings.json"),
+    }
+
+
+def test_enter_shell_starts_the_user_shell_with_sandbox_environment(tmp_path):
+    target = tmp_path / ".sandbox"
+    invocation = {}
+
+    def exec_process(executable, arguments, environment):
+        invocation.update(
+            executable=executable,
+            arguments=arguments,
+            environment=environment,
+        )
+
+    sandbox.enter_shell(
+        target,
+        base={"PATH": "/usr/bin", "SHELL": "/bin/zsh"},
+        exec_process=exec_process,
+    )
+
+    assert invocation["executable"] == "/bin/zsh"
+    assert invocation["arguments"] == ["/bin/zsh", "-i"]
+    assert invocation["environment"]["PATH"] == f"{REPO / '.venv' / 'bin'}:/usr/bin"
+    assert invocation["environment"]["XDG_DATA_HOME"] == str(target / "data")
+    assert invocation["environment"]["SESSION_TRACKER_PROJECTS_DIR"] == str(target / "claude")
+    assert invocation["environment"]["CODEX_SESSIONS_DIR"] == str(target / "codex")
+    assert invocation["environment"]["RINGLEADER_CLAUDE_SETTINGS"] == str(
+        target / "claude-settings.json"
+    )
+
+
 def test_build_rejects_fixture_inside_sandbox(tmp_path):
     target = tmp_path / ".sandbox"
     fixture, descriptor = _fixture(target)
@@ -180,3 +260,59 @@ def test_build_command_ignores_sandbox_xdg_data_home(tmp_path, monkeypatch):
     assert seen["fixture_root"] == (
         Path.home() / ".local" / "share" / "ringleader" / "fixtures" / "test-v1"
     )
+
+
+def test_shell_command_reuses_ready_sandbox_and_enters_it(tmp_path, monkeypatch):
+    fixture, descriptor = _fixture(tmp_path)
+    descriptor_path = tmp_path / "descriptor.json"
+    descriptor_path.write_text(json.dumps(descriptor), encoding="utf-8")
+    target = tmp_path / ".sandbox"
+    sandbox.build(fixture, target, descriptor)
+    progress = target / "data" / "progress"
+    progress.write_text("kept", encoding="utf-8")
+    invocation = {}
+
+    def exec_process(executable, arguments, environment):
+        invocation.update(
+            executable=executable,
+            arguments=arguments,
+            environment=environment,
+        )
+
+    monkeypatch.setattr(sandbox, "DESCRIPTOR", descriptor_path)
+    monkeypatch.setattr(sandbox, "SANDBOX", target)
+    monkeypatch.setenv("RINGLEADER_SANDBOX_FIXTURE_DIR", str(fixture))
+    monkeypatch.setenv("SHELL", "/bin/zsh")
+
+    assert sandbox.main(["--shell"], exec_process=exec_process) == 0
+    assert progress.read_text(encoding="utf-8") == "kept"
+    assert invocation["arguments"] == ["/bin/zsh", "-i"]
+    assert invocation["environment"]["XDG_DATA_HOME"] == str(target / "data")
+
+
+def test_sandbox_recipe_wires_skills_then_enters_shell():
+    result = subprocess.run(
+        ["just", "--dry-run", "sandbox"],
+        cwd=REPO,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.stderr.splitlines() == [
+        "uv run rl skills install --yes",
+        "uv run python scripts/sandbox.py --shell",
+    ]
+
+
+def test_sandbox_reset_recipe_rebuilds_without_entering_shell():
+    result = subprocess.run(
+        ["just", "--dry-run", "sandbox-reset"],
+        cwd=REPO,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0
+    assert result.stderr.strip() == "uv run python scripts/sandbox.py"

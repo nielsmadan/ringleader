@@ -5,21 +5,21 @@ markdown (agent-driven flows over the `rl` CLI), so there's no unit-test harness
 `just test` covers `rl` itself. This is a manual run list for exercising the skills end to
 end before a release. Each row gives the command(s) to run and what "working" looks like.
 
-Before exercising a skill, confirm it's actually reachable by the agent you're testing in:
-run `rl skills install` (or `--yes` to skip the confirmation prompt) to symlink the bundled
-skills into `~/.claude/skills` / `~/.agents/skills`, then `rl skills status` to check each
-one shows `linked`. `rl skills update` re-syncs after the bundled set changes;
+`just sandbox` runs `rl skills install --yes` before opening the test shell, so the bundled
+skills are reachable by the agent launched there. Run `rl skills status` if you want to
+inspect the links; `rl skills update` re-syncs after the bundled set changes, and
 `rl skills uninstall` removes the symlinks this tool created.
 
-Restore and build the frozen sandbox first, then export the four variables it prints:
+Reset the frozen sandbox, then enter its isolated shell:
 
 ```sh
+just sandbox-reset
 just sandbox
 ```
 
 The sandbox contains 100 privacy-reviewed, verbatim OSS sessions and an empty registry.
-Every command below then reads and writes only `.sandbox/`; re-run `just sandbox` between
-scenarios to return to the same zero state.
+Every command below then reads and writes only `.sandbox/`; exit the shell and run
+`just sandbox-reset` between scenarios to return to the same zero state.
 
 | # | Skill / behavior | Command(s) | Expected observable |
 |---|---|---|---|
