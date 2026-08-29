@@ -11,6 +11,7 @@ class GitProject:
     remote: str | None
     key: str  # stable grouping key
     label: str  # human-friendly group label
+    clone_url: str | None = None
 
 
 def normalize_remote(url: str) -> str:
@@ -74,4 +75,4 @@ def resolve_git_project(cwd: str | None, runner=None) -> GitProject | None:
     else:
         key = root
         label = Path(root).name
-    return GitProject(root=root, remote=remote, key=key, label=label)
+    return GitProject(root=root, remote=remote, key=key, label=label, clone_url=remote_raw)

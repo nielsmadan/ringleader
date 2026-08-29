@@ -6,6 +6,7 @@ from pathlib import Path
 
 from . import overview
 from .sources.base import NormalizedSession, RawRef
+from .stateio import atomic_write_text
 
 REGISTRY_VERSION = 2
 
@@ -33,6 +34,7 @@ _GIT_PROJECT_FIELDS = {
     "gitProjectLabel": "git_project_label",
     "gitRoot": "git_root",
     "gitRemote": "git_remote",
+    "gitCloneUrl": "git_clone_url",
 }
 
 
@@ -69,8 +71,22 @@ def load_registry(path) -> dict:
 
 def save_registry(path, reg) -> None:
     p = Path(path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(reg, indent=2, ensure_ascii=False), encoding="utf-8")
+    atomic_write_text(p, json.dumps(reg, indent=2, ensure_ascii=False))
+
+
+def reconcile_harvest_paths(reg: dict, paths_by_session: dict[str, list[str]]) -> dict:
+    def update(record: dict) -> None:
+        session_id = record.get("sessionId")
+        if session_id in paths_by_session:
+            record["harvestPath"] = paths_by_session[session_id] or None
+        embedded = record.get("thread")
+        if isinstance(embedded, dict):
+            update(embedded)
+
+    for bucket in ("threads", "archived", "deleted"):
+        for record in reg.get(bucket, []):
+            update(record)
+    return reg
 
 
 def _as_dict(meta) -> dict:
@@ -241,6 +257,17 @@ def mark_harvested(reg: dict, session_id: str, harvest_paths) -> dict:
     raise KeyError(session_id)
 
 
+def append_harvest_path(reg: dict, session_id: str, harvest_path: str) -> dict:
+    for t in reg["threads"]:
+        if t["sessionId"] == session_id:
+            existing = t.get("harvestPath")
+            paths = existing if isinstance(existing, list) else [existing] if existing else []
+            t["decision"] = "harvested"
+            t["harvestPath"] = [*paths, harvest_path]
+            return reg
+    raise KeyError(session_id)
+
+
 def mark_reviewed(reg: dict, session_id: str, mtime: str | None = None) -> dict:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
@@ -382,6 +409,7 @@ def relocate_thread(reg: dict, session_id: str, new_project: str, git: dict | No
             t["gitProjectLabel"] = (git or {}).get("label")
             t["gitRoot"] = (git or {}).get("root")
             t["gitRemote"] = (git or {}).get("remote")
+            t["gitCloneUrl"] = (git or {}).get("clone_url")
             return reg
     raise KeyError(session_id)
 

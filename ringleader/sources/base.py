@@ -53,6 +53,7 @@ class NormalizedSession:
     git_project_label: str | None = None
     git_root: str | None = None
     git_remote: str | None = None
+    git_clone_url: str | None = None
     cache_version: int | None = None
     file_fingerprint: str | None = None
     git_resolved: bool = False

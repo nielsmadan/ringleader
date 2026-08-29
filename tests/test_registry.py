@@ -103,6 +103,13 @@ def test_load_save_roundtrip(tmp_path):
     assert load_registry(p)["threads"][0]["sessionId"] == "s1"
 
 
+def test_reconcile_persists_raw_git_clone_url():
+    session = _meta("s1", NOW)
+    session.git_clone_url = "git@github.com:me/repo.git"
+    reg = reconcile(empty_registry(), [session], NOW)
+    assert reg["threads"][0]["gitCloneUrl"] == "git@github.com:me/repo.git"
+
+
 import pytest
 from ringleader.registry import (
     apply_classification,

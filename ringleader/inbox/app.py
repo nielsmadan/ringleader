@@ -19,6 +19,7 @@ from ..config import load_config
 from ..fuzzytime import parse_duration
 from ..models import active_model
 from ..paths import archive_root, default_registry
+from ..stateio import publish_lock
 
 
 def _now_iso() -> str:
@@ -444,19 +445,24 @@ class InboxApp(App):
                 archive_cmd.archive_thread(self._reg, t, archive_root_path=archive_root())
             else:
                 md = harvest_cmd._render_md(t, data)
-                path = harvests.write_harvest(
-                    session_id=t["sessionId"],
-                    name=t.get("title") or t.get("suggestedName") or "",
-                    folder_path=t.get("gitRoot") or t.get("project"),
-                    repo_url=t.get("gitRemote"),
-                    harvested_at=_now_iso(),
-                    content=md,
-                )
-                registry.mark_harvested(self._reg, t["sessionId"], [str(path)])
+                with publish_lock():
+                    self._reg = registry.load_registry(self.registry_path)
+                    path = harvests._write_harvest_unlocked(
+                        session_id=t["sessionId"],
+                        name=t.get("title") or t.get("suggestedName") or "",
+                        folder_path=t.get("gitRoot") or t.get("project"),
+                        repo_url=t.get("gitRemote"),
+                        clone_url=t.get("gitCloneUrl"),
+                        harvested_at=_now_iso(),
+                        content=md,
+                    )
+                    registry.append_harvest_path(self._reg, t["sessionId"], str(path))
+                    registry.save_registry(self.registry_path, self._reg)
         except Exception as e:
             self.notify(f"harvest failed: {e}", title="rl inbox", severity="error")
             return
-        registry.save_registry(self.registry_path, self._reg)
+        if empty:
+            registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
 
     # -- delete / undo --------------------------------------------------

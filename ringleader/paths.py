@@ -29,6 +29,10 @@ def config_path() -> Path:
     return state_dir() / "config.json"
 
 
+def publish_receipts_dir() -> Path:
+    return state_dir() / "publish" / "receipts"
+
+
 def archive_root() -> Path:
     return state_dir() / "archive"
 

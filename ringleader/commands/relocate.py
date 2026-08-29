@@ -27,7 +27,17 @@ def cmd_relocate(argv: list[str]) -> int:
 
     reg = registry.load_registry(args.registry)
     gp = gitinfo.resolve_git_project(new_path)
-    git = {"key": gp.key, "label": gp.label, "root": gp.root, "remote": gp.remote} if gp else None
+    git = (
+        {
+            "key": gp.key,
+            "label": gp.label,
+            "root": gp.root,
+            "remote": gp.remote,
+            "clone_url": gp.clone_url,
+        }
+        if gp
+        else None
+    )
     try:
         registry.relocate_thread(reg, args.id, new_path, git)
     except KeyError:

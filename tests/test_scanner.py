@@ -86,11 +86,13 @@ def test_scan_attaches_injected_git_project(tmp_path):
             remote="github.com/me/proj",
             key="github.com/me/proj",
             label="proj",
+            clone_url="git@github.com:me/proj.git",
         )
 
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path)], git_resolver=fake)
     assert scanned[0].git_project_key == "github.com/me/proj"
     assert scanned[0].git_project_label == "proj"
+    assert scanned[0].git_clone_url == "git@github.com:me/proj.git"
 
 
 def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):

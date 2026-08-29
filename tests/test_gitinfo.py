@@ -38,6 +38,21 @@ def test_resolve_prefers_remote_slug(tmp_path):
     assert gp.remote == "github.com/me/cool-repo"
 
 
+def test_resolve_keeps_raw_clone_url(tmp_path):
+    raw = "git@github.com:me/cool-repo.git"
+    gp = resolve_git_project(
+        str(tmp_path),
+        runner=_runner(
+            {
+                ("rev-parse", "--show-toplevel"): f"{tmp_path}\n",
+                ("config", "--get", "remote.origin.url"): f"{raw}\n",
+            }
+        ),
+    )
+    assert gp.remote == "github.com/me/cool-repo"
+    assert gp.clone_url == raw
+
+
 def test_resolve_falls_back_to_toplevel_without_remote(tmp_path):
     cwd = str(tmp_path)
     runner = _runner(

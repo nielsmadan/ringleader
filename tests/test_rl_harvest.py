@@ -34,6 +34,7 @@ def _seed(reg_path, tmp_path):
                         "project": "/repo",
                         "gitRoot": "/repo",
                         "gitRemote": "git@github.com:me/repo.git",
+                        "gitCloneUrl": "git@github.com:me/repo.git",
                         "title": "fix-auth",
                     }
                 ],
@@ -57,6 +58,7 @@ def test_harvest_writes_store_entry(tmp_path, monkeypatch):
     got = harvests.load_harvests()
     assert len(got) == 1 and "did the thing" in got[0].content
     assert got[0].repo_url == "git@github.com:me/repo.git"
+    assert got[0].clone_url == "git@github.com:me/repo.git"
     # harvested flag set
     assert json.loads(reg.read_text())["threads"][0]["decision"] == "harvested"
 
@@ -84,3 +86,14 @@ def test_harvest_dry_run_writes_nothing(tmp_path, monkeypatch):
     from ringleader import harvests
 
     assert harvests.load_harvests() == []
+
+
+def test_harvest_appends_to_existing_session_queue(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    reg = tmp_path / "registry.json"
+    _seed(reg, tmp_path)
+    monkeypatch.setattr(harvest_mod, "active_model", lambda cfg: FakeModel())
+    monkeypatch.setattr(harvest_mod.export, "render_conversation", lambda p: "## USER\n\nhi\n")
+    assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg)]) == 0
+    assert harvest_mod.cmd_harvest(["s1", "--registry", str(reg)]) == 0
+    assert len(json.loads(reg.read_text())["threads"][0]["harvestPath"]) == 2

@@ -93,6 +93,7 @@ def scan(sources=None, git_resolver=None, cached_threads=None) -> list[Normalize
                     ns.git_project_label = gp.label
                     ns.git_root = gp.root
                     ns.git_remote = gp.remote
+                    ns.git_clone_url = gp.clone_url
                     ns.git_resolved = True
             out.append(ns)
     return out

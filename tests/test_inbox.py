@@ -56,6 +56,7 @@ def _seed(tmp_path, n=2, last_roundup_at="fresh"):
                 "gitRoot": f"/repo{i}",
                 "gitProjectLabel": f"repo{i}",
                 "gitRemote": "git@github.com:me/repo.git",
+                "gitCloneUrl": "git@github.com:me/repo.git",
                 "gitBranch": "main",
                 "title": f"session-{i}",
                 "whatItIs": f"did thing {i}",
@@ -106,6 +107,7 @@ def _seed_tabs(tmp_path, monkeypatch):
             "gitRoot": f"/repo{i}",
             "gitProjectLabel": f"repo{i}",
             "gitRemote": "git@github.com:me/repo.git",
+            "gitCloneUrl": "git@github.com:me/repo.git",
             "gitBranch": "main",
             "title": f"session-{i}",
             "whatItIs": f"did thing {i}",
@@ -250,6 +252,7 @@ async def test_harvest_nonempty_digest_writes_harvest(tmp_path, monkeypatch):
     got = harvests.load_harvests()
     assert len(got) == 1
     assert "did the thing" in got[0].content
+    assert got[0].clone_url == "git@github.com:me/repo.git"
 
 
 async def test_harvest_empty_digest_archives(tmp_path, monkeypatch):
