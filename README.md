@@ -405,10 +405,13 @@ living repository docs and the handled queue items are deleted.
    behind still resumes, but drops the session's `subagents/` and `tool-results/` data.
    Check the live side doesn't already hold either name first — `rl session archive` aborts
    on that collision and the reverse move deserves the same care.
-2. Delete the session's entry from `archived` in `registry.json`. Re-discovery
-   does not depend on this: `reconcile` re-adds any scanned session it has no thread for,
-   record or not. But a stale `archived` entry keeps the session listed by
-   `rl overview --archived` forever while it is also live.
+2. Delete the session's entry from `archived` in `registry.json`. **Not optional.**
+   A scan skips any session that still carries an `archived` record — that is what stops
+   an agent from undoing an archive by recreating its transcript — so leaving the record
+   in place means `rl session refresh` reports `total: 0` and the session is never
+   re-registered. `rl prune` then lists the file you just moved back as a resurrected
+   stub, and `rl prune --delete` unlinks it. Since restoring *moves* the transcript out
+   of `archive/`, that is the only copy.
 3. Re-scan — `rl overview`, or any command run without `--no-scan`.
 4. Optionally delete the leftover `archive/<slug>/<id>.md` harvest summary and the emptied
    archive directory.
