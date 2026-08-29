@@ -18,7 +18,7 @@ HARVEST_SCHEMA = {
         "decisions": {"type": "array", "items": {"type": "string"}},
         "whatChanged": {"type": "array", "items": {"type": "string"}},
     },
-    "required": ["summary"],
+    "required": ["summary", "gotchas", "decisions", "whatChanged"],
 }
 
 
