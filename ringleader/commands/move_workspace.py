@@ -166,6 +166,56 @@ def _refuse_empty(
     return 1
 
 
+def editable_installs(old: str) -> list[Path]:
+    """`.pth` files whose editable-install target is `old` or sits beneath it.
+
+    A tool installed with `pip install -e` / `uv tool install -e` resolves its
+    source through one of these every time it runs, so moving the checkout
+    breaks the installed command — including `rl` itself, whose own source is a
+    workspace directory a user may reasonably move.
+    """
+    roots = [
+        Path.home() / ".local/share/uv/tools",
+        Path.home() / ".local/share/pipx/venvs",
+    ]
+    found = []
+    for root in roots:
+        if not root.is_dir():
+            continue
+        for pth in root.glob("*/lib/*/site-packages/*.pth"):
+            try:
+                lines = pth.read_text().splitlines()
+            except OSError:
+                continue
+            for line in lines:
+                target = line.strip()
+                if not target.startswith("/"):
+                    continue
+                if target == old or is_beneath(target, old):
+                    found.append(pth)
+                    break
+    return found
+
+
+def repoint_editables(pths: list[Path], old: str, new: str) -> list[Path]:
+    """Rewrite each `.pth` onto the new location. Returns the ones that failed,
+    which the caller must report: a silently unrepaired `.pth` leaves a working
+    directory and a broken command, and the breakage surfaces later somewhere
+    unrelated."""
+    failed = []
+    for pth in pths:
+        try:
+            lines = pth.read_text().splitlines()
+            out = [
+                new + line.strip()[len(old):] if line.strip() == old or is_beneath(line.strip(), old) else line
+                for line in lines
+            ]
+            pth.write_text("\n".join(out) + "\n")
+        except OSError:
+            failed.append(pth)
+    return failed
+
+
 def _preflight(old: str, new: str, *, move_files: bool) -> str | None:
     if is_beneath(new, old):
         return f"{new} is inside {old}"
@@ -191,6 +241,9 @@ def _describe(plan: _Plan, *, move_files: bool) -> None:
     for thread in plan.unsupported:
         print(f"  session  {thread['sessionId'][:8]}  registry only ({thread.get('source')})")
     print(f"{len(plan.threads)} session(s), {len(plan.arch)} archived")
+    if move_files:
+        for pth in editable_installs(plan.old):
+            print(f"  editable  {pth.name} will be repointed at the new location")
 
 
 def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[str]]:
@@ -298,6 +351,16 @@ def _run(argv: list[str], *, move_files: bool) -> int:
         except OSError as e:
             print(f"rl-workspace-{verb}: {e}", file=sys.stderr)
             return 1
+
+    if move_files:
+        failed = repoint_editables(editable_installs(old), old, new)
+        for pth in failed:
+            print(
+                f"rl-workspace-{verb}: could not repoint {pth} — the command it "
+                f"installs will fail until you run:\n"
+                f'  echo "{new}" > {pth}',
+                file=sys.stderr,
+            )
 
     moved, stranded = _relocate_storage(plan, sources, verb)
     applied = _retarget_registry(args.registry, old, new, moved, sources, stranded)

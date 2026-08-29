@@ -269,3 +269,48 @@ def test_archived_records_are_retargeted(tmp_path, monkeypatch):
     record = json.loads(reg.read_text())["archived"][0]
     assert record["thread"]["project"] == str(new / "sub")
     assert record["project"] == "some-git-label", "a git label must not be rewritten as a path"
+
+
+def _editable(tmp_path, target: str, name="_editable_impl_demo.pth"):
+    site = tmp_path / "home/.local/share/uv/tools/demo/lib/python3.13/site-packages"
+    site.mkdir(parents=True, exist_ok=True)
+    pth = site / name
+    pth.write_text(target + "\n")
+    return pth
+
+
+def test_editable_pointing_at_the_moved_tree_is_found(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    pth = _editable(tmp_path, "/ws/proj")
+    assert move_workspace.editable_installs("/ws/proj") == [pth]
+
+
+def test_an_editable_beneath_the_moved_tree_is_found(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    pth = _editable(tmp_path, "/ws/proj/src")
+    assert move_workspace.editable_installs("/ws/proj") == [pth]
+
+
+def test_an_unrelated_editable_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    _editable(tmp_path, "/somewhere/else")
+    assert move_workspace.editable_installs("/ws/proj") == []
+
+
+def test_repointing_rewrites_only_the_matching_prefix(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    pth = _editable(tmp_path, "/ws/proj/src")
+    assert move_workspace.repoint_editables([pth], "/ws/proj", "/ws/new/dev1") == []
+    assert pth.read_text().strip() == "/ws/new/dev1/src"
+
+
+def test_an_unwritable_pth_is_reported_rather_than_silently_skipped(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    pth = _editable(tmp_path, "/ws/proj")
+    pth.chmod(0o444)
+    pth.parent.chmod(0o555)
+    try:
+        assert move_workspace.repoint_editables([pth], "/ws/proj", "/ws/new") == [pth]
+    finally:
+        pth.parent.chmod(0o755)
+        pth.chmod(0o644)
