@@ -45,7 +45,11 @@ refresh-local:
 reset-local:
     @uv tool uninstall ringleader
 
-# Build a throwaway world for testing the skills from zero state (re-run to reset).
+# Pick real sessions out of your archive and freeze a copy (run once).
+sandbox-freeze *ARGS:
+    @uv run python scripts/sandbox.py --freeze {{ARGS}}
+
+# Rebuild the throwaway world from the frozen fixture (re-run to reset to zero).
 sandbox *ARGS:
     @uv run python scripts/sandbox.py {{ARGS}}
 
