@@ -58,6 +58,31 @@ def test_unknown_noun_reports_the_valid_ones(nouns, capsys):
     assert "skills" in capsys.readouterr().err
 
 
+def test_install_help_lists_the_nouns(nouns, capsys):
+    """`--help` used to fall through to the first noun, printing only
+    `usage: rl install skills` — never naming the noun it needs."""
+    assert setup.cmd_install(["--help"]) == 0
+    assert nouns == []  # not forwarded to any noun
+    out = capsys.readouterr().out
+    assert "usage: rl install <noun>" in out
+    assert "skills" in out and "statusline" in out and "all" in out
+    assert "with no noun does `all`" in out
+
+
+def test_update_help_lists_only_nouns_that_support_it(nouns, capsys):
+    assert setup.cmd_update(["-h"]) == 0
+    assert nouns == []
+    out = capsys.readouterr().out
+    assert "skills" in out
+    assert "statusline" not in out  # the statusline has nothing to re-sync
+    assert "with no noun" not in out
+
+
+def test_help_after_a_noun_still_reaches_that_noun(nouns):
+    assert setup.cmd_install(["skills", "--help"]) == 0
+    assert nouns == [("skills.install", ["--help"])]
+
+
 def test_nonzero_from_any_noun_propagates(monkeypatch):
     monkeypatch.setattr(
         setup,

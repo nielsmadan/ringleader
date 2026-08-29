@@ -23,8 +23,28 @@ NOUNS = {
     },
 }
 
+NOUN_HELP = {
+    "skills": "the bundled ringleader-* skills, linked into each agent's skills dir",
+    "statusline": "the Claude Code statusLine snippet that captures rate-limit windows",
+    "hooks": "the session-end hook that archives finished sessions",
+}
+
+
+def _print_help(verb: str, *, default_all: bool) -> None:
+    print(f"usage: rl {verb} <noun> [options]\n")
+    print("nouns:")
+    for name, verbs in NOUNS.items():
+        if verb in verbs:
+            print(f"  {name:<11} {NOUN_HELP[name]}")
+    print(f"  {'all':<11} every noun above")
+    lead = f"`rl {verb}` with no noun does `all`.\n" if default_all else ""
+    print(f"\n{lead}Run `rl {verb} <noun> --help` for that noun's own options.")
+
 
 def _run(verb: str, argv: list[str], *, default_all: bool) -> int:
+    if argv and argv[0] in ("-h", "--help"):
+        _print_help(verb, default_all=default_all)
+        return 0
     noun = argv[0] if argv and not argv[0].startswith("-") else None
     rest = argv[1:] if noun else argv
 

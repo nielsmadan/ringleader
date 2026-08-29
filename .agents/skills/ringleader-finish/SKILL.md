@@ -17,7 +17,9 @@ and read back the answer. Everything else — calling `rl`, the harvest sub-prot
 
 ## Flow
 
-1. **Identify the session.** Run `rl session whoami`. If it reports that this is not a
+1. **Identify the session.** Run `rl session refresh`, then `rl session whoami`. The
+   refresh registers this session if it started since the last scan; without it step 3
+   fails after the harvest is already written. If `whoami` reports that this is not a
    recognised agent session, say so and stop — pass the id explicitly to the commands
    below only if the user supplies one.
 

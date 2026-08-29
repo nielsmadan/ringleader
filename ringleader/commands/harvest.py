@@ -9,8 +9,8 @@ from .. import export, harvests, registry
 from ..config import load_config
 from ..models import active_model
 from ..models.base import ModelError
-from ..stateio import publish_lock
 from ..session_env import current_session
+from ..stateio import publish_lock
 from . import default_registry
 
 HARVEST_SCHEMA = {
@@ -66,7 +66,11 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
     reg = registry.load_registry(registry_path)
     thread = next((item for item in reg["threads"] if item["sessionId"] == session_id), None)
     if thread is None:
-        print(f"rl-harvest: unknown session {session_id}", file=sys.stderr)
+        print(
+            f"rl-harvest: unknown session {session_id} — run `rl session refresh` "
+            "first if it started since the last scan",
+            file=sys.stderr,
+        )
         return 1, None
     condensed = export.render_conversation(thread["file"])
     try:
@@ -94,6 +98,7 @@ def _save_harvest_unlocked(session_id: str, registry_path: str, markdown: str) -
     registry.append_harvest_path(reg, thread["sessionId"], str(path))
     registry.save_registry(registry_path, reg)
     return thread, path
+
 
 def _read_from_file(path: str) -> str:
     return sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
@@ -137,7 +142,11 @@ def cmd_harvest(argv: list[str]) -> int:
         try:
             thread, path = _save_harvest_unlocked(session_id, args.registry, markdown)
         except KeyError:
-            print(f"rl-harvest: unknown session {session_id}", file=sys.stderr)
+            print(
+                f"rl-harvest: unknown session {session_id} — run `rl session refresh` "
+                "first if it started since the last scan",
+                file=sys.stderr,
+            )
             return 1
     print(f"harvested {thread['sessionId']} -> {path}")
     return 0

@@ -157,6 +157,18 @@ def test_from_file_rejects_empty_content(tmp_path, monkeypatch, capsys):
     assert harvests.load_harvests() == []
 
 
+def test_unknown_session_names_the_remedy(tmp_path, monkeypatch, capsys):
+    """The `finish` skill hits this on any session started since the last scan, at the
+    step where it has already spent the tokens writing the harvest."""
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg = _registry(tmp_path)
+    md = tmp_path / "h.md"
+    md.write_text("# t\n\nbody.\n")
+
+    assert harvest_mod.cmd_harvest(["nope", "--registry", str(reg), "--from-file", str(md)]) == 1
+    assert "rl session refresh" in capsys.readouterr().err
+
+
 def test_current_resolves_the_session_id(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s1")
