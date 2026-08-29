@@ -9,6 +9,21 @@ from pathlib import Path
 from .base import ModelError
 
 
+def _envelope_error(stdout: str) -> str | None:
+    """Claude reports API-side failures inside its stdout envelope, often while
+    exiting 0 and leaving stderr empty — so the reason (auth, credit, rate limit)
+    is invisible to anyone reading the exit code or stderr."""
+    try:
+        envelope = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(envelope, dict) or not envelope.get("is_error"):
+        return None
+    reason = str(envelope.get("result") or envelope.get("subtype") or "unknown error")[:200]
+    status = envelope.get("api_error_status")
+    return f"{reason} (api status {status})" if status else reason
+
+
 @dataclass
 class ClaudeCliModel:
     name: str = "claude"
@@ -39,6 +54,9 @@ class ClaudeCliModel:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, check=False)
         except OSError as e:  # CLI vanished mid-run
             raise ModelError(f"claude invocation failed: {e}") from e
+        detail = _envelope_error(proc.stdout)
+        if detail:
+            raise ModelError(f"claude: {detail}")
         if proc.returncode != 0:
             raise ModelError(f"claude exited {proc.returncode}: {proc.stderr.strip()[:200]}")
         try:

@@ -77,6 +77,66 @@ def test_claude_raises_modelerror_on_nonzero(monkeypatch):
         ClaudeCliModel().complete_json("p", SCHEMA)
 
 
+def test_claude_surfaces_the_envelope_reason_when_it_exits_nonzero(monkeypatch):
+    # the CLI puts the reason in its stdout envelope and leaves stderr empty
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.subprocess.run",
+        lambda cmd, **kw: types.SimpleNamespace(
+            returncode=1,
+            stdout=json.dumps(
+                {
+                    "is_error": True,
+                    "result": "Not logged in · Please run /login",
+                    "subtype": "success",
+                }
+            ),
+            stderr="",
+        ),
+    )
+    with pytest.raises(ModelError, match="Not logged in"):
+        ClaudeCliModel().complete_json("p", SCHEMA)
+
+
+def test_claude_surfaces_the_envelope_reason_when_it_exits_zero(monkeypatch):
+    # an API-side failure still exits 0; only is_error in the envelope marks it
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.subprocess.run",
+        lambda cmd, **kw: types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"is_error": True, "result": "Credit balance is too low", "api_error_status": 400}
+            ),
+            stderr="",
+        ),
+    )
+    with pytest.raises(ModelError, match="Credit balance is too low"):
+        ClaudeCliModel().complete_json("p", SCHEMA)
+
+
+def test_claude_reports_api_status_alongside_the_reason(monkeypatch):
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.subprocess.run",
+        lambda cmd, **kw: types.SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {"is_error": True, "result": "Credit balance is too low", "api_error_status": 400}
+            ),
+            stderr="",
+        ),
+    )
+    with pytest.raises(ModelError, match="400"):
+        ClaudeCliModel().complete_json("p", SCHEMA)
+
+
+def test_claude_falls_back_to_stderr_when_stdout_has_no_envelope(monkeypatch):
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.subprocess.run",
+        lambda cmd, **kw: types.SimpleNamespace(returncode=1, stdout="not json", stderr="boom"),
+    )
+    with pytest.raises(ModelError, match="boom"):
+        ClaudeCliModel().complete_json("p", SCHEMA)
+
+
 def test_codex_complete_json_parses_schema_output(monkeypatch):
     monkeypatch.setattr(
         "ringleader.models.codex_cli.subprocess.run",
