@@ -141,3 +141,24 @@ def test_uninstall_reports_permission_failure_gracefully(tmp_path, monkeypatch, 
         os.chmod(skdir, 0o700)
     assert rc == 1
     assert "could not remove" in capsys.readouterr().err
+
+
+def test_update_does_not_install_when_nothing_is_wired_up(tmp_path, monkeypatch, capsys):
+    """`update` syncs an existing install; it must not opt an agent in on its own —
+    install recipes call it unattended."""
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    assert skills.cmd_update(["--yes"]) == 0
+    assert "no ringleader skills installed" in capsys.readouterr().out
+    assert not (home / ".claude" / "skills").exists()
+
+
+def test_update_syncs_once_installed(tmp_path, monkeypatch):
+    home = _fake_home(tmp_path, ".claude")
+    monkeypatch.setenv("HOME", str(home))
+    skills.cmd_install(["--yes"])
+    stale = home / ".claude" / "skills" / "ringleader-gone"
+    stale.symlink_to(skills.bundled_skills_dir() / "ringleader-triage")
+    assert skills.cmd_update(["--yes"]) == 0
+    assert not stale.exists()
+    assert (home / ".claude" / "skills" / "ringleader-triage").is_symlink()

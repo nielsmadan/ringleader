@@ -28,10 +28,19 @@ typecheck:
 install-local:
     @uv run rl data migrate
     @uv tool install .
+    @rl skills update --yes
     @echo "Installed: $(which rl)"
+
+# Install `rl` editable: it tracks the working tree, so it never goes stale.
+install-editable:
+    @uv run rl data migrate
+    @uv tool install --reinstall --force -e .
+    @rl skills update --yes
+    @echo "Installed (editable): $(which rl)"
 
 refresh-local:
     @uv tool install --reinstall --force .
+    @rl skills update --yes
 
 reset-local:
     @uv tool uninstall ringleader
@@ -40,6 +49,6 @@ clean:
     @rm -rf .pytest_cache .ruff_cache .coverage htmlcov
 
 sync-playbook:
-    @for s in init triage cleanup overview; do \
+    @for s in init triage cleanup overview usage; do \
       cp .agents/skills/PLAYBOOK.md ".agents/skills/ringleader-$s/references/playbook.md"; \
     done

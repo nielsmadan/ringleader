@@ -156,7 +156,13 @@ def cmd_update(argv: list[str]) -> int:
     home = Path.home()
     bundled = {s.name for s in _bundled_skills()}
     dirs = _unique_dirs(_install_dirs(home))
-    stale = [link for d in dirs for link in _managed_links(d) if link.name not in bundled]
+    # update syncs what's already wired up; it never opts an agent in for the first
+    # time, so it's safe to run unattended (e.g. from an install recipe).
+    linked = [link for d in dirs for link in _managed_links(d)]
+    if not linked:
+        print("no ringleader skills installed — run `rl skills install` to wire them up")
+        return 0
+    stale = [link for link in linked if link.name not in bundled]
     stale_failed = 0
     if stale:
         print("Will remove stale links:")

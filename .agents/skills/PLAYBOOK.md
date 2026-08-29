@@ -1,7 +1,7 @@
 # ringleader PLAYBOOK
 
 Shared, agent-neutral conventions for the `ringleader` skills (`overview`, `triage`,
-`cleanup`, `init`). Every skill's per-agent wrapper points back here for the WHAT; the
+`cleanup`, `init`, `usage`). Every skill's per-agent wrapper points back here for the WHAT; the
 wrapper itself only supplies the HOW for the two enhancement points below.
 
 This file must stay agent-neutral: no mechanism names, only the two placeholders
@@ -22,7 +22,7 @@ that agent's own facility.
 
 Flat commands:
 
-- `rl overview [selector] [--project X] [-s] [--snoozed] [--archived] [--checkouts] [--recent N] [--source X] [--no-scan] [--json]`
+- `rl overview [selector] [--project X] [-s] [--snoozed] [--kept] [--archived] [--checkouts] [--recent N] [--source X] [--no-scan] [--json]`
   — project rollup by default, `-s` for a flat per-session list, `--snoozed` for
   currently-snoozed sessions, a `selector` (git-project label or cwd path) for a
   single-repo deep-dive.
@@ -47,6 +47,11 @@ Session subcommands (`rl session <sub>`):
 - `rl session snooze ID [--until ISO] [--for N]` — set a session aside; it drops out of
   the default overview until woken.
 - `rl session wake ID` — un-snooze a session.
+- `rl session keep ID [--yes]` — keep a session long-term: it stays live and resumable
+  but leaves the triage inbox for good, even if it sees new activity.
+- `rl session unkeep ID` — undo a keep; the session returns to the inbox.
+- `rl session unarchive ID` — put an archived transcript back where it was so the
+  agent can resume it again.
 - `rl session relocate ID PATH` — re-point a session at a directory it moved to on disk.
 - `rl session archive ID [--summary-file PATH]` — move a finished session's transcript out
   of the live registry; optionally attach a markdown summary.
@@ -64,7 +69,25 @@ four skills, but part of the same CLI surface: `rl mem refresh`, `rl mem prune
 [--delete]`, `rl mem triage`, `rl mem overview`, `rl mem mark reviewed|cleaned`.
 
 Data subcommands (`rl data <sub>`): `rl data export ID [--out PATH]`, `rl data tokens
-[--days N] [--json]`, `rl data migrate [old_dir]`.
+[--days N] [--archived] [--json]`, `rl data migrate [old_dir]`.
+
+Usage subcommands (`rl usage`) — read-only token accounting across every harness, used by
+the `usage` skill:
+
+- `rl usage [--source X] [--days N] [--since D] [--until D] [--all] [--archived] [--by day|project|session|model|source] [--breakdown] [--limit N] [--merge DIR] [--json]`
+  — token totals, ranked by the chosen grouping. `--archived` also counts sessions
+  `rl session archive` moved out of the live transcript directories.
+- `rl usage session ID [--json]` — one session's turns, token split, cache hit rate, top
+  turns, and context growth. An ambiguous id prefix is refused, not merged.
+- `rl usage windows [--json]` — Codex's 5h/weekly subscription consumption. Only current
+  snapshots are reported; an expired one is named as having none, never shown as live.
+  Claude does not persist its windows to disk, so it is always reported as unavailable.
+- `rl usage export [--out PATH]` — write this machine's records for `--merge` on another.
+- `rl data tokens` is the Claude-only alias of `rl usage`.
+
+Cost is never invented. JSON `total_cost` is `null` when nothing in scope is priced, and
+`cost_partial: true` marks a scope that mixes priced records (Claude, Pi, OpenCode) with
+unpriced ones (Codex); a partial figure is a floor, not the total.
 
 ## Strategic ordering
 
@@ -90,6 +113,63 @@ Project <i>/<N> · <done>/<total> triaged · <H> harvested
 
 Example: `Project 3/12 · 47/210 triaged · 12 harvested`. Update it after every project,
 not just at the end of the run.
+
+## Opening, baseline, closeout
+
+Bracket every run that changes state, so the user knows what is about to happen, and
+afterwards can tell whether anything moved.
+
+**Open by saying what this run will do.** Before the first command, give a short plan in
+the user's terms: the steps, what will actually be changed on disk or in the registry,
+what needs their decisions, and roughly how big the job is. Two or three lines — the
+point is that nobody is surprised by a delete, and nobody has to guess how long this is.
+
+**Then snapshot the baseline, before touching anything.** One scan, recorded for later:
+
+```
+rl overview --json      # live_count, unclassified, spread_projects, blocked, stale, kept
+rl triage --json        # length = the inbox you are about to work
+```
+
+**At the end, report the delta, not the end state.** A short before → after table over
+those same numbers, plus what the run actually did and what it cost:
+
+```
+                  before   after
+live threads         261     249
+unclassified         223     211
+triage inbox         116      92
+kept                   0       3
+```
+
+Then, in this order:
+1. **What changed** — deleted/pruned (with disk reclaimed), classified, harvested,
+   kept, snoozed.
+2. **What needs the user** — sessions that came back `blocked`, and anything a decision
+   is waiting on. Name them; this is the part worth their attention.
+3. **What is left** — how much of the backlog is still untouched, so the number is not a
+   surprise later.
+
+**Always end with a concrete next step.** Never stop on a bare summary. `[SELECT]` a
+short list of what to do now, with a recommendation first — e.g. keep going on the next
+project batch, run `cleanup` for the full backlog, resume a specific blocked session, or
+stop here. If the user picks an action, do it; the run is not over until they have chosen.
+
+## Leaving the triage inbox
+
+A session leaves the inbox in one of three ways, and they differ **only** in what brings
+it back. Pick by asking the user what should happen next, not by how finished it looks:
+
+| choice | command | comes back when |
+|---|---|---|
+| open | `rl session set …`, then `rl session mark reviewed ID` | the session gets **new activity** |
+| snooze | `rl session snooze ID --for N` | **N days** pass (it auto-wakes) |
+| keep | `rl session keep ID` | **never** — only `rl session unkeep`, or `rl overview --kept` to look |
+
+Use **open** for "still going, ping me when it moves", **snooze** for "not now, ask me
+again on a date", and **keep** for "I want this thread around indefinitely; stop asking".
+Kept sessions stay live and resumable and still show in `rl overview` — keep silences
+triage only, and never auto-expires.
 
 ## Harvest sub-protocol
 

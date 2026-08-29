@@ -15,6 +15,16 @@ or directly: `uv tool install .`. Either way this puts `rl` on `PATH` as a real
 console command — run it as `rl <command>` from anywhere, not `./rl`. To run
 from a source checkout without installing, use `uv run rl <command>`.
 
+**Working on ringleader itself?** Use `just install-editable` instead. A normal install
+copies the source, so the global `rl` silently falls behind the checkout until you
+reinstall; an editable one tracks the working tree, so `rl` is always what you last
+edited — and `rl skills` resolves to the repo's own `.agents/skills/`.
+
+All three install recipes finish with `rl skills update --yes`, so if you've wired the
+skills into your agents they stay in sync with the repo (new skills linked, removed ones
+cleaned up). If you haven't, it's a no-op — `update` never opts an agent in on its own;
+that's what `rl skills install` is for.
+
 State (the registry and `archive/`) lives under `~/.local/share/ringleader/`
 (or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
 runs `rl data migrate` first to move any pre-existing repo-root `registry.json` /
@@ -22,8 +32,9 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 
 ## Skills
 
-`.agents/skills/` ships four agent skills that drive `rl` instead of raw commands —
-`ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`:
+`.agents/skills/` ships five agent skills that drive `rl` instead of raw commands —
+`ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
+`ringleader-usage`:
 
 - **`ringleader-overview`** — the morning read: what's in flight, what's stale and
   awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
@@ -36,6 +47,9 @@ runs `rl data migrate` first to move any pre-existing repo-root `registry.json` 
 - **`ringleader-cleanup`** — the same flow as triage over the *entire* backlog instead of a
   recent window; resumable across runs, since the registry records what's already been
   triaged.
+- **`ringleader-usage`** — explain where an agent session's tokens went and how to spend
+  fewer: survey usage, drill into heavy sessions, read the transcript around the expensive
+  turns, and give concrete advice. Read-only.
 
 Each is an agent-neutral `SKILL.md` plus a bundled `references/playbook.md` (synced from
 the canonical `.agents/skills/PLAYBOOK.md`), so they read natively in Claude Code, Codex,
@@ -83,9 +97,9 @@ Three tabs, cycled with `tab`/`shift+tab`: **inbox** → **selected** → **harv
 ### `rl roundup [--yes] [--registry <path>]`
 
 A combined maintenance verb: **refresh** (scan + reconcile), **prune** (delete tiny +
-stale sessions), then **enrich** (LLM-classify the newly-pending sessions), then
-records `lastRoundupAt`. Unlike `rl prune`, a bare `rl roundup` deletes rather than
-previews. `rl inbox` runs this automatically on entry when stale; it's also a
+stale sessions, plus purge archives past `archive.retention_days`), then **enrich**
+(LLM-classify the newly-pending sessions), then records `lastRoundupAt`. Unlike
+`rl prune`, a bare `rl roundup` deletes rather than previews. `rl inbox` runs this automatically on entry when stale; it's also a
 standalone command. `--yes` is accepted (the inbox passes it after its own
 confirm prompt) but is currently a no-op — `rl roundup` itself never prompts. If no
 model is configured, the enrich step is a no-op and refresh + prune still run.
@@ -127,6 +141,36 @@ For the memory-review inbox instead of the session inbox, use `rl mem triage`
 Deletes tiny + stale sessions. Preview by default; pass `--delete` to
 actually delete. `--project` scopes the prune to one repo/dir selector.
 
+When `archive.retention_days` (see `rl config`) is greater than 0, prune also
+purges **archived** sessions older than that cutoff — deleting their files from
+`archive/` and moving their record from `archived` to `deleted` as `purged`. Same preview/confirm/`--delete`
+contract; the cutoff is measured from when each session was archived. With the
+default of 0, archives are kept forever.
+
+### `rl usage [--source S] [--days N] [--by day|project|session|model|source] [--breakdown] [--archived] [--json]`
+
+Token usage across Claude Code, Codex, OpenCode, and Pi, read from local
+transcripts. Defaults to the trailing 7 days, grouped by project. `--breakdown`
+adds the input/output/cache-read/cache-write/reasoning split. `--archived` also
+counts the Claude transcripts `rl session archive` moved out of
+`~/.claude/projects`. Tokens are the primary unit; a cost column appears only
+where cost is known (on disk for OpenCode/Pi, list-price estimate for Claude).
+Codex publishes no prices, so a scope mixing it with a priced source reports a
+floor, flagged `cost_partial` in JSON and `(partial: …)` in text; a scope with
+nothing priced reports `null`, never `0`.
+
+- `rl usage session <id>` — where one session's tokens went: turn count, the full
+  split, cache hit rate, top turns, and context growth. An id prefix matching
+  several sessions is refused rather than silently merged.
+- `rl usage windows` — Codex 5h/weekly subscription windows. Only snapshots whose
+  window has not yet reset are reported as current; an expired one is listed under
+  `codex_expired` in JSON and as "no current snapshot" in text. Claude's windows are
+  not written to disk; use `claude /usage` for those.
+- `rl usage export [--out PATH]` / `rl usage --merge <dir>` — combine usage from
+  several machines (file-based, no sync service).
+
+`rl data tokens` remains as an alias for `rl usage --source claude`.
+
 ### `rl harvests [--json]`
 
 Lists the durable knowledge harvested out of completed sessions (`rl session
@@ -150,11 +194,14 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl session set` | Classify a session (whatItIs/decision/tags). |
 | `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to classifying by hand in the `triage`/`cleanup` skill flow. No-op if no model is configured. |
 | `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
-| `rl session delete <id>` | Delete one session (files + tombstone). |
+| `rl session delete <id>` | Delete one session (files + a `deleted` record). |
 | `rl session harvest <id> [--dry-run]` | Distill a finished session into a durable markdown harvest (summary/gotchas/decisions/whatChanged) with a configured LLM, store it, and mark the session harvested. `--dry-run` prints the markdown instead of writing it. No-op if no model is configured. |
 | `rl session complete <id>` | Harvest, then archive — the tool-native "I'm done with this session" verb. Does not archive if the harvest was a no-op (no model configured). |
 | `rl session snooze <id>` | Park a session (hide from default views). |
 | `rl session wake <id>` | Un-snooze a session. |
+| `rl session keep <id> [--yes]` | Keep a session long-term: stays live and resumable, but leaves the triage inbox for good (even on new activity). |
+| `rl session unkeep <id>` | Undo a keep; the session returns to the triage inbox. |
+| `rl session unarchive <id>` | Put an archived transcript back where it was so the agent can resume it again. |
 | `rl session name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
 | `rl session relocate <id> <path>` | Re-point a session after moving its dir. |
 | `rl session mark harvested <id> [--paths a,b]` | Mark a session harvested (records docs). |
@@ -169,7 +216,7 @@ Commands are grouped under `rl session`, `rl mem`, `rl data`, and
 | `rl data export <id> [--out <path>]` | Render a session to markdown. |
 | `rl data tokens` | Report token/size stats. |
 | `rl data migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
-| `rl config show` / `rl config set <key> <value>` | Select the AI engine for `enrich` (`ai` = `claude`/`codex`/`llm`, plus `model`, `llm.provider`). Stores no secrets. |
+| `rl config show` / `rl config set <key> <value>` | Select the AI engine for `enrich` (`ai` = `claude`/`codex`/`llm`, plus `model`, `llm.provider`), and set `archive.retention_days` (0 = keep archives forever). Stores no secrets. |
 
 ## AI engine
 
@@ -195,18 +242,23 @@ Codex sessions come from `~/.codex/sessions/**/*.jsonl`, with native names read 
 ## Restoring an archived session
 
 While a session sits in `archive/` it is out of `~/.claude/projects/`, so `claude --resume`
-cannot see it at all. There is no `rl unarchive` — but archiving only *moves* files and
+cannot see it at all. `rl session unarchive <id>` puts it back — archiving only *moves* files and
 edits the registry, so it is reversible by hand. `<slug>` below is the encoded-cwd directory
 name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
+
+This only works **before** the retention cutoff: once `archive.retention_days` is set and
+`rl prune`/`rl roundup` has purged a session, its archived files are deleted and it is gone
+for good (the record moves to `deleted` as `purged`). Any harvested knowledge still survives in
+`harvests/`.
 
 1. Move **both** `archive/<slug>/<id>.jsonl` and its sidecar directory
    `archive/<slug>/<id>/` back into `~/.claude/projects/<slug>/`. Leaving the sidecar
    behind still resumes, but drops the session's `subagents/` and `tool-results/` data.
    Check the live side doesn't already hold either name first — `rl session archive` aborts
    on that collision and the reverse move deserves the same care.
-2. Delete the session's `reason: "archived"` tombstone from `registry.json`. Re-discovery
+2. Delete the session's entry from `archived` in `registry.json`. Re-discovery
    does not depend on this: `reconcile` re-adds any scanned session it has no thread for,
-   tombstone or not. But a stale tombstone keeps the session listed by
+   record or not. But a stale `archived` entry keeps the session listed by
    `rl overview --archived` forever while it is also live.
 3. Re-scan — `rl overview`, or any command run without `--no-scan`.
 4. Optionally delete the leftover `archive/<slug>/<id>.md` harvest summary and the emptied

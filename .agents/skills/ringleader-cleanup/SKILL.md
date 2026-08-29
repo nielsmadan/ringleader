@@ -22,12 +22,16 @@ mechanics and fallbacks.
 ## Flow
 
 Run the `triage` skill's flow (`../ringleader-triage/SKILL.md`) end to end, with its Step
-2 changed to build the inbox from `rl triage --json` — no `--recent` bound.
+3 changed to build the inbox from `rl triage --json` — no `--recent` bound. Its opening
+plan (Step 1) matters more here than anywhere: say up front how big the backlog is, that
+the run is chunked by project, and that it can be stopped and resumed at any point.
 
 Because the backlog can be large, lean hard on `references/playbook.md`'s strategic
 ordering: work **project by project, in bounded chunks**, oldest activity first, and
 report the progress tally after every project rather than trying to clear the whole
-backlog in one sitting.
+backlog in one sitting. Run the closeout (`references/playbook.md` § Opening, baseline,
+closeout) when the user stops, not only when the backlog is empty — a partial run still
+owes them a delta and a next step.
 
 **Resumable by design.** It's fine to stop partway through and pick this back up later —
 `rl session mark cleaned <project>` and the per-session `reviewed`/`harvested` marks are

@@ -12,9 +12,11 @@ pruning them before the GC clock deletes them.
   to a command you are running to "see what it would do."
 - **`rl session archive` takes the session out of the resume picker.** The transcript moves out of
   `~/.claude/projects/` into `archive/`, so `claude --resume` genuinely cannot see it —
-  treat archiving as ending the thread. There is no `rl unarchive`, but nothing is deleted:
-  a human can move the files back by hand (README → "Restoring an archived session"), at
-  the cost of the thread's registry record.
+  treat archiving as ending the thread. `rl session unarchive <id>` puts it back, and nothing is deleted
+  (until `archive.retention_days` elapses — default 0/off): a human can move the files back
+  by hand (README → "Restoring an archived session"), at the cost of the thread's registry
+  record. Once the retention cutoff passes, `rl prune`/`rl roundup` purges the archived files
+  for good.
 - **`rl` is an installed console command, not a repo-local script.** `just install-local`
   (or `uv tool install .`) puts it on `PATH`; from a source checkout without installing,
   use `uv run rl <sub>` instead. Its state — `registry.json` and `archive/` — lives under
@@ -27,13 +29,15 @@ pruning them before the GC clock deletes them.
   grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
   meant to be called by the skills in `.agents/skills/` (session track) or
   `.claude/skills/` (`memory-triage`), not by hand.
-- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Four skills —
-  `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup` —
-  each ship an agent-neutral `SKILL.md` plus a bundled `references/playbook.md`, synced
-  from the canonical `.agents/skills/PLAYBOOK.md` (`just sync-playbook`). They replace the
-  old, single-purpose session skills (sync, overview, name, harvest, triage as separate
-  skills) — those are gone, folded into these four. `memory-triage` is untouched and still
-  lives in `.claude/skills/`. Wire them into an agent with `rl skills install`, which
+- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Five skills —
+  `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
+  `ringleader-usage` — each ship an agent-neutral `SKILL.md` plus a bundled
+  `references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
+  (`just sync-playbook`). The first four replace the old, single-purpose session skills
+  (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
+  these four; `ringleader-usage` is new, explaining where tokens went. `memory-triage` is
+  untouched and still lives in `.claude/skills/`. Wire them into an agent with `rl skills
+  install`, which
   symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi) and
   `~/.claude/skills` (Claude Code); `rl skills status`/`update`/`uninstall` round out the
   surface. The old Claude-only plugin manifest and installer are gone. See
@@ -51,8 +55,12 @@ rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one 
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
+rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
+rl usage session <id>               # where one session's tokens went
+rl usage windows                    # codex 5h/weekly limits (claude's aren't on disk)
 rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
+rl session keep <id>                # keep long-term: out of triage for good (unkeep to undo)
 rl session enrich                   # classify pending sessions via an LLM (vs. by hand in the triage/cleanup skill)
 rl session harvest <id> [--dry-run] # distill a finished session into a harvest via an LLM
 rl session complete <id>            # harvest, then archive (no-op archive if harvest didn't run)

@@ -2,7 +2,13 @@ import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent / ".agents" / "skills"
-SKILLS = ["ringleader-init", "ringleader-triage", "ringleader-cleanup", "ringleader-overview"]
+SKILLS = [
+    "ringleader-init",
+    "ringleader-triage",
+    "ringleader-cleanup",
+    "ringleader-overview",
+    "ringleader-usage",
+]
 
 
 def _body(name):
