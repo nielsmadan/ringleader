@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import shutil
 from datetime import UTC, datetime
+from pathlib import Path
 
-from .. import overview, projects, prune, registry
+from .. import overview, projects, prune, registry, scanner
 from ..config import load_config
 from ..paths import archive_root
 from . import default_registry
@@ -15,6 +17,60 @@ def _now() -> str:
 
 def _label(t: dict) -> str:
     return t.get("title") or t.get("suggestedName") or t["sessionId"][:8]
+
+
+def stub_candidates(reg: dict, sessions) -> list:
+    """Transcripts on disk whose session was already archived — recreated by an agent
+    that wrote after the archive moved the file."""
+    archived = {x["sessionId"] for x in reg.get("archived", [])}
+    return [s for s in sessions if s.session_id in archived]
+
+
+def _project_shim(s) -> dict:
+    """`projects.filter_by_projects` matches against registry-shaped dicts; a stub
+    candidate is a `NormalizedSession` from a live scan, so translate its identity
+    fields into the same shape rather than duplicating `matches()`'s logic."""
+    return {
+        "project": s.cwd,
+        "gitProjectLabel": s.git_project_label,
+        "gitProjectKey": s.git_project_key,
+        "gitRoot": s.git_root,
+    }
+
+
+def _scope_stubs(stubs: list, selectors) -> list:
+    pairs = [(s, _project_shim(s)) for s in stubs]
+    kept = {
+        id(shim) for shim in projects.filter_by_projects([shim for _, shim in pairs], selectors)
+    }
+    return [s for s, shim in pairs if id(shim) in kept]
+
+
+def _find_stubs(reg: dict, selectors=None) -> list:
+    if not reg.get("archived"):
+        return []
+    scanned = scanner.scan(sources=scanner.active_sources(), cached_threads=reg["threads"])
+    stubs = stub_candidates(reg, scanned)
+    if selectors:
+        stubs = _scope_stubs(stubs, selectors)
+    return stubs
+
+
+def _report_stubs(stubs: list) -> None:
+    for s in stubs:
+        print(f"  resurrected {s.session_id[:8]}  {s.file}  (transcript recreated after archive)")
+    print(f"\n{len(stubs)} resurrected archived transcript(s)")
+
+
+def _delete_stubs(stubs: list) -> int:
+    removed = 0
+    for s in stubs:
+        f = Path(s.file)
+        sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+        f.unlink(missing_ok=True)
+        shutil.rmtree(sidecar, ignore_errors=True)
+        removed += 1
+    return removed
 
 
 def cmd_prune(argv: list[str]) -> int:
@@ -59,7 +115,9 @@ def cmd_prune(argv: list[str]) -> int:
     if args.project:
         arch = projects.filter_by_projects(arch, args.project)
 
-    if not cands and not arch:
+    stubs = _find_stubs(reg, args.project)
+
+    if not cands and not arch and not stubs:
         print("nothing to prune")
         return 0
 
@@ -87,6 +145,9 @@ def cmd_prune(argv: list[str]) -> int:
             f"\n{len(arch)} archived session(s) past retention (archive.retention_days={retention})"
         )
 
+    if stubs:
+        _report_stubs(stubs)
+
     if not args.delete:
         print("(preview — re-run with --delete to remove these)")
         return 0
@@ -96,6 +157,8 @@ def cmd_prune(argv: list[str]) -> int:
         parts.append(f"delete {len(cands)} sessions ({overview._human_size(total)})")
     if arch:
         parts.append(f"purge {len(arch)} archived")
+    if stubs:
+        parts.append(f"remove {len(stubs)} resurrected archived transcript(s)")
     try:
         resp = input(f"Proceed to {' and '.join(parts)}? [y/N] ").strip().lower()
     except EOFError:
@@ -106,7 +169,11 @@ def cmd_prune(argv: list[str]) -> int:
 
     deleted = prune.delete_sessions(reg, cands, now)
     purged = prune.purge_archived(reg, arch, now, archive_root_path=str(archive_root()))
+    removed_stubs = _delete_stubs(stubs)
     skipped = len(cands) - deleted
     registry.save_registry(args.registry, reg)
-    print(f"deleted {deleted} sessions, skipped {skipped}, purged {purged} archived")
+    print(
+        f"deleted {deleted} sessions, skipped {skipped}, purged {purged} archived, "
+        f"removed {removed_stubs} resurrected"
+    )
     return 0

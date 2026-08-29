@@ -187,11 +187,16 @@ def _key(rec: dict) -> tuple:
 def reconcile(reg: dict, scanned, now_iso: str) -> dict:
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
+    # an agent that writes after we archived its transcript recreates the file;
+    # re-registering it would undo the archive
+    archived_ids = {x["sessionId"] for x in reg.get("archived", [])}
     seen = set()
     threads = []
 
     for md in scanned_dicts:
         k = (md["source"], md["session_id"])
+        if md["session_id"] in archived_ids and by_id.get(k) is None:
+            continue
         seen.add(k)
         existing = by_id.get(k)
         if existing is not None:

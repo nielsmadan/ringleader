@@ -4,6 +4,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from ringleader.commands import prune
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -14,6 +15,10 @@ _OLD_ARCHIVE = "2026-01-01T00:00:00+00:00"  # far past any retention against rea
 def _isolate_state(tmp_path, monkeypatch):
     # cmd_prune reads config via load_config(); pin XDG so no test touches the real store.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    # stub detection scans installed sources; point both at empty dirs so no test
+    # touches the real ~/.claude/projects or ~/.codex/sessions on this machine.
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "no-claude-projects"))
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "no-codex-sessions"))
 
 
 def _thread(  # noqa: PLR0913 -- test data-builder helper, one arg per fixture field
@@ -300,3 +305,108 @@ def test_archive_project_scope_limits_purge(tmp_path):
     saved = json.loads(reg.read_text())
     assert [d["sessionId"] for d in saved["deleted"]] == ["arch-a"]  # purged out of the archive
     assert [a["sessionId"] for a in saved["archived"]] == ["arch-b"]  # other project untouched
+
+
+# --- resurrected stub (transcript recreated after archiving) ---
+
+
+def test_prune_lists_a_resurrected_archived_transcript(tmp_path, monkeypatch, capsys):
+    projects_dir = tmp_path / "projects" / "-w-x"
+    projects_dir.mkdir(parents=True)
+    stub = projects_dir / "s1.jsonl"
+    stub.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [],
+                "deleted": [],
+                "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+            }
+        )
+    )
+
+    assert prune.cmd_prune(["--registry", str(reg)]) == 0
+    assert "s1" in capsys.readouterr().out
+    assert stub.exists()  # preview only
+
+
+def test_prune_delete_removes_a_resurrected_archived_transcript(tmp_path, monkeypatch, capsys):
+    projects_dir = tmp_path / "projects" / "-w-x"
+    projects_dir.mkdir(parents=True)
+    stub = projects_dir / "s1.jsonl"
+    stub.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+
+    # a genuine, unrelated thread that is NOT prune-eligible (recent mtime) — its
+    # continued presence in `threads` after the run shows stub deletion really leaves
+    # `threads` alone, rather than the assertion being trivially true on an empty list.
+    live_thread = _thread(tmp_path, "live", size_bytes=100, mtime="2026-08-29T00:00:00+00:00")
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [live_thread],
+                "deleted": [],
+                "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+            }
+        )
+    )
+
+    assert prune.cmd_prune(["--registry", str(reg), "--delete"]) == 0
+    out = capsys.readouterr().out
+    assert "removed 1 resurrected" in out
+    assert not stub.exists()  # the stray recreated file is gone
+    data = json.loads(reg.read_text())
+    assert [t["sessionId"] for t in data["threads"]] == ["live"]  # unrelated thread untouched
+    # the real archived copy is a separate concern — the archive record is untouched
+    assert [a["sessionId"] for a in data["archived"]] == ["s1"]
+
+
+def test_prune_scopes_resurrected_stubs_by_project(tmp_path, monkeypatch, capsys):
+    proj_a = tmp_path / "projects" / "-w-a"
+    proj_b = tmp_path / "projects" / "-w-b"
+    proj_a.mkdir(parents=True)
+    proj_b.mkdir(parents=True)
+    stub_a = proj_a / "sa.jsonl"
+    stub_b = proj_b / "sb.jsonl"
+    stub_a.write_text(
+        '{"cwd":"/w/a","gitBranch":"main"}\n{"type":"user","message":{"content":"hi"}}\n'
+    )
+    stub_b.write_text(
+        '{"cwd":"/w/b","gitBranch":"main"}\n{"type":"user","message":{"content":"hi"}}\n'
+    )
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [],
+                "deleted": [],
+                "archived": [
+                    {"sessionId": "sa", "archivedAt": "2026-08-28T09:00:00+00:00"},
+                    {"sessionId": "sb", "archivedAt": "2026-08-28T09:00:00+00:00"},
+                ],
+            }
+        )
+    )
+
+    # preview scoped to project "a" only reports sa
+    assert prune.cmd_prune(["--registry", str(reg), "--project", "/w/a"]) == 0
+    out = capsys.readouterr().out
+    assert "sa" in out
+    assert "sb" not in out
+
+    # --delete scoped to project "a" must not touch project "b"'s stub
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    assert prune.cmd_prune(["--registry", str(reg), "--project", "/w/a", "--delete"]) == 0
+    assert not stub_a.exists()
+    assert stub_b.exists()  # other project's resurrected stub untouched

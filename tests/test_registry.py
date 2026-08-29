@@ -96,6 +96,38 @@ def test_reconcile_preserves_git_project_when_cwd_vanishes():
     assert reg2["threads"][0]["gitProjectKey"] == "proj"
 
 
+def test_reconcile_ignores_a_transcript_whose_id_is_archived():
+    reg = {
+        "version": 2,
+        "threads": [],
+        "deleted": [],
+        "archived": [{"sessionId": "s1", "archivedAt": "2026-08-28T09:00:00+00:00"}],
+    }
+    scanned = [
+        {
+            "source": "claude-code",
+            "session_id": "s1",
+            "file": "/p/s1.jsonl",
+            "mtime": "2026-08-28T10:00:00+00:00",
+            "project": "/w/x",
+        }
+    ]
+    out = reconcile(reg, scanned, "2026-08-28T10:00:00+00:00")
+    assert out["threads"] == []
+    assert len(out["archived"]) == 1
+
+
+def test_reconcile_keeps_a_thread_present_in_both_threads_and_archived():
+    # a session that is somehow tracked in both lists must stay visible — dropping it
+    # would make it vanish from the tool entirely, worse than the bug being fixed
+    reg = empty_registry()
+    reg = reconcile(reg, [_meta("s1", "2026-06-01T00:00:00+00:00")], NOW)
+    reg["archived"] = [{"sessionId": "s1", "archivedAt": "2026-06-02T00:00:00+00:00"}]
+    reg2 = reconcile(reg, [_meta("s1", "2026-06-05T00:00:00+00:00")], NOW)
+    assert len(reg2["threads"]) == 1
+    assert reg2["threads"][0]["sessionId"] == "s1"
+
+
 def test_load_save_roundtrip(tmp_path):
     p = tmp_path / "registry.json"
     assert load_registry(p) == empty_registry()  # missing file → empty
