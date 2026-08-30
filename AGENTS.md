@@ -55,7 +55,12 @@ pruning them before the GC clock deletes them.
   confirms, and **refuses rather than merges** when the destination already holds
   session storage, because merging would rewrite a sessionId — the registry's key.
   `rl workspace retarget` does the last two halves, for a directory you moved by
-  hand, and is what makes `move` re-runnable after a partial failure.
+  hand, and is what makes `move` re-runnable after a partial failure. Build artifacts
+  inside the tree (`.venv`, `node_modules`, `target`) also break on a move, and are
+  **reported, never rewritten** — the preview names each one and the command that
+  regenerates it. The line is who else can fix it: an editable `.pth` under
+  `~/.local/share/uv/tools` lives outside the tree and only this command knows the
+  move happened, while a virtualenv has a package manager that owns it.
 - **`rl config filter` hides sessions by name, it does not delete them.** A pattern is
   an anchored glob where only `*` and `?` are wildcards — brackets stay literal, so
   `[cadet-city]*` catches a bracketed prefix rather than a character class. Matches are

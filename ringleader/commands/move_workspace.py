@@ -12,6 +12,15 @@ Three things have to change together, and they are owned by three different plac
 `move` does all three. `retarget` does the last two, for when the directory was
 already moved by hand — which is also what makes `move` re-runnable, since a failure
 after the directory moved leaves exactly that state.
+
+A fourth kind of state also breaks, and is deliberately NOT repaired here: build
+artifacts inside the tree that bake in an absolute path (`.venv`, `node_modules`,
+`target`). Those are reported, never rewritten. The dividing line is who else can
+fix it — an editable `.pth` under `~/.local/share/uv/tools` lives outside the moved
+tree and nothing but this command knows the move happened, whereas a virtualenv is
+derived state whose own package manager regenerates it correctly. Rewriting the
+paths inside build artifacts would mean tracking every one of those formats forever,
+and a subtly wrong rewrite leaves something that half-works.
 """
 
 from __future__ import annotations
@@ -197,6 +206,63 @@ def editable_installs(old: str) -> list[Path]:
     return found
 
 
+# (directory, sibling file identifying the ecosystem, command that regenerates it).
+# Ordered: the first entry whose directory matches and whose sibling exists wins, so
+# each name ends with a `None` fallback for an unrecognised toolchain.
+DERIVED_STATE = (
+    (".venv", "uv.lock", "uv sync --reinstall"),
+    (".venv", "pyproject.toml", "uv sync --reinstall"),
+    (".venv", None, "recreate the virtualenv"),
+    ("node_modules", "pnpm-lock.yaml", "pnpm install --force"),
+    ("node_modules", "yarn.lock", "yarn install --force"),
+    ("node_modules", None, "npm ci"),
+    ("target", "Cargo.toml", "cargo clean"),
+    (".build", "Package.swift", "swift build"),
+)
+
+# never descended into: the artifacts themselves are large, and .git is irrelevant here
+_NO_DESCENT = {".git", ".venv", "node_modules", "target", ".build"}
+
+
+def _search_roots(root: Path, max_depth: int):
+    """`root` and its subdirectories down to `max_depth`, skipping the artifact
+    directories themselves — a monorepo keeps its package builds one or two levels
+    down, and walking the whole tree to find them is not worth the stat calls."""
+    level = [root]
+    for _ in range(max_depth + 1):
+        yield from level
+        nxt = []
+        for d in level:
+            try:
+                entries = list(d.iterdir())
+            except OSError:
+                continue
+            nxt.extend(
+                c
+                for c in entries
+                if c.is_dir() and not c.is_symlink() and c.name not in _NO_DESCENT
+            )
+        level = nxt
+
+
+def derived_state(root: str, *, max_depth: int = 2) -> list[tuple[Path, str]]:
+    """Build artifacts under `root` that bake in an absolute path, each with the
+    command that regenerates it. Reported to the user, never rewritten — see the
+    module docstring for why this side of the line is not ours to repair."""
+    found = []
+    for parent in _search_roots(Path(root), max_depth):
+        matched: set[str] = set()
+        for name, sibling, command in DERIVED_STATE:
+            path = parent / name
+            if name in matched or not path.is_dir():
+                continue
+            if sibling is not None and not (parent / sibling).exists():
+                continue
+            matched.add(name)
+            found.append((path, command))
+    return found
+
+
 def repoint_editables(pths: list[Path], old: str, new: str) -> list[Path]:
     """Rewrite each `.pth` onto the new location. Returns the ones that failed,
     which the caller must report: a silently unrepaired `.pth` leaves a working
@@ -246,6 +312,10 @@ def _describe(plan: _Plan, *, move_files: bool) -> None:
     if move_files:
         for pth in editable_installs(plan.old):
             print(f"  editable  {pth.name} will be repointed at the new location")
+    tree = plan.old if move_files else plan.new
+    for path, command in derived_state(tree):
+        rel = path.relative_to(tree)
+        print(f"  derived   {rel} keeps the old path — regenerate it with `{command}`")
 
 
 def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[str]]:

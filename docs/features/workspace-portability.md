@@ -31,6 +31,14 @@ If the destination already holds session storage, the move **refuses**. Merging 
 rewriting a session id — the registry's primary key — and a half-merged store cannot be safely
 undone. `--allow-empty` covers the opposite case: proceeding when no sessions match.
 
+## Build artifacts are reported, not rewritten
+
+A move invalidates anything inside the tree that baked in the old absolute path — `.venv`,
+`node_modules`, `target`. The preview names each one and the command that regenerates it, and
+that is all it does. The line is who else can fix it: an editable `.pth` under
+`~/.local/share/uv/tools` lives *outside* the tree and only this command knows the move
+happened, so it is repointed; a virtualenv has a package manager that owns it.
+
 ## Re-runnable after a partial failure
 
 `retarget` is exactly the last two halves of `move`. If a move fails after relocating the

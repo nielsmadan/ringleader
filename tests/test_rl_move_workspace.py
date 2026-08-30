@@ -346,3 +346,70 @@ def test_a_thread_without_a_git_root_is_left_alone():
     t = {}
     move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
     assert "gitRoot" not in t
+
+
+def _tree(tmp_path, *paths: str):
+    """Build a tree from `dir/` and `file` entries, returning its root."""
+    root = tmp_path / "tree"
+    for spec in paths:
+        target = root / spec.rstrip("/")
+        if spec.endswith("/"):
+            target.mkdir(parents=True, exist_ok=True)
+        else:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("")
+    return root
+
+
+def _found(root):
+    return {str(p.relative_to(root)): cmd for p, cmd in move_workspace.derived_state(str(root))}
+
+
+def test_a_uv_project_venv_reports_the_sync_command(tmp_path):
+    root = _tree(tmp_path, ".venv/", "uv.lock")
+    assert _found(root) == {".venv": "uv sync --reinstall"}
+
+
+def test_a_venv_without_a_recognised_toolchain_falls_back(tmp_path):
+    root = _tree(tmp_path, ".venv/")
+    assert _found(root) == {".venv": "recreate the virtualenv"}
+
+
+def test_the_lockfile_selects_the_node_package_manager(tmp_path):
+    root = _tree(tmp_path, "node_modules/", "pnpm-lock.yaml")
+    assert _found(root) == {"node_modules": "pnpm install --force"}
+
+
+def test_node_modules_without_a_lockfile_falls_back_to_npm(tmp_path):
+    root = _tree(tmp_path, "node_modules/")
+    assert _found(root) == {"node_modules": "npm ci"}
+
+
+def test_a_target_directory_needs_a_cargo_manifest_to_count(tmp_path):
+    root = _tree(tmp_path, "target/")
+    assert _found(root) == {}
+
+
+def test_a_cargo_target_directory_is_reported(tmp_path):
+    root = _tree(tmp_path, "target/", "Cargo.toml")
+    assert _found(root) == {"target": "cargo clean"}
+
+
+def test_every_artifact_in_one_directory_is_reported(tmp_path):
+    root = _tree(tmp_path, ".venv/", "uv.lock", "node_modules/", "package-lock.json")
+    assert _found(root) == {".venv": "uv sync --reinstall", "node_modules": "npm ci"}
+
+
+def test_a_monorepo_package_two_levels_down_is_found(tmp_path):
+    root = _tree(tmp_path, "apps/web/node_modules/", "apps/web/yarn.lock")
+    assert _found(root) == {"apps/web/node_modules": "yarn install --force"}
+
+
+def test_the_search_stops_below_the_depth_limit(tmp_path):
+    root = _tree(tmp_path, "a/b/c/node_modules/")
+    assert _found(root) == {}
+
+
+def test_artifact_directories_are_not_searched_from_within(tmp_path):
+    root = _tree(tmp_path, "node_modules/nested/.venv/", "node_modules/nested/uv.lock")
+    assert _found(root) == {"node_modules": "npm ci"}

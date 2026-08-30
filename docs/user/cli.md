@@ -133,7 +133,7 @@ Backs the `memory-triage` skill.
 
 | Command | Does |
 |---|---|
-| `rl workspace move <old> <new>` | Move the directory, its session storage, and the registry. Confirms first; **refuses rather than merges** into a destination that already holds session storage. `--dry-run`, `--yes`, `--allow-empty` |
+| `rl workspace move <old> <new>` | Move the directory, its session storage, and the registry. Confirms first; **refuses rather than merges** into a destination that already holds session storage. `--dry-run`, `--yes`, `--allow-empty`. Build artifacts inside the tree are reported, never rewritten. |
 | `rl workspace retarget <old> <new>` | The last two halves, for a directory you already moved by hand. Makes `move` re-runnable after a partial failure. `--dry-run`, `--yes` |
 
 ## `rl config`
