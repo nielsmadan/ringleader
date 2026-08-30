@@ -2,11 +2,14 @@
 default:
     @just --list
 
+# `python -m`, not the console script: a script whose shebang went stale (a moved
+# checkout) is skipped by uv in favour of whatever is on PATH, which then fails with
+# a missing project dependency rather than saying the venv is broken.
 test:
-    @uv run pytest -q
+    @uv run python -m pytest -q
 
 cov:
-    @uv run pytest --cov --cov-report=term-missing -q
+    @uv run python -m pytest --cov --cov-report=term-missing -q
 
 lint:
     @uv run ruff check
@@ -18,11 +21,11 @@ fmt:
 check:
     @uv run ruff check
     @uv run ruff format --check
-    @uv run pytest -q
+    @uv run python -m pytest -q
 
 # Optional; not part of `check`.
 typecheck:
-    @uv run mypy ringleader || true
+    @uv run python -m mypy ringleader || true
 
 # Migrate legacy repo state, then install the global `rl`.
 # --reinstall because the version never changes: without it uv audits the existing
