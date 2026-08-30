@@ -34,6 +34,9 @@ rl inbox               # work the queue in a TUI
 rl doctor              # what's wired, and how aggressive your GC clock is
 ```
 
+The default overview's `total` is the number of sessions still awaiting a triage decision.
+Use `--status all` when you want every matching live session instead.
+
 Then wire the skills into your agent so it can drive all of this for you:
 
 ```sh

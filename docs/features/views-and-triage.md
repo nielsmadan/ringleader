@@ -21,6 +21,10 @@ Project rollup by default, grouped by **git project** — worktrees, clones and 
 one repo collapse into a single row, keyed by normalized remote (or repo root when there is no
 remote). Sessions with no resolvable git project group by cwd.
 
+The default rollup's `total` is the number of sessions still awaiting a triage decision, using
+the same rules as `rl triage`. Projects with reviewed open work remain visible with `total` zero.
+Explicit status views such as `--status all` count all matching sessions instead.
+
 ```sh
 rl overview                    # rollup across every project
 rl overview ringleader         # deep-dive one repo (a git label or a cwd path)

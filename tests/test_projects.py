@@ -119,6 +119,46 @@ def test_project_summary_counts_total_classified_unnamed():
     assert s.unnamed == 1  # classified AND no title → only "a"
 
 
+def test_project_summary_triage_counts_exclude_decided_sessions():
+    mtime = "2026-06-20T00:00:00+00:00"
+    reg = _reg(
+        [
+            dict(_t("pending", status="blocked", title="pending"), mtime=mtime),
+            dict(
+                _t("reviewed", status="unfinished", title="reviewed"),
+                mtime=mtime,
+                reviewedAtMtime=mtime,
+            ),
+            dict(_t("kept", status="active", title="kept"), mtime=mtime, decision="keep"),
+        ]
+    )
+
+    s = project_summary(reg, triage_counts=True)[0]
+
+    assert s.total == 1
+    assert s.classified == 1
+    assert s.needs_attention is True
+
+
+def test_project_summary_triage_counts_keep_reviewed_project_visible_at_zero():
+    mtime = "2026-06-20T00:00:00+00:00"
+    reg = _reg(
+        [
+            dict(
+                _t("reviewed", status="unfinished", title="reviewed"),
+                mtime=mtime,
+                reviewedAtMtime=mtime,
+            )
+        ]
+    )
+
+    s = project_summary(reg, triage_counts=True)[0]
+
+    assert s.total == 0
+    assert s.classified == 0
+    assert s.needs_attention is False
+
+
 def test_project_summary_orders_git_first_then_by_total_desc():
     reg = _reg(
         [

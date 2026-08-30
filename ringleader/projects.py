@@ -37,14 +37,17 @@ class ProjectStat:
     unnamed: int
     checkouts: list[str]  # distinct cwds this repo was worked from, sorted
     cleaned_at: str | None  # ISO of the last session-triage run, or None
-    needs_attention: bool  # never cleaned, or a session changed since the last clean
+    needs_attention: bool  # the project has sessions represented by the default total
     snoozed: int  # snoozed sessions in this group (0 unless include_snoozed)
     mem_entries: int  # memory entries currently tracked for this project
     mem_cleaned_at: str | None  # ISO of the last memory-triage run, or None
 
 
 def project_summary(
-    reg: dict, now_iso: str | None = None, include_snoozed: bool = False
+    reg: dict,
+    now_iso: str | None = None,
+    include_snoozed: bool = False,
+    triage_counts: bool = False,
 ) -> list[ProjectStat]:
     if now_iso is None:
         now_iso = datetime.now(UTC).isoformat()
@@ -74,15 +77,16 @@ def project_summary(
                 "snoozed": 0,
             }
             groups[key] = g
-        g["total"] += 1
         if snoozed:
             g["snoozed"] += 1
         if t.get("project"):
             g["checkouts"].add(t["project"])
-        if t.get("status", "unclassified") != "unclassified":
-            g["classified"] += 1
-            if not t.get("title"):
-                g["unnamed"] += 1
+        if not triage_counts or overview.in_triage_inbox(t, now_iso):
+            g["total"] += 1
+            if t.get("status", "unclassified") != "unclassified":
+                g["classified"] += 1
+                if not t.get("title"):
+                    g["unnamed"] += 1
         ca = g["cleaned_at"]
         # snoozed and kept sessions are deliberately set aside — don't let them raise the flag
         if (
@@ -104,7 +108,11 @@ def project_summary(
             unnamed=g["unnamed"],
             checkouts=sorted(g["checkouts"]),
             cleaned_at=g["cleaned_at"],
-            needs_attention=(g["cleaned_at"] is None or g["fresh_since_clean"]),
+            needs_attention=(
+                g["total"] > 0
+                if triage_counts
+                else g["cleaned_at"] is None or g["fresh_since_clean"]
+            ),
             snoozed=g["snoozed"],
             mem_entries=mem_counts.get(k, 0),
             mem_cleaned_at=mem_cleaned.get(k),

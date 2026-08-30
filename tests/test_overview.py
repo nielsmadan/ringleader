@@ -370,6 +370,31 @@ def test_render_rollup_lists_projects_and_count():
     assert "1 projects/dirs" in out
 
 
+def test_render_rollup_total_matches_triage_inbox():
+    pending = _t("pending", status="blocked")
+    reviewed = _t("reviewed", status="unfinished", reviewedAtMtime="2026-07-01T00:00:00+00:00")
+    kept = _t("kept", status="active", decision="keep")
+    reg = {"threads": [pending, reviewed, kept], "projectsCleanedAt": {}}
+
+    out = render_rollup(reg, NOW)
+    row = next(line for line in out.splitlines() if line.startswith("repo"))
+
+    assert row.split()[1] == "1"
+    assert "⚠" in row
+
+
+def test_render_rollup_status_all_counts_every_session():
+    pending = _t("pending", status="blocked")
+    reviewed = _t("reviewed", status="unfinished", reviewedAtMtime="2026-07-01T00:00:00+00:00")
+    kept = _t("kept", status="active", decision="keep")
+    reg = {"threads": [pending, reviewed, kept], "projectsCleanedAt": {}}
+
+    out = render_rollup(reg, NOW, selection=StatusSelection.all())
+    row = next(line for line in out.splitlines() if line.startswith("repo"))
+
+    assert row.split()[1] == "3"
+
+
 def _rollup_reg(mem_entries=None, mem_cleaned=None):
     return {
         "threads": [

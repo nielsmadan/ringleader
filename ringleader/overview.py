@@ -231,6 +231,15 @@ def snooze_active(thread: dict, now_iso: str) -> bool:
     return until is None or now_iso < until
 
 
+def in_triage_inbox(thread: dict, now_iso: str) -> bool:
+    if snooze_active(thread, now_iso):
+        return False
+    if thread.get("decision") in ("harvested", "keep"):
+        return False
+    reviewed = thread.get("reviewedAtMtime")
+    return reviewed is None or reviewed != thread.get("mtime")
+
+
 def triage_inbox(threads, now_iso: str) -> list[dict]:
     """Sessions awaiting a decision: not parked, not harvested, not kept, and not
     reviewed at their current state.
@@ -239,16 +248,7 @@ def triage_inbox(threads, now_iso: str) -> list[dict]:
     snoozed returns when its wake date passes, reviewed returns when the file changes
     (reviewedAtMtime no longer matches mtime), and kept never returns until
     `rl session unkeep`. Archived/deleted sessions are already gone from threads."""
-    out = []
-    for t in threads:
-        if snooze_active(t, now_iso):
-            continue
-        if t.get("decision") in ("harvested", "keep"):
-            continue
-        if t.get("reviewedAtMtime") is not None and t.get("reviewedAtMtime") == t.get("mtime"):
-            continue
-        out.append(t)
-    return out
+    return [t for t in threads if in_triage_inbox(t, now_iso)]
 
 
 def triage_count(threads, now_iso: str) -> int:
@@ -427,7 +427,12 @@ def render_rollup(
     scoped = dict(reg)
     scoped["threads"] = filter_by_status(reg["threads"], now_iso, selection)
     include_snoozed = selection.mode is not StatusMode.DEFAULT
-    stats = projects.project_summary(scoped, now_iso, include_snoozed=include_snoozed)
+    stats = projects.project_summary(
+        scoped,
+        now_iso,
+        include_snoozed=include_snoozed,
+        triage_counts=selection.mode is StatusMode.DEFAULT,
+    )
     lines = [
         f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
         f"{'chk':>4} {'cleaned':>9} {'mem':>9}"

@@ -47,6 +47,9 @@ rl
 `unclassified`, or `all`; it is repeatable (OR). `-a`/`--all` is a legacy alias for
 `--status all`.
 
+In the default project rollup, `total` matches the `rl triage` count for each project. An
+explicit status view counts every matching session instead.
+
 ## Setup
 
 `rl install <noun>`, `rl update <noun>`, `rl uninstall <noun>`. Bare `rl install` does `all`.
