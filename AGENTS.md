@@ -107,4 +107,5 @@ A `<selector>` is a git-project label (`juggler`) or a cwd path — not a sessio
 `docs/overview.md` maps the docs tree. `docs/features/` is what each feature does,
 `docs/tech/` is how it's built (start at their `overview.md`), `docs/decisions/` holds the
 ADRs, and `docs/reference/` records how the **external** agent CLIs behave. `README.md` and
-`docs/user/cli.md` document the command surface including flags.
+`docs/user/cli.md` document the command surface including flags. `docs/roadmap.md` records
+explored directions that are explicitly *not* current behavior.
