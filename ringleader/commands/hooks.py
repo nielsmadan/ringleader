@@ -413,6 +413,7 @@ def cmd_status(argv: list[str]) -> int:
         link = pi_dir / _pi_extension().name
         print(f"pi: {link}")
         print(f"  status: {_pi_link_state(link)}")
+        print("  note: no Pi source — archiving happens at the next roundup")
 
     if _opencode_detected(home):
         any_agent = True

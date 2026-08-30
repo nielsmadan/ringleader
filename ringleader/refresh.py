@@ -22,6 +22,7 @@ def auto_refresh(  # noqa: PLR0913
     now_iso,
     *,
     tail=30,
+    claude_projects_dir=None,
     projects_root=None,
     git_resolver=None,
     sources=None,
@@ -30,11 +31,15 @@ def auto_refresh(  # noqa: PLR0913
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. This is the cheap, pure-code refresh the read commands run so
     their counts are never stale; classification/naming stays a separate agentic step."""
+    if projects_root is not None:
+        if claude_projects_dir is not None:
+            raise ValueError("pass claude_projects_dir, not both")
+        claude_projects_dir = projects_root
     reg = registry.load_registry(registry_path)
     before = {t["sessionId"] for t in reg["threads"]}
     if sources is None:
-        if projects_root is not None:
-            sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=projects_root)]
+        if claude_projects_dir is not None:
+            sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
         else:
             sources = scanner.active_sources()
     scanned = scanner.scan(
