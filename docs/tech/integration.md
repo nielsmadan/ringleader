@@ -74,9 +74,16 @@ before it writes.
 ### Which session am I in?
 
 `session_env.py` answers that from the **live process**, not from disk: `PROBES` maps a source
-name to the environment variable that agent exports (`claude-code` →
+name to the environment variable that agent exports (`codex` → `CODEX_THREAD_ID`,
+`pi` → `PI_SESSION_ID`, `opencode` → `OPENCODE_SESSION_ID`, `claude-code` →
 `CLAUDE_CODE_SESSION_ID`). `current_session()` returns `(source, session_id)` or `None`, and
-backs every `--current` flag plus `rl session whoami`.
+backs every `--current` flag plus `rl session whoami`. Codex also checks
+`CODEX_SESSION_ID` as a fallback (THREAD_ID names the child subagent, SESSION_ID
+the parent). `PROBES` is ordered so an inner agent's var wins if a shell
+inherits an outer agent's env (Codex/Pi/OpenCode before Claude Code). OpenCode
+and Pi sessions are not yet in the registry — they lack a `Source`
+implementation (`scanner.py:16`) — so `--current` resolves their id but
+`sweep` finds nothing.
 
 ## Key entry points
 
@@ -89,9 +96,9 @@ backs every `--current` flag plus `rl session whoami`.
 
 ## Gotchas
 
-- **`PROBES` is verified for Claude Code only.** Running `rl session whoami` inside another agent
-  is how the remaining variables get identified; until then `--current` works only under Claude
-  Code.
+- **Codex is the only non-Claude agent whose sessions are fully in the registry.** For
+  OpenCode and Pi, `--current` resolves the session id but `sweep` still finds nothing —
+  they have no `Source` (`sources/claude_code.py`, `sources/codex.py` are the only two).
 - **Symlinked skills mean repo edits are live** in every wired agent immediately. Convenient
   while iterating, surprising if you forget.
 - **Uninstall is ownership-scoped**, by symlink target and by command path. A hand-written hook
