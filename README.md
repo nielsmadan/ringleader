@@ -1,9 +1,11 @@
 # ringleader
 
-Curates the **dormant** Claude Code sessions sitting on disk
-(`~/.claude/projects/*.jsonl`) — naming them, classifying what state they're
-in, surfacing what's still in-flight vs. abandoned, and pruning the rest
-before the GC clock silently deletes it.
+Curates the **dormant** agent sessions sitting on disk — naming them, classifying what state
+they're in, surfacing what's still in-flight vs. abandoned, harvesting what they taught you, and
+pruning the rest before the GC clock silently deletes it.
+
+Reads Claude Code and Codex sessions; reports token usage across Claude Code, Codex, OpenCode
+and Pi.
 
 ## Install
 
@@ -11,422 +13,130 @@ before the GC clock silently deletes it.
 just install-local        # migrates any legacy repo-root state, then `uv tool install .`
 ```
 
-or directly: `uv tool install .`. Either way this puts `rl` on `PATH` as a real
-console command — run it as `rl <command>` from anywhere, not `./rl`. To run
-from a source checkout without installing, use `uv run rl <command>`.
+or directly `uv tool install .`. Either way this puts `rl` on `PATH` as a real console command —
+run it as `rl <command>` from anywhere, not `./rl`. From a source checkout without installing,
+use `uv run rl <command>`.
 
-**Working on ringleader itself?** Use `just install-editable` instead. A normal install
-copies the source, so the global `rl` silently falls behind the checkout until you
-reinstall; an editable one tracks the working tree, so `rl` is always what you last
-edited — and `rl install skills` resolves to the repo's own `.agents/skills/`.
+**Working on ringleader itself?** Use `just install-editable` — a normal install copies the
+source, so the global `rl` silently falls behind your checkout until you reinstall.
 
-All three install recipes finish with `rl update all --yes`, so if you've wired the
-skills (and statusline) into your agents they stay in sync with the repo (new skills
-linked, removed ones cleaned up). If you haven't, it's a no-op — `update` never opts an
-agent in on its own; that's what `rl install skills` is for.
+State (registry, archive, pending harvest queue) lives under `~/.local/share/ringleader/`
+(or `$XDG_DATA_HOME/ringleader`) — not in this repo.
 
-State (the registry, archive, and pending harvest queue) lives under `~/.local/share/ringleader/`
-(or `$XDG_DATA_HOME/ringleader` if set) — not in this repo. `just install-local`
-runs `rl data migrate` first to move any pre-existing repo-root `registry.json` /
-`archive/` into that location.
+→ [Getting started](docs/user/getting-started.md)
+
+## Quick start
+
+```sh
+rl overview            # where is my work spread — a rollup by git project
+rl triage              # what awaits a decision
+rl inbox               # work the queue in a TUI
+rl doctor              # what's wired, and how aggressive your GC clock is
+```
+
+Then wire the skills into your agent so it can drive all of this for you:
+
+```sh
+rl install             # skills, session-end hook, statusline capture
+```
+
+→ [Agent setup](docs/user/agent-setup.md)
+
+## What it does
+
+- **Triage** — every dormant session gets one of five decisions: finish it, keep going, snooze,
+  keep long-term, or delete. `rl overview` groups by git project, collapsing worktrees and
+  clones of the same repo. → [The triage workflow](docs/user/triage-workflow.md)
+- **Harvest** — distill what a session taught into durable markdown before it disappears, then
+  publish it into the repo's living docs. `rl session finish` refuses a session that was never
+  harvested. → [Finishing a session](docs/user/finishing-a-session.md)
+- **Archive, don't delete** — archiving *moves* the transcript out of the agent's store, so
+  `claude --resume` can't see it, and `rl session unarchive` puts it back.
+  → [Archives and retention](docs/user/archives-and-retention.md)
+- **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
+- **Usage** — where your tokens went, across four harnesses, plus 5h/weekly subscription
+  windows. → [Usage analytics](docs/user/usage-analytics.md)
 
 ## Skills
 
-`.agents/skills/` ships six agent skills that drive `rl` instead of raw commands —
-`ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
-`ringleader-usage`, `ringleader-finish`, `ringleader-publish`:
+`.agents/skills/` ships seven agent-neutral skills that drive `rl` instead of raw commands, and
+read natively in Claude Code, Codex, OpenCode and Pi:
 
-- **`ringleader-overview`** — the morning read: what's in flight, what's stale and
-  awaiting triage, what's snoozed, and an offer to jump into triage when the inbox is old.
-- **`ringleader-init`** — onboard a machine: verify `rl` is installed, check
-  session-retention settings (`rl doctor`), and run a small, bounded first triage pass
-  (`--recent 7`).
-- **`ringleader-triage`** — recurring cleanup of the last few days of sessions:
-  delete/finished/open per session, integrate finished work directly into repo docs or leave
-  it in the tool-native pending queue for later publishing, then name and review what's open.
-- **`ringleader-cleanup`** — the same flow as triage over the *entire* backlog instead of a
-  recent window; resumable across runs, since the registry records what's already been
-  triaged.
-- **`ringleader-usage`** — explain where an agent session's tokens went and how to spend
-  fewer: survey usage, drill into heavy sessions, read the transcript around the expensive
-  turns, and give concrete advice. Read-only.
-- **`ringleader-finish`** — finish the session you are currently in: harvest what it
-  learned from its own live context (not a model reading the transcript later) and mark it
-  to be archived once you quit, so it never reaches triage.
-- **`ringleader-publish`** — drain pending tool-native harvests into the living docs of
-  matching repositories from a checkout collection. It skips dirty or ambiguous checkouts,
-  may offer a clone, commits locally only after verified integration, and never pushes.
-
-The six session-track skills share an agent-neutral `SKILL.md` plus a bundled
-`references/playbook.md` (synced from the canonical `.agents/skills/PLAYBOOK.md`).
-`ringleader-publish` owns its focused publishing protocol. All seven read natively in Claude
-Code, Codex, OpenCode, and Pi — no per-agent plugin format required. Wire them into your
-agent(s) with:
-
-```sh
-rl install            # wire up everything ringleader installs (skills, statusline, hooks)
-rl install skills     # or just one
-rl update all         # re-sync what's already wired, after a repo change
-rl uninstall skills   # remove what this tool created
-rl doctor             # what's linked, registered, and how retention is set
-```
-
-`install` and `uninstall` ask for confirmation before touching anything; pass `--yes` to
-skip the prompt.
-
-To publish a collection of completed tool-native harvests from a checkout collection:
-
-```text
-cd ~/wrksp/all
-/ringleader-publish using the /doc skill
-```
-
-### Testing the skills from a zero state
-
-`rl` takes every input from the environment, so a throwaway world needs no support from
-the tool:
-
-```sh
-just sandbox              # link the skills and enter the isolated sandbox shell
-```
-
-The first run builds `.sandbox/` from the frozen fixture; later runs preserve whatever the
-test changed. The command also links the bundled skills, opens an interactive child shell,
-and puts the checkout's `rl` on `PATH`. Start an agent there and invoke the skill — every
-`rl` call lands in `.sandbox/`, and your real sessions, registry and settings are untouched.
-Exit the child shell when finished.
-
-Reset all test progress explicitly before a new scenario:
-
-```sh
-just sandbox-reset
-```
-
-This restores the same transcript bytes, relative ages, settings, and empty registry. Run
-`just sandbox` afterward to enter the fresh sandbox.
-
-The fixture contains 100 verbatim sessions from nine verified public repositories: 70
-Claude Code and 30 Codex, split evenly between named and unnamed sessions. Its workload
-mix is 10 tiny, 41 medium, and 49 long sessions. The selected transcripts were scanned in
-full for client identifiers and credible credential shapes, then their prompts and titles
-were reviewed semantically. They are not generated, shortened, redacted, or promoted from
-subagent rollouts.
-
-The raw transcripts stay out of git under
-`~/.local/share/ringleader/fixtures/init-v1` with private permissions. That is the directory
-to zip and store in Proton Drive. To restore it, extract the archive so
-`~/.local/share/ringleader/fixtures/init-v1/manifest.json` exists, then run
-`just sandbox-reset`. The committed descriptor pins the manifest fingerprint, source
-counts, and byte count, so an incomplete or different extraction is rejected before
-`.sandbox/` is touched.
-
-Each build gives eight sessions ages of 1–6 days, ten genuine tiny sessions ages of 9–50
-days, and 82 older non-tiny sessions ages of 8–90 days. It also sets Claude Code's
-`cleanupPeriodDays` to 7. That keeps init's first seven-day pass bounded while overview and
-cleanup still face a realistic backlog.
-
-See `.agents/skills/SMOKE.md` for the manual checklist used to exercise
-the skills end to end.
-
-## Finishing a session
-
-`ringleader-finish` runs *inside* the session it finishes: it harvests durable knowledge
-from the agent's own live context (`rl session harvest --current --from-file -`), which no
-later triage pass can do since a model reading the transcript afterward never saw what you
-actually decided — then marks it with `rl session finish --current` so it leaves the
-triage inbox immediately.
-
-Marking is not archiving: a live transcript can't be moved while its agent still owns it
-(the next write would just recreate the file), so the actual move happens later, via
-`rl session sweep`. `rl install hooks` wires a session-end hook into Claude Code, Codex
-and Pi that runs the sweep within seconds of quitting. Without the hook installed — or on
-OpenCode, which has no session-end event to hook — the sweep still runs, from `rl roundup`
-and `rl session refresh`, so the session is archived at the next roundup at the latest.
-`rl doctor` reports, per agent, whether the hook is installed.
-
-## Everyday
-
-The front-door commands, most useful first.
-
-### `rl inbox [--registry <path>]`
-
-A terminal UI (inbox-zero flow) for blitzing through dormant sessions. Built on
-Textual, which ships as a dependency — no extra to install.
-
-On entry, if a roundup hasn't run within `roundup_stale_hours` (config, default 8) —
-or never — it offers to run `rl roundup` first; on **y** it runs on a background
-worker and fires a desktop notification when done, then drops you into the inbox.
-
-Three tabs, cycled with `tab`/`shift+tab`: **inbox** → **selected** → **harvesting**.
-
-- **inbox** — undecided live sessions, one row per session (`project: description`).
-  `j`/`k` move the cursor. `h` harvests (distills) the session — an empty digest
-  archives it immediately, a non-empty digest moves it to **harvesting**. `d` stages
-  a delete, applied on exit; `u` undoes the last staged delete. `s` snoozes for a
-  fuzzy duration (`2h`, `3d`, `2w`, `1mo`, `tomorrow`, `next monday`, or a bare
-  integer = days). `enter` selects the session for today, moving it to **selected**.
-  `;` opens a detail view (project, status, whatItIs, last prompt, git branch,
-  condensed transcript) — `h` returns to the list.
-- **selected** — sessions picked for today; `u`/`enter` un-selects (back to **inbox**).
-- **harvesting** — sessions with an un-integrated digest (harvested but not yet
-  archived), shown with a preview of their digest; `a` marks it integrated and
-  archives it.
-
-### `rl roundup [--yes] [--registry <path>]`
-
-A combined maintenance verb: **refresh** (scan + reconcile), **prune** (delete tiny +
-stale sessions, plus purge archives past `archive.retention_days`), then **enrich**
-(LLM-classify the newly-pending sessions), then records `lastRoundupAt`. Unlike
-`rl prune`, a bare `rl roundup` deletes rather than previews. `rl inbox` runs this automatically on entry when stale; it's also a
-standalone command. `--yes` is accepted (the inbox passes it after its own
-confirm prompt) but is currently a no-op — `rl roundup` itself never prompts. If no
-model is configured, the enrich step is a no-op and refresh + prune still run.
-
-### `rl overview [<selector>] [--cwd] [-s] [--status STATUS] [-a] [--archived] [--checkouts] [--no-scan] [--json]`
-
-The view. Auto-refreshes the registry (a disk scan) before rendering, unless
-`--no-scan` is passed. Unchanged transcripts are reused when their source parser
-version and filesystem fingerprint still match; Git identity is refreshed separately.
-Prints a `⚠ N awaiting triage` header when the inbox is non-empty.
-
-- (no args) — project rollup, the default. The `cleaned` column is the last
-  `rl session mark cleaned` (session triage); `mem` is the last
-  `rl mem mark cleaned` (memory triage), showing `—` where the project has no
-  memory entries at all.
-- `-s`, `--sessions` — flat per-session list instead of the rollup.
-- `<selector>` — one-repo deep-dive (a git project label like `juggler`, or a cwd path).
-- `--cwd` — scope every view to sessions whose cwd/git root is the current directory or
-  below it. The default is a grouped session list; combine with normal view flags such as
-  `--sessions`, `--json`, `--snoozed`, or `--kept`. It cannot be combined with a positional
-  selector or `--project`.
-- `--status STATUS` — filter by effective status; repeat it to match any selected status.
-  Accepted values are `active`, `unfinished`, `blocked`, `finished`, `abandoned`,
-  `harvested`, `unclassified`, and `all`. `all` includes every non-archived session,
-  including snoozed and kept sessions.
-- `-a`, `--all` — legacy alias for `--status all`.
-- `--archived` — list archived sessions instead of live ones.
-- `--checkouts` — rollup only: also list each repo's checkout paths.
-- `--no-scan` — skip the auto-scan, report from the registry as-is.
-- `--json` — print the registry-wide rollup as JSON instead of text, or a session
-  array with `--sessions`, `--snoozed`, or `--kept`; normal and `--sessions` views
-  honor `--status`. JSON honors `--cwd` but ignores positional/`--project` selectors and
-  `--archived`.
-
-Examples:
-
-```sh
-rl overview --cwd --status all
-rl overview --cwd --status unfinished --status blocked
-```
-
-For the memory rollup instead of the session rollup, use `rl mem overview`
-(same flags: `[<selector>] [--no-scan]`).
-
-### `rl triage [--project <sel>] [--no-scan] [--json]`
-
-Lists sessions awaiting your decision — not yet reviewed, harvested, or
-parked. Auto-refreshes the registry first, unless `--no-scan`. `--project`
-scopes the inbox to one repo/dir selector (repeatable). `--json` prints the
-inbox as JSON instead of text (honors `-u`/`--unclassified`).
-
-For the memory-review inbox instead of the session inbox, use `rl mem triage`
-(same flags: `[--project <sel>] [--no-scan]`).
-
-### `rl prune [--project <sel>] [--delete]`
-
-Deletes tiny + stale sessions. Preview by default; pass `--delete` to
-actually delete. `--project` scopes the prune to one repo/dir selector.
-
-When `archive.retention_days` (see `rl config`) is greater than 0, prune also
-purges **archived** sessions older than that cutoff — deleting their files from
-`archive/` and moving their record from `archived` to `deleted` as `purged`. Same preview/confirm/`--delete`
-contract; the cutoff is measured from when each session was archived. With the
-default of 0, archives are kept forever.
-
-### `rl usage [--source S] [--days N] [--by day|project|session|model|source] [--breakdown] [--archived] [--json]`
-
-Token usage across Claude Code, Codex, OpenCode, and Pi, read from local
-transcripts. Defaults to the trailing 7 days, grouped by project. `--breakdown`
-adds the input/output/cache-read/cache-write/reasoning split. `--archived` also
-counts the Claude transcripts `rl session archive` moved out of
-`~/.claude/projects`. Tokens are the primary unit; a cost column appears only
-where cost is known (on disk for OpenCode/Pi, list-price estimate for Claude).
-Codex publishes no prices, so a scope mixing it with a priced source reports a
-floor, flagged `cost_partial` in JSON and `(partial: …)` in text; a scope with
-nothing priced reports `null`, never `0`.
-
-- `rl usage session <id>` — where one session's tokens went: turn count, the full
-  split, cache hit rate, top turns, and context growth. An id prefix matching
-  several sessions is refused rather than silently merged.
-- `rl usage windows` — 5h/weekly subscription-window consumption. Codex needs no setup:
-  it persists its rate limits to disk and ringleader reads them directly. Claude needs a
-  one-time `rl install statusline` (see below) — Claude Code (**v2.1.80+, Pro/Max only**)
-  exposes `rate_limits` only through the statusLine hook payload, never to disk on its
-  own, and only after the first API response in a session; `rl install statusline` wires
-  a snippet into your statusLine command that captures it. Each window (5h, weekly) can
-  be independently present or absent. OpenCode and Pi have no subscription-window
-  concept, so they never appear here. In both codex/claude sections, only snapshots
-  whose window has not yet reset are reported as current; an expired one is listed under
-  `codex_expired`/`claude_expired` in JSON and as "no current snapshot" in text.
-
-  Two limitations worth knowing before you rely on this:
-  - **Freshness is bounded by usage.** Claude's numbers are only as fresh as the last
-    statusLine render (capped at a 10-minute TTL) — there's no way to poll Claude Code
-    for a fresh reading on demand. A stale capture reports "no current snapshot", not a
-    stale percentage.
-  - **Multi-account ambiguity.** The statusLine payload carries no account identity. With
-    several Claude accounts on one machine, the capture reflects whichever account
-    rendered the statusLine last, and there's no way to tell which — a reading can be
-    wrong and look completely normal.
-- `rl install statusline [--settings PATH] [--yes]` / `rl uninstall statusline [--settings
-  PATH] [--yes]` — manage the capture snippet in `~/.claude/settings.json` (path
-  resolution: `--settings PATH` → `RINGLEADER_CLAUDE_SETTINGS` → `~/.claude/settings.json`).
-  `install` shows a diff of the change and asks for confirmation (`--yes` skips the
-  prompt), backs up the file to `settings.json.bak` first, and only inserts the snippet
-  into the existing statusLine command — nothing else in the file is touched. Running it
-  again is a no-op ("already installed"); `uninstall` removes exactly what `install`
-  added, restoring the original command. `rl doctor` reports which target is in use,
-  whether the snippet is installed, and whether a current capture exists.
-
-  Both statusLine shapes are supported. If `statusLine.command` is an **inline command**,
-  the snippet goes into that command. If it is a **path to a script** (as the official
-  docs and tools like `claude-pace` recommend), `install` reads the script, splices the
-  snippet in after the line that captures stdin, and backs the script up first — the same
-  diff/confirm/insert-only/reversible contract, applied to the script instead of
-  `settings.json`. If the referenced file does not exist, or neither target has a
-  recognizable stdin capture, `install` refuses rather than guessing and prints the
-  snippet for you to paste yourself, right after the line that reads stdin
-  (e.g. `input=$(cat)`).
-- `rl usage export [--out PATH]` / `rl usage --merge <dir>` — combine usage from
-  several machines (file-based, no sync service).
-
-  Two known limits on the project column. A harness that records no working directory
-  (OpenCode) groups under `(unknown)`. And where a project name is recovered from an
-  encoded directory name rather than a recorded cwd, a directory containing a hyphen
-  cannot be told apart from a nested path — `foo-bar` and `foo/bar` encode identically —
-  so such a project can appear as two rows. Both are reporting artifacts, not
-  double-counted tokens: the totals are right, only the grouping splits.
-
-`rl data tokens` remains as an alias for `rl usage --source claude`.
-
-### `rl harvests [--json]`
-
-Lists the pending, tool-native harvest queue created by `rl session harvest` and
-`rl session complete` — folder path, repository URL, and content for each. `--json`
-prints the full human-facing list (including `content`) as JSON. Queue items live under
-`state_dir()/harvests/`; they remain durable only until verified integration into living
-docs, when the exact handled items are deleted.
-
-`ringleader-publish` uses separate plumbing: `snapshot` reads metadata and exact tokens
-without bodies; `begin` claims an exact set and creates a private bundle and recovery
-receipt; `prepare` records a verified changed or accepted no-change outcome; `consume`
-deletes exactly the handled items; `abandon` safely releases a begun receipt; and `recover`
-lists temporary unresolved receipts. A changed target receives the local commit
-`chore: update docs` only after integration verifies; the skill never pushes.
-
-## Plumbing
-
-Mostly invoked by the `ringleader-*` skills (`overview`, `init`, `triage`, `cleanup`, plus
-the separate `memory-triage` skill for the memory track), not by hand.
-
-Commands are grouped under `rl session`, `rl mem`, `rl data`, and
-`rl config`. `rl <group>` with no subcommand lists that group's verbs.
-
-| Command | Does |
+| Skill | Does |
 |---|---|
-| `rl session refresh [--project <sel>]` | Reconcile + emit sessions to classify. |
-| `rl session set` | Classify a session (whatItIs/decision/tags). |
-| `rl session enrich [--project <sel>] [--limit N]` | Classify pending sessions (status/whatItIs/name) with a configured LLM — a tool-native alternative to classifying by hand in the `triage`/`cleanup` skill flow. No-op if no model is configured. |
-| `rl session archive <id> [--summary-file <md>]` | Move a finished session to `archive/` (out of the resume picker). |
-| `rl session delete <id>` | Delete one session (files + a `deleted` record). |
-| `rl session harvest <id> [--dry-run]` | Distill a finished session into a durable markdown harvest (summary/gotchas/decisions/whatChanged) with a configured LLM, store it, and mark the session harvested. `--dry-run` prints the markdown instead of writing it. No-op if no model is configured. |
-| `rl session harvest --current --from-file <path\|->` | Store agent-authored harvest markdown as-is, skipping the model — what `ringleader-finish` uses from inside the live session. |
-| `rl session complete <id>` | Harvest, then archive — the tool-native "I'm done with this session" verb. Does not archive if the harvest was a no-op (no model configured). |
-| `rl session finish [<id>\|--current] [--force]` | Mark a harvested session `finishOnExit`: leaves triage now, archives once `rl session sweep` finds its transcript quiet. Refuses an unharvested session unless `--force`. Does not archive by itself. |
-| `rl session sweep [--session <id>] [--from-hook] [--current]` | Archive every `finishOnExit` thread whose transcript has stopped changing. Bare form runs from `rl roundup`/`rl session refresh`; `--from-hook` reads a session-end hook payload from stdin (installed by `rl install hooks`) for the seconds-after-exit path. |
-| `rl session whoami` | Print the agent source and session id `rl` resolves for the session it's running inside, or fail if it can't tell. Used by `--current` flags and for debugging. |
-| `rl session snooze <id>` | Park a session (hide from default views). |
-| `rl session wake <id>` | Un-snooze a session. |
-| `rl session keep <id> [--yes]` | Keep a session long-term: stays live and resumable, but leaves the triage inbox for good (even on new activity). |
-| `rl session unkeep <id>` | Undo a keep; the session returns to the triage inbox. |
-| `rl session unarchive <id>` | Put an archived transcript back where it was so the agent can resume it again. |
-| `rl session name [--project <sel>] [--dry-run]` | Apply/refresh session names. |
-| `rl session relocate <id> <path>` | Re-point one session's record. Registry only — does not move session storage. |
-| `rl workspace move <old> <new>` | Move a directory, its session storage, and the registry. |
-| `rl workspace retarget <old> <new>` | Same, when you already moved the directory yourself. |
-| `rl session mark harvested <id> [--paths a,b]` | Mark a session harvested (records docs). |
-| `rl session mark reviewed <id>` | Mark an open session reviewed (skip until it changes). |
-| `rl session mark cleaned <selector>` | Record a project as just-triaged. |
-| `rl mem refresh` | Reconcile + emit memory entries to review. |
-| `rl mem prune` | Delete obsolete-candidate memory entries. |
-| `rl mem triage [--project <sel>] [--no-scan]` | The memory-review inbox. |
-| `rl mem overview [<selector>] [--no-scan]` | Memory rollup (or `<selector>` deep-dive). |
-| `rl mem mark cleaned <selector>` | Record a project's memory as just-triaged. |
-| `rl mem mark reviewed <name>` | Mark a memory entry reviewed. |
-| `rl data export <id> [--out <path>]` | Render a session to markdown. |
-| `rl data tokens` | Report token/size stats. |
-| `rl data migrate` | One-time move of legacy repo-root `registry.json`/`archive/` into `~/.local/share/ringleader/`. Run by `just install-local`; safe to re-run (no-op once state already lives there). |
-| `rl config show` / `rl config set <key> <value>` | Select the AI engine for `enrich` (`ai` = `claude`/`codex`/`llm`, plus `model`, `llm.provider`), and set `archive.retention_days` (0 = keep archives forever). Stores no secrets. |
+| `ringleader-init` | onboard a machine, then run a bounded first triage pass |
+| `ringleader-overview` | the morning read: what's in flight, stale, or snoozed |
+| `ringleader-triage` | recurring cleanup of the last few days |
+| `ringleader-cleanup` | the same over the entire backlog; resumable across runs |
+| `ringleader-finish` | finish the session you're *in*, harvesting from live context |
+| `ringleader-usage` | explain where tokens went and how to spend fewer |
+| `ringleader-publish` | drain pending harvests into the living docs of matching repos |
 
-## AI engine
+`memory-triage` is separate and lives in `.claude/skills/`.
 
-`rl session enrich` classifies sessions by calling a model through a small `Model`
-seam (`ringleader/models/`). By default it **auto-picks the first installed agent CLI**
-(`claude`, then `codex`) and drives it one-shot, reusing that CLI's own auth — so
-ringleader stores **no API keys or secrets**. `rl config set ai <claude|codex|llm>`
-pins a choice. The `llm` engine calls a model provider's API directly (via the
-[`llm`](https://llm.datasette.io/) library, using your own key) instead of an agent
-CLI — it is not a dependency, so `pip install llm` first; `rl config set ai llm` then
-reports the install hint if it's missing. When no engine is available, `enrich`
-is a no-op and classifying sessions by hand — the `triage`/`cleanup` skill flow's
-per-session `[SELECT]` step — remains the way to do it.
+```sh
+rl install skills      # symlink into ~/.agents/skills and ~/.claude/skills
+rl update all          # re-sync after a repo change
+rl uninstall skills    # remove only what this tool created
+```
 
-## Sources
+→ [Agent setup](docs/user/agent-setup.md) · `.agents/skills/SMOKE.md` for the manual checklist
 
-Scanning is behind a `Source` protocol (`ringleader/sources/`): `discover()` lists
-raw session refs cheaply (path + mtime/size, no parse), `parse()` reads one into a
-`NormalizedSession`. Claude Code sessions come from `~/.claude/projects/*.jsonl`;
-Codex sessions come from `~/.codex/sessions/**/*.jsonl`, with native names read from
-`~/.codex/session_index.jsonl`. Both sources support native name writeback.
+## Commands
 
-## Restoring an archived session
+```sh
+rl inbox                            # TUI to blitz dormant sessions inbox-zero style
+rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot
+rl overview [<selector>] [--json]   # the view; project rollup by default
+rl triage [--json]                  # sessions awaiting a decision
+rl prune [--delete]                 # delete tiny + stale sessions
+rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
+rl harvests [--json]                # inbox of harvested knowledge
+rl doctor                           # what's linked, registered, and how retention is set
+rl session <sub>                    # session plumbing: refresh, harvest, finish, archive, ...
+rl mem <sub>                        # memory plumbing
+rl data <sub>                       # export, tokens, migrate
+rl workspace move <old> <new>       # move a checkout without stranding its sessions
+rl config show | set <key> <value>  # the AI engine and retention (stores no secrets)
+```
 
-While a session sits in `archive/` it is out of `~/.claude/projects/`, so `claude --resume`
-cannot see it at all. `rl session unarchive <id>` puts it back — archiving only *moves* files and
-edits the registry, so it is reversible by hand. `<slug>` below is the encoded-cwd directory
-name (e.g. `-Users-you-wrksp-oss-Foo`), identical on both sides.
+A `<selector>` is a git-project label (`ringleader`) or a cwd path — **not** a session id.
 
-This only works **before** the retention cutoff: once `archive.retention_days` is set and
-`rl prune`/`rl roundup` has purged a session, its archived files are deleted and it is gone
-for good (the record moves to `deleted` as `purged`). Pending central queue files survive
-archive purge only until successful publication; afterward the durable knowledge is in the
-living repository docs and the handled queue items are deleted.
+→ [Full CLI reference](docs/user/cli.md)
 
-1. Move **both** `archive/<slug>/<id>.jsonl` and its sidecar directory
-   `archive/<slug>/<id>/` back into `~/.claude/projects/<slug>/`. Leaving the sidecar
-   behind still resumes, but drops the session's `subagents/` and `tool-results/` data.
-   Check the live side doesn't already hold either name first — `rl session archive` aborts
-   on that collision and the reverse move deserves the same care.
-2. Delete the session's entry from `archived` in `registry.json`. **Not optional.**
-   A scan skips any session that still carries an `archived` record — that is what stops
-   an agent from undoing an archive by recreating its transcript — so leaving the record
-   in place means `rl session refresh` never mentions the restored session at all: it is
-   absent from `pending` and uncounted in `total`, and never re-registered. `rl prune`
-   then lists the file you just moved back as a resurrected stub, and `rl prune --delete`
-   unlinks it. Since restoring *moves* the transcript out of `archive/`, that is the only
-   copy.
-3. Re-scan — `rl overview`, or any command run without `--no-scan`.
-4. Optionally delete the leftover `archive/<slug>/<id>.md` harvest summary and the emptied
-   archive directory.
+## The AI engine
 
-Then `cd <project> && claude --resume`. **The thread's registry record does not come back.**
-Archiving pops it, so the session returns as a brand-new unclassified, unnamed thread — its
-name, `whatItIs`, decision, tags, `harvestPath` and reviewed/classified markers are gone.
-Re-run the `triage` or `cleanup` skill (which classifies and names sessions as part of its
-flow) to rebuild them. Both `archive/` and
-`registry.json` live under `~/.local/share/ringleader/`, outside this repo, so none of
-this touches tracked files.
+`rl session enrich` and `rl session harvest` need a model. Ringleader **stores no secrets** — it
+drives an already-installed agent CLI one-shot (`claude`, then `codex`), reusing that CLI's own
+auth. `rl config set ai <claude|codex|llm>` pins a choice; the `llm` engine calls a provider API
+directly with your own key and is not a dependency. With nothing available, both verbs are clean
+no-ops and classifying stays a manual step in the triage skill.
 
-## Selectors
+## Documentation
 
-`<selector>` = a git-project label (e.g. `juggler`) or a cwd path.
+Guides for **using** ringleader live in [`docs/user/`](docs/user/index.md):
+
+- [Getting started](docs/user/getting-started.md) — install, first scan, first triage pass.
+- [Agent setup](docs/user/agent-setup.md) — skills, hooks, statusline, the AI engine, sandbox.
+- [The triage workflow](docs/user/triage-workflow.md) — the recurring loop.
+- [Finishing a session](docs/user/finishing-a-session.md) — harvesting, and why finish ≠ archive.
+- [Archives and retention](docs/user/archives-and-retention.md) — including a manual restore.
+- [Usage analytics](docs/user/usage-analytics.md) — tokens, windows, multi-machine merge.
+- [CLI reference](docs/user/cli.md) — every command at a glance.
+
+Docs for **building** ringleader are in [`docs/overview.md`](docs/overview.md):
+[features/](docs/features/overview.md) (what it does), [tech/](docs/tech/overview.md) (how it's
+built), [decisions/](docs/decisions/overview.md) (ADRs), and
+[reference/](docs/reference/agent-session-management.md) (how the external agent CLIs behave).
+
+## Development
+
+```sh
+just test              # pytest
+just check             # lint + typecheck + tests
+just install-editable  # track the working tree
+just sandbox           # isolated throwaway world for exercising the skills
+just sync-playbook     # re-sync the bundled skill playbooks
+```
+
+See `AGENTS.md` for contributor and agent guidance.

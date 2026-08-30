@@ -1,0 +1,27 @@
+# 0007: Ship agent-neutral skills, not a Claude-only plugin
+
+## Context
+
+The skills started as a Claude Code plugin with a Claude-specific manifest and installer. But
+ringleader reads sessions from Claude Code, Codex, OpenCode and Pi, and its usage analytics
+span all four. A tool that curates every agent's sessions but can only be *driven* from one of
+them is wired backwards.
+
+## Decision
+
+Skills live at `.agents/skills/ringleader-*`, each shipping an agent-neutral `SKILL.md` plus a
+bundled `references/playbook.md` synced from the canonical `.agents/skills/PLAYBOOK.md`
+(`just sync-playbook`). `rl install skills` symlinks them into `~/.agents/skills` (Codex,
+OpenCode, Pi) and `~/.claude/skills` (Claude Code).
+
+The Claude-only plugin manifest and its installer were removed.
+
+## Consequences
+
+- One skill body, four agents; the playbook is written once and synced rather than duplicated.
+- `rl install` / `rl update` / `rl uninstall` / `rl doctor` became the install surface, so
+  wiring is inspectable and reversible.
+- Symlinks mean a repo edit is live in every agent immediately — good for iteration, and the
+  reason `rl doctor` reports what is linked where.
+- The earlier single-purpose skills (sync, overview, name, harvest, triage) were folded into
+  the task-shaped set. See [features/agent-integration.md](../features/agent-integration.md).

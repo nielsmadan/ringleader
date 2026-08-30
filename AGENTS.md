@@ -32,10 +32,11 @@ pruning them before the GC clock deletes them.
   grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
   meant to be called by the skills in `.agents/skills/` (session track) or
   `.claude/skills/` (`memory-triage`), not by hand.
-- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Six skills —
+- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Seven skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
-  `ringleader-usage`, `ringleader-finish` — each ship an agent-neutral `SKILL.md` plus a
-  bundled `references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
+  `ringleader-usage`, `ringleader-finish`, `ringleader-publish` — each ship an
+  agent-neutral `SKILL.md` plus a bundled `references/playbook.md`, synced from
+  the canonical `.agents/skills/PLAYBOOK.md`
   (`just sync-playbook`). The first four replace the old, single-purpose session skills
   (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
   these four; `ringleader-usage` explains where tokens went; `ringleader-finish` finishes
@@ -55,9 +56,10 @@ pruning them before the GC clock deletes them.
   `rl workspace retarget` does the last two halves, for a directory you moved by
   hand, and is what makes `move` re-runnable after a partial failure.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
-  `discover()`/`parse()` protocol; `sources/claude_code.py` (reading
-  `~/.claude/projects/*.jsonl`) is the only implementation today. Registry/overview/triage
-  code talks to `Source`, not to Claude Code transcripts directly.
+  `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
+  hiding, workspace relocation); `claude_code.py` and `codex.py` implement it.
+  Registry/overview/triage code talks to `Source`, never to a transcript format.
+  See `docs/tech/sources.md`.
 
 ## Commands
 
@@ -89,5 +91,7 @@ A `<selector>` is a git-project label (`juggler`) or a cwd path — not a sessio
 
 ## Reference
 
-`README.md` documents the full command surface including flags. `SPEC.md` holds the data
-model. Design docs for individual features are in `docs/specs/`.
+`docs/overview.md` maps the docs tree. `docs/features/` is what each feature does,
+`docs/tech/` is how it's built (start at their `overview.md`), `docs/decisions/` holds the
+ADRs, and `docs/reference/` records how the **external** agent CLIs behave. `README.md` and
+`docs/user/cli.md` document the command surface including flags.
