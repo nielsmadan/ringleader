@@ -21,7 +21,8 @@ pruning them before the GC clock deletes them.
   `rl session sweep` archives it once the transcript is quiet, because moving a live
   transcript is undone by the agent's next write.
 - **`rl` is an installed console command, not a repo-local script.** `just install-local`
-  (or `uv tool install .`) puts it on `PATH`; from a source checkout without installing,
+  (or `uv tool install --reinstall .` — plain `install` keeps stale code, the version
+  never changes) puts it on `PATH`; from a source checkout without installing,
   use `uv run rl <sub>` instead. Its state — `registry.json` and `archive/` — lives under
   `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not in this repo.
   `rl data migrate` (run automatically by `just install-local`) moves any legacy repo-root

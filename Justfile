@@ -25,9 +25,11 @@ typecheck:
     @uv run mypy ringleader || true
 
 # Migrate legacy repo state, then install the global `rl`.
+# --reinstall because the version never changes: without it uv audits the existing
+# install and keeps shipping the old code.
 install-local:
     @uv run rl data migrate
-    @uv tool install .
+    @uv tool install --reinstall --force .
     @rl update all --yes
     @echo "Installed: $(which rl)"
 

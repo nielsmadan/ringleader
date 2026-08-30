@@ -10,12 +10,13 @@ and Pi.
 ## Install
 
 ```sh
-just install-local        # migrates any legacy repo-root state, then `uv tool install .`
+just install-local        # migrates any legacy repo-root state, then reinstalls `rl`
 ```
 
-or directly `uv tool install .`. Either way this puts `rl` on `PATH` as a real console command —
-run it as `rl <command>` from anywhere, not `./rl`. From a source checkout without installing,
-use `uv run rl <command>`.
+or directly `uv tool install --reinstall .` — the `--reinstall` matters, because the version
+never changes, so a plain `uv tool install .` audits the existing install and keeps the old
+code. Either way this puts `rl` on `PATH` as a real console command — run it as `rl <command>`
+from anywhere, not `./rl`. From a source checkout without installing, use `uv run rl <command>`.
 
 **Working on ringleader itself?** Use `just install-editable` — a normal install copies the
 source, so the global `rl` silently falls behind your checkout until you reinstall.
