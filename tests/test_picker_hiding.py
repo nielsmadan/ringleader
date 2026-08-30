@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 from ringleader import prune, scanner
 from ringleader.commands import delete
+from ringleader.sources.base import IndexUpdate
 from ringleader.sources.codex import CodexSource, CodexStateError
 
 NOW = "2026-08-16T00:00:00+00:00"
@@ -64,25 +65,25 @@ def test_hiding_sets_the_archived_flag_codex_resume_filters_on(tmp_path, monkeyp
     home = _codex_home(tmp_path, monkeypatch)
     rollout = _add_thread(home, "sess-1")
 
-    assert CodexSource().hide_from_picker("sess-1", str(rollout)) is True
+    assert CodexSource().hide_from_picker("sess-1", str(rollout)) is IndexUpdate.UPDATED
 
     archived, archived_at = _archived(home, "sess-1")
     assert archived == 1
     assert archived_at > 0
 
 
-def test_hiding_reports_false_when_the_thread_is_already_archived(tmp_path, monkeypatch):
+def test_hiding_an_already_archived_thread_reports_it_was_already_current(tmp_path, monkeypatch):
     home = _codex_home(tmp_path, monkeypatch)
     rollout = _add_thread(home, "sess-1", archived=1)
 
-    assert CodexSource().hide_from_picker("sess-1", str(rollout)) is False
+    assert CodexSource().hide_from_picker("sess-1", str(rollout)) is IndexUpdate.ALREADY_CURRENT
 
 
-def test_hiding_reports_false_for_a_session_codex_has_no_row_for(tmp_path, monkeypatch):
+def test_hiding_reports_no_entry_for_a_session_codex_has_no_row_for(tmp_path, monkeypatch):
     home = _codex_home(tmp_path, monkeypatch)
     _add_thread(home, "sess-1")
 
-    assert CodexSource().hide_from_picker("other", str(home)) is False
+    assert CodexSource().hide_from_picker("other", str(home)) is IndexUpdate.NO_ENTRY
 
 
 def test_hiding_uses_the_newest_state_db_when_codex_has_migrated(tmp_path, monkeypatch):
@@ -117,14 +118,17 @@ def test_hiding_refuses_to_touch_a_thread_the_transcript_does_not_belong_to(tmp_
     _add_thread(home, "parent")
     other = _add_thread(home, "child")
 
-    assert CodexSource().hide_from_picker("parent", str(other)) is False
+    assert CodexSource().hide_from_picker("parent", str(other)) is IndexUpdate.NO_ENTRY
     assert _archived(home, "parent")[0] == 0
 
 
 def test_sources_without_an_index_are_left_alone(tmp_path, monkeypatch):
     _codex_home(tmp_path, monkeypatch)
 
-    assert scanner.hide_from_picker(_thread("sess-1", "/x.jsonl", source="claude-code")) is False
+    assert (
+        scanner.hide_from_picker(_thread("sess-1", "/x.jsonl", source="claude-code"))
+        is IndexUpdate.NO_INDEX
+    )
 
 
 def test_prune_clears_the_picker_entry_before_deleting_the_transcript(tmp_path, monkeypatch):

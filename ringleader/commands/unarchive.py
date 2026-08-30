@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 
 from .. import registry, scanner
+from ..sources.base import IndexUpdate
 from . import default_registry
 
 
@@ -16,7 +17,7 @@ def _archived(reg: dict, session_id: str) -> dict | None:
     return None
 
 
-def restore(reg: dict, ts: dict) -> tuple[str, bool]:
+def restore(reg: dict, ts: dict) -> tuple[str, IndexUpdate]:
     """Put an archived transcript back and clear its archived record.
 
     Ordering is deliberately the reverse of archiving: the agent's picker index still
@@ -25,7 +26,7 @@ def restore(reg: dict, ts: dict) -> tuple[str, bool]:
     first — Codex refuses to archive a session whose rollout is already gone), so don't
     "harmonise" the two.
 
-    Returns (restored path, picker restored). Raises RuntimeError if it can't move."""
+    Returns (restored path, picker outcome). Raises RuntimeError if it can't move."""
     session_id = ts["sessionId"]
     src = Path(ts["archivePath"])
     original = ts.get("originalPath")
@@ -48,6 +49,11 @@ def restore(reg: dict, ts: dict) -> tuple[str, bool]:
 
     thread = ts.get("thread") or {"sessionId": session_id, "source": ts.get("source")}
     shown = scanner.show_in_picker(thread, str(dest))
+    # The workspace may have moved while this session sat in the archive, in which case
+    # its registry project is already the new path but the agent's index is not.
+    project = thread.get("project")
+    if project:
+        scanner.rebind_workspace(thread, str(dest), project)
 
     registry.restore_session(reg, session_id, str(dest))
     if ts.get("thread"):
@@ -82,9 +88,10 @@ def cmd_unarchive(argv: list[str]) -> int:
     registry.save_registry(args.registry, reg)
 
     print(f"restored {args.id} -> {dest}")
-    if not shown and (ts.get("thread") or {}).get("source") == "codex":
+    if shown is IndexUpdate.NO_ENTRY:
         # A half-restore that claims success is the worst outcome: the transcript is
-        # back but the session stays invisible in the agent's own picker.
+        # back but the session stays invisible in the agent's own picker. Only NO_ENTRY
+        # means that — a source with no index of its own has nothing to restore.
         print(
             "  note: restored on disk, but the agent's picker entry could not be "
             "updated (it may have been archived by the agent itself)",

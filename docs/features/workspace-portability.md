@@ -1,15 +1,20 @@
 # Move a checkout without losing its sessions
 
-> **Problem:** Claude Code keys session storage by the directory a session was *launched* in.
-> Move a workspace and its whole history becomes unresumable from the new path — and a plain
-> `rl` scan makes it worse by reverting the registry to the stale path baked into the transcript.
+> **Problem:** agents bind a session to the directory it was *launched* in — Claude Code by
+> the storage path it files the transcript under, Codex by a cwd column its resume picker
+> filters on. Move a workspace and its whole history becomes unresumable from the new path —
+> and a plain `rl` scan makes it worse by reverting the registry to the stale path baked into
+> the transcript.
 
 ## Overview
 
 `rl workspace move` changes **three things at once**:
 
 1. the directory on disk;
-2. the agent's session storage (the slug directory is renamed);
+2. the agent's session storage, in whichever shape the source keeps it — Claude Code keys
+   it by launch cwd, so the slug directory is renamed; Codex files rollouts by date and
+   records the cwd in its own state db, so nothing moves and that entry is rewritten in
+   place;
 3. the registry — which is then **pinned**, or the next scan reverts it.
 
 ```sh
@@ -56,6 +61,8 @@ session storage, so the session stays unresumable from the new path. For a whole
 - `commands/move_workspace.py` — `cmd_move()`, `cmd_retarget()`.
 - `sources/base.py` — `WorkspaceRelocatingSource` (`storage_for`, `relocate_storage`,
   `relocate_session`); both relocate methods raise rather than merge.
+- `sources/base.py` — `WorkspaceRebindingSource` (`rebind_workspace`); rewrites the agent's
+  recorded cwd in place, so nothing collides and no transcript path changes.
 - `registry.pin_thread_location()` / `relocate_thread()`.
 - `slug.py` — reproduces Claude Code's directory encoding to find the storage.
 

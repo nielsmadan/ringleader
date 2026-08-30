@@ -36,5 +36,9 @@ Capabilities beyond the core are **separate opt-in protocols**, each advertised 
 - `NormalizedSession` carries a few Claude-Code-shaped extras (`message_count`, `git_branch`,
   `ai_title`) because they drive real behavior — prune eligibility and display. A source that
   cannot supply them leaves the defaults.
+- **Added later:** `WorkspaceRebindingSource`, for an agent that records the workspace in its own
+  index rather than keying storage by it. This is the predicted path working as intended — a new
+  store shape got a new protocol instead of widening `WorkspaceRelocatingSource` — but it does
+  mean the workspace family now has two shapes, and a caller must ask for both.
 
 See [tech/sources.md](../tech/sources.md).

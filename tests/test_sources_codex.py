@@ -3,7 +3,13 @@ from itertools import zip_longest
 from pathlib import Path
 
 import pytest
-from ringleader.sources.base import NameApplyingSource, PickerHidingSource, RawRef, Source
+from ringleader.sources.base import (
+    NameApplyingSource,
+    PickerHidingSource,
+    RawRef,
+    Source,
+    WorkspaceRebindingSource,
+)
 from ringleader.sources.codex import CodexSessionIndexError, CodexSource
 
 
@@ -78,8 +84,11 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, Source)
     assert isinstance(src, NameApplyingSource)
     assert isinstance(src, PickerHidingSource)
+    assert isinstance(src, WorkspaceRebindingSource)
     assert src.name == "codex"
-    assert src.capabilities == frozenset({"applies_names", "hides_from_picker", "shows_in_picker"})
+    assert src.capabilities == frozenset(
+        {"applies_names", "hides_from_picker", "shows_in_picker", "rebinds_workspace"}
+    )
 
 
 def test_discover_finds_rollouts(tmp_path):

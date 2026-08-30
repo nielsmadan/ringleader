@@ -10,7 +10,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar
 
-from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
+from .base import (
+    IndexUpdate,
+    NormalizedSession,
+    RawRef,
+    append_jsonl_line,
+    stat_fingerprint,
+)
+
+_ARCHIVE_COLUMNS = frozenset({"archived", "archived_at", "rollout_path"})
+_REBIND_COLUMNS = frozenset({"cwd", "rollout_path"})
 
 
 class CodexSessionIndexError(RuntimeError):
@@ -131,7 +140,9 @@ class CodexSource:
     tail_turns: int = 30
     name: str = "codex"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"applies_names", "hides_from_picker", "shows_in_picker"})
+        default_factory=lambda: frozenset(
+            {"applies_names", "hides_from_picker", "shows_in_picker", "rebinds_workspace"}
+        )
     )
     _names_by_id: dict[str, str | None] | None = field(default=None, init=False, repr=False)
 
@@ -225,67 +236,87 @@ class CodexSource:
         append_jsonl_line(self.session_index_file, line)
         self._names_by_id = None
 
-    def hide_from_picker(self, session_id: str, file_path: str) -> bool:
-        """Set the thread's `archived` flag in Codex's state DB, which is what
-        `codex resume` filters on. Codex's own `archive` subcommand refuses once
-        the rollout file is gone, so this has to run before we move or delete it."""
+    def _update_thread(
+        self,
+        sql: str,
+        params: tuple,
+        *,
+        key: tuple[str, str],
+        required: frozenset[str],
+        note: str,
+    ) -> IndexUpdate:
+        """Run one guarded UPDATE against Codex's state db. Every caller pins its
+        WHERE on `rollout_path` as well as the id, so a stale or mis-derived id
+        touches nothing rather than some other thread. When the UPDATE matches no
+        row, `key` re-queries for the thread itself, which is what separates a
+        session Codex has no record of from one already in the desired state."""
         db = _state_db(Path(self.sessions_dir).parent)
         if db is None:
-            return False
+            return IndexUpdate.NO_INDEX
         try:
             con = sqlite3.connect(db, timeout=5.0)
         except sqlite3.Error as e:
             raise CodexStateError(f"cannot open Codex state db {db}: {e}") from e
         try:
             columns = {row[1] for row in con.execute("PRAGMA table_info(threads)")}
-            if not {"archived", "archived_at", "rollout_path"} <= columns:
-                raise CodexStateError(
-                    f"{db} has no archivable threads table — Codex's schema moved, "
-                    "so sessions cannot be cleared from its resume picker"
-                )
-            # rollout_path pins the update to this exact transcript: a stale or
-            # mis-derived id then archives nothing rather than some other thread.
-            cur = con.execute(
-                "UPDATE threads SET archived = 1, archived_at = ? "
-                "WHERE id = ? AND rollout_path = ? AND archived = 0",
-                (int(datetime.now(UTC).timestamp()), session_id, str(file_path)),
-            )
+            if not required <= columns:
+                raise CodexStateError(f"{db} {note}")
+            cur = con.execute(sql, params)
             con.commit()
-            return cur.rowcount > 0
+            if cur.rowcount > 0:
+                return IndexUpdate.UPDATED
+            row = con.execute(
+                "SELECT 1 FROM threads WHERE id = ? AND rollout_path = ?", key
+            ).fetchone()
+            return IndexUpdate.ALREADY_CURRENT if row else IndexUpdate.NO_ENTRY
         except sqlite3.Error as e:
             raise CodexStateError(f"cannot update Codex state db {db}: {e}") from e
         finally:
             con.close()
 
-    def show_in_picker(self, session_id: str, file_path: str) -> bool:
+    def hide_from_picker(self, session_id: str, file_path: str) -> IndexUpdate:
+        """Set the thread's `archived` flag in Codex's state DB, which is what
+        `codex resume` filters on. Codex's own `archive` subcommand refuses once
+        the rollout file is gone, so this has to run before we move or delete it."""
+        return self._update_thread(
+            "UPDATE threads SET archived = 1, archived_at = ? "
+            "WHERE id = ? AND rollout_path = ? AND archived = 0",
+            (int(datetime.now(UTC).timestamp()), session_id, str(file_path)),
+            key=(session_id, str(file_path)),
+            required=_ARCHIVE_COLUMNS,
+            note="has no archivable threads table — Codex's schema moved, so sessions "
+            "cannot be cleared from its resume picker",
+        )
+
+    def show_in_picker(self, session_id: str, file_path: str) -> IndexUpdate:
         """Undo `hide_from_picker`, putting the thread back in `codex resume`.
 
         Ordering is the reverse of hiding: the guard matches on `rollout_path`, which
         hiding never rewrote, so the transcript must already be restored to its
-        original location before this runs. Returns False when nothing matched — a
-        thread Codex itself archived (it rewrites rollout_path) or a row that is gone."""
-        db = _state_db(Path(self.sessions_dir).parent)
-        if db is None:
-            return False
-        try:
-            con = sqlite3.connect(db, timeout=5.0)
-        except sqlite3.Error as e:
-            raise CodexStateError(f"cannot open Codex state db {db}: {e}") from e
-        try:
-            columns = {row[1] for row in con.execute("PRAGMA table_info(threads)")}
-            if not {"archived", "archived_at", "rollout_path"} <= columns:
-                raise CodexStateError(
-                    f"{db} has no archivable threads table — Codex's schema moved, "
-                    "so sessions cannot be restored to its resume picker"
-                )
-            cur = con.execute(
-                "UPDATE threads SET archived = 0, archived_at = NULL "
-                "WHERE id = ? AND rollout_path = ? AND archived = 1",
-                (session_id, str(file_path)),
-            )
-            con.commit()
-            return cur.rowcount > 0
-        except sqlite3.Error as e:
-            raise CodexStateError(f"cannot update Codex state db {db}: {e}") from e
-        finally:
-            con.close()
+        original location before this runs. A thread Codex itself archived has had its
+        `rollout_path` rewritten, so it reports `NO_ENTRY`."""
+        return self._update_thread(
+            "UPDATE threads SET archived = 0, archived_at = NULL "
+            "WHERE id = ? AND rollout_path = ? AND archived = 1",
+            (session_id, str(file_path)),
+            key=(session_id, str(file_path)),
+            required=_ARCHIVE_COLUMNS,
+            note="has no archivable threads table — Codex's schema moved, so sessions "
+            "cannot be restored to its resume picker",
+        )
+
+    def rebind_workspace(self, session_id: str, file_path: str, new_cwd: str) -> IndexUpdate:
+        """Point the thread at the workspace's new location. Codex files rollouts by
+        date rather than by cwd, so nothing moves on disk — but `codex resume` filters
+        the picker on this column, and the cwd baked into the rollout file at launch is
+        never revisited. Left alone, the session stays resumable only by its id.
+
+        `IS NOT` rather than `!=` so a NULL cwd is rebound rather than read as unchanged."""
+        return self._update_thread(
+            "UPDATE threads SET cwd = ? WHERE id = ? AND rollout_path = ? AND cwd IS NOT ?",
+            (str(new_cwd), session_id, str(file_path), str(new_cwd)),
+            key=(session_id, str(file_path)),
+            required=_REBIND_COLUMNS,
+            note="has no threads.cwd — Codex's schema moved, so sessions cannot follow "
+            "a workspace to its new path",
+        )

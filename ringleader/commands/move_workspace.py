@@ -3,9 +3,12 @@
 Three things have to change together, and they are owned by three different places:
 
   the directory      — moved on disk here
-  session storage    — the agent keys it by launch cwd, so it is relocated through
-                       the source seam (`WorkspaceRelocatingSource`); without this
-                       the sessions stay unreachable from the new path
+  session storage    — reached through the source seam, in one of two shapes:
+                       an agent that keys storage by launch cwd has it relocated
+                       (`WorkspaceRelocatingSource`), while one that files
+                       transcripts flat and records the cwd in its own index has
+                       that entry rewritten in place (`WorkspaceRebindingSource`);
+                       without this the sessions stay unreachable from the new path
   the registry       — retargeted and pinned, or the next scan reverts it from the
                        transcript's stale baked-in cwd
 
@@ -34,7 +37,7 @@ from pathlib import Path
 
 from .. import gitinfo, registry, scanner
 from ..slug import is_beneath, normalize, remap, slugify
-from ..sources.base import WorkspaceRelocatingSource
+from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
 from . import default_registry
 
@@ -47,7 +50,8 @@ class _Plan:
     arch: list = field(default_factory=list)  # (archived record, new_project)
     whole: list = field(default_factory=list)  # (source, old_cwd, new_cwd)
     per: list = field(default_factory=list)  # (thread, source, new_project)
-    unsupported: list = field(default_factory=list)  # threads whose source can't relocate
+    rebind: list = field(default_factory=list)  # (thread, source, new_project)
+    unsupported: list = field(default_factory=list)  # threads whose storage can't be followed
     already_done: bool = False  # nothing beneath OLD, but NEW already has sessions
 
 
@@ -65,12 +69,21 @@ def _git_for(new_project: str) -> dict | None:
     }
 
 
-def _relocating_sources() -> dict:
-    return {
-        s.name: s
-        for s in scanner.active_sources()
-        if "relocates_workspace" in s.capabilities and isinstance(s, WorkspaceRelocatingSource)
-    }
+@dataclass(frozen=True)
+class _Sources:
+    """The two source shapes a move drives, resolved once and carried together. They
+    are always needed as a pair: a plan built with only one silently misclassifies
+    every session belonging to the other."""
+
+    relocating: dict
+    rebinding: dict
+
+
+def _resolve_sources() -> _Sources:
+    return _Sources(
+        relocating=scanner.sources_with("relocates_workspace", WorkspaceRelocatingSource),
+        rebinding=scanner.sources_with("rebinds_workspace", WorkspaceRebindingSource),
+    )
 
 
 def _drifted(thread: dict) -> bool:
@@ -94,7 +107,7 @@ def _listing(slug_dir: Path) -> list[Path]:
 _LISTINGS: dict[str, list[Path]] = {}
 
 
-def build_plan(reg: dict, old: str, new: str, sources: dict) -> _Plan:
+def build_plan(reg: dict, old: str, new: str, srcs: _Sources) -> _Plan:
     _LISTINGS.clear()
     plan = _Plan(old=old, new=new)
     plan.threads = [
@@ -113,7 +126,15 @@ def build_plan(reg: dict, old: str, new: str, sources: dict) -> _Plan:
     seen: set[str] = set()
     for thread, new_project in plan.threads:
         source = thread.get("source") or "claude-code"
-        if source not in sources or not thread.get("file"):
+        if not thread.get("file"):
+            plan.unsupported.append(thread)
+            continue
+        # Checked before the slug-directory logic below: these sources move no
+        # transcript, so a slug dir and its siblings say nothing about them.
+        if source in srcs.rebinding:
+            plan.rebind.append((thread, source, new_project))
+            continue
+        if source not in srcs.relocating:
             plan.unsupported.append(thread)
             continue
         slug_dir = Path(thread["file"]).parent
@@ -134,17 +155,17 @@ def build_plan(reg: dict, old: str, new: str, sources: dict) -> _Plan:
     return plan
 
 
-def collisions(plan: _Plan, sources: dict) -> list[str]:
+def collisions(plan: _Plan, srcs: _Sources) -> list[str]:
     """Destinations that already hold session storage. Refused rather than merged:
     merging renames the colliding session and rewrites its sessionId, which is the
     registry's primary key."""
     out = []
     for source, _old_cwd, new_cwd in plan.whole:
-        dst = sources[source].storage_for(new_cwd)
+        dst = srcs.relocating[source].storage_for(new_cwd)
         if dst.exists():
             out.append(str(dst))
     for thread, source, new_project in plan.per:
-        dst = sources[source].storage_for(new_project) / Path(thread["file"]).name
+        dst = srcs.relocating[source].storage_for(new_project) / Path(thread["file"]).name
         if dst.exists():
             out.append(str(dst))
     return out
@@ -306,6 +327,8 @@ def _describe(plan: _Plan, *, move_files: bool) -> None:
     for thread, _source, _new_project in plan.per:
         why = "cwd drifted from its launch dir" if _drifted(thread) else "shared directory"
         print(f"  session  {thread['sessionId'][:8]}  moved on its own ({why})")
+    for thread, _source, _new_project in plan.rebind:
+        print(f"  session  {thread['sessionId'][:8]}  rebound in place ({thread.get('source')})")
     for thread in plan.unsupported:
         print(f"  session  {thread['sessionId'][:8]}  registry only ({thread.get('source')})")
     print(f"{len(plan.threads)} session(s), {len(plan.arch)} archived")
@@ -318,7 +341,7 @@ def _describe(plan: _Plan, *, move_files: bool) -> None:
         print(f"  derived   {rel} keeps the old path — regenerate it with `{command}`")
 
 
-def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[str]]:
+def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict, set[str]]:
     """Returns the old->new transcript paths, and the session ids whose storage did
     NOT move. A failed session must not be pinned: pinning rewrites its `project`, and
     `retarget` finds threads by the old path — so pinning a stranded session puts it
@@ -327,7 +350,7 @@ def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[
     stranded: set[str] = set()
     for source, old_cwd, new_cwd in plan.whole:
         try:
-            moved.update(sources[source].relocate_storage(old_cwd, new_cwd))
+            moved.update(srcs.relocating[source].relocate_storage(old_cwd, new_cwd))
         except (RuntimeError, OSError) as e:
             print(f"rl-workspace-{verb}: {old_cwd}: {e}", file=sys.stderr)
             for thread, _ in plan.threads:
@@ -335,11 +358,53 @@ def _relocate_storage(plan: _Plan, sources: dict, verb: str) -> tuple[dict, set[
                     stranded.add(thread["sessionId"])
     for thread, source, new_project in plan.per:
         try:
-            moved[thread["file"]] = sources[source].relocate_session(thread["file"], new_project)
+            moved[thread["file"]] = srcs.relocating[source].relocate_session(
+                thread["file"], new_project
+            )
         except (RuntimeError, OSError) as e:
             print(f"rl-workspace-{verb}: {thread['sessionId'][:8]}: {e}", file=sys.stderr)
             stranded.add(thread["sessionId"])
+    for thread, source, new_project in plan.rebind:
+        sid = thread["sessionId"]
+        try:
+            outcome = srcs.rebinding[source].rebind_workspace(sid, thread["file"], new_project)
+        except (RuntimeError, OSError) as e:
+            print(f"rl-workspace-{verb}: {sid[:8]}: {e}", file=sys.stderr)
+            stranded.add(sid)
+            continue
+        if outcome is IndexUpdate.NO_INDEX:
+            # Strand rather than pin. The index being absent is usually temporary — a
+            # Codex home mid-migration, a mis-set CODEX_SESSIONS_DIR — and a pinned
+            # thread is one `retarget` can never find again.
+            print(
+                f"rl-workspace-{verb}: {sid[:8]}: {source} has no session index here",
+                file=sys.stderr,
+            )
+            stranded.add(sid)
+        elif outcome is IndexUpdate.NO_ENTRY:
+            print(
+                f"rl-workspace-{verb}: {sid[:8]}: no {source} index entry for "
+                f"{thread['file']} — it stays resumable by id",
+                file=sys.stderr,
+            )
+    _rebind_archived(plan, srcs, verb)
     return moved, stranded
+
+
+def _rebind_archived(plan: _Plan, srcs: _Sources, verb: str) -> None:
+    """An archived session still has an index entry, still keyed to the path the
+    transcript had before archiving — so it needs the same rebind, or unarchiving it
+    after a move restores a session the picker still filters to the old workspace."""
+    for record, new_project in plan.arch:
+        source = (record.get("thread") or {}).get("source")
+        original = record.get("originalPath")
+        if not original or source not in srcs.rebinding:
+            continue
+        sid = record["sessionId"]
+        try:
+            srcs.rebinding[source].rebind_workspace(sid, original, new_project)
+        except (RuntimeError, OSError) as e:
+            print(f"rl-workspace-{verb}: {sid[:8]} (archived): {e}", file=sys.stderr)
 
 
 def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
@@ -357,11 +422,16 @@ def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
 
 
 def _retarget_registry(
-    registry_path: str, old: str, new: str, moved: dict, sources: dict, stranded: set[str]
+    registry_path: str,
+    old: str,
+    new: str,
+    moved: dict,
+    srcs: _Sources,
+    stranded: set[str],
 ) -> _Plan:
     with publish_lock():
         reg = registry.load_registry(registry_path)
-        plan = build_plan(reg, old, new, sources)
+        plan = build_plan(reg, old, new, srcs)
         plan.threads = [t for t in plan.threads if t[0]["sessionId"] not in stranded]
         for thread, new_project in plan.threads:
             registry.pin_thread_location(thread, new_project, _git_for(new_project))
@@ -407,13 +477,13 @@ def _run(argv: list[str], *, move_files: bool) -> int:
         print(f"rl-workspace-{verb}: {problem}", file=sys.stderr)
         return 1
 
-    sources = _relocating_sources()
-    plan = build_plan(registry.load_registry(args.registry), old, new, sources)
+    srcs = _resolve_sources()
+    plan = build_plan(registry.load_registry(args.registry), old, new, srcs)
     empty = _refuse_empty(plan, old, verb, move_files=move_files, allow_empty=args.allow_empty)
     if empty is not None:
         return empty
 
-    occupied = collisions(plan, sources)
+    occupied = collisions(plan, srcs)
     if occupied:
         print(f"rl-workspace-{verb}: session storage already exists at:", file=sys.stderr)
         for path in occupied:
@@ -450,8 +520,8 @@ def _run(argv: list[str], *, move_files: bool) -> int:
                 file=sys.stderr,
             )
 
-    moved, stranded = _relocate_storage(plan, sources, verb)
-    applied = _retarget_registry(args.registry, old, new, moved, sources, stranded)
+    moved, stranded = _relocate_storage(plan, srcs, verb)
+    applied = _retarget_registry(args.registry, old, new, moved, srcs, stranded)
     if move_files:
         print(f"moved {old} -> {new}")
     print(f"retargeted {len(applied.threads)} session(s), {len(applied.arch)} archived")

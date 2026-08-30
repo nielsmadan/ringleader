@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 import pytest
 from ringleader.commands import move_workspace
@@ -413,3 +414,153 @@ def test_the_search_stops_below_the_depth_limit(tmp_path):
 def test_artifact_directories_are_not_searched_from_within(tmp_path):
     root = _tree(tmp_path, "node_modules/nested/.venv/", "node_modules/nested/uv.lock")
     assert _found(root) == {"node_modules": "npm ci"}
+
+
+def _codex_world(tmp_path, monkeypatch):
+    """A workspace whose only session belongs to a source that rebinds in place:
+    Codex files rollouts by date, so nothing moves — only the recorded cwd."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "no-claude"))
+    monkeypatch.setattr(move_workspace, "_git_for", lambda p: None)
+
+    home = tmp_path / "codex"
+    rollouts = home / "sessions" / "2026" / "08" / "29"
+    rollouts.mkdir(parents=True)
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(home / "sessions"))
+
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    rollout = rollouts / "rollout-c1.jsonl"
+    rollout.write_text('{"type":"user"}\n')
+
+    con = sqlite3.connect(home / "state_5.sqlite")
+    con.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cwd TEXT)")
+    con.execute(
+        "INSERT INTO threads (id, rollout_path, cwd) VALUES (?, ?, ?)",
+        ("c1", str(rollout), str(ws)),
+    )
+    con.commit()
+    con.close()
+
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "threads": [
+                    {
+                        "sessionId": "c1",
+                        "file": str(rollout),
+                        "project": str(ws),
+                        "source": "codex",
+                        "mtime": "2026-08-29T00:00:00+00:00",
+                    }
+                ],
+                "archived": [],
+                "deleted": [],
+            }
+        )
+    )
+    return ws, tmp_path / "moved", reg, home, rollout
+
+
+def _codex_cwd(home, sid="c1"):
+    con = sqlite3.connect(home / "state_5.sqlite")
+    row = con.execute("SELECT cwd FROM threads WHERE id = ?", (sid,)).fetchone()
+    con.close()
+    return row[0]
+
+
+def test_move_rebinds_a_session_whose_source_stores_transcripts_flat(tmp_path, monkeypatch):
+    ws, new, reg, home, rollout = _codex_world(tmp_path, monkeypatch)
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    assert _codex_cwd(home) == str(new)
+    assert rollout.exists()
+    assert json.loads(reg.read_text())["threads"][0]["project"] == str(new)
+
+
+def test_a_rebinding_session_is_not_reported_as_unsupported(tmp_path, monkeypatch, capsys):
+    """It used to fall through to `registry only`, which updated the registry and left
+    the session unreachable from the new path — the bug this seam exists to fix."""
+    ws, new, reg, _home, _rollout = _codex_world(tmp_path, monkeypatch)
+
+    move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--dry-run"])
+
+    out = capsys.readouterr().out
+    assert "rebound in place (codex)" in out
+    assert "registry only" not in out
+
+
+def test_a_failed_rebind_leaves_the_session_recoverable(tmp_path, monkeypatch, capsys):
+    ws, new, reg, _home, _rollout = _codex_world(tmp_path, monkeypatch)
+
+    def boom(self, session_id, file_path, new_cwd):
+        raise RuntimeError("state db is locked")
+
+    monkeypatch.setattr("ringleader.sources.codex.CodexSource.rebind_workspace", boom)
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 1
+    assert "state db is locked" in capsys.readouterr().err
+    # not pinned to the new path: `retarget` finds threads by the old one
+    assert json.loads(reg.read_text())["threads"][0]["project"] == str(ws)
+
+
+def test_a_rebind_with_no_index_entry_warns_by_id_and_still_pins(tmp_path, monkeypatch, capsys):
+    """No row is not something a re-run can fix, so the move completes and pins. The
+    warning has to name the session, or the user has nothing to act on."""
+    ws, new, reg, home, _rollout = _codex_world(tmp_path, monkeypatch)
+    con = sqlite3.connect(home / "state_5.sqlite")
+    con.execute("DELETE FROM threads WHERE id = 'c1'")
+    con.commit()
+    con.close()
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    err = capsys.readouterr().err
+    assert "c1" in err
+    assert "stays resumable by id" in err
+    assert json.loads(reg.read_text())["threads"][0]["project"] == str(new)
+
+
+def test_a_rebind_without_an_index_strands_instead_of_pinning(tmp_path, monkeypatch, capsys):
+    """A missing state db is usually temporary, and pinning would put the session beyond
+    the reach of `retarget` — the one command that could still repair it."""
+    ws, new, reg, home, _rollout = _codex_world(tmp_path, monkeypatch)
+    (home / "state_5.sqlite").unlink()
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 1
+
+    assert "no session index" in capsys.readouterr().err
+    assert json.loads(reg.read_text())["threads"][0]["project"] == str(ws)
+
+
+def test_an_archived_session_is_rebound_at_its_original_path(tmp_path, monkeypatch):
+    """Its index entry still exists and still names the pre-archive path, so it needs the
+    same rebind — otherwise unarchiving after a move restores a session the picker keeps
+    filtering to the old workspace."""
+    ws, new, reg, home, _rollout = _codex_world(tmp_path, monkeypatch)
+    archived_rollout = home / "sessions" / "2026" / "08" / "29" / "rollout-c2.jsonl"
+    con = sqlite3.connect(home / "state_5.sqlite")
+    con.execute(
+        "INSERT INTO threads (id, rollout_path, cwd) VALUES (?, ?, ?)",
+        ("c2", str(archived_rollout), str(ws)),
+    )
+    con.commit()
+    con.close()
+    data = json.loads(reg.read_text())
+    data["archived"] = [
+        {
+            "sessionId": "c2",
+            "archivePath": str(tmp_path / "archive" / "rollout-c2.jsonl"),
+            "originalPath": str(archived_rollout),
+            "thread": {"sessionId": "c2", "project": str(ws), "source": "codex"},
+        }
+    ]
+    reg.write_text(json.dumps(data))
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    assert _codex_cwd(home, "c2") == str(new)

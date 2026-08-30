@@ -2,8 +2,22 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
+
+
+class IndexUpdate(Enum):
+    """Outcome of writing to an agent's own session index. A bare bool cannot
+    separate the three non-writes, and they need opposite handling: `NO_INDEX`
+    means the agent keeps no index here, so a caller that reports failure is
+    wrong; `NO_ENTRY` means it does and we could not find the session, which is
+    the only one worth warning about; `ALREADY_CURRENT` is success on a re-run."""
+
+    UPDATED = "updated"
+    ALREADY_CURRENT = "already_current"
+    NO_ENTRY = "no_entry"
+    NO_INDEX = "no_index"
 
 
 def append_jsonl_line(path: Path, line: str) -> None:
@@ -89,9 +103,9 @@ class PickerHidingSource(Source, Protocol):
     """A source whose agent keeps its own index of sessions, separate from the
     transcript files. Moving or deleting a transcript leaves such an index
     listing a session that no longer exists, so those sources get a hook to
-    clear their entry first. Returns True when an entry was actually cleared."""
+    clear their entry first."""
 
-    def hide_from_picker(self, session_id: str, file_path: str) -> bool: ...
+    def hide_from_picker(self, session_id: str, file_path: str) -> IndexUpdate: ...
 
 
 @runtime_checkable
@@ -112,10 +126,21 @@ class WorkspaceRelocatingSource(Source, Protocol):
 
 
 @runtime_checkable
+class WorkspaceRebindingSource(Source, Protocol):
+    """A source whose agent stores every transcript in one flat place and records
+    the workspace separately, in its own index. Moving the workspace moves no
+    transcript, so unlike `WorkspaceRelocatingSource` there is no destination to
+    collide with and no new path for the registry to follow — only the recorded
+    cwd, rewritten in place."""
+
+    def rebind_workspace(self, session_id: str, file_path: str, new_cwd: str) -> IndexUpdate: ...
+
+
+@runtime_checkable
 class PickerShowingSource(Source, Protocol):
     """The inverse of `PickerHidingSource`: restore an entry the tool previously
     hid, so a session put back on disk becomes resumable again. `file_path` is the
     transcript's ORIGINAL location — the index still points there — so the file has
-    to be back in place before this runs. Returns True when an entry was restored."""
+    to be back in place before this runs."""
 
-    def show_in_picker(self, session_id: str, file_path: str) -> bool: ...
+    def show_in_picker(self, session_id: str, file_path: str) -> IndexUpdate: ...
