@@ -18,7 +18,7 @@ from .. import safe_write
 from ..paths import exists_or_report
 
 HOOK_EVENT = "SessionEnd"
-TIMEOUT_SECONDS = 5
+TIMEOUT_SECONDS = {"claude": 5, "codex": 3}
 
 
 def bundled_dir() -> Path:
@@ -118,7 +118,7 @@ def _has_our_entry(data: dict) -> bool:
     return False
 
 
-def _with_our_entry(data: dict) -> dict:
+def _with_our_entry(data: dict, timeout_seconds: int) -> dict:
     """`data`, with our SessionEnd group appended if not already present. Mutates and
     returns `data` in place; raises `ValueError` (caller skips the file) if `hooks` or
     `hooks.SessionEnd` already exist with the wrong shape."""
@@ -128,7 +128,15 @@ def _with_our_entry(data: dict) -> dict:
     events = hooks.setdefault(HOOK_EVENT, [])
     if not isinstance(events, list):
         raise ValueError(f"'hooks.{HOOK_EVENT}' is not an array")
-    if _has_our_entry(data):
+    found = False
+    for group in events:
+        if not isinstance(group, dict):
+            continue
+        for h in group.get("hooks", []):
+            if isinstance(h, dict) and _is_ours(h.get("command")):
+                h["timeout"] = timeout_seconds
+                found = True
+    if found:
         return data
     events.append(
         {
@@ -136,7 +144,7 @@ def _with_our_entry(data: dict) -> dict:
                 {
                     "type": "command",
                     "command": str(_session_end_script()),
-                    "timeout": TIMEOUT_SECONDS,
+                    "timeout": timeout_seconds,
                 }
             ]
         }
@@ -178,11 +186,11 @@ def _without_our_entries(data: dict) -> tuple[dict, int]:
     return new_data, removed
 
 
-def _planned_text(data: dict) -> str | None:
+def _planned_text(data: dict, timeout_seconds: int) -> str | None:
     """The full text to write once our entry is in `data`, or None if it is already
     there. Raises `ValueError` (caller skips the file) on a wrong-shaped `hooks` key."""
     before = json.dumps(data, indent=2)
-    after = json.dumps(_with_our_entry(data), indent=2)
+    after = json.dumps(_with_our_entry(data, timeout_seconds), indent=2)
     return None if after == before else after + "\n"
 
 
@@ -264,7 +272,7 @@ def _json_plan(
         if not (opt_in or _has_our_entry(data)):
             continue
         try:
-            plan.append((label, path, raw, _planned_text(data)))
+            plan.append((label, path, raw, _planned_text(data, TIMEOUT_SECONDS[label])))
         except ValueError as e:
             print(f"{path}: {e}; leaving untouched", file=sys.stderr)
             failed += 1

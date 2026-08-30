@@ -17,6 +17,54 @@ def test_install_registers_a_claude_session_end_hook(tmp_path, monkeypatch):
     assert any("session_end.sh" in h["command"] for group in entries for h in group["hooks"])
 
 
+def test_install_uses_codex_session_end_timeout_limit(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+    settings = tmp_path / ".codex" / "hooks.json"
+    settings.write_text("{}")
+
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    entries = json.loads(settings.read_text())["hooks"]["SessionEnd"]
+    ours = next(
+        h
+        for group in entries
+        for h in group["hooks"]
+        if "session_end.sh" in h["command"]
+    )
+    assert ours["timeout"] == 3
+
+
+def test_update_repairs_an_existing_codex_timeout(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".codex").mkdir()
+    settings = tmp_path / ".codex" / "hooks.json"
+    settings.write_text(
+        json.dumps(
+            {
+                "hooks": {
+                    "SessionEnd": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": str(hooks._session_end_script()),
+                                    "timeout": 5,
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+    )
+
+    assert hooks.cmd_update(["--yes"]) == 0
+
+    entry = json.loads(settings.read_text())["hooks"]["SessionEnd"][0]["hooks"][0]
+    assert entry["timeout"] == 3
+
+
 def test_install_previews_a_diff_and_keeps_a_backup(tmp_path, monkeypatch, capsys):
     """The same file `rl install statusline` edits, so the same convention: show the
     change, keep the old bytes."""
