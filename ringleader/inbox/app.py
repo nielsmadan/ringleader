@@ -290,7 +290,9 @@ class InboxApp(App):
         return [
             t
             for t in inbox
-            if t.get("selectedForDay") != today and t["sessionId"] not in self._staged_deletes
+            if t.get("selectedForDay") != today
+            and t["sessionId"] not in self._staged_deletes
+            and not overview.is_filtered(t)
         ]
 
     def _compute_selected(self) -> list[dict]:

@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, datetime
 
 from .. import projects, registry, scanner
+from ..config import load_config
 from . import default_registry, sweep
 
 
@@ -19,6 +20,7 @@ def cmd_scan(args):
     scanned = scanner.scan(sources=scanner.active_sources())
     tails = {ns.session_id: ns.tail_text for ns in scanned}
     reg = registry.reconcile(reg, scanned, _now())
+    registry.apply_name_filters(reg, load_config().session_filters)
     registry.save_registry(args.registry, reg)
 
     pending = registry.sessions_needing_classification(reg)

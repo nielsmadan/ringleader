@@ -64,6 +64,18 @@ On entry it offers to run `rl roundup` when `lastRoundupAt` is older than `round
 Refresh, prune (**this deletes**), and enrich in one pass. It is the "make everything current"
 verb, and what `rl inbox` triggers on stale state.
 
+## Filtering noisy sessions
+
+Some tools spawn agent sessions by the dozen — a fan-out orchestrator, a scheduled job — and
+each one lands in the registry as another thread to triage. `rl config filter` hides them by
+name ([syntax](../user/cli.md#rl-config-filter)).
+
+A match is stamped as `filteredBy` at scan time and drops the session out of `rl overview`,
+`rl triage`, `rl inbox` and the rollup counts, and out of `rl session enrich`, which would
+otherwise spend a model call classifying noise. Nothing is deleted: `rl overview --filtered`
+lists what is hidden and why, and `--include-filtered` puts the sessions back into any view.
+Edits take effect on the next scan, which every default view runs for you.
+
 ## Selectors
 
 A `<selector>` is a git-project label (`ringleader`) or a cwd path — **never a session id**.
@@ -79,6 +91,8 @@ A `<selector>` is a git-project label (`ringleader`) or a cwd path — **never a
 
 - **Scanning dominates runtime** on a large `~/.claude/projects`; both views scan by default.
 - **`rl roundup` deletes.** It runs prune with deletion enabled, unlike bare `rl prune`.
+- **Filtering hides, it does not protect.** `rl prune` still deletes a filtered session from
+  disk when it is tiny and stale, even though another tool wrote it.
 
 ## Related
 

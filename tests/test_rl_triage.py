@@ -132,3 +132,33 @@ def test_triage_memory_empty_message(tmp_path):
     )
     assert r.returncode == 0, r.stderr
     assert "no memory awaiting review" in r.stdout
+
+
+def test_filtered_sessions_are_out_of_the_triage_inbox(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "--json")
+
+    assert r.returncode == 0, r.stderr
+    assert [row["session_id"] for row in json.loads(r.stdout)] == ["real"]
+
+
+def test_triage_include_filtered_shows_them(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "--include-filtered", "--json")
+
+    assert r.returncode == 0, r.stderr
+    assert sorted(row["session_id"] for row in json.loads(r.stdout)) == ["noise", "real"]

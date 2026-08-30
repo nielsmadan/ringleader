@@ -42,6 +42,16 @@ def kept_json(threads, now_iso: str) -> list[dict]:
     return out
 
 
+def filtered_json(threads, now_iso: str) -> list[dict]:
+    out = []
+    for t in threads:
+        if overview.is_filtered(t):
+            row = _session_json(t, now_iso)
+            row["filtered_by"] = t.get("filteredBy")
+            out.append(row)
+    return out
+
+
 def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> list[dict]:
     """JSON-safe view of the triage inbox — same sessions `render_triage` shows.
 

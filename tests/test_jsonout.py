@@ -160,3 +160,31 @@ def test_triage_memory_json_rejected(tmp_path):
     assert result.returncode != 0
     assert "--json" in result.stderr
     assert "--memory" in result.stderr
+
+
+def test_filtered_json_reports_only_filtered_sessions_with_their_pattern():
+    from ringleader import jsonout
+
+    now = "2026-08-02T00:00:00+00:00"
+    threads = [
+        {
+            "sessionId": "noise",
+            "title": "[cadet-city] reviewer",
+            "status": "unclassified",
+            "mtime": "2026-08-01T00:00:00+00:00",
+            "project": "/p",
+            "filteredBy": "[cadet-city]*",
+        },
+        {
+            "sessionId": "real",
+            "title": "real work",
+            "status": "unfinished",
+            "mtime": "2026-08-01T00:00:00+00:00",
+            "project": "/p",
+            "filteredBy": None,
+        },
+    ]
+
+    rows = jsonout.filtered_json(threads, now)
+
+    assert [(r["session_id"], r["filtered_by"]) for r in rows] == [("noise", "[cadet-city]*")]

@@ -46,7 +46,8 @@ def cmd_enrich(argv: list[str]) -> int:
     ap.add_argument("--limit", type=int, default=None)
     args = ap.parse_args(argv)
 
-    model = active_model(load_config())
+    cfg = load_config()
+    model = active_model(cfg)
     if model is None:
         print(
             "no model configured — set one with `rl config`, or classify via the session-sync skill"
@@ -58,6 +59,7 @@ def cmd_enrich(argv: list[str]) -> int:
     scanned = scanner.scan(sources=scanner.active_sources())
     tails = {ns.session_id: ns.tail_text for ns in scanned}
     reg = registry.reconcile(reg, scanned, now)
+    registry.apply_name_filters(reg, cfg.session_filters)
 
     pending = registry.sessions_needing_classification(reg)
     if args.project:

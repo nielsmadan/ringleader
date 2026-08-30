@@ -41,6 +41,9 @@ editing:
 - **`_METADATA_FIELDS`** — derived from the transcript on every scan (`file`, `project`,
   `title`, `summary`, `lastPrompt`, `mtime`, `sizeBytes`, `messageCount`, `gitBranch`,
   `fileFingerprint`, `cacheVersion`). Cheap and always safe to overwrite.
+- **`filteredBy`** — the `config.session_filters` pattern this session's name matched, or
+  `None`. Stamped on every scan like the metadata fields, and read by the views to hide the
+  session ([Filtering noisy sessions](../features/views-and-triage.md#filtering-noisy-sessions)).
 - **`_GIT_PROJECT_FIELDS`** — `gitProjectKey`, `gitProjectLabel`, `gitRoot`, `gitRemote`,
   `gitCloneUrl`. These need the **live filesystem**, so a vanished cwd resolves to `None`.
   Reconcile refreshes them **only when the new scan actually resolved a value**, otherwise the

@@ -673,3 +673,16 @@ async def test_empty_inbox_shows_placeholder(tmp_path, monkeypatch):
         label = app.query_one("#empty-state", Label)
         assert label.display is True
         assert "inbox zero" in str(label.content)
+
+
+async def test_filtered_threads_are_kept_out_of_the_inbox(tmp_path, monkeypatch):
+    reg_path = _setup(tmp_path, monkeypatch)
+    reg = json.loads(reg_path.read_text(encoding="utf-8"))
+    for t in reg["threads"]:
+        if t["sessionId"] == "s0":
+            t["filteredBy"] = "session-*"
+    reg_path.write_text(json.dumps(reg), encoding="utf-8")
+
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test():
+        assert "s0" not in [t["sessionId"] for t in app._inbox]

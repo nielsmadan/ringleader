@@ -64,6 +64,11 @@ def age_days(mtime_iso: str, now_iso: str) -> float:
     return (_parse(now_iso) - _parse(mtime_iso)).total_seconds() / 86400.0
 
 
+def is_filtered(thread: dict) -> bool:
+    """Matched a `rl config filter` pattern: hidden from every view, still on disk."""
+    return bool(thread.get("filteredBy"))
+
+
 def is_kept(thread: dict) -> bool:
     """Kept long-term: out of the triage inbox for good, but still live and resumable."""
     return thread.get("decision") == "keep"
@@ -530,4 +535,19 @@ def render_kept(threads, now_iso: str) -> str:
         what = t.get("whatItIs") or ""
         line = f"{name} · {project} · {age}d"
         lines.append(f"{line} · {what}" if what else line)
+    return "\n".join(lines)
+
+
+def render_filtered(threads, now_iso: str) -> str:
+    rows = [t for t in threads if is_filtered(t)]
+    if not rows:
+        return "no filtered sessions"
+    rows.sort(key=lambda t: (t.get("filteredBy") or "", t.get("mtime") or ""))
+    lines = []
+    for t in rows:
+        name = t.get("title") or t.get("suggestedName") or (t.get("sessionId") or "")[:8]
+        mtime = t.get("mtime")
+        age = round(age_days(mtime, now_iso)) if mtime else 0
+        project = t.get("gitProjectLabel") or t.get("project") or "—"
+        lines.append(f"{name} · {project} · {age}d · {t.get('filteredBy')}")
     return "\n".join(lines)

@@ -5,7 +5,7 @@ import os
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
 
-from . import overview
+from . import namefilter, overview
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text
 
@@ -149,6 +149,7 @@ def _new_thread(md: dict) -> dict:
             "snoozedAt": None,
             "keptAt": None,
             "selectedForDay": None,
+            "filteredBy": None,
         }
     )
     return thread
@@ -253,7 +254,16 @@ def needs_classification(thread: dict) -> bool:
 
 
 def sessions_needing_classification(reg: dict) -> list[dict]:
-    return [t for t in reg["threads"] if needs_classification(t)]
+    return [t for t in reg["threads"] if not t.get("filteredBy") and needs_classification(t)]
+
+
+def apply_name_filters(reg: dict, patterns) -> dict:
+    """Stamp every live thread with the config pattern that matches its name, or None.
+    Recomputed on each scan, so editing the filters takes effect without a re-parse."""
+    patterns = list(patterns or ())
+    for t in reg["threads"]:
+        t["filteredBy"] = namefilter.thread_match(t, patterns)
+    return reg
 
 
 def apply_classification(

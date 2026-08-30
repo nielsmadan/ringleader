@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from . import registry, scanner
+from .config import load_config
 from .sources.claude_code import ClaudeCodeSource
 
 
@@ -16,8 +17,15 @@ def delta_note(added: int, removed: int) -> str | None:
     return "(scanning… " + ", ".join(bits) + ")"
 
 
-def auto_refresh(
-    registry_path, now_iso, *, tail=30, projects_root=None, git_resolver=None, sources=None
+def auto_refresh(  # noqa: PLR0913
+    registry_path,
+    now_iso,
+    *,
+    tail=30,
+    projects_root=None,
+    git_resolver=None,
+    sources=None,
+    name_filters=None,
 ):
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. This is the cheap, pure-code refresh the read commands run so
@@ -35,6 +43,9 @@ def auto_refresh(
         cached_threads=reg["threads"],
     )
     reg = registry.reconcile(reg, scanned, now_iso)
+    if name_filters is None:
+        name_filters = load_config().session_filters
+    registry.apply_name_filters(reg, name_filters)
     registry.save_registry(registry_path, reg)
     after = {t["sessionId"] for t in reg["threads"]}
     return reg, delta_note(len(after - before), len(before - after))

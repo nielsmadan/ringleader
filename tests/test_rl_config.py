@@ -62,6 +62,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
         "archive_retention_days": 0,
+        "session_filters": [],
     }
 
 
@@ -129,3 +130,60 @@ def test_config_show_reports_no_active_model_for_llm_engine(tmp_path):
 
     assert r.returncode == 0, r.stderr
     assert "none" in r.stdout.lower()
+
+
+def test_config_filter_add_list_remove_roundtrip(tmp_path):
+    env = _env(tmp_path)
+
+    r = _run("config", "filter", "add", "[cadet-city]*", env=env)
+    assert r.returncode == 0, r.stderr
+    assert "[cadet-city]*" in r.stdout
+
+    r = _run("config", "filter", "list", env=env)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.strip() == "[cadet-city]*"
+
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert data["session_filters"] == ["[cadet-city]*"]
+
+    r = _run("config", "filter", "remove", "[cadet-city]*", env=env)
+    assert r.returncode == 0, r.stderr
+
+    r = _run("config", "filter", "list", env=env)
+    assert "no session filters" in r.stdout
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert data["session_filters"] == []
+
+
+def test_config_filter_shows_in_config_show(tmp_path):
+    env = _env(tmp_path)
+    _run("config", "filter", "add", "[x]*", env=env)
+
+    r = _run("config", "show", env=env)
+
+    assert "session.filters: [x]*" in r.stdout
+
+
+def test_config_filter_rejects_duplicate_and_absent_patterns(tmp_path):
+    env = _env(tmp_path)
+    _run("config", "filter", "add", "[x]*", env=env)
+
+    r = _run("config", "filter", "add", "[x]*", env=env)
+    assert r.returncode == 2
+    assert "already a filter" in r.stderr
+
+    r = _run("config", "filter", "remove", "[nope]*", env=env)
+    assert r.returncode == 2
+    assert "not a filter" in r.stderr
+
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert data["session_filters"] == ["[x]*"]
+
+
+def test_config_filter_requires_a_pattern(tmp_path):
+    env = _env(tmp_path)
+
+    r = _run("config", "filter", "add", env=env)
+
+    assert r.returncode == 2
+    assert "usage: rl config filter add" in r.stderr

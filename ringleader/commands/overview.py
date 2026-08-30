@@ -111,6 +111,9 @@ def _json_view(reg: dict, now: str, args, selection: overview.StatusSelection) -
     if args.kept:
         print(json.dumps(jsonout.kept_json(reg["threads"], now), indent=2))
         return 0
+    if args.filtered:
+        print(json.dumps(jsonout.filtered_json(reg["threads"], now), indent=2))
+        return 0
     if args.sessions:
         threads = _filter_source_recent(reg["threads"], now, args)
         threads = overview.filter_by_status(threads, now, selection)
@@ -132,7 +135,20 @@ def _alt_view(reg: dict, now: str, args, selectors) -> str | None:
         return overview.render_snoozed(reg["threads"], now)
     if args.kept:
         return overview.render_kept(reg["threads"], now)
+    if args.filtered:
+        return overview.render_filtered(reg["threads"], now)
     return None
+
+
+def _scope_filtered(reg: dict, args) -> dict:
+    """Hide name-filtered sessions from every view built below this point. They stay in
+    the registry (and on disk) — --filtered inspects them, --include-filtered unhides."""
+    if args.include_filtered:
+        return reg
+    wanted = bool(args.filtered)
+    scoped = dict(reg)
+    scoped["threads"] = [t for t in reg["threads"] if overview.is_filtered(t) is wanted]
+    return scoped
 
 
 def _print_sessions_view(reg: dict, now: str, args, selection: overview.StatusSelection) -> None:
@@ -199,6 +215,16 @@ def _overview_parser() -> argparse.ArgumentParser:
         help="list sessions kept long-term (out of triage for good)",
     )
     ap.add_argument(
+        "--filtered",
+        action="store_true",
+        help="list sessions hidden by a `rl config filter` name pattern",
+    )
+    ap.add_argument(
+        "--include-filtered",
+        action="store_true",
+        help="also show sessions hidden by a `rl config filter` name pattern",
+    )
+    ap.add_argument(
         "--checkouts", action="store_true", help="rollup only: also list each repo's checkout paths"
     )
     ap.add_argument(
@@ -245,6 +271,7 @@ def cmd_overview(argv: list[str]) -> int:
 
     if args.cwd:
         reg = _scope_to_cwd(reg, now, args)
+    reg = _scope_filtered(reg, args)
 
     if args.json:
         return _json_view(reg, now, args, selection)

@@ -771,3 +771,78 @@ def test_overview_memory_still_empty_when_nothing_tracked(tmp_path):
     r = _run_mem(reg, "--no-scan")
     assert r.returncode == 0, r.stderr
     assert "no memory entries" in r.stdout
+
+
+def test_filtered_sessions_are_hidden_from_the_session_list(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "-s", "-a", "--json")
+
+    assert r.returncode == 0, r.stderr
+    assert [row["session_id"] for row in json.loads(r.stdout)] == ["real"]
+
+
+def test_include_filtered_puts_them_back(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "-s", "-a", "--include-filtered", "--json")
+
+    assert r.returncode == 0, r.stderr
+    assert sorted(row["session_id"] for row in json.loads(r.stdout)) == ["noise", "real"]
+
+
+def test_filtered_view_lists_only_filtered_sessions_with_their_pattern(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "--filtered")
+
+    assert r.returncode == 0, r.stderr
+    assert "[cadet-city] reviewer" in r.stdout
+    assert "[cadet-city]*" in r.stdout
+    assert "real work" not in r.stdout
+
+
+def test_filtered_view_json_reports_the_pattern(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [_thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*")],
+    )
+
+    r = _run(reg, "--no-scan", "--filtered", "--json")
+
+    assert r.returncode == 0, r.stderr
+    rows = json.loads(r.stdout)
+    assert [(row["session_id"], row["filtered_by"]) for row in rows] == [("noise", "[cadet-city]*")]
+
+
+def test_filtered_sessions_do_not_count_toward_the_rollup(tmp_path):
+    reg = _registry(
+        tmp_path,
+        [
+            _thread("noise", title="[cadet-city] reviewer", filteredBy="[cadet-city]*"),
+            _thread("real", title="real work"),
+        ],
+    )
+
+    r = _run(reg, "--no-scan", "--json")
+
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["live_count"] == 1

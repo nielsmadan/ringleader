@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 from .paths import config_path
@@ -14,6 +14,7 @@ class Config:
     llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
     archive_retention_days: int = 0  # 0 = keep archived sessions forever
+    session_filters: list[str] = field(default_factory=list)
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -30,6 +31,7 @@ def load_config(path: Path | None = None) -> Config:
         llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
         archive_retention_days=data.get("archive_retention_days", 0),
+        session_filters=list(data.get("session_filters", [])),
     )
 
 

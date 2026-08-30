@@ -411,3 +411,78 @@ def test_auto_refresh_with_explicit_sources_scans_all_of_them(tmp_path):
     assert set(by_id) == {"s1", "c1"}
     assert by_id["s1"]["source"] == "claude-code"
     assert by_id["c1"]["source"] == "codex"
+
+
+def _titled_projects_dir(tmp, sid, title):
+    proj = tmp / "projects" / "-Users-me-proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / f"{sid}.jsonl").write_text(
+        json.dumps({"sessionId": sid, "cwd": "/Users/me/proj", "type": "user"})
+        + "\n"
+        + json.dumps({"type": "custom-title", "customTitle": title})
+        + "\n",
+        encoding="utf-8",
+    )
+    return tmp / "projects"
+
+
+def test_auto_refresh_stamps_matching_sessions_with_the_filter(tmp_path):
+    root = _titled_projects_dir(tmp_path, "s1", "[cadet-city] reviewer")
+    _titled_projects_dir(tmp_path, "s2", "real work")
+    reg_path = _registry(tmp_path, [])
+
+    reg, _ = refresh.auto_refresh(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        projects_root=root,
+        git_resolver=lambda cwd: None,
+        name_filters=["[cadet-city]*"],
+    )
+
+    by_id = {t["sessionId"]: t for t in reg["threads"]}
+    assert by_id["s1"]["filteredBy"] == "[cadet-city]*"
+    assert by_id["s2"]["filteredBy"] is None
+    saved = json.loads(reg_path.read_text(encoding="utf-8"))
+    assert {t["sessionId"]: t["filteredBy"] for t in saved["threads"]} == {
+        "s1": "[cadet-city]*",
+        "s2": None,
+    }
+
+
+def test_auto_refresh_keeps_filtered_sessions_in_the_registry(tmp_path):
+    root = _titled_projects_dir(tmp_path, "s1", "[cadet-city] reviewer")
+    reg_path = _registry(tmp_path, [])
+
+    reg, note = refresh.auto_refresh(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        projects_root=root,
+        git_resolver=lambda cwd: None,
+        name_filters=["[cadet-city]*"],
+    )
+
+    assert note == "(scanning… 1 new)"
+    assert [t["sessionId"] for t in reg["threads"]] == ["s1"]
+    assert reg["deleted"] == []
+
+
+def test_auto_refresh_restamps_when_the_filter_changes(tmp_path):
+    root = _titled_projects_dir(tmp_path, "s1", "[cadet-city] reviewer")
+    reg_path = _registry(tmp_path, [])
+    refresh.auto_refresh(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        projects_root=root,
+        git_resolver=lambda cwd: None,
+        name_filters=["[cadet-city]*"],
+    )
+
+    reg, _ = refresh.auto_refresh(
+        reg_path,
+        "2026-07-19T00:01:00+00:00",
+        projects_root=root,
+        git_resolver=lambda cwd: None,
+        name_filters=[],
+    )
+
+    assert reg["threads"][0]["filteredBy"] is None

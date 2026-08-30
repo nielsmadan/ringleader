@@ -1,4 +1,5 @@
 from ringleader.registry import (
+    apply_name_filters,
     empty_registry,
     load_registry,
     reconcile,
@@ -653,3 +654,58 @@ def test_mark_finish_on_exit_raises_for_an_unknown_session():
 
     with pytest.raises(KeyError):
         registry.mark_finish_on_exit({"threads": []}, "nope", "2026-08-28T10:00:00+00:00")
+
+
+def test_apply_name_filters_stamps_the_matching_pattern():
+    reg = empty_registry()
+    reg = reconcile(
+        reg,
+        [
+            _meta("s1", NOW, title="[cadet-city] reviewer"),
+            _meta("s2", NOW, title="real work"),
+        ],
+        NOW,
+    )
+
+    apply_name_filters(reg, ["[cadet-city]*"])
+
+    by_id = {t["sessionId"]: t for t in reg["threads"]}
+    assert by_id["s1"]["filteredBy"] == "[cadet-city]*"
+    assert by_id["s2"]["filteredBy"] is None
+
+
+def test_apply_name_filters_clears_the_stamp_when_the_pattern_goes_away():
+    reg = empty_registry()
+    reg = reconcile(reg, [_meta("s1", NOW, title="[cadet-city] reviewer")], NOW)
+    apply_name_filters(reg, ["[cadet-city]*"])
+
+    apply_name_filters(reg, [])
+
+    assert reg["threads"][0]["filteredBy"] is None
+
+
+def test_reconcile_preserves_the_filter_stamp():
+    reg = empty_registry()
+    reg = reconcile(reg, [_meta("s1", NOW, title="[cadet-city] reviewer")], NOW)
+    apply_name_filters(reg, ["[cadet-city]*"])
+
+    reg = reconcile(reg, [_meta("s1", NOW, title="[cadet-city] reviewer")], NOW)
+
+    assert reg["threads"][0]["filteredBy"] == "[cadet-city]*"
+
+
+def test_filtered_sessions_are_not_offered_for_classification():
+    reg = empty_registry()
+    reg = reconcile(
+        reg,
+        [
+            _meta("s1", NOW, title="[cadet-city] reviewer"),
+            _meta("s2", NOW, title="real work"),
+        ],
+        NOW,
+    )
+    apply_name_filters(reg, ["[cadet-city]*"])
+
+    pending = sessions_needing_classification(reg)
+
+    assert [t["sessionId"] for t in pending] == ["s2"]

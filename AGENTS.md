@@ -55,6 +55,12 @@ pruning them before the GC clock deletes them.
   session storage, because merging would rewrite a sessionId — the registry's key.
   `rl workspace retarget` does the last two halves, for a directory you moved by
   hand, and is what makes `move` re-runnable after a partial failure.
+- **`rl config filter` hides sessions by name, it does not delete them.** A pattern is
+  an anchored glob where only `*` and `?` are wildcards — brackets stay literal, so
+  `[cadet-city]*` catches a bracketed prefix rather than a character class. Matches are
+  stamped as `filteredBy` at scan time and drop out of `overview`/`triage`/`inbox` and
+  out of `rl session enrich`; `--include-filtered` (or `rl overview --filtered`) gets
+  them back. `rl prune` still deletes them from disk when they are tiny and stale.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
   hiding, workspace relocation); `claude_code.py` and `codex.py` implement it.
@@ -82,6 +88,7 @@ rl session complete <id>            # harvest, then archive (no-op archive if ha
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
 rl data <sub>                       # export, tokens, migrate
 rl config                           # select the AI engine for enrich (ai=claude/codex/llm; stores no secrets)
+rl config filter add '<glob>'       # hide sessions whose name matches (list/remove too)
 just test                           # tests; pytest config lives in pyproject.toml now
 ```
 

@@ -73,6 +73,11 @@ def cmd_triage(argv: list[str]) -> int:
         help="filter to sessions from this source (repeatable)",
     )
     ap.add_argument(
+        "--include-filtered",
+        action="store_true",
+        help="also show sessions hidden by a `rl config filter` name pattern",
+    )
+    ap.add_argument(
         "--json",
         action="store_true",
         help="print the triage inbox as JSON instead of text; honors -u/--unclassified",
@@ -98,6 +103,8 @@ def cmd_triage(argv: list[str]) -> int:
         wanted = set(args.source)
         threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
     threads = overview.filter_recent(threads, now, args.recent)
+    if not args.include_filtered:
+        threads = [t for t in threads if not overview.is_filtered(t)]
     if args.json:
         print(
             json.dumps(

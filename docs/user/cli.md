@@ -153,6 +153,22 @@ Backs the `memory-triage` skill.
 
 Stores no secrets — the `claude`/`codex` engines reuse that CLI's own auth.
 
+### `rl config filter`
+
+Hide sessions whose name matches a glob — see
+[Filtering noisy sessions](../features/views-and-triage.md#filtering-noisy-sessions).
+
+```sh
+rl config filter add '[cadet-city]*'   # everything named "[cadet-city] ..."
+rl config filter list
+rl config filter remove '[cadet-city]*'
+```
+
+Patterns are anchored to the whole name: `*` matches any run of characters, `?` matches one,
+and every other character — brackets included — is literal, so the `[cadet-city]` prefix above
+means what it looks like rather than a character class. Quote the pattern so the shell leaves
+it alone.
+
 ## Conventions
 
 - A **`<selector>`** is a git-project label (`ringleader`) or a cwd path — never a session id.
