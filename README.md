@@ -72,7 +72,7 @@ read natively in Claude Code, Codex, OpenCode and Pi:
 | `ringleader-overview` | the morning read: what's in flight, stale, or snoozed |
 | `ringleader-triage` | recurring cleanup of the last few days |
 | `ringleader-cleanup` | the same over the entire backlog; resumable across runs |
-| `ringleader-finish` | finish the session you're *in*, harvesting from live context |
+| `ringleader-finish` | finish the session you're *in*, harvesting from live context — or nothing, when there was nothing to keep |
 | `ringleader-usage` | explain where tokens went and how to spend fewer |
 | `ringleader-publish` | drain pending harvests into the living docs of matching repos |
 
