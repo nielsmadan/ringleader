@@ -138,10 +138,14 @@ built), [decisions/](docs/decisions/overview.md) (ADRs), and
 
 ```sh
 just test              # pytest
-just check             # lint + typecheck + tests
+just check             # everything CI runs: ruff check + format --check + mypy + tests
+just hooks             # install the git hooks (lefthook)
 just install-editable  # track the working tree
 just sandbox           # isolated throwaway world for exercising the skills
 just sync-playbook     # re-sync the bundled skill playbooks
 ```
+
+Hooks are defined in `lefthook.yml`: pre-commit lints and format-checks staged `*.py`;
+pre-push runs `ruff check`, `mypy`, and the suite.
 
 See `AGENTS.md` for contributor and agent guidance.

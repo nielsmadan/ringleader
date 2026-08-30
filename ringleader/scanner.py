@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from . import registry
-from .gitinfo import resolve_git_project
+from .gitinfo import GitProject, resolve_git_project
 from .sources.base import (
     CachedMetadataSource,
     IndexUpdate,
@@ -181,13 +181,13 @@ def scan(
         sources = SOURCES
     if git_resolver is None:
         git_resolver = resolve_git_project
-    threads_by_ref = {}
+    threads_by_ref: dict[tuple[str, str], dict] = {}
     for thread in cached_threads or []:
         source_name = thread.get("source") or "claude-code"
         for source_ref in (thread.get("sourceRef"), thread.get("file")):
             if source_ref:
                 threads_by_ref[(source_name, source_ref)] = thread
-    cache: dict[str, object] = {}  # cwd -> GitProject|None, resolved once per cwd
+    cache: dict[str, GitProject | None] = {}  # resolved once per cwd
     out: list[NormalizedSession] = []
     for src in sources:
         try:

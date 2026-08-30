@@ -50,22 +50,23 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
-    node: object = TABLE
+    node: dict = TABLE
     crumbs: list[str] = []
     rest = argv
     while rest:
         tok, rest = rest[0], rest[1:]
-        entry = node.get(tok) if isinstance(node, dict) else None
+        entry = node.get(tok)
         if entry is None:
             where = f" in 'rl {' '.join(crumbs)}'" if crumbs else ""
             print(f"rl: unknown command '{tok}'{where}", file=sys.stderr)
             _usage(sys.stderr)
             return 2
         crumbs.append(tok)
-        if callable(entry):
-            return entry(rest) or 0
-        node = entry
-    if not isinstance(node, dict):
-        raise RuntimeError("invalid command table")
+        if isinstance(entry, dict):
+            node = entry
+            continue
+        if not callable(entry):
+            raise RuntimeError("invalid command table")
+        return entry(rest) or 0
     _group_usage(crumbs, node, sys.stdout)
     return 0

@@ -42,8 +42,9 @@ def _render_jsonl(path) -> str:
                     if isinstance(content, list)
                     else []
                 )
-                if tools:
-                    out.append(f"_(tools: {', '.join(tools)})_\n")
+                names = [n for n in tools if isinstance(n, str) and n]
+                if names:
+                    out.append(f"_(tools: {', '.join(names)})_\n")
             elif t == "response_item":
                 p = o.get("payload", {})
                 if p.get("type") == "message":

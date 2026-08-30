@@ -21,11 +21,15 @@ fmt:
 check:
     @uv run ruff check
     @uv run ruff format --check
+    @uv run python -m mypy
     @uv run python -m pytest -q
 
-# Optional; not part of `check`.
 typecheck:
-    @uv run python -m mypy ringleader || true
+    @uv run python -m mypy
+
+# Install git hooks (lefthook).
+hooks:
+    @lefthook install
 
 # Migrate legacy repo state, then install the global `rl`.
 # --reinstall because the version never changes: without it uv audits the existing

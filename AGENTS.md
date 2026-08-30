@@ -100,11 +100,24 @@ rl data <sub>                       # export, tokens, migrate
 rl config                           # select the AI engine for enrich (ai=claude/codex/llm; stores no secrets)
 rl config filter add '<glob>'       # hide sessions whose name matches (list/remove too)
 just test                           # tests; pytest config lives in pyproject.toml now
+just check                          # everything CI runs: ruff + format --check + mypy + tests
+just hooks                          # install the git hooks (lefthook)
 ```
 
 From a source checkout without installing, prefix each `rl` call with `uv run` (`uv run rl overview`).
 
 A `<selector>` is a git-project label (`juggler`) or a cwd path — not a session id.
+
+## Git hooks
+
+Defined in `lefthook.yml`, installed with `just hooks`. **Pre-commit** runs `ruff format --check`
+and `ruff check` on staged `*.py`, so it is fast. **Pre-push** runs `ruff check`, `mypy`, and the
+suite over the whole tree (~60s, dominated by the tests); lefthook skips it when the push range
+has no files.
+
+`mypy` is configured in `pyproject.toml` (`[tool.mypy]`, `files = ["ringleader"]`), so plain
+`uv run mypy` checks the package. The tree is clean under all four gates — keep it that way
+rather than reaching for `--no-verify`.
 
 ## Reference
 

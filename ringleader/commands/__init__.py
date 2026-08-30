@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys as _sys
+from collections.abc import Callable
 
 from ..paths import default_registry as default_registry
 from . import (
@@ -41,6 +42,9 @@ from . import (
     whoami,
 )
 from . import harvests as harvests_cmd
+
+# A leaf runs a command; a group is a nested dict of them. `cli.main` walks this.
+CommandFn = Callable[[list[str]], int]
 
 
 def _reserved(label):
@@ -95,7 +99,7 @@ _WORKSPACE = {
     "retarget": move_workspace.cmd_retarget,
 }
 
-TABLE = {
+TABLE: dict[str, CommandFn | dict] = {
     # flat daily verbs
     "overview": overview.cmd_overview,
     "triage": triage.cmd_triage,

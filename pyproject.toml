@@ -44,6 +44,16 @@ branch = true
 [tool.coverage.report]
 show_missing = true
 
+[tool.mypy]
+python_version = "3.13"
+files = ["ringleader"]
+
+# `llm` is an optional engine (see docs/tech/models.md); it is deliberately not a
+# dependency, so its absence must not fail the type check.
+[[tool.mypy.overrides]]
+module = "llm"
+ignore_missing_imports = true
+
 [tool.ruff]
 target-version = "py313"
 line-length = 100
