@@ -207,7 +207,9 @@ def repoint_editables(pths: list[Path], old: str, new: str) -> list[Path]:
         try:
             lines = pth.read_text().splitlines()
             out = [
-                new + line.strip()[len(old):] if line.strip() == old or is_beneath(line.strip(), old) else line
+                new + line.strip()[len(old) :]
+                if line.strip() == old or is_beneath(line.strip(), old)
+                else line
                 for line in lines
             ]
             pth.write_text("\n".join(out) + "\n")
@@ -281,7 +283,7 @@ def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
     """
     root = thread.get("gitRoot")
     if isinstance(root, str) and (root == old or is_beneath(root, old)):
-        thread["gitRoot"] = new + root[len(old):]
+        thread["gitRoot"] = new + root[len(old) :]
 
 
 def _retarget_registry(

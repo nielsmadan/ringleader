@@ -85,7 +85,7 @@ def test_a_pinned_thread_survives_the_next_scan(tmp_path, monkeypatch):
     stale baked-in cwd on the very next scan."""
     from ringleader import registry as registry_mod
 
-    ws, new, reg, projects, _ = _world(tmp_path, monkeypatch)
+    ws, new, reg, _projects, _ = _world(tmp_path, monkeypatch)
     move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"])
 
     loaded = json.loads(reg.read_text())
@@ -206,7 +206,7 @@ def test_move_refuses_when_nothing_matches(tmp_path, monkeypatch, capsys):
     """Matching is lexical and case-sensitive while the filesystem is neither, so a
     zero-match move is almost always a mistyped OLD — moving anyway would orphan every
     session under it and still exit 0."""
-    ws, new, reg, _projects, _t = _world(tmp_path, monkeypatch)
+    _ws, _new, reg, _projects, _t = _world(tmp_path, monkeypatch)
     unrelated = tmp_path / "unrelated"
     unrelated.mkdir()
 
@@ -235,7 +235,7 @@ def test_a_failed_relocation_leaves_the_session_recoverable(tmp_path, monkeypatc
     """The central claim of the module: a partial failure must stay repairable by
     `retarget`. Pinning a stranded session would rewrite its `project` and put it beyond
     the reach of the one command that could fix it."""
-    ws, new, reg, projects, transcript = _world(tmp_path, monkeypatch)
+    ws, new, reg, _projects, transcript = _world(tmp_path, monkeypatch)
 
     def boom(self, old_cwd, new_cwd):
         raise OSError("disk full")
