@@ -252,7 +252,7 @@ def _search_roots(root: Path, max_depth: int):
     level = [root]
     for _ in range(max_depth + 1):
         yield from level
-        nxt = []
+        nxt: list[Path] = []
         for d in level:
             try:
                 entries = list(d.iterdir())

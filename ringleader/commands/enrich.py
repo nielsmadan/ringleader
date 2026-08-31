@@ -56,21 +56,34 @@ def cmd_enrich(argv: list[str]) -> int:
 
     now = _now()
     reg = registry.load_registry(args.registry)
-    scanned = scanner.scan(sources=scanner.active_sources())
-    tails = {ns.session_id: ns.tail_text for ns in scanned}
-    reg = registry.reconcile(reg, scanned, now)
+    unavailable_sources: set[str] = set()
+    scanned = scanner.scan(
+        sources=scanner.active_sources(unavailable_sources=unavailable_sources),
+        unavailable_sources=unavailable_sources,
+    )
+    tails = {(ns.source, ns.session_id): ns.tail_text for ns in scanned}
+    reg = registry.reconcile(
+        reg,
+        scanned,
+        now,
+        unavailable_sources=unavailable_sources,
+    )
     registry.apply_name_filters(reg, cfg.session_filters)
 
     pending = registry.sessions_needing_classification(reg)
     if args.project:
         pending = projects.filter_by_projects(pending, args.project)
+    unavailable = [t for t in pending if (t.get("source") or "claude-code") in unavailable_sources]
+    pending = [t for t in pending if (t.get("source") or "claude-code") not in unavailable_sources]
     if args.limit is not None:
         pending = pending[: args.limit]
 
-    done = skipped = 0
+    done = 0
+    skipped = len(unavailable)
     for t in pending:
         try:
-            out = model.complete_json(_prompt(t, tails.get(t["sessionId"], "")), ENRICH_SCHEMA)
+            source_key = (t.get("source") or "claude-code", t["sessionId"])
+            out = model.complete_json(_prompt(t, tails[source_key]), ENRICH_SCHEMA)
             registry.apply_classification(
                 reg,
                 t["sessionId"],

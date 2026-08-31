@@ -21,7 +21,11 @@ def cmd_export(argv: list[str]) -> int:
         print(f"rl-export: unknown session {args.id}", file=sys.stderr)
         return 1
 
-    text = export.render_conversation(t["file"])
+    try:
+        text = export.render_conversation(t)
+    except (OSError, RuntimeError) as error:
+        print(f"rl-export: {error}", file=sys.stderr)
+        return 1
     if args.out:
         Path(args.out).write_text(text, encoding="utf-8")
         print(f"wrote {args.out}")

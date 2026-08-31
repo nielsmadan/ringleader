@@ -49,7 +49,7 @@ def archive_thread(
 
     Returns the destination path. Raises RuntimeError on move-collision or path conflicts
     (the caller decides how to report that to the user)."""
-    src = Path(thread["file"])
+    src = scanner.filesystem_path(thread, "archive")
     slug = (
         thread.get("gitProjectLabel")
         or (Path(thread["project"]).name if thread.get("project") else None)

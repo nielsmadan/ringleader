@@ -262,7 +262,7 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
         return _cmd_export(argv[1:], prog)
     ap = argparse.ArgumentParser(
         prog=prog,
-        description="Token usage across coding-agent harnesses, read from local transcripts.",
+        description="Token usage across coding-agent harnesses, read from local agent state.",
     )
     ap.add_argument("--source", action="append", choices=sorted(aggregate.READERS))
     ap.add_argument("--days", type=int, default=7)

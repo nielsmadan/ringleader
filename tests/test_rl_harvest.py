@@ -1,6 +1,6 @@
 import json
 
-from ringleader import harvests
+from ringleader import harvests, session_env
 from ringleader.commands import harvest as harvest_mod
 from ringleader.models.base import ModelError
 
@@ -171,6 +171,8 @@ def test_unknown_session_names_the_remedy(tmp_path, monkeypatch, capsys):
 
 def test_current_resolves_the_session_id(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    for var in (*session_env.PROBES.values(), session_env._CODEX_FALLBACK):
+        monkeypatch.delenv(var, raising=False)
     monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "s1")
     reg = _registry(tmp_path)
     md = tmp_path / "h.md"

@@ -161,7 +161,7 @@ def scan_memory(root, git_resolver=None) -> list[MemoryEntry]:
             if cwd not in git_cache:
                 git_cache[cwd] = git_resolver(cwd)
             gp = git_cache[cwd]
-        repo_gone = bool(cwd) and not Path(cwd).exists()
+        repo_gone = cwd is not None and not Path(cwd).exists()
         doc = repo_doc_path(cwd)
         doc_text = None
         if doc:

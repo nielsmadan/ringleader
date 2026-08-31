@@ -72,7 +72,11 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
             file=sys.stderr,
         )
         return 1, None
-    condensed = export.render_conversation(thread["file"])
+    try:
+        condensed = export.render_conversation(thread)
+    except (OSError, RuntimeError) as error:
+        print(f"rl-harvest: {error}", file=sys.stderr)
+        return 1, None
     try:
         data = model.complete_json(_prompt(thread, condensed), HARVEST_SCHEMA)
     except (ModelError, KeyError) as error:
@@ -124,6 +128,7 @@ def cmd_harvest(argv: list[str]) -> int:
         print("rl-harvest: need a session id, or --current", file=sys.stderr)
         return 1
 
+    markdown: str | None
     if args.from_file is not None:
         markdown = _read_from_file(args.from_file)
         if not markdown.strip():

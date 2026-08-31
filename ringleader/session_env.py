@@ -1,6 +1,6 @@
 """Which agent session is this process running inside?
 
-The `sources/` seam reads transcripts off disk; this one reads the live process, so
+The `sources/` seam reads stored sessions; this one reads the live process, so
 a skill can act on the session it is currently part of without being told its id.
 """
 

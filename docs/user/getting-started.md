@@ -40,9 +40,9 @@ one machine's worth of sessions.
 rl overview
 ```
 
-This scans `~/.claude/projects` (and Codex's store, if present), builds the registry, and prints
-a rollup by git project. The first run is the slow one — it parses every transcript. Later runs
-only parse what changed.
+This scans the local Claude Code, Codex and OpenCode stores that are present, builds the registry,
+and prints a rollup by git project. The first run is the slow one — it parses every session.
+Later runs only parse what changed.
 
 ```sh
 rl overview --sessions        # flat list instead of the rollup

@@ -26,8 +26,8 @@ def _memory_rollup(reg: dict, now: str, selectors: list[str]) -> int:
             print("no memory entries for that selector")
             return 0
         for e in sorted(entries, key=lambda e: (e.get("project") or "", e.get("name") or "")):
-            obs = ", ".join(e.get("obsoleteSignals") or []) or "none"
-            print(f"{e.get('name') or '(unnamed)'}  obsolete={obs}  project={e.get('project')}")
+            signals = ", ".join(e.get("obsoleteSignals") or []) or "none"
+            print(f"{e.get('name') or '(unnamed)'}  obsolete={signals}  project={e.get('project')}")
         return 0
     groups: dict[str, list[dict]] = {}
     for e in entries:

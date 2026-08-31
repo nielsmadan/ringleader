@@ -23,8 +23,9 @@ def cmd_mark_reviewed(argv: list[str]) -> int:
     # Record the LIVE file mtime so a session just renamed (which bumped the file)
     # isn't re-surfaced on the next scan. Fall back to the registry mtime.
     live_mtime = None
-    f = Path(t["file"])
-    if f.exists():
+    file_path = t.get("file")
+    f = Path(file_path) if isinstance(file_path, str) and file_path else None
+    if f is not None and f.exists():
         live_mtime = datetime.fromtimestamp(f.stat().st_mtime, tz=UTC).isoformat()
     try:
         registry.mark_reviewed(reg, args.id, live_mtime)

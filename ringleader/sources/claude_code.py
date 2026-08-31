@@ -41,7 +41,9 @@ class ClaudeCodeSource:
     tail_turns: int = 30
     name: str = "claude-code"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"applies_names", "relocates_workspace"})
+        default_factory=lambda: frozenset(
+            {"applies_names", "filesystem_lifecycle", "relocates_workspace"}
+        )
     )
 
     def __post_init__(self) -> None:
@@ -91,6 +93,7 @@ class ClaudeCodeSource:
                 continue
             yield RawRef(
                 source=self.name,
+                source_ref=p.stem,
                 file=str(p),
                 mtime=_iso_mtime(p),
                 size_bytes=st.st_size,
@@ -98,7 +101,7 @@ class ClaudeCodeSource:
             )
 
     def parse(self, ref: RawRef) -> NormalizedSession:
-        path = Path(ref.file)
+        path = ref.file_path()
         info = parse_transcript(path, tail_turns=self.tail_turns)
         return NormalizedSession(
             source=self.name,

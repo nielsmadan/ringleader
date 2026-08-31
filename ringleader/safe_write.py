@@ -46,11 +46,13 @@ def backup_and_write(path: Path, text: str) -> Path | None:
     path = Path(os.path.realpath(path))
     mode = _mode_for(path)
 
-    backup: Path | None = path.with_name(path.name + ".bak")
+    backup_path = path.with_name(path.name + ".bak")
     try:
-        shutil.copy2(path, backup)
+        shutil.copy2(path, backup_path)
     except FileNotFoundError:
-        backup = None
+        backup: Path | None = None
+    else:
+        backup = backup_path
 
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=path.name + ".", suffix=".tmp")
     try:

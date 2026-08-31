@@ -4,7 +4,6 @@ import argparse
 import shutil
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .. import registry, scanner
 from . import default_registry
@@ -27,13 +26,12 @@ def cmd_delete(argv: list[str]) -> int:
         return 1
 
     try:
+        f = scanner.filesystem_path(t, "delete")
         scanner.hide_from_picker(t)
     except RuntimeError as e:
-        # deleting anyway would strand a live entry in the agent's picker
         print(f"rl-delete: {e}", file=sys.stderr)
         return 1
 
-    f = Path(t["file"])
     f.unlink(missing_ok=True)
     shutil.rmtree(f.with_suffix(""), ignore_errors=True)
     registry.prune_session(reg, args.id, _now(), reason="deleted")

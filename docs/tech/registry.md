@@ -38,7 +38,7 @@ tell what it may bring back.
 Three groups, each refreshed under a different rule — this is the part worth knowing before
 editing:
 
-- **`_METADATA_FIELDS`** — derived from the transcript on every scan (`file`, `project`,
+- **`_METADATA_FIELDS`** — derived from the source on every scan (`sourceRef`, optional `file`, `project`,
   `title`, `summary`, `lastPrompt`, `mtime`, `sizeBytes`, `messageCount`, `gitBranch`,
   `fileFingerprint`, `cacheVersion`). Cheap and always safe to overwrite.
 - **`filteredBy`** — the `config.session_filters` pattern this session's name matched, or
@@ -72,9 +72,10 @@ entirely — only when **all** of these hold:
 - the source reports a `parser_version` and it equals the thread's `cacheVersion`,
 - the ref carries a fingerprint and it equals the thread's `fileFingerprint`.
 
-`fileFingerprint` is `stat_fingerprint()`: dev, inode, size, mtime_ns, ctime_ns. Bumping a
-source's `parser_version` invalidates every cached parse for that source at once, which is the
-intended way to ship a parser change.
+`fileFingerprint` is the historical registry field name for the source-owned fingerprint. JSONL
+sources store `stat_fingerprint()` (dev, inode, size, mtime_ns, ctime_ns); OpenCode stores a
+per-session metadata/conversation digest. Bumping a source's `parser_version` invalidates every
+cached parse for that source at once, which is the intended way to ship a parser change.
 
 ### Reconcile
 

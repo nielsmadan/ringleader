@@ -28,6 +28,11 @@ For each dormant session, exactly one of:
 | **Keep long-term** | `rl session keep <id>` | never triage this again |
 | **Delete** | `rl session delete <id>` | nothing worth keeping |
 
+OpenCode sessions are read-only in ringleader. They participate in scanning, views, triage,
+detail, export and harvest, but `finish`, `complete`, `archive`, `delete`, `prune` and their TUI
+equivalents decline them rather than mutating `opencode.db`. Snooze and keep remain available
+because they change only ringleader's registry.
+
 ### Snooze vs. keep
 
 Both hide a session, and they are not interchangeable:

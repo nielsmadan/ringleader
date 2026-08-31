@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .. import registry
+from .. import registry, scanner
 from ..paths import archive_root
 from ..stateio import publish_lock
 from . import archive as archive_cmd
@@ -16,6 +16,17 @@ def cmd_complete(argv: list[str]) -> int:
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     args = ap.parse_args(argv)
+
+    initial = registry.load_registry(args.registry)
+    initial_thread = next(
+        (item for item in initial["threads"] if item["sessionId"] == args.id), None
+    )
+    if initial_thread is not None:
+        try:
+            scanner.filesystem_path(initial_thread, "complete")
+        except RuntimeError as error:
+            print(f"rl-complete: {error}", file=sys.stderr)
+            return 1
 
     rc, markdown = harvest_mod._prepare_harvest(args.id, args.registry)
     if rc != 0:

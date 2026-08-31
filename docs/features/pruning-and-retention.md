@@ -26,6 +26,9 @@ defaults are `--older-than 7` days and `--max-turns 12` messages; a session must
 `rl roundup` runs prune **with deletion enabled** — it is the one everyday verb that deletes
 without a separate flag.
 
+OpenCode's SQLite-backed sessions can appear in the preview but are skipped during deletion;
+ringleader never mutates `opencode.db`.
+
 ## Archive retention
 
 Archiving moves files rather than deleting them, so archived sessions accumulate. `archive.

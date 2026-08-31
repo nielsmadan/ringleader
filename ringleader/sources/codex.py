@@ -141,7 +141,13 @@ class CodexSource:
     name: str = "codex"
     capabilities: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            {"applies_names", "hides_from_picker", "shows_in_picker", "rebinds_workspace"}
+            {
+                "applies_names",
+                "filesystem_lifecycle",
+                "hides_from_picker",
+                "shows_in_picker",
+                "rebinds_workspace",
+            }
         )
     )
     _names_by_id: dict[str, str | None] | None = field(default=None, init=False, repr=False)
@@ -157,6 +163,11 @@ class CodexSource:
     def root(self) -> Path:
         return self.sessions_dir
 
+    def _session_index_path(self) -> Path:
+        if self.session_index_file is None:
+            raise RuntimeError("Codex session index is not configured")
+        return self.session_index_file
+
     def discover(self) -> Iterator[RawRef]:
         self._names_by_id = None
         if not self.sessions_dir.exists():
@@ -164,13 +175,15 @@ class CodexSource:
         for p in sorted(self.sessions_dir.glob("**/*.jsonl")):
             try:
                 st = p.stat()
-                if not _is_interactive(_meta(p)):
+                meta = _meta(p)
+                if not _is_interactive(meta):
                     continue
             except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
             yield RawRef(
                 source=self.name,
+                source_ref=_thread_id(meta, p),
                 file=str(p),
                 mtime=_iso_mtime(p),
                 size_bytes=st.st_size,
@@ -178,7 +191,7 @@ class CodexSource:
             )
 
     def parse(self, ref: RawRef) -> NormalizedSession:
-        path = Path(ref.file)
+        path = ref.file_path()
         meta = _meta(path)
         session_id = _thread_id(meta, path)
         _first, last, count = _message_stats(path)
@@ -203,7 +216,7 @@ class CodexSource:
             return self._names_by_id
         names: dict[str, str | None] = {}
         try:
-            lines = self.session_index_file.read_text(encoding="utf-8").splitlines()
+            lines = self._session_index_path().read_text(encoding="utf-8").splitlines()
         except FileNotFoundError:
             lines = []
         except OSError as e:
@@ -233,7 +246,7 @@ class CodexSource:
             {"id": session_id, "thread_name": name.strip(), "updated_at": updated_at},
             ensure_ascii=False,
         )
-        append_jsonl_line(self.session_index_file, line)
+        append_jsonl_line(self._session_index_path(), line)
         self._names_by_id = None
 
     def _update_thread(

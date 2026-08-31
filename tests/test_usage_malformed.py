@@ -1,4 +1,5 @@
 import json
+import sqlite3
 
 from ringleader.usage.claude import ClaudeUsageReader
 from ringleader.usage.codex import CodexUsageReader
@@ -110,39 +111,102 @@ def test_codex_scalar_rate_limits_does_not_crash(tmp_path):
     assert list(reader.windows()) == []
 
 
-def _oc_write(storage, session, msg_id, body):
-    d = storage / "message" / session
-    d.mkdir(parents=True, exist_ok=True)
-    (d / f"{msg_id}.json").write_text(json.dumps(body), encoding="utf-8")
+def _oc_write(
+    tmp_path,
+    *,
+    time_updated,
+    tokens_input=0,
+    tokens_output=0,
+    cost=0,
+):
+    db = tmp_path / "opencode.db"
+    connection = sqlite3.connect(db)
+    connection.executescript(
+        """
+        CREATE TABLE project (id TEXT PRIMARY KEY, worktree TEXT NOT NULL);
+        CREATE TABLE session (
+            id TEXT PRIMARY KEY,
+            project_id TEXT NOT NULL,
+            directory TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            model TEXT,
+            cost REAL NOT NULL,
+            tokens_input INTEGER NOT NULL,
+            tokens_output INTEGER NOT NULL,
+            tokens_reasoning INTEGER NOT NULL,
+            tokens_cache_read INTEGER NOT NULL,
+            tokens_cache_write INTEGER NOT NULL
+        );
+        CREATE TABLE message (
+            id TEXT PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            time_created INTEGER NOT NULL,
+            time_updated INTEGER NOT NULL,
+            data TEXT NOT NULL
+        );
+        """
+    )
+    connection.execute("INSERT INTO project VALUES (?, ?)", ("opaque", "/repo"))
+    connection.execute(
+        "INSERT INTO session VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            "ses_1",
+            "opaque",
+            "/repo",
+            time_updated,
+            time_updated,
+            None,
+            cost,
+            tokens_input,
+            tokens_output,
+            0,
+            0,
+            0,
+        ),
+    )
+    connection.execute(
+        "INSERT INTO message VALUES (?, ?, ?, ?, ?)",
+        (
+            "msg_1",
+            "ses_1",
+            time_updated,
+            time_updated,
+            json.dumps(
+                {
+                    "role": "assistant",
+                    "cost": cost,
+                    "tokens": {
+                        "input": tokens_input,
+                        "output": tokens_output,
+                        "reasoning": 0,
+                        "cache": {"read": 0, "write": 0},
+                    },
+                }
+            ),
+        ),
+    )
+    connection.commit()
+    connection.close()
+    return db
 
 
 def test_opencode_scalar_tokens_and_bad_time_do_not_crash(tmp_path):
-    _oc_write(
-        tmp_path,
-        "ses_1",
-        "msg_1",
-        {"id": "msg_1", "sessionID": "ses_1", "role": "assistant", "tokens": 7, "time": "bad"},
-    )
+    db = _oc_write(tmp_path, time_updated="bad", tokens_input="many", tokens_output="many")
 
-    assert list(OpenCodeUsageReader(storage_dir=tmp_path).records()) == []
+    assert list(OpenCodeUsageReader(db_path=db).records()) == []
 
 
 def test_opencode_scalar_time_with_valid_tokens_degrades_timestamp(tmp_path):
-    _oc_write(
+    db = _oc_write(
         tmp_path,
-        "ses_1",
-        "msg_1",
-        {
-            "id": "msg_1",
-            "sessionID": "ses_1",
-            "role": "assistant",
-            "tokens": {"input": "many", "output": 5},
-            "time": "bad",
-            "cost": "expensive",
-        },
+        time_updated="bad",
+        tokens_input="many",
+        tokens_output=5,
+        cost="expensive",
     )
 
-    r = next(iter(OpenCodeUsageReader(storage_dir=tmp_path).records()))
+    r = next(iter(OpenCodeUsageReader(db_path=db).records()))
 
     assert r.input == 0
     assert r.output == 5

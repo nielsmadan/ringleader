@@ -20,7 +20,7 @@ absent from the transcript.
 ## From triage, later
 
 ```sh
-rl session harvest <id>      # a model reads the transcript
+rl session harvest <id>      # a model reads the conversation
 rl session finish <id>
 ```
 

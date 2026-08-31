@@ -355,12 +355,6 @@ def _save_receipt_unlocked(receipt: PublishReceipt) -> None:
     atomic_write_text(_receipt_path(receipt.receipt_id), text)
 
 
-def _replace_receipt_unlocked(receipt: PublishReceipt, **changes: object) -> PublishReceipt:
-    updated = replace(receipt, **changes)
-    _save_receipt_unlocked(updated)
-    return updated
-
-
 def _remove_receipt_unlocked(receipt_id: str) -> None:
     path = _receipt_path(receipt_id)
     try:
@@ -528,13 +522,15 @@ def prepare_publish(
                 raise PublishStateError("no-change outcome cannot have a tree or paths")
         else:
             raise PublishStateError("invalid outcome")
-        return _replace_receipt_unlocked(
+        updated = replace(
             receipt,
             state="prepared",
             outcome=outcome,
             expected_tree=expected_tree,
             changed_paths=paths,
         )
+        _save_receipt_unlocked(updated)
+        return updated
 
 
 def abandon_receipt(receipt_id: str) -> None:
@@ -578,7 +574,7 @@ def _paths_by_session(
     remaining: Sequence[Harvest], affected_items: Sequence[ReceiptItem]
 ) -> dict[str, list[str]]:
     affected_sessions = {item.session_id for item in affected_items}
-    paths = {session_id: [] for session_id in affected_sessions}
+    paths: dict[str, list[str]] = {session_id: [] for session_id in affected_sessions}
     for item in remaining:
         if item.session_id in paths:
             paths[item.session_id].append(str(item.path.absolute()))
@@ -637,7 +633,8 @@ def consume_publish(receipt_id: str, *, commit: str | None) -> ConsumeResult:
         if stranded:
             raise PublishStateError(f"archive live session before consuming: {stranded[0]}")
         if receipt.state == "prepared":
-            receipt = _replace_receipt_unlocked(receipt, state="finishing", commit=commit)
+            receipt = replace(receipt, state="finishing", commit=commit)
+            _save_receipt_unlocked(receipt)
         for item in selected:
             item.path.unlink(missing_ok=True)
         harvest_directory_fd = os.open(harvests_dir(), os.O_RDONLY)

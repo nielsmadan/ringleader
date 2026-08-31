@@ -7,6 +7,8 @@ edits and deletes this state from the outside and therefore has to know what the
 Surveyed on 2026-08-15 against: Claude Code 2.1.232, codex-cli 0.147.0, opencode 1.18.15, pi 0.84.1.
 Facts below were verified against local state and CLI help unless marked *(unverified)*.
 
+OpenCode storage: verified 2026-08-31 against opencode 1.18.25.
+
 ## Summary
 
 | | Claude Code | Codex | OpenCode | Pi |
@@ -189,9 +191,14 @@ There is no per-session file to curate: everything is rows in
 legacy `~/.local/share/opencode/storage/` tree is nearly empty (1 session directory) — migrated.
 
 `session` columns that matter: `id` (`ses_…`), `project_id`, `parent_id` (non-null for child /
-sub-agent sessions — 7 of 133 locally), `slug` (human-friendly, e.g. `shiny-star`), `title`
+sub-agent sessions — 7 of 158 locally), `slug` (human-friendly, e.g. `shiny-star`), `title`
 (generated), `directory`, `time_created` / `time_updated` / `time_archived` (0 archived locally),
 `agent`, `model`, `cost`, and a token breakdown.
+
+Assistant `message.data` rows carry the per-response `time.created`, `modelID`, `providerID`,
+`cost`, and token buckets. Their sums matched the corresponding `session` totals exactly on the
+local database. `tokens.reasoning` is separate from visible `tokens.output`, not a subset; both
+must be counted in total output usage.
 
 `project.id` is an opaque hash of `project.worktree`; it is **not** SHA-1 of the path (checked), so
 resolve a directory to a project by querying the `project` table rather than recomputing a hash.

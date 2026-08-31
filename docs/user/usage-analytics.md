@@ -1,6 +1,6 @@
 # Usage analytics
 
-Where your tokens went, read from the transcripts your agents already write locally. No API
+Where your tokens went, read from the local state your agents already write. No API
 call, no credential, works offline.
 
 ## The basics
@@ -25,7 +25,9 @@ rl usage session <id>
 ```
 
 Turn count, the full token split, cache hit rate, the top turns, and context growth. An id
-prefix matching several sessions is refused rather than silently merged.
+prefix matching several sessions is refused rather than silently merged. OpenCode detail uses the
+per-response token, model, cost and timestamp data in its database, so day and model grouping do
+not shift when an old session is resumed.
 
 For advice rather than numbers, the `ringleader-usage` skill surveys usage, drills into the
 heavy sessions, reads the transcript around the expensive turns, and tells you what to do
@@ -75,13 +77,19 @@ File-based, no sync service. Records carry a machine id and are de-duplicated on
 
 ## Known reporting artifacts
 
-Two quirks in the **project** column. Neither double-counts tokens — the totals are right, only
+One quirk in the **project** column. It does not double-count tokens — the totals are right, only
 the grouping splits:
 
-- A harness that records no working directory (OpenCode) groups under `(unknown)`.
 - Where a project name is recovered from an encoded directory name rather than a recorded cwd, a
   directory containing a hyphen can't be told apart from a nested path — `foo-bar` and `foo/bar`
   encode identically — so one project can appear as two rows.
+
+OpenCode projects come from the database's `session.project_id` → `project.worktree` join; the
+opaque id is never reconstructed from a path.
+
+OpenCode usage includes child/sub-agent session rows because their token totals are separate from
+the parent. Those rows do not appear in session overview or triage, which only curate top-level
+resumable sessions.
 
 ## `rl data tokens` is not the same command
 

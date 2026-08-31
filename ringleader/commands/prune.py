@@ -4,7 +4,6 @@ import argparse
 import shutil
 import sys
 from datetime import UTC, datetime
-from pathlib import Path
 
 from .. import overview, projects, prune, registry, scanner
 from ..config import load_config
@@ -66,9 +65,11 @@ def _report_stubs(stubs: list) -> None:
 def _delete_stubs(stubs: list) -> int:
     removed = 0
     for s in stubs:
-        f = Path(s.file)
-        sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
         try:
+            f = scanner.filesystem_path(
+                {"source": s.source, "sessionId": s.session_id, "file": s.file}, "prune"
+            )
+            sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
             # same order as prune.delete_sessions: deleting first would strand a live
             # entry in the agent's picker, pointing at a transcript that is gone
             scanner.hide_from_picker(
@@ -150,9 +151,12 @@ def cmd_prune(argv: list[str]) -> int:
     if arch:
         arch.sort(key=lambda ts: ts.get("archivedAt") or "")
         for ts in arch:
-            age = round(overview.age_days(ts.get("archivedAt"), now))
+            archived_at = ts.get("archivedAt")
+            if not isinstance(archived_at, str):
+                continue
+            age = round(overview.age_days(archived_at, now))
             print(
-                f"  archived {(ts.get('archivedAt') or '')[:10]}  {ts.get('project') or '(unknown)'}"
+                f"  archived {archived_at[:10]}  {ts.get('project') or '(unknown)'}"
                 f"  {ts['sessionId'][:8]}  ({age}d, past {retention}d retention)"
             )
         print(

@@ -165,10 +165,11 @@ _BYTES_PER_UNIT = 1024
 
 def _human_size(num_bytes) -> str:
     n = float(num_bytes or 0)
-    for unit in ("B", "KB", "MB", "GB"):
-        if n < _BYTES_PER_UNIT or unit == "GB":
+    for unit in ("B", "KB", "MB"):
+        if n < _BYTES_PER_UNIT:
             return f"{int(n)}B" if unit == "B" else f"{n:.1f}{unit}"
         n /= _BYTES_PER_UNIT
+    return f"{n:.1f}GB"
 
 
 def _size_suffix(thread: dict) -> str:

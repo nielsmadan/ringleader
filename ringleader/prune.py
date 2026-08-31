@@ -36,12 +36,11 @@ def prune_candidates(
 def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
     deleted = skipped = 0
     for t in candidates:
-        f = Path(t["file"])
-        sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
         try:
+            f = scanner.filesystem_path(t, "prune")
+            sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
             scanner.hide_from_picker(t)
         except RuntimeError as e:
-            # Deleting anyway would strand a live entry in the agent's picker
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
             skipped += 1
             continue
@@ -82,6 +81,16 @@ def purge_archived(
     for ts in candidates:
         archive_path = ts.get("archivePath")
         if archive_path:
+            lifecycle_thread = ts.get("thread") or {
+                "sessionId": ts.get("sessionId"),
+                "source": ts.get("source") or "claude-code",
+                "file": ts.get("originalPath") or archive_path,
+            }
+            try:
+                scanner.filesystem_path(lifecycle_thread, "purge")
+            except RuntimeError as error:
+                print(f"skipped archived {ts['sessionId']}: {error}", file=sys.stderr)
+                continue
             rp = Path(archive_path).resolve()
             # Never delete outside the archive tree: registry.json is hand-editable,
             # and these deletes are irreversible last-copy data.

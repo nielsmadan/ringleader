@@ -1,6 +1,6 @@
 # Scanning and refresh
 
-How a run gets from "transcripts on disk" to "a reconciled registry": `scanner.py`,
+How a run gets from stored agent sessions to a reconciled registry: `scanner.py`,
 `refresh.py`, `gitinfo.py`, `projects.py`, `slug.py`.
 
 ## Purpose
@@ -16,7 +16,8 @@ before rendering.
 
 `scan(sources, git_resolver, cached_threads)`:
 
-1. Index `cached_threads` by `(source, file)`.
+1. Index `cached_threads` by `(source, sourceRef)`, falling back to `file` for registries written
+   before `sourceRef` existed.
 2. For each source, for each `discover()` ref: ask `registry.cached_session()` whether the cache
    is valid. On a hit, skip `parse()` entirely; on a miss, parse and stamp the result with the
    source's `parser_version` and the ref's fingerprint.
@@ -24,8 +25,10 @@ before rendering.
    fields that changed without the transcript changing.
 4. Resolve git identity for the session's cwd, **memoized per cwd** in a local dict, so a repo
    with forty sessions shells out to git once.
-5. `OSError` on a single transcript prints to stderr and skips that file — one unreadable
-   transcript must not abort the scan.
+5. A read failure on one transcript or source-owned row prints to stderr and skips it — one
+   unreadable session store must not abort scans of unrelated sources. If an active store is
+   temporarily unavailable, reconciliation retains its cached sessions instead of marking them
+   gone.
 
 Both `sources` and `git_resolver` are injectable, which is how the tests run without touching a
 real store.
@@ -89,8 +92,10 @@ every view so they are never stale; classification and naming stay separate, age
 
 ## Why
 
-Two-phase discover/parse plus a stat fingerprint means the steady state costs one `stat()` per
-transcript. Memoizing git per cwd matters more than it looks: `resolve_git_project` shells out,
+Two-phase discover/parse plus a source-owned fingerprint avoids reparsing unchanged sessions.
+For JSONL that costs one `stat()` per transcript; OpenCode derives per-session generations from
+row counts, byte sizes and update timestamps, then reads conversation payloads only on cache
+misses. Memoizing git per cwd matters more than it looks: `resolve_git_project` shells out,
 and a machine with hundreds of sessions across a dozen repos would otherwise pay hundreds of
 subprocess spawns per view.
 

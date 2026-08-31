@@ -2,18 +2,23 @@ from __future__ import annotations
 
 import json
 import os
-from dataclasses import asdict, is_dataclass
+from dataclasses import asdict
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from . import namefilter, overview
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text
+
+if TYPE_CHECKING:
+    from .memory import MemoryEntry
 
 REGISTRY_VERSION = 2
 
 # maps registry key -> NormalizedSession field name
 _METADATA_FIELDS = {
     "source": "source",
+    "sourceRef": "source_ref",
     "file": "file",
     "project": "cwd",
     "title": "custom_title",
@@ -123,8 +128,8 @@ def reconcile_harvest_paths(
     return reg
 
 
-def _as_dict(meta) -> dict:
-    return asdict(meta) if is_dataclass(meta) else dict(meta)
+def _as_dict(meta: NormalizedSession | dict) -> dict:
+    return asdict(meta) if isinstance(meta, NormalizedSession) else dict(meta)
 
 
 def _new_thread(md: dict) -> dict:
@@ -168,24 +173,41 @@ def cached_session(
         or thread.get("fileFingerprint") != ref.fingerprint
     ):
         return None
-    values = {mk: thread.get(rk) for rk, mk in _METADATA_FIELDS.items()}
-    values.update({mk: thread.get(rk) for rk, mk in _GIT_PROJECT_FIELDS.items()})
-    values.update(
+    return NormalizedSession(
         source=ref.source,
         session_id=thread["sessionId"],
-        file=ref.file,
+        cwd=thread.get("project"),
         mtime=ref.mtime,
         size_bytes=ref.size_bytes,
+        custom_title=thread.get("title"),
+        summary=thread.get("summary"),
+        last_prompt=thread.get("lastPrompt"),
+        file=ref.file,
+        ai_title=thread.get("aiTitle"),
         message_count=thread.get("messageCount") or 0,
+        git_branch=thread.get("gitBranch"),
+        git_project_key=thread.get("gitProjectKey"),
+        git_project_label=thread.get("gitProjectLabel"),
+        git_root=thread.get("gitRoot"),
+        git_remote=thread.get("gitRemote"),
+        git_clone_url=thread.get("gitCloneUrl"),
+        cache_version=thread.get("cacheVersion"),
+        file_fingerprint=thread.get("fileFingerprint"),
+        source_ref=ref.identity,
     )
-    return NormalizedSession(**values)
 
 
 def _key(rec: dict) -> tuple:
     return (rec.get("source") or "claude-code", rec["sessionId"])
 
 
-def reconcile(reg: dict, scanned, now_iso: str) -> dict:
+def reconcile(
+    reg: dict,
+    scanned,
+    now_iso: str,
+    *,
+    unavailable_sources: set[str] | frozenset[str] = frozenset(),
+) -> dict:
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
     # an agent that writes after we archived its transcript recreates the file;
@@ -224,15 +246,20 @@ def reconcile(reg: dict, scanned, now_iso: str) -> dict:
     gone = {x["sessionId"] for x in deleted} | {x["sessionId"] for x in archived}
     for t in reg["threads"]:
         sid = t["sessionId"]
-        if _key(t) not in seen and sid not in gone:
-            deleted.append(
-                {
-                    "sessionId": sid,
-                    "deletedAt": now_iso,
-                    "reason": "gc",
-                    "harvestPath": t.get("harvestPath"),
-                }
-            )
+        key = _key(t)
+        if key in seen or sid in gone:
+            continue
+        if key[0] in unavailable_sources:
+            threads.append(dict(t))
+            continue
+        deleted.append(
+            {
+                "sessionId": sid,
+                "deletedAt": now_iso,
+                "reason": "gc",
+                "harvestPath": t.get("harvestPath"),
+            }
+        )
 
     return {
         "version": REGISTRY_VERSION,
@@ -531,8 +558,8 @@ def purge_archived_session(reg: dict, session_id: str, purged_at: str) -> dict:
     return reg
 
 
-def _mem_entry_dict(m) -> dict:
-    d = asdict(m) if is_dataclass(m) else dict(m)
+def _mem_entry_dict(m: MemoryEntry) -> dict:
+    d = asdict(m)
     return {
         "path": d["path"],
         "project": d.get("project"),

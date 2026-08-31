@@ -11,7 +11,7 @@ from textual.containers import Grid, VerticalScroll
 from textual.screen import ModalScreen
 from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Static
 
-from .. import config, export, harvests, notify, overview, prune, registry
+from .. import config, export, harvests, notify, overview, prune, registry, scanner
 from ..commands import archive as archive_cmd
 from ..commands import harvest as harvest_cmd
 from ..commands import roundup
@@ -169,6 +169,10 @@ class DetailModal(ModalScreen):
     def compose(self) -> ComposeResult:
         t = self._thread
         status = overview.effective_status(t, _now_iso())
+        try:
+            conversation = export.render_conversation(t)
+        except (OSError, RuntimeError) as error:
+            conversation = f"(conversation unavailable: {error})"
         lines = [
             f"project: {overview.group_label(t)}",
             f"status: {status}",
@@ -178,7 +182,7 @@ class DetailModal(ModalScreen):
             "",
             "--- conversation ---",
             "",
-            export.render_conversation(t["file"]),
+            conversation,
         ]
         yield VerticalScroll(Static("\n".join(lines)))
 
@@ -362,12 +366,12 @@ class InboxApp(App):
     def _list_view(self) -> ListView:
         return self.query_one("#inbox-list", ListView)
 
-    def _current(self) -> tuple[int | None, dict | None]:
+    def _current(self) -> tuple[int, dict] | None:
         list_view = self._list_view()
         idx = list_view.index
         rows = self._active_rows()
         if idx is None or not (0 <= idx < len(rows)):
-            return None, None
+            return None
         return idx, rows[idx]
 
     async def _remove_row(self, idx: int) -> None:
@@ -419,9 +423,10 @@ class InboxApp(App):
     async def action_harvest(self) -> None:
         if self._active_tab != "inbox":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        idx, t = current
         model = active_model(load_config())
         if model is None:
             self.notify(
@@ -431,7 +436,7 @@ class InboxApp(App):
             )
             return
         try:
-            condensed = export.render_conversation(t["file"])
+            condensed = export.render_conversation(t)
             data = model.complete_json(
                 harvest_cmd._prompt(t, condensed), harvest_cmd.HARVEST_SCHEMA
             )
@@ -484,8 +489,14 @@ class InboxApp(App):
     async def action_delete(self) -> None:
         if self._active_tab != "inbox":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
+            return
+        idx, t = current
+        try:
+            scanner.filesystem_path(t, "delete")
+        except RuntimeError as error:
+            self.notify(str(error), title="rl inbox", severity="warning")
             return
         self._staged_deletes.add(t["sessionId"])
         self._undo_stack.append((idx, t))
@@ -509,9 +520,10 @@ class InboxApp(App):
     async def action_snooze(self) -> None:
         if self._active_tab != "inbox":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        idx, t = current
         until = await self.push_screen_wait(SnoozeModal())
         if until is None:
             return
@@ -526,9 +538,10 @@ class InboxApp(App):
         (which returns on a date) or leaving it open (which returns on new activity)."""
         if self._active_tab != "inbox":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        idx, t = current
         registry.keep_thread(self._reg, t["sessionId"], _now_iso())
         registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
@@ -538,9 +551,10 @@ class InboxApp(App):
     async def action_select_day(self) -> None:
         if self._active_tab != "inbox":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        idx, t = current
         registry.select_for_day(self._reg, t["sessionId"], _today_str())
         registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
@@ -556,9 +570,10 @@ class InboxApp(App):
     async def action_unselect(self) -> None:
         if self._active_tab != "selected":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        idx, t = current
         registry.clear_selected(self._reg, t["sessionId"])
         registry.save_registry(self.registry_path, self._reg)
         await self._remove_row(idx)
@@ -568,18 +583,26 @@ class InboxApp(App):
     async def action_archive(self) -> None:
         if self._active_tab != "harvesting":
             return
-        idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
-        with publish_lock():
-            self._reg = registry.load_registry(self.registry_path)
-            thread = next(
-                (item for item in self._reg["threads"] if item["sessionId"] == t["sessionId"]),
-                None,
-            )
-            if thread is not None:
-                archive_cmd.archive_thread(self._reg, thread, archive_root_path=str(archive_root()))
-                registry.save_registry(self.registry_path, self._reg)
+        idx, t = current
+        try:
+            scanner.filesystem_path(t, "archive")
+            with publish_lock():
+                self._reg = registry.load_registry(self.registry_path)
+                thread = next(
+                    (item for item in self._reg["threads"] if item["sessionId"] == t["sessionId"]),
+                    None,
+                )
+                if thread is not None:
+                    archive_cmd.archive_thread(
+                        self._reg, thread, archive_root_path=str(archive_root())
+                    )
+                    registry.save_registry(self.registry_path, self._reg)
+        except (OSError, RuntimeError) as error:
+            self.notify(str(error), title="rl inbox", severity="warning")
+            return
         self._harvest_by_session.pop(t["sessionId"], None)
         await self._remove_row(idx)
 
@@ -588,9 +611,10 @@ class InboxApp(App):
     def action_detail(self) -> None:
         if self._active_tab != "inbox":
             return
-        _idx, t = self._current()
-        if t is None:
+        current = self._current()
+        if current is None:
             return
+        _idx, t = current
         self.push_screen(DetailModal(t))
 
     # -- exit --------------------------------------------------------

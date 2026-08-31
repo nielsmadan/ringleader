@@ -20,6 +20,10 @@ class IndexUpdate(Enum):
     NO_INDEX = "no_index"
 
 
+class SourceUnavailableError(OSError):
+    pass
+
+
 def append_jsonl_line(path: Path, line: str) -> None:
     try:
         size = path.stat().st_size
@@ -38,10 +42,20 @@ def append_jsonl_line(path: Path, line: str) -> None:
 @dataclass(frozen=True)
 class RawRef:
     source: str
-    file: str  # absolute transcript path
+    file: str | None
     mtime: str
     size_bytes: int
     fingerprint: str | None = None
+    source_ref: str | None = None
+
+    @property
+    def identity(self) -> str | None:
+        return self.source_ref or self.file
+
+    def file_path(self) -> Path:
+        if self.file is None:
+            raise ValueError(f"{self.source} reference has no filesystem path")
+        return Path(self.file)
 
 
 @dataclass
@@ -54,11 +68,11 @@ class NormalizedSession:
     custom_title: str | None
     summary: str | None
     last_prompt: str | None
-    file: str
+    file: str | None
     # Below: Claude-Code-observed extras beyond the cross-harness-generic core above.
     # registry.reconcile still persists these (messageCount drives prune eligibility,
-    # gitBranch/aiTitle are display + classification context) — a future source that
-    # can't supply them just leaves the defaults.
+    # gitBranch/aiTitle are display + classification context) — a source that can't
+    # supply them leaves the defaults.
     ai_title: str | None = None
     message_count: int = 0
     tail_text: str = ""  # transient; used for classification, not persisted
@@ -71,6 +85,7 @@ class NormalizedSession:
     cache_version: int | None = None
     file_fingerprint: str | None = None
     git_resolved: bool = False
+    source_ref: str | None = None
 
 
 @runtime_checkable
@@ -78,8 +93,8 @@ class Source(Protocol):
     name: str
     capabilities: frozenset[str]
 
-    def discover(self) -> Iterator[RawRef]: ...  # cheap: paths + mtime/size, no parse
-    def parse(self, ref: RawRef) -> NormalizedSession: ...  # read tail, extract fields
+    def discover(self) -> Iterator[RawRef]: ...
+    def parse(self, ref: RawRef) -> NormalizedSession: ...
 
 
 def stat_fingerprint(st) -> str:
@@ -91,6 +106,11 @@ def stat_fingerprint(st) -> str:
 @runtime_checkable
 class CachedMetadataSource(Protocol):
     def refresh_cached_metadata(self, session: NormalizedSession) -> None: ...
+
+
+@runtime_checkable
+class ConversationRenderingSource(Source, Protocol):
+    def render_conversation(self, source_ref: str) -> str: ...
 
 
 @runtime_checkable

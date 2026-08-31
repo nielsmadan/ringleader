@@ -4,8 +4,9 @@ Curates the **dormant** agent sessions sitting on disk — naming them, classify
 they're in, surfacing what's still in-flight vs. abandoned, harvesting what they taught you, and
 pruning the rest before the GC clock silently deletes it.
 
-Reads Claude Code and Codex sessions; reports token usage across Claude Code, Codex, OpenCode
-and Pi.
+Reads Claude Code, Codex and OpenCode sessions; reports token usage across Claude Code, Codex,
+OpenCode and Pi. OpenCode session curation is read-only: views, triage, detail, export and harvest
+work, while file lifecycle verbs decline its database-backed sessions.
 
 ## Install
 
@@ -54,7 +55,7 @@ rl install             # skills, session-end hook, statusline capture
 - **Harvest** — distill what a session taught into durable markdown before it disappears, then
   publish it into the repo's living docs. `rl session finish` refuses a session that was never
   harvested. → [Finishing a session](docs/user/finishing-a-session.md)
-- **Archive, don't delete** — archiving *moves* the transcript out of the agent's store, so
+- **Archive, don't delete** — for file-backed sources, archiving *moves* the transcript out of the agent's store, so
   `claude --resume` can't see it, and `rl session unarchive` puts it back.
   → [Archives and retention](docs/user/archives-and-retention.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.

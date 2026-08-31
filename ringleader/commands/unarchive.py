@@ -28,13 +28,19 @@ def restore(reg: dict, ts: dict) -> tuple[str, IndexUpdate]:
 
     Returns (restored path, picker outcome). Raises RuntimeError if it can't move."""
     session_id = ts["sessionId"]
-    src = Path(ts["archivePath"])
     original = ts.get("originalPath")
     if not original:
         raise RuntimeError(
             f"{session_id} was archived before ringleader recorded its original path; "
             "move the transcript back by hand (README → Restoring an archived session)"
         )
+    thread = ts.get("thread") or {
+        "sessionId": session_id,
+        "source": ts.get("source") or "claude-code",
+        "file": original,
+    }
+    scanner.filesystem_path(thread, "unarchive")
+    src = Path(ts["archivePath"])
     dest = Path(original)
     if dest.exists():
         raise RuntimeError(f"{dest} already exists — not overwriting")
@@ -47,7 +53,6 @@ def restore(reg: dict, ts: dict) -> tuple[str, IndexUpdate]:
     if sidecar.exists():
         shutil.move(str(sidecar), str(dest.with_suffix("")))
 
-    thread = ts.get("thread") or {"sessionId": session_id, "source": ts.get("source")}
     shown = scanner.show_in_picker(thread, str(dest))
     # The workspace may have moved while this session sat in the archive, in which case
     # its registry project is already the new path but the agent's index is not.

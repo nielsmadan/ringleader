@@ -6,7 +6,7 @@ from ringleader import harvests
 from ringleader.config import Config
 from ringleader.inbox.app import InboxApp, _today_str
 from ringleader.models.base import ModelError
-from textual.widgets import Label
+from textual.widgets import Label, Static
 
 pytestmark = pytest.mark.asyncio
 
@@ -330,6 +330,24 @@ async def test_detail_view_opens_and_h_pops_back(tmp_path, monkeypatch):
         await pilot.press("h")
         await pilot.pause()
         assert len(app.screen_stack) == 1
+
+
+async def test_detail_view_reports_an_unavailable_conversation(tmp_path, monkeypatch):
+    reg_path = _setup(tmp_path, monkeypatch)
+
+    def unavailable(_thread):
+        raise OSError("database is locked")
+
+    monkeypatch.setattr("ringleader.export.render_conversation", unavailable)
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test() as pilot:
+        await pilot.press(";")
+        await pilot.pause()
+
+        assert app.is_running
+        assert len(app.screen_stack) == 2
+        detail = app.screen.query_one(Static)
+        assert "conversation unavailable: database is locked" in str(detail.content)
 
 
 async def test_tab_cycles_inbox_selected_harvesting(tmp_path, monkeypatch):

@@ -11,7 +11,7 @@ remember anything the transcript does not contain: that you abandoned a thread, 
 already harvested it, or any trend over time.
 
 Neither alone supports the two things the tool exists to do — *remember my decision* and
-*show me how spread out I am* — without re-reading every transcript on every run.
+*show me how spread out I am* — without re-reading every stored session on every run.
 
 ## Decision
 

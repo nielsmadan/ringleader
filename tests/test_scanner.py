@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
+from ringleader import registry
 from ringleader.scanner import scan
 from ringleader.sources.base import NormalizedSession
 from ringleader.sources.claude_code import ClaudeCodeSource
@@ -33,6 +35,24 @@ def test_scan_builds_normalized_sessions(tmp_path):
 def test_scan_missing_root_returns_empty(tmp_path):
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path / "does-not-exist")])
     assert scanned == []
+
+
+def test_scan_reuses_legacy_file_backed_cache_without_source_ref(tmp_path, monkeypatch):
+    proj = tmp_path / "-Users-me-proj"
+    _session(proj, "legacy", "/Users/me/proj")
+    source = ClaudeCodeSource(projects_dir=tmp_path)
+    first = scan(sources=[source], git_resolver=lambda cwd: None)
+    reg = registry.reconcile(registry.empty_registry(), first, "2026-08-30T00:00:00+00:00")
+    reg["threads"][0].pop("sourceRef")
+
+    def fail_parse(ref):
+        raise AssertionError(f"cache miss for {ref}")
+
+    monkeypatch.setattr(source, "parse", fail_parse)
+
+    cached = scan(sources=[source], cached_threads=reg["threads"], git_resolver=lambda cwd: None)
+
+    assert cached[0].source_ref == "legacy"
 
 
 def test_scan_skips_invalid_utf8_file(tmp_path):
@@ -101,12 +121,46 @@ def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):
     claude.mkdir()  # only claude root exists
     monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(claude))
     monkeypatch.setenv("CODEX_SESSIONS_DIR", str(codex))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     from ringleader import scanner
 
     names = {s.name for s in scanner.active_sources()}
     assert names == {"claude-code"}
     codex.mkdir()
     assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex"}
+
+
+def test_unreadable_source_root_is_unavailable_not_absent(tmp_path, monkeypatch, capsys):
+    from ringleader import scanner
+
+    root = tmp_path / "blocked"
+    source = SimpleNamespace(name="blocked", root=root)
+    real_stat = Path.stat
+
+    def denied_stat(path, *args, **kwargs):
+        if path == root:
+            raise PermissionError("permission denied")
+        return real_stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", denied_stat)
+    monkeypatch.setattr(scanner, "_new_sources", lambda: [source])
+    unavailable_sources = set()
+
+    assert scanner.active_sources(unavailable_sources=unavailable_sources) == []
+    assert unavailable_sources == {"blocked"}
+    assert str(root) in capsys.readouterr().err
+
+    cached = {"source": "blocked", "sessionId": "s1"}
+    reg = registry.empty_registry()
+    reg["threads"] = [cached]
+    reconciled = registry.reconcile(
+        reg,
+        [],
+        "2026-08-31T00:00:00+00:00",
+        unavailable_sources=unavailable_sources,
+    )
+    assert reconciled["threads"] == [cached]
+    assert reconciled["deleted"] == []
 
 
 def test_capabilities_declared():

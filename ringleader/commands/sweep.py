@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from .. import registry
+from .. import registry, scanner
 from ..paths import archive_root
 from ..session_env import current_session
 from . import archive as archive_cmd
@@ -59,7 +59,12 @@ def due(reg: dict, now: float, *, grace_seconds: int = GRACE_SECONDS) -> list[di
     for t in reg.get("threads", []):
         if not t.get("finishOnExit"):
             continue
-        m = _mtime(t.get("file", ""))
+        try:
+            path = scanner.filesystem_path(t, "sweep")
+        except RuntimeError:
+            out.append(t)
+            continue
+        m = _mtime(str(path))
         # a transcript already gone is still due: archive_thread records it either way
         if m is None or now - m >= grace_seconds:
             out.append(t)
@@ -127,7 +132,11 @@ def cmd_sweep(argv: list[str]) -> int:
         # not an error: the hook fires for every session, most of which aren't finished
         if t is None or not t.get("finishOnExit"):
             return 0
-        wait_until_quiet(t.get("file", ""))
+        try:
+            path = scanner.filesystem_path(t, "sweep")
+        except RuntimeError:
+            return _archive(reg, [t], args.registry)
+        wait_until_quiet(str(path))
         return _archive(reg, [t], args.registry)
 
     return _archive(reg, due(reg, time.time(), grace_seconds=args.grace), args.registry)

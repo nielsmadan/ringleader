@@ -29,25 +29,32 @@ def auto_refresh(  # noqa: PLR0913
     name_filters=None,
 ):
     """Scan installed sources, reconcile into the registry, persist, and report the
-    membership delta. This is the cheap, pure-code refresh the read commands run so
-    their counts are never stale; classification/naming stays a separate agentic step."""
+    membership delta. Read commands run this before rendering; an unavailable source
+    retains its cached sessions. Classification and naming remain separate agentic steps."""
     if projects_root is not None:
         if claude_projects_dir is not None:
             raise ValueError("pass claude_projects_dir, not both")
         claude_projects_dir = projects_root
     reg = registry.load_registry(registry_path)
     before = {t["sessionId"] for t in reg["threads"]}
+    unavailable_sources: set[str] = set()
     if sources is None:
         if claude_projects_dir is not None:
             sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
         else:
-            sources = scanner.active_sources()
+            sources = scanner.active_sources(unavailable_sources=unavailable_sources)
     scanned = scanner.scan(
         sources=sources,
         git_resolver=git_resolver,
         cached_threads=reg["threads"],
+        unavailable_sources=unavailable_sources,
     )
-    reg = registry.reconcile(reg, scanned, now_iso)
+    reg = registry.reconcile(
+        reg,
+        scanned,
+        now_iso,
+        unavailable_sources=unavailable_sources,
+    )
     if name_filters is None:
         name_filters = load_config().session_filters
     registry.apply_name_filters(reg, name_filters)

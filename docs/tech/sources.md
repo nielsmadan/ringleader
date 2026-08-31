@@ -10,15 +10,19 @@ support renaming natively. `sources/base.py` defines a small required protocol p
 **opt-in capability protocols** for the rest, so the registry and views never know which agent
 a session came from ([0003](../decisions/0003-scan-behind-a-source-seam.md)).
 
-Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`) and `codex.py`
-(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`).
+Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.py`
+(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`), and
+read-only `opencode.py` (rows in `$XDG_DATA_HOME/opencode/opencode.db`).
 
 ## How it works
 
 ### The two data carriers
 
-- **`RawRef`** — what `discover()` yields: `source`, `file`, `mtime`, `size_bytes`, and an
-  optional `fingerprint`. Deliberately stat-only, so enumerating a large store parses nothing.
+- **`RawRef`** — what `discover()` yields: `source`, a stable source-owned `source_ref`, an
+  optional filesystem `file`, `mtime`, `size_bytes`, and an optional `fingerprint`. JSONL
+  sources use the transcript's session id as `source_ref` and retain its path separately;
+  OpenCode uses its session row id and has no file. File discovery is stat-only. Database
+  sources may query row metadata and content to produce a per-session fingerprint.
 - **`NormalizedSession`** — what `parse()` returns. A cross-harness core (`session_id`, `cwd`,
   `custom_title`, `summary`, `last_prompt`, …) plus Claude-Code-observed extras
   (`message_count`, `git_branch`, `ai_title`) that earn their place by driving real behavior:
@@ -37,8 +41,8 @@ class Source(Protocol):
     def parse(self, ref: RawRef) -> NormalizedSession: ...
 ```
 
-The two-phase split is what makes incremental scans cheap: `discover()` is stat-only, and
-`parse()` runs only for refs the registry's fingerprint check rejects.
+The two-phase split is what makes incremental scans cheap: `discover()` computes lightweight
+refs and `parse()` runs only for refs the registry's fingerprint check rejects.
 
 ### Capability protocols
 
@@ -48,11 +52,18 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 | Protocol | Capability | Methods |
 |---|---|---|
 | `CachedMetadataSource` | — | `refresh_cached_metadata()` — update display fields even on a cache hit |
+| `ConversationRenderingSource` | `renders_conversation` | `render_conversation()` — render a source-owned session without assuming JSONL |
 | `NameApplyingSource` | `applies_names` | `apply_name()` — write a name into the agent's own store |
 | `PickerHidingSource` | `hides_from_picker` | `hide_from_picker()` |
 | `PickerShowingSource` | `shows_in_picker` | `show_in_picker()` |
 | `WorkspaceRelocatingSource` | `relocates_workspace` | `storage_for()`, `relocate_storage()`, `relocate_session()` |
 | `WorkspaceRebindingSource` | `rebinds_workspace` | `rebind_workspace()` |
+
+`filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
+Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
+`Path` or touching disk. Claude Code and Codex opt in. OpenCode deliberately does not: its
+database is read-only to ringleader, so it supports scan, overview, triage, detail, export and
+harvest, while lifecycle verbs decline or skip it.
 
 **Picker hiding** exists because Codex keeps a sqlite index separate from the rollout files.
 Deleting or moving a transcript there leaves the picker offering a session whose file is gone.
@@ -79,7 +90,7 @@ does, and the session is not in it) need opposite handling from the caller, and
 
 ### Helpers
 
-- `stat_fingerprint(st)` — `dev:inode:size:mtime_ns:ctime_ns`, the registry's cache key.
+- `stat_fingerprint(st)` — `dev:inode:size:mtime_ns:ctime_ns`, the file-backed sources' cache key.
 - `append_jsonl_line(path, line)` — appends a record, inserting a leading newline only when the
   file does not already end with one. Writing a name into a live transcript must not corrupt it.
 
@@ -87,7 +98,7 @@ does, and the session is not in it) need opposite handling from the caller, and
 
 - `sources/base.py` — every protocol and both dataclasses.
 - `scanner.SOURCE_TYPES` — the registered implementations.
-- `scanner.active_sources()` — those whose root actually exists.
+- `scanner.active_sources()` — those whose root exists and passes its availability check.
 - `scanner.source_by_name()` — resolve a thread's `source` string back to an instance.
 
 ## Gotchas
@@ -95,10 +106,17 @@ does, and the session is not in it) need opposite handling from the caller, and
 - **`scanner.SOURCES` is built at import time; `active_sources()` builds fresh instances.**
   The module-level tuple would otherwise capture whatever root was current at import, which
   breaks under monkeypatched environment variables in tests.
-- **A missing capability is a no-op, not an error.** `hide_from_picker()` returns `False` for a
-  source without an index. Only a source that *has* one and fails raises.
+- **A missing capability is a no-op, not an error.** `hide_from_picker()` returns
+  `IndexUpdate.NO_INDEX` for a source without an index. Only a source that *has* one and fails
+  raises.
 - **`parser_version` is the cache-invalidation lever.** Change how a source parses and bump it,
   or every existing thread keeps its stale cached parse.
+- **OpenCode fingerprints are per session, not per database file.** They cover the session's
+  parsed metadata plus message/part counts, byte sizes and timestamp generations, so changing one
+  conversation invalidates one cache entry without transferring every payload during discovery.
+- **Unavailable stores retain their cached sessions.** A locked or schema-incompatible store is
+  omitted from that scan, but its previous registry records are not mistaken for deleted rows or
+  classified without a readable transcript tail.
 - **`git_resolved` marks whether git identity came from this scan** rather than the cache —
   the registry needs it to decide whether to overwrite the git fields.
 

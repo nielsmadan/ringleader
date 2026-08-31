@@ -17,14 +17,24 @@ def _now() -> str:
 
 def cmd_scan(args):
     reg = registry.load_registry(args.registry)
-    scanned = scanner.scan(sources=scanner.active_sources())
-    tails = {ns.session_id: ns.tail_text for ns in scanned}
-    reg = registry.reconcile(reg, scanned, _now())
+    unavailable_sources: set[str] = set()
+    scanned = scanner.scan(
+        sources=scanner.active_sources(unavailable_sources=unavailable_sources),
+        unavailable_sources=unavailable_sources,
+    )
+    tails = {(ns.source, ns.session_id): ns.tail_text for ns in scanned}
+    reg = registry.reconcile(
+        reg,
+        scanned,
+        _now(),
+        unavailable_sources=unavailable_sources,
+    )
     registry.apply_name_filters(reg, load_config().session_filters)
     registry.save_registry(args.registry, reg)
 
     pending = registry.sessions_needing_classification(reg)
     pending = projects.filter_by_projects(pending, getattr(args, "project", None))
+    pending = [t for t in pending if (t.get("source") or "claude-code") not in unavailable_sources]
     emit = [
         {
             "sessionId": t["sessionId"],
@@ -35,7 +45,7 @@ def cmd_scan(args):
             "aiTitle": t["aiTitle"],
             "lastPrompt": t["lastPrompt"],
             "messageCount": t["messageCount"],
-            "tail": tails.get(t["sessionId"], "")[:6000],
+            "tail": tails[(t.get("source") or "claude-code", t["sessionId"])][:6000],
         }
         for t in pending
     ]

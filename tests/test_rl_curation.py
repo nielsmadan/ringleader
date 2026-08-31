@@ -280,7 +280,7 @@ def test_mark_harvested_empty_paths_is_none(tmp_path):
     assert json.loads(reg.read_text())["threads"][0]["harvestPath"] is None
 
 
-def test_review_sets_reviewed_at_mtime(tmp_path):
+def test_review_sets_reviewed_at_mtime_for_fileless_session(tmp_path):
     reg = tmp_path / "registry.json"
     reg.write_text(
         json.dumps(
@@ -292,7 +292,8 @@ def test_review_sets_reviewed_at_mtime(tmp_path):
                 "threads": [
                     {
                         "sessionId": "a",
-                        "file": "x",
+                        "source": "opencode",
+                        "file": None,
                         "mtime": "2026-06-05T00:00:00+00:00",
                         "reviewedAtMtime": None,
                     }

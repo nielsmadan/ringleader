@@ -6,7 +6,8 @@
 ## Overview
 
 `rl usage` reports token spend across **Claude Code, Codex, OpenCode and Pi**, read from the
-transcripts each already writes locally. No API call, no credential, works offline.
+transcript files or database rows each already writes locally. No API call, no credential, works
+offline.
 
 ```sh
 rl usage                          # last 7 days, by project
@@ -63,7 +64,9 @@ with a machine id and de-duplicated on merge.
   same flags.
 - **Claude windows report nothing until the status line is installed** *and* a session has had
   its first API response.
-- **Reading is I/O-bound over transcripts**, so all-time reports on a large history are slow.
+- **Reading is I/O-bound over local agent state**, so all-time reports on a large history are slow.
+- **OpenCode records are per assistant response.** SQLite `message.data` retains the timestamp,
+  model, cost and token buckets, while the owning `session` supplies project identity.
 
 ## Related
 

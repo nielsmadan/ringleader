@@ -21,7 +21,7 @@ _FLAT = (
     "uninstall",
 )
 _GROUPS = ("session", "mem", "data", "workspace")
-_RESERVED = set()
+_RESERVED: set[str] = set()
 
 
 def _leaf_names(node, group: str = "") -> str:
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
-    node = TABLE
+    node: object = TABLE
     crumbs: list[str] = []
     rest = argv
     while rest:
@@ -65,5 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         if callable(entry):
             return entry(rest) or 0
         node = entry
+    if not isinstance(node, dict):
+        raise RuntimeError("invalid command table")
     _group_usage(crumbs, node, sys.stdout)
     return 0

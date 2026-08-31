@@ -1,6 +1,6 @@
 # Usage analytics
 
-`ringleader/usage/`: reading token spend out of four agents' local transcripts, plus
+`ringleader/usage/`: reading token spend out of four agents' local state, plus
 subscription-window state.
 
 ## Purpose
@@ -17,6 +17,9 @@ layers treat identically.
 and the four token counts — `input`, `cache_read`, `cache_write`, `output`. They are kept
 separate rather than summed because cache reads and writes price very differently;
 `total_of()` combines them when a single number is wanted.
+`reasoning` is also exposed as a breakdown field, but normalized as a subset of `output` so it is
+never added twice. OpenCode stores reasoning separately from visible output, so its reader folds
+the two together when constructing `UsageRecord.output`.
 
 `UsageReader` is the protocol each harness implements. `aggregate.READERS` maps a source name to
 its reader, and is the authority for `--source`'s valid values.
@@ -27,7 +30,7 @@ its reader, and is the authority for `--source`'s valid values.
 |---|---|
 | `claude.py` | `~/.claude/projects/*.jsonl` usage records |
 | `codex.py` | `~/.codex/sessions/**/*.jsonl` |
-| `opencode.py` | the OpenCode store |
+| `opencode.py` | `$XDG_DATA_HOME/opencode/opencode.db` in SQLite read-only mode |
 | `pi.py` | `~/.pi/agent/sessions/**` |
 
 ### Aggregation
@@ -88,12 +91,18 @@ twice. `rl usage --merge <dir>` is the consumer.
 - **A percentage over 1000 is an epoch**, not a percentage — see `_EPOCH_LEAK_FLOOR`.
 - **`PRICES` is a static table.** Cost figures are estimates and drift with provider pricing.
 - **`--days` defaults to 7**, so a bare `rl usage` is a week, not all time. `--all` widens it.
-- **Reading is per-transcript**, so usage over a large history is I/O-bound in the same way a
-  scan is.
+- **Reading walks local session stores**, so usage over a large history is I/O-bound in the same
+  way a scan is.
+- **OpenCode usage comes from assistant message rows.** The reader emits one immutable record per
+  response so date windows and model grouping reflect when each response happened. It joins the
+  owning session's opaque `project_id` to `project.worktree`, and includes child/sub-agent rows
+  because their spend is separate from the parent. The curation Source excludes those rows because
+  they are not user-owned resumable sessions. The reader never derives a project id from a path or
+  writes the database.
 
 ## Why
 
-Parsing local transcripts rather than querying a billing API: it needs no credential, works
+Parsing local agent state rather than querying a billing API: it needs no credential, works
 offline, covers agents that expose no API at all, and keeps working when a provider changes its
 reporting surface. The cost is that pricing is a table we maintain.
 

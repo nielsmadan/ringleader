@@ -87,7 +87,13 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, WorkspaceRebindingSource)
     assert src.name == "codex"
     assert src.capabilities == frozenset(
-        {"applies_names", "hides_from_picker", "shows_in_picker", "rebinds_workspace"}
+        {
+            "applies_names",
+            "filesystem_lifecycle",
+            "hides_from_picker",
+            "shows_in_picker",
+            "rebinds_workspace",
+        }
     )
 
 
@@ -103,6 +109,7 @@ def test_discover_finds_rollouts(tmp_path):
     assert len(refs) == 1
     r = refs[0]
     assert isinstance(r, RawRef) and r.source == "codex" and r.file.endswith(".jsonl")
+    assert r.source_ref == "11111111-0000-0000-0000-000000000001"
 
 
 def test_parse_extracts_fields_and_skips_preamble(tmp_path):

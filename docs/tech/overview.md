@@ -28,7 +28,7 @@ go deeper, per subsystem.
 
 ## Data flow (end to end)
 
-`sources/*.discover()` (stat-only refs) → `scanner.scan()` — which consults
+`sources/*.discover()` (source-owned refs and fingerprints) → `scanner.scan()` — which consults
 `registry.cached_session()` and calls `parse()` only on a fingerprint miss, then attaches git
 identity from `gitinfo.resolve_git_project()`, memoized per cwd → `registry.reconcile()` merges
 into `registry.json` → `overview.py` / `commands/triage.py` / `prune.py` read and render.
@@ -36,7 +36,7 @@ into `registry.json` → `overview.py` / `commands/triage.py` / `prune.py` read 
 `refresh.auto_refresh()` is the scan+reconcile+persist wrapper the views call; `--no-scan` skips
 it. Alongside: `models/` supplies classification and harvesting on demand, `harvests.py` queues
 what they produce, `publish_*.py` drains it into a repo, and `usage/` runs an entirely separate
-read path over the same transcripts for token accounting.
+read path over the same transcript files or database rows for token accounting.
 
 ## Cross-cutting patterns (read before editing any module)
 

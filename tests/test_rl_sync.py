@@ -10,6 +10,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from types import SimpleNamespace
+
+from ringleader.commands import sync as sync_mod
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -35,6 +38,7 @@ def test_session_refresh_honors_registry_and_emits_pending(tmp_path):
         **os.environ,
         "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
         "CODEX_SESSIONS_DIR": str(empty_codex),
+        "XDG_DATA_HOME": str(tmp_path / "xdg"),
     }
 
     r = _run("session", "refresh", "--registry", str(reg), env=env)
@@ -57,6 +61,7 @@ def test_session_refresh_project_filter_is_reachable(tmp_path):
         **os.environ,
         "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
         "CODEX_SESSIONS_DIR": str(empty_codex),
+        "XDG_DATA_HOME": str(tmp_path / "xdg"),
     }
 
     r = _run("session", "refresh", "--registry", str(reg), "--project", "nope", env=env)
@@ -162,3 +167,41 @@ def test_session_set_honors_registry_and_applies_classification(tmp_path):
     assert thread["status"] == "active"
     assert thread["whatItIs"] == "x"
     assert thread["suggestedName"] == "x"
+
+
+def test_session_scan_omits_pending_threads_from_an_unavailable_source(
+    tmp_path, monkeypatch, capsys
+):
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 2,
+                "lastScan": None,
+                "archived": [],
+                "deleted": [],
+                "threads": [
+                    {
+                        "source": "opencode",
+                        "sessionId": "ses_1",
+                        "file": None,
+                        "mtime": "2026-08-30T00:00:00+00:00",
+                        "status": "unclassified",
+                    }
+                ],
+            }
+        )
+    )
+
+    def unavailable_sources(*, unavailable_sources):
+        unavailable_sources.add("opencode")
+        return []
+
+    monkeypatch.setattr(sync_mod.scanner, "active_sources", unavailable_sources)
+    monkeypatch.setattr(sync_mod.scanner, "scan", lambda **kwargs: [])
+
+    sync_mod.cmd_scan(SimpleNamespace(registry=str(reg), project=None))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"pendingCount": 0, "total": 1, "pending": []}
+    assert [thread["sessionId"] for thread in json.loads(reg.read_text())["threads"]] == ["ses_1"]

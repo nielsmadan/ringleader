@@ -2,12 +2,16 @@
 
 ## What archiving does
 
-`rl session archive <id>` **moves** the transcript out of the agent's store into
+For file-backed Claude Code and Codex sessions, `rl session archive <id>` **moves** the transcript out of the agent's store into
 `~/.local/share/ringleader/archive/`. Because Claude Code builds its resume picker by scanning
 the project directory, a moved file is genuinely invisible to `claude --resume` — treat
 archiving as ending the thread.
 
 Nothing is deleted. `rl session unarchive <id>` moves it back and drops the tombstone.
+
+OpenCode sessions are rows rather than files. Ringleader opens that database read-only, so
+archive, unarchive, delete, prune, finish, complete and sweep explicitly decline OpenCode
+sessions instead of changing its archival timestamp or deleting rows.
 
 ## The retention cutoff
 

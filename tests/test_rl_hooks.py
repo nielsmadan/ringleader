@@ -26,12 +26,7 @@ def test_install_uses_codex_session_end_timeout_limit(tmp_path, monkeypatch):
     assert hooks.cmd_install(["--yes"]) == 0
 
     entries = json.loads(settings.read_text())["hooks"]["SessionEnd"]
-    ours = next(
-        h
-        for group in entries
-        for h in group["hooks"]
-        if "session_end.sh" in h["command"]
-    )
+    ours = next(h for group in entries for h in group["hooks"] if "session_end.sh" in h["command"])
     assert ours["timeout"] == 3
 
 

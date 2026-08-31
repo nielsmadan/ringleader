@@ -18,7 +18,7 @@ rl session complete <id>             # harvest, then archive
 
 ## Two ways in
 
-- **Model-distilled** — `rl session harvest <id>` reads the transcript and calls the configured
+- **Model-distilled** — `rl session harvest <id>` reads the conversation and calls the configured
   engine. A no-op when no model is available.
 - **Agent-authored** — `rl session harvest --current --from-file <path|->` stores markdown
   as-is, skipping the model. This is what the `ringleader-finish` skill uses from *inside* a live

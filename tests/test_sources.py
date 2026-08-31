@@ -22,6 +22,7 @@ def test_parse_extracts_normalized_fields(tmp_path: Path):
     src = ClaudeCodeSource(projects_dir=tmp_path)
     refs = list(src.discover())
     assert len(refs) == 1
+    assert refs[0].source_ref == "aaaaaaaa-0000-0000-0000-000000000000"
     ns = src.parse(refs[0])
     assert ns.source == "claude-code"
     assert ns.session_id == "aaaaaaaa-0000-0000-0000-000000000000"

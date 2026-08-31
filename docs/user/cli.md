@@ -36,7 +36,7 @@ rl
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl prune` | Delete tiny + stale sessions. **Previews unless `--delete`.** | `--delete`, `--older-than` (7), `--max-turns` (12), `--project` |
-| `rl usage` | Token usage from local transcripts. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until`, `--all`, `--archived`, `--limit`, `--merge`, `--json` |
+| `rl usage` | Token usage from local transcript files and agent databases. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until`, `--all`, `--archived`, `--limit`, `--merge`, `--json` |
 | `rl usage session <id>` | One session's spend: turns, split, cache rate, top turns. | `--json` |
 | `rl usage windows` | 5h/weekly windows. Codex from disk; Claude needs `rl install statusline`. | |
 | `rl usage export` | Write usage records out, to `--merge` elsewhere. | `--out` |
@@ -67,6 +67,10 @@ Each noun takes `--yes`.
 ## `rl session`
 
 Mostly called by the skills, not by hand.
+
+OpenCode supports the read-only session verbs (`refresh`, classification, harvest and data
+export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `complete`,
+`sweep`, `archive`, `unarchive`, `delete`, and prune deletion) decline OpenCode sessions.
 
 **Scan and classify**
 

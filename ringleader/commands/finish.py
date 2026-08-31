@@ -4,7 +4,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 
-from .. import registry
+from .. import registry, scanner
 from ..session_env import current_session
 from . import default_registry
 
@@ -38,6 +38,11 @@ def cmd_finish(argv: list[str]) -> int:
     t = next((x for x in reg["threads"] if x["sessionId"] == session_id), None)
     if t is None:
         print(f"rl-finish: unknown session {session_id}", file=sys.stderr)
+        return 1
+    try:
+        scanner.filesystem_path(t, "finish")
+    except RuntimeError as error:
+        print(f"rl-finish: {error}", file=sys.stderr)
         return 1
     if t.get("decision") != "harvested" and not args.force:
         print(
