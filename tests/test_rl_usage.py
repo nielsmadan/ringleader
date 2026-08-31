@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 from ringleader.commands import usage as usage_cmd
@@ -169,7 +170,9 @@ def test_archived_flag_adds_the_archive_records(monkeypatch, capsys):
         usage_cmd, "collect", lambda sources, dirs=None: [_rec(session="s-live", project="live")]
     )
     monkeypatch.setattr(
-        usage_cmd, "collect_archived", lambda: [_rec(session="s-archived", project="archived")]
+        usage_cmd,
+        "collect_archived",
+        lambda sources=None: [_rec(session="s-archived", project="archived")],
     )
 
     usage_cmd.cmd_usage(["--all", "--archived", "--json"])
@@ -220,7 +223,9 @@ def test_archived_dedupes_a_session_present_in_both_trees(monkeypatch, tmp_path,
 
 def test_archive_is_left_out_unless_asked_for(monkeypatch, capsys):
     monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: [_rec(project="live")])
-    monkeypatch.setattr(usage_cmd, "collect_archived", lambda: [_rec(project="archived")])
+    monkeypatch.setattr(
+        usage_cmd, "collect_archived", lambda sources=None: [_rec(project="archived")]
+    )
 
     usage_cmd.cmd_usage(["--all", "--json"])
 
@@ -253,6 +258,109 @@ def test_collect_archived_reads_the_archive_root(monkeypatch, tmp_path):
     recs = usage_cmd.collect_archived()
 
     assert [r.input for r in recs] == [7]
+
+
+def _write_claude_transcript(path: Path, *, inp: int, out: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "assistant",
+                "requestId": "r-claude",
+                "timestamp": "2026-08-17T10:00:00.000Z",
+                "cwd": "/Users/x/wrksp/foo",
+                "message": {
+                    "id": "m-claude",
+                    "model": "claude-opus-5",
+                    "usage": {"input_tokens": inp, "output_tokens": out},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def _write_codex_transcript(path: Path, *, inp: int, cached: int, out: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "event_msg",
+                "timestamp": "2026-08-17T11:00:00.000Z",
+                "payload": {
+                    "type": "token_count",
+                    "info": {
+                        "last_token_usage": {
+                            "input_tokens": inp,
+                            "cached_input_tokens": cached,
+                            "cache_write_input_tokens": 0,
+                            "output_tokens": out,
+                            "reasoning_output_tokens": 0,
+                            "total_tokens": inp + out,
+                        },
+                        "total_token_usage": {
+                            "input_tokens": inp,
+                            "cached_input_tokens": cached,
+                            "cache_write_input_tokens": 0,
+                            "output_tokens": out,
+                            "reasoning_output_tokens": 0,
+                            "total_tokens": inp + out,
+                        },
+                    },
+                    "rate_limits": {},
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_collect_archived_covers_both_claude_and_codex(monkeypatch, tmp_path):
+    _write_claude_transcript(tmp_path / "-Users-x-wrksp-foo" / "sess-claude.jsonl", inp=9, out=1)
+    _write_codex_transcript(
+        tmp_path
+        / "proj"
+        / "rollout-2026-08-17T11-00-00-019fe602-6c5d-7190-abca-ce9c8c8543c1.jsonl",
+        inp=20,
+        cached=6,
+        out=5,
+    )
+    monkeypatch.setattr(usage_cmd, "archive_root", lambda: tmp_path)
+
+    recs = usage_cmd.collect_archived()
+    by_source = {r.source: r for r in recs}
+
+    assert by_source["claude"].total == 10
+    assert (
+        by_source["codex"].total == 25
+    )  # 20 input (incl 6 cached) -> 14+6 + 5 out; total stays 25
+    # No double counting: each file only yields its own source, sources differ, ids differ.
+    assert {r.source for r in recs} == {"claude", "codex"}
+    assert len({r.session_id for r in recs}) == 2
+
+
+def test_archived_merges_claude_and_codex_without_double_counting(monkeypatch, tmp_path, capsys):
+    _write_claude_transcript(tmp_path / "-Users-x-wrksp-foo" / "sess-claude.jsonl", inp=9, out=1)
+    _write_codex_transcript(
+        tmp_path
+        / "proj"
+        / "rollout-2026-08-17T11-00-00-019fe602-6c5d-7190-abca-ce9c8c8543c1.jsonl",
+        inp=20,
+        cached=6,
+        out=5,
+    )
+    monkeypatch.setattr(usage_cmd, "archive_root", lambda: tmp_path)
+    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: [])
+
+    usage_cmd.cmd_usage(["--all", "--archived", "--by", "source", "--json"])
+
+    out = json.loads(capsys.readouterr().out)
+    rows = {r["key"]: r for r in out["rows"]}
+    assert rows["claude"]["tokens"] == 10
+    assert rows["codex"]["tokens"] == 25
+    assert out["total_tokens"] == 35
 
 
 def test_ambiguous_session_prefix_refuses_instead_of_merging(monkeypatch, capsys):

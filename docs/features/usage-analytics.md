@@ -37,14 +37,18 @@ reprices; an unrecognized model reports no cost rather than a wrong one.
   Claude Code **v2.1.80+**, Pro/Max only, and only populates after the first API response in a
   session.
 
-## Across machines
+## Archived sessions and across machines
 
 ```sh
+rl usage --archived                 # include archived Claude + Codex transcripts
+rl usage --archived --source codex  # only archived Codex sessions
 rl usage export --out usage-laptop.json    # on each machine
 rl usage --merge <dir>                     # combined report
 ```
 
-Records are tagged with a machine id and de-duplicated on merge.
+`--archived` merges the archive (`~/.local/share/ringleader/archive`) into the live
+report and de-duplicates any session that exists in both trees. Records are tagged
+with a machine id and de-duplicated on merge.
 
 ## Key entry points
 

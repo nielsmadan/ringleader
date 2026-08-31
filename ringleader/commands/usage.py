@@ -7,7 +7,6 @@ from datetime import UTC, date, datetime, timedelta
 from ..paths import archive_root
 from ..usage import aggregate
 from ..usage.base import UsageRecord, WindowSnapshot, window_is_current
-from ..usage.claude import ClaudeUsageReader
 from ..usage.codex import CodexUsageReader
 
 _AMBIGUOUS_LIMIT = 10
@@ -34,9 +33,20 @@ def collect(sources, dirs=None) -> list[UsageRecord]:
     return out
 
 
-def collect_archived() -> list[UsageRecord]:
-    reader = ClaudeUsageReader(projects_dir=archive_root())
-    return list(reader.records()) if reader.available() else []
+_ARCHIVE_KWARG: dict[str, str] = {"claude": "projects_dir", "codex": "sessions_dir"}
+
+
+def collect_archived(sources: list[str] | None = None) -> list[UsageRecord]:
+    root = archive_root()
+    wanted = set(sources) if sources is not None else set(aggregate.READERS)
+    out: list[UsageRecord] = []
+    for name, cls in aggregate.READERS.items():
+        if name not in wanted or name not in _ARCHIVE_KWARG:
+            continue
+        reader = cls(**{_ARCHIVE_KWARG[name]: root})
+        if reader.available():
+            out.extend(reader.records())
+    return out
 
 
 def _now() -> datetime:
@@ -269,10 +279,10 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
 
     sources = args.source or sorted(aggregate.READERS)
     records = collect(sources)
-    if args.archived and "claude" in sources:
+    if args.archived:
         from ..usage import transfer  # noqa: PLC0415
 
-        records = transfer.dedupe(records + collect_archived())
+        records = transfer.dedupe(records + collect_archived(sources))
     if args.merge:
         from ..usage import transfer  # noqa: PLC0415
 

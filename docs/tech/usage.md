@@ -55,6 +55,17 @@ wrong number.
 carries a `resets_at` epoch instead, so any "percentage" above 1000 is reinterpreted as a
 timestamp.
 
+### Archived usage
+
+`collect_archived()` in `commands/usage.py` reads the same `UsageRecord` stream out of
+`archive_root()` (`~/.local/share/ringleader/archive/<slug>/*.jsonl`). It dispatches
+through `aggregate.READERS` so every archivable source is included, and respects
+`--source` filtering; each reader only emits records matching its own JSON shape
+(`"token_count"` events vs `"assistant"` messages), so a codex `**/*.jsonl` glob
+matching Claude's `*/*.jsonl` paths still produces no double-counting. `rl usage
+--archived` merges that stream with live records and then `dedupe()`s. Only Claude
+and Codex produce archivable transcripts today — OpenCode/Pi use separate stores.
+
 ### Cross-machine merge
 
 `transfer.py` handles multi-machine totals. `write_export()` dumps records tagged with a
