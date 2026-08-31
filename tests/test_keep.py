@@ -118,6 +118,28 @@ def test_render_kept_lists_only_kept():
     assert "other" not in out
 
 
+def test_render_kept_groups_by_project_with_status_and_kept_age():
+    rows = [
+        _t("a", decision="keep", keptAt="2026-08-10T00:00:00+00:00"),
+        _t("b", decision="keep", keptAt=NOW, gitProjectKey="other-k", gitProjectLabel="elsewhere"),
+    ]
+    out = overview.render_kept(rows, NOW)
+    assert out.startswith("=== kept long-term (2)")
+    assert "## repo" in out and "## elsewhere" in out
+    assert "[unfinished]" in out
+    assert "kept 7d ago" in out
+    assert "about a" in out
+    assert out.endswith("2 kept · `rl session unkeep <id>` returns one to triage")
+
+
+def test_render_kept_wraps_long_descriptions():
+    what = "word " * 60
+    out = overview.render_kept([_t("a", decision="keep", whatItIs=what)], NOW)
+    body = [ln for ln in out.splitlines() if ln.startswith(overview.KEPT_DESC_INDENT)]
+    assert len(body) > 1
+    assert max(len(ln) for ln in body) <= len(overview.KEPT_DESC_INDENT) + overview.KEPT_DESC_W
+
+
 def test_render_kept_empty_state():
     assert overview.render_kept([_t("other")], NOW) == "no kept sessions"
 

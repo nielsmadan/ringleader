@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import textwrap
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,6 +12,9 @@ FILTERABLE_STATUSES = (*LIVE_STATUSES, "finished", "abandoned", "harvested", "un
 ABANDON_AGE_DAYS = 21
 
 PROJECT_W = 30
+KEPT_NAME_W = 30
+KEPT_DESC_W = 76
+KEPT_DESC_INDENT = " " * 6
 
 
 class StatusMode(Enum):
@@ -527,15 +531,32 @@ def render_kept(threads, now_iso: str) -> str:
     if not rows:
         return "no kept sessions"
     rows.sort(key=lambda t: t.get("keptAt") or "")
-    lines = []
+    groups: dict[str, list[dict]] = defaultdict(list)
+    labels: dict[str, str] = {}
     for t in rows:
-        name = t.get("title") or t.get("suggestedName") or (t.get("sessionId") or "")[:8]
-        mtime = t.get("mtime")
-        age = round(age_days(mtime, now_iso)) if mtime else 0
-        project = t.get("gitProjectLabel") or t.get("project") or "—"
-        what = t.get("whatItIs") or ""
-        line = f"{name} · {project} · {age}d"
-        lines.append(f"{line} · {what}" if what else line)
+        k = group_key(t)
+        groups[k].append(t)
+        labels.setdefault(k, group_label(t))
+    status_w = max(len(effective_status(t, now_iso)) for t in rows) + 2
+    badge_w = max(len(source_badge(t)) for t in rows) + 2
+    name_w = min(max(len(_label(t)) for t in rows), KEPT_NAME_W)
+    lines = [f"=== kept long-term ({len(rows)}) — out of triage until unkept ===", ""]
+    for key in sorted(groups, key=lambda k: labels[k].lower()):
+        lines.append(f"## {tilde(labels[key])}")
+        for t in groups[key]:
+            status = f"[{effective_status(t, now_iso)}]"
+            badge = f"({source_badge(t)})"
+            age = round(age_days(t["mtime"], now_iso)) if t.get("mtime") else 0
+            kept = f" · kept {age_human(t['keptAt'], now_iso)}" if t.get("keptAt") else ""
+            lines.append(
+                f"  {status:{status_w}} {badge:{badge_w}} {_label(t):{name_w}} {age:>3}d{kept}"
+            )
+            lines += [
+                KEPT_DESC_INDENT + chunk
+                for chunk in textwrap.wrap(t.get("whatItIs") or "", KEPT_DESC_W)
+            ]
+        lines.append("")
+    lines.append(f"{len(rows)} kept · `rl session unkeep <id>` returns one to triage")
     return "\n".join(lines)
 
 
