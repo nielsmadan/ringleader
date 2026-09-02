@@ -18,8 +18,9 @@ from .sources.base import (
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
 from .sources.opencode import OpenCodeSource
+from .sources.pi import PiSource
 
-SOURCE_TYPES = (ClaudeCodeSource, CodexSource, OpenCodeSource)
+SOURCE_TYPES = (ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource)
 
 
 def _new_sources():

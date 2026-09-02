@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "ringleader"
 version = "0.1.0"
-description = "Curate dormant Claude Code sessions on disk — name, classify, triage, and prune them before the GC clock deletes them."
+description = "Curate dormant agent sessions on disk — name, classify, triage, and prune them before the GC clock deletes them."
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = ["textual>=8"]

@@ -80,10 +80,10 @@ name to the environment variable that agent exports (`codex` → `CODEX_THREAD_I
 backs every `--current` flag plus `rl session whoami`. Codex also checks
 `CODEX_SESSION_ID` as a fallback (THREAD_ID names the child subagent, SESSION_ID
 the parent). `PROBES` is ordered so an inner agent's var wins if a shell
-inherits an outer agent's env (Codex/Pi/OpenCode before Claude Code). OpenCode
-and Pi sessions are not yet in the registry — they lack a `Source`
-implementation (`scanner.py:16`) — so `--current` resolves their id but
-`sweep` finds nothing.
+inherits an outer agent's env (Codex/Pi/OpenCode before Claude Code). All four
+agents have a `Source`. Pi exports its id, so `--current` works end to end;
+OpenCode does not yet export the probed variable, and its database-backed Source
+deliberately declines filesystem lifecycle operations.
 
 ## Key entry points
 
@@ -96,9 +96,9 @@ implementation (`scanner.py:16`) — so `--current` resolves their id but
 
 ## Gotchas
 
-- **Codex is the only non-Claude agent whose sessions are fully in the registry.** For
-  OpenCode and Pi, `--current` resolves the session id but `sweep` still finds nothing —
-  they have no `Source` (`sources/claude_code.py`, `sources/codex.py` are the only two).
+- **OpenCode's `--current` probe is forward-looking.** Its Source supplies registry entries,
+  but OpenCode does not yet export `OPENCODE_SESSION_ID`, and lifecycle operations deliberately
+  decline its database-backed sessions.
 - **Symlinked skills mean repo edits are live** in every wired agent immediately. Convenient
   while iterating, surprising if you forget.
 - **Uninstall is ownership-scoped**, by symlink target and by command path. A hand-written hook

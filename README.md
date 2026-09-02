@@ -4,9 +4,9 @@ Curates the **dormant** agent sessions sitting on disk — naming them, classify
 they're in, surfacing what's still in-flight vs. abandoned, harvesting what they taught you, and
 pruning the rest before the GC clock silently deletes it.
 
-Reads Claude Code, Codex and OpenCode sessions; reports token usage across Claude Code, Codex,
-OpenCode and Pi. OpenCode session curation is read-only: views, triage, detail, export and harvest
-work, while file lifecycle verbs decline its database-backed sessions.
+Reads Claude Code, Codex, OpenCode, and Pi sessions; reports token usage across all four. OpenCode
+session curation is read-only: views, triage, detail, export, and harvest work, while file
+lifecycle verbs decline its database-backed sessions.
 
 ## Install
 

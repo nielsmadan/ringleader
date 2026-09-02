@@ -28,7 +28,7 @@ def test_scan_builds_normalized_sessions(tmp_path):
     assert ns.session_id == "bbbbbbbb-0000-0000-0000-000000000002"
     assert ns.cwd == "/Users/me/proj"
     assert ns.size_bytes > 0
-    assert ns.mtime.endswith("+00:00")  # tz-aware iso
+    assert ns.mtime.endswith("+00:00")
     assert "do thing" in ns.tail_text
 
 
@@ -58,9 +58,7 @@ def test_scan_reuses_legacy_file_backed_cache_without_source_ref(tmp_path, monke
 def test_scan_skips_invalid_utf8_file(tmp_path):
     proj = tmp_path / "-Users-me-proj"
     proj.mkdir(parents=True, exist_ok=True)
-    # valid session
     _session(proj, "dddddddd-0000-0000-0000-000000000001", "/Users/me/proj", "valid content")
-    # file with invalid UTF-8 bytes — should NOT abort the scan
     bad = proj / "eeeeeeee-0000-0000-0000-000000000002.jsonl"
     bad.write_bytes(b"\xff\xfe not utf8\n")
     scanned = scan(sources=[ClaudeCodeSource(projects_dir=tmp_path)])
@@ -118,16 +116,20 @@ def test_scan_attaches_injected_git_project(tmp_path):
 def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):
     claude = tmp_path / "claude"
     codex = tmp_path / "codex"
-    claude.mkdir()  # only claude root exists
+    pi = tmp_path / "pi"
+    claude.mkdir()
     monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(claude))
     monkeypatch.setenv("CODEX_SESSIONS_DIR", str(codex))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
+    monkeypatch.setenv("PI_SESSIONS_DIR", str(pi))
     from ringleader import scanner
 
     names = {s.name for s in scanner.active_sources()}
     assert names == {"claude-code"}
     codex.mkdir()
     assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex"}
+    pi.mkdir()
+    assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex", "pi"}
 
 
 def test_unreadable_source_root_is_unavailable_not_absent(tmp_path, monkeypatch, capsys):

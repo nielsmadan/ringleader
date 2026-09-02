@@ -33,12 +33,15 @@ def test_session_refresh_honors_registry_and_emits_pending(tmp_path):
     empty_projects.mkdir()
     empty_codex = tmp_path / "empty-codex"
     empty_codex.mkdir()
+    empty_pi = tmp_path / "empty-pi"
+    empty_pi.mkdir()
     reg = tmp_path / "registry.json"
     env = {
         **os.environ,
         "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
         "CODEX_SESSIONS_DIR": str(empty_codex),
         "XDG_DATA_HOME": str(tmp_path / "xdg"),
+        "PI_SESSIONS_DIR": str(empty_pi),
     }
 
     r = _run("session", "refresh", "--registry", str(reg), env=env)
@@ -47,7 +50,6 @@ def test_session_refresh_honors_registry_and_emits_pending(tmp_path):
     assert '"pendingCount"' in r.stdout
     payload = json.loads(r.stdout)
     assert payload == {"pendingCount": 0, "total": 0, "pending": []}
-    # --registry actually reached cmd_scan: it wrote the tmp registry, not the default.
     assert reg.exists()
 
 
@@ -56,12 +58,15 @@ def test_session_refresh_project_filter_is_reachable(tmp_path):
     empty_projects.mkdir()
     empty_codex = tmp_path / "empty-codex"
     empty_codex.mkdir()
+    empty_pi = tmp_path / "empty-pi"
+    empty_pi.mkdir()
     reg = tmp_path / "registry.json"
     env = {
         **os.environ,
         "SESSION_TRACKER_PROJECTS_DIR": str(empty_projects),
         "CODEX_SESSIONS_DIR": str(empty_codex),
         "XDG_DATA_HOME": str(tmp_path / "xdg"),
+        "PI_SESSIONS_DIR": str(empty_pi),
     }
 
     r = _run("session", "refresh", "--registry", str(reg), "--project", "nope", env=env)
@@ -111,6 +116,7 @@ def test_session_refresh_keeps_stdout_pure_json_when_sweeping(tmp_path):
         "XDG_DATA_HOME": str(tmp_path / "data"),
         "SESSION_TRACKER_PROJECTS_DIR": str(tmp_path / "projects"),
         "CODEX_SESSIONS_DIR": str(empty_codex),
+        "PI_SESSIONS_DIR": str(tmp_path / "empty-pi"),
     }
 
     r = _run("session", "refresh", "--registry", str(reg), env=env)
@@ -162,7 +168,6 @@ def test_session_set_honors_registry_and_applies_classification(tmp_path):
 
     assert r.returncode == 0, r.stderr
     assert "applied id1" in r.stdout
-    # --registry actually reached cmd_apply: the tmp registry was updated in place.
     thread = json.loads(reg.read_text())["threads"][0]
     assert thread["status"] == "active"
     assert thread["whatItIs"] == "x"

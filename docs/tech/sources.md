@@ -11,8 +11,9 @@ support renaming natively. `sources/base.py` defines a small required protocol p
 a session came from ([0003](../decisions/0003-scan-behind-a-source-seam.md)).
 
 Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.py`
-(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`), and
-read-only `opencode.py` (rows in `$XDG_DATA_HOME/opencode/opencode.db`).
+(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`), `pi.py`
+(`~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl`, names via `session_info`), and read-only
+`opencode.py` (rows in `$XDG_DATA_HOME/opencode/opencode.db`).
 
 ## How it works
 
@@ -61,7 +62,7 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
-`Path` or touching disk. Claude Code and Codex opt in. OpenCode deliberately does not: its
+`Path` or touching disk. Claude Code, Codex, and Pi opt in. OpenCode deliberately does not: its
 database is read-only to ringleader, so it supports scan, overview, triage, detail, export and
 harvest, while lifecycle verbs decline or skip it.
 

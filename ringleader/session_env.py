@@ -15,8 +15,7 @@ import os
 # (OPENCODE_SESSION_ID) is the variable opencode exposes when it does — see
 # https://github.com/anomalyco/opencode/issues/9292 — but as of 1.18.25
 # `opencode run "env | sort"` does not yet export it, so it is a forward
-# probe: no Source exists for opencode/pi yet and sweep will still find
-# nothing.
+# probe: its Source exists, but `--current` cannot resolve it yet.
 #
 # Ordering matters: an agent's tool subprocess inherits the parent's env, so a
 # nested shell can carry two session vars (e.g. CLAUDE_CODE_SESSION_ID from
