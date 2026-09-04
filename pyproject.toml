@@ -26,6 +26,9 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["ringleader"]
+# staged by scripts/vendor-hooklinesinker.sh and gitignored, so hatchling drops them
+# from the wheel unless they are declared here
+artifacts = ["ringleader/_vendor/**"]
 
 [tool.hatch.build.targets.wheel.force-include]
 ".agents/skills" = "ringleader/_skills"

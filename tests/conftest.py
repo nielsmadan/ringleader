@@ -10,6 +10,9 @@ def isolate_agent_environment(monkeypatch, tmp_path):
     monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "_claude"))
     monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "_codex"))
     monkeypatch.setenv("PI_SESSIONS_DIR", str(tmp_path / "_pi"))
+    # keeps `rl doctor` from finding — and running — the machine's real hooklinesinker
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_state"))
     for name in (
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",

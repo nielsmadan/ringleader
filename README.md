@@ -100,7 +100,8 @@ rl harvests [--json]                # inbox of harvested knowledge
 rl doctor                           # what's linked, registered, and how retention is set
 rl session <sub>                    # session plumbing: refresh, harvest, finish, archive, ...
 rl mem <sub>                        # memory plumbing
-rl data <sub>                       # export, tokens, migrate
+rl data <sub>                       # export, tokens, migrate, presence
+rl data presence status [--json]    # is live-session presence wired up
 rl workspace move <old> <new>       # move a checkout without stranding its sessions
 rl config show | set <key> <value>  # the AI engine and retention (stores no secrets)
 ```
@@ -108,6 +109,38 @@ rl config show | set <key> <value>  # the AI engine and retention (stores no sec
 A `<selector>` is a git-project label (`ringleader`) or a cwd path — **not** a session id.
 
 → [Full CLI reference](docs/user/cli.md)
+
+## Live session presence
+
+Ringleader curates sessions that are **dormant**, so it has to know which ones are still live.
+That answer comes from [hooklinesinker](https://github.com/nielsmadan/hooklinesinker), a small
+shared binary that owns the status hooks for Claude Code, Codex, OpenCode and Pi. **You do not
+install a separate Brew dependency**: the release artifacts for all four supported architectures
+ride along inside ringleader's own wheel.
+
+```sh
+rl data presence install [--agent claude]... [--yes]   # register + install hooks
+rl data presence status [--json]                       # what is wired up
+rl data presence uninstall [--yes]                     # remove only ringleader's consumer
+```
+
+Nothing happens until you ask for it. A plain `uv tool install .` stays non-mutating;
+`ringleader-init` runs `status` and asks before running `install`. Installing registers
+ringleader as a *consumer* — several tools can share one binary and one set of hooks, and
+uninstalling removes only ringleader's registration, leaving the hooks in place for whoever
+else still uses them. A command that needs live sessions never installs silently; it fails and
+names `rl data presence install`.
+
+**The privacy boundary:** ringleader only ever runs `hooklinesinker sessions --json`,
+`consumers --json` and `doctor --json`, with a 2-second timeout, and reads nothing else. The
+status ledger under `$XDG_STATE_HOME/hooklinesinker` stays private to that binary. Manual
+diagnostics live there too — `rl doctor` ends with a `presence` section, and
+`hooklinesinker doctor` reports the same checks first-hand.
+
+Working from a source checkout? `just install-local` stages the artifacts first (see
+`scripts/vendor-hooklinesinker.sh`, which verifies a release build's `SHA256SUMS` before
+copying anything into `ringleader/_vendor/`). Without a staged artifact everything else still
+installs and works — only `rl data presence` reports what is missing.
 
 ## The AI engine
 

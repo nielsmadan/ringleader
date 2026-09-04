@@ -27,6 +27,7 @@ from . import (
     move_workspace,
     name,
     overview,
+    presence,
     prune,
     relocate,
     roundup,
@@ -93,6 +94,11 @@ _DATA = {
     "export": export.cmd_export,
     "tokens": tokens.cmd_tokens,
     "migrate": migrate.cmd_migrate,
+    "presence": {
+        "install": presence.cmd_install,
+        "status": presence.cmd_status,
+        "uninstall": presence.cmd_uninstall,
+    },
 }
 _WORKSPACE = {
     "move": move_workspace.cmd_move,

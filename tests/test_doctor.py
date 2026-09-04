@@ -1,5 +1,6 @@
 import json
 
+from ringleader import presence
 from ringleader.commands import doctor
 
 
@@ -55,6 +56,40 @@ def test_doctor_reports_every_setup_surface(tmp_path, monkeypatch, capsys):
     assert "cleanupPeriodDays" in out
     assert "skills" in out.lower()
     assert "statusline" in out.lower()
+
+
+def test_doctor_warns_when_hooklinesinker_is_absent(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"cleanupPeriodDays": 90}))
+
+    assert doctor.cmd_doctor(["--settings", str(settings)]) == 0
+
+    out = capsys.readouterr().out
+    assert "--- presence ---" in out
+    assert presence.SETUP_COMMAND in out
+    assert "⚠ hooklinesinker" in out
+
+
+def test_doctor_reports_malformed_presence_state_as_an_error_and_still_exits_zero(
+    tmp_path, monkeypatch, capsys
+):
+    """Reporting commands in this CLI always exit 0; a broken install is an error glyph."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"cleanupPeriodDays": 90}))
+    monkeypatch.setattr(
+        doctor,
+        "presence_rows",
+        lambda _client: [
+            {"label": "status ledger", "state": "error", "detail": "failed to parse a record"}
+        ],
+    )
+
+    assert doctor.cmd_doctor(["--settings", str(settings)]) == 0
+
+    assert "✖ status ledger: failed to parse a record" in capsys.readouterr().out
 
 
 def test_doctor_reports_absent_claude_settings_as_not_installed(tmp_path, monkeypatch, capsys):
