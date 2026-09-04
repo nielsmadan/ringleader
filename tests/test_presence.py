@@ -446,6 +446,67 @@ def test_detected_agents_reads_the_agent_homes(tmp_path, monkeypatch):
     assert presence.detected_agents() == ("claude", "codex", "opencode", "pi")
 
 
+def test_detected_agents_reads_droids_factory_home(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".factory").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    assert presence.detected_agents() == ("droid",)
+
+
+def test_detected_agents_reads_qwens_default_home_without_an_override(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".qwen").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("QWEN_HOME", raising=False)
+    assert presence.detected_agents() == ("qwen",)
+
+
+def test_detected_agents_honors_qwen_home_override(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    relocated = tmp_path / "elsewhere" / "qwen"
+    relocated.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("QWEN_HOME", str(relocated))
+    assert presence.detected_agents() == ("qwen",)
+
+
+def test_detected_agents_treats_an_empty_qwen_home_as_unset(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".qwen").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("QWEN_HOME", "")
+    assert presence.detected_agents() == ("qwen",)
+
+
+def test_detected_agents_reads_kimis_default_home_without_an_override(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".kimi-code").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
+    assert presence.detected_agents() == ("kimi",)
+
+
+def test_detected_agents_honors_kimi_code_home_override(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    relocated = tmp_path / "elsewhere" / "kimi-code"
+    relocated.mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("KIMI_CODE_HOME", str(relocated))
+    assert presence.detected_agents() == ("kimi",)
+
+
+def test_detected_agents_orders_new_agents_after_the_original_four(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    for probe in (".claude", ".factory", ".qwen", ".kimi-code"):
+        (home / probe).mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("QWEN_HOME", raising=False)
+    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
+    assert presence.detected_agents() == ("claude", "droid", "qwen", "kimi")
+
+
 def test_active_binary_path_follows_xdg_data_home(tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
     assert (

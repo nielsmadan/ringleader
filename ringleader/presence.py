@@ -22,7 +22,7 @@ CONSUMER = "ringleader"
 SETUP_COMMAND = "rl data presence install"
 VENDOR_COMMAND = "./scripts/vendor-hooklinesinker.sh && just install-local"
 CHECKSUM_MANIFEST = "checksums.txt"
-AGENTS = ("claude", "codex", "opencode", "pi")
+AGENTS = ("claude", "codex", "opencode", "pi", "droid", "qwen", "kimi")
 
 _ARTIFACTS = {
     ("Darwin", "arm64"): "macos-universal",
@@ -36,6 +36,14 @@ _AGENT_HOMES = (
     ("codex", ".codex"),
     ("opencode", ".config/opencode"),
     ("pi", ".pi"),
+    ("droid", ".factory"),
+)
+
+# Agents whose config dir can be relocated by an env var, mirroring hooklinesinker's own
+# installers (an unset or empty override falls back to the default, home-relative path).
+_AGENT_HOME_ENV_OVERRIDES = (
+    ("qwen", "QWEN_HOME", ".qwen"),
+    ("kimi", "KIMI_CODE_HOME", ".kimi-code"),
 )
 
 
@@ -150,9 +158,20 @@ def active_binary_path() -> Path:
     return Path(base) / "hooklinesinker" / "bin" / "hooklinesinker"
 
 
+def _agent_home_override(root: Path, env_var: str, default_relative: str) -> Path:
+    override = os.environ.get(env_var)
+    return Path(override).expanduser() if override else root / default_relative
+
+
 def detected_agents(home: Path | None = None) -> tuple[str, ...]:
     root = home or Path.home()
-    return tuple(agent for agent, probe in _AGENT_HOMES if (root / probe).is_dir())
+    found = [agent for agent, probe in _AGENT_HOMES if (root / probe).is_dir()]
+    found += [
+        agent
+        for agent, env_var, default_relative in _AGENT_HOME_ENV_OVERRIDES
+        if _agent_home_override(root, env_var, default_relative).is_dir()
+    ]
+    return tuple(found)
 
 
 def sha256_file(path: Path) -> str:

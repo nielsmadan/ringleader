@@ -114,9 +114,9 @@ A `<selector>` is a git-project label (`ringleader`) or a cwd path — **not** a
 
 Ringleader curates sessions that are **dormant**, so it has to know which ones are still live.
 That answer comes from [hooklinesinker](https://github.com/nielsmadan/hooklinesinker), a small
-shared binary that owns the status hooks for Claude Code, Codex, OpenCode and Pi. **You do not
-install a separate Brew dependency**: the release artifacts for all four supported architectures
-ride along inside ringleader's own wheel.
+shared binary that owns the status hooks for Claude Code, Codex, OpenCode, Pi, Factory Droid,
+Qwen Code and Kimi Code. **You do not install a separate Brew dependency**: the release artifacts
+for all four supported architectures ride along inside ringleader's own wheel.
 
 ```sh
 rl data presence install [--agent claude]... [--yes]   # register + install hooks

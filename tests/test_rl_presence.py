@@ -119,6 +119,34 @@ def test_install_accepts_explicit_agents(world, monkeypatch, capsys):
     capsys.readouterr()
 
 
+def test_install_accepts_the_new_agents(world, monkeypatch, capsys):
+    _, candidate = world
+    runner = FakeRunner(results={f"{candidate}|version": ok({"protocol": 1, "version": "0.1.0"})})
+    bind(monkeypatch, install_client(world, runner))
+
+    assert (
+        main(
+            [
+                "data",
+                "presence",
+                "install",
+                "--yes",
+                "--agent",
+                "droid",
+                "--agent",
+                "qwen",
+                "--agent",
+                "kimi",
+            ]
+        )
+        == 0
+    )
+
+    agents = [c[-1] for c in runner.calls if c[1] == "hooks"]
+    assert agents == ["droid", "qwen", "kimi"]
+    capsys.readouterr()
+
+
 def test_status_reports_a_registered_consumer(world, monkeypatch, capsys):
     runner = FakeRunner(
         results={

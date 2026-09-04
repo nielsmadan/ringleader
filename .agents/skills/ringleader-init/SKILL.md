@@ -38,8 +38,9 @@ this file only adds the flow.
    already set up, say so and move on. If it is not, explain before touching anything:
    activating it writes status hooks into each detected agent's own configuration
    (`~/.claude/settings.json`, `~/.codex/hooks.json`, the OpenCode plugin directory, the Pi
-   extension directory) and registers ringleader alongside any other tool already using the
-   binary. Get the user's approval, then run `rl data presence install` for the agents they
+   extension directory, `~/.factory/hooks.json`, `~/.qwen/settings.json`,
+   `~/.kimi-code/config.toml`) and registers ringleader alongside any other tool already using
+   the binary. Get the user's approval, then run `rl data presence install` for the agents they
    chose — `rl data presence uninstall` later removes only ringleader's registration. If the
    command reports no staged artifact (a source checkout), relay the command it names and
    move on: everything else in ringleader works without it.
