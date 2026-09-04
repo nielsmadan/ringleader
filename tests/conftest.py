@@ -1,8 +1,4 @@
-from pathlib import Path
-
 import pytest
-
-LIVE_REGISTRY = Path(__file__).resolve().parent.parent / "registry.json"
 
 
 @pytest.fixture(autouse=True)
@@ -21,19 +17,21 @@ def isolate_agent_environment(monkeypatch, tmp_path):
 
 
 @pytest.fixture(autouse=True, scope="session")
-def guard_live_registry():
-    # the rl commands default to the repo's real registry, so one missing --registry
-    # in a test silently overwrites the user's live cache
-    before = LIVE_REGISTRY.read_bytes() if LIVE_REGISTRY.exists() else None
+def guard_live_state(tmp_path_factory):
+    """Every rl command defaults `--registry` to the user's real registry, so one missing
+    `--registry` in a test would read and overwrite live session state. Point the whole
+    state dir at a throwaway path for the session.
+
+    `XDG_DATA_HOME` is the one lever that works: `paths.state_dir()` reads it on every
+    call, so every helper built on it moves together — registry, archive root, config,
+    publish receipts — whereas patching `default_registry` would miss the copy each
+    command module bound at import time.
+
+    Prevention rather than the snapshot-and-restore this used to attempt: `rl data
+    migrate` moved the live file under `~/.local/share`, where the user's own session-end
+    hooks write it while the suite runs, so restoring a snapshot would sooner or later
+    revert one of their writes."""
+    patch = pytest.MonkeyPatch()
+    patch.setenv("XDG_DATA_HOME", str(tmp_path_factory.mktemp("xdg-data")))
     yield
-    after = LIVE_REGISTRY.read_bytes() if LIVE_REGISTRY.exists() else None
-    if after == before:
-        return
-    if before is None:
-        LIVE_REGISTRY.unlink()
-    else:
-        LIVE_REGISTRY.write_bytes(before)
-    pytest.fail(
-        "a test wrote to the live registry.json (restored) — "
-        "pass --registry <tmp path> to every rl invocation"
-    )
+    patch.undo()
