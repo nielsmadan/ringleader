@@ -35,3 +35,21 @@ def test_thread_match_falls_back_to_the_suggested_name():
     assert namefilter.thread_match({"title": "[x] a", "suggestedName": "other"}, ["[x]*"]) == "[x]*"
     assert namefilter.thread_match({"title": None, "suggestedName": "[x] a"}, ["[x]*"]) == "[x]*"
     assert namefilter.thread_match({"title": None, "suggestedName": None}, ["*"]) is None
+
+
+def test_a_multi_star_pattern_does_not_blow_up_on_a_long_subject():
+    import time
+
+    start = time.time()
+    assert not namefilter.matches("a" * 200 + "b", "*a" * 10 + "*c")
+    assert time.time() - start < 1.0
+
+
+def test_adjacent_stars_behave_as_one():
+    assert namefilter.matches("abc", "a***c")
+    assert namefilter.matches("ac", "a**c")
+
+
+def test_ignore_case_is_opt_in():
+    assert namefilter.matches("Auth-Flow", "auth-*", ignore_case=True)
+    assert not namefilter.matches("Auth-Flow", "auth-*")

@@ -25,6 +25,10 @@ go deeper, per subsystem.
 - [integration.md](integration.md) — `commands/skills.py`, `hooks.py`, `statusline.py`,
   `session_env.py`, `safe_write.py`: editing four other programs' configs, removably.
 - [inbox.md](inbox.md) — `inbox/app.py`: the Textual TUI.
+- `search.py` / `searchview.py` / `tty.py` — `rl session search`: the matcher (tiers,
+  scope, archived-tombstone fallbacks) is kept apart from the renderer that colours it,
+  so `jsonout.py` never depends on terminal formatting. `tty.py` owns the `--color`
+  policy for whatever command wants it next.
 
 ## Data flow (end to end)
 

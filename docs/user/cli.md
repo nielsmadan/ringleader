@@ -72,6 +72,12 @@ OpenCode supports the read-only session verbs (`refresh`, classification, harves
 export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `complete`,
 `sweep`, `archive`, `unarchive`, `delete`, and prune deletion) decline OpenCode sessions.
 
+**Find**
+
+| Command | Does |
+|---|---|
+| `rl session search <query>` | Find sessions by name. Case-insensitive substring, or an **anchored** glob when the query holds `*`/`?` — quote it, or the shell eats it. Hits are ranked: names first, then a session-id prefix, then the cached blurbs. Archived and name-filtered sessions are included and labelled. `--live`, `--archived`, `--limit` (default 50), `--json`, `--color auto\|always\|never` |
+
 **Scan and classify**
 
 | Command | Does |
@@ -179,6 +185,8 @@ it alone.
 - **`--project` is repeatable** wherever it appears, and aliases the positional selector on
   `overview`.
 - **`overview` and `triage` scan the disk first** unless you pass `--no-scan`.
+- **`session search` never scans.** It reads the registry as it stands, so run
+  `rl session refresh` first if a session created minutes ago is missing.
 - **`prune` and `mem prune` preview by default**; only `--delete` removes anything. `rl roundup`
   runs prune *with* deletion.
 - State lives in `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not the repo.

@@ -30,6 +30,7 @@ from . import (
     prune,
     relocate,
     roundup,
+    search,
     setup,
     snooze,
     sweep,
@@ -71,6 +72,7 @@ _SESSION = {
     "keep": keep.cmd_keep,
     "unkeep": keep.cmd_unkeep,
     "name": name.cmd_name,
+    "search": search.cmd_search,
     "relocate": relocate.cmd_relocate,
     "whoami": whoami.cmd_whoami,
     "mark": {

@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from . import overview
+
+if TYPE_CHECKING:
+    from .search import Match
+
+
+# search reports which field matched; the JSON contract is snake_case throughout
+_MATCH_FIELDS = {"aiTitle": "ai_title", "whatItIs": "what_it_is", "lastPrompt": "last_prompt"}
 
 
 def _session_json(t: dict, now_iso: str) -> dict:
@@ -88,4 +97,23 @@ def rollup_json(
         "stale": m["stale_count"],
         "oldest_age_days": m["oldest_age_days"],
         "kept": m["kept_count"],
+    }
+
+
+def search_json(matches: list[Match], now_iso: str, *, limit: int | None = None) -> dict:
+    """Search hits as `_session_json` rows plus why each one matched. `total` is the
+    whole result set, so a caller that passed `--limit` can tell 50-of-900 from 50."""
+    shown = matches if limit is None else matches[:limit]
+    return {
+        "total": len(matches),
+        "matches": [
+            {
+                **_session_json(m.thread, now_iso),
+                "matched_on": _MATCH_FIELDS.get(m.matched_on, m.matched_on),
+                "matched_text": m.value,
+                "archived": m.archived,
+                "filtered": m.filtered,
+            }
+            for m in shown
+        ],
     }

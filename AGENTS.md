@@ -91,6 +91,7 @@ rl usage windows                    # 5h/weekly limits: codex from disk, claude 
 rl install statusline               # capture claude's 5h/weekly limits via the statusLine hook
 rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
+rl session search <query>           # find sessions by name; id prefix and cached blurbs too
 rl session keep <id>                # keep long-term: out of triage for good (unkeep to undo)
 rl session enrich                   # classify pending sessions via an LLM (vs. by hand in the triage/cleanup skill)
 rl session harvest <id> [--dry-run] # distill a finished session into a harvest via an LLM

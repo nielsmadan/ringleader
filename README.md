@@ -97,6 +97,7 @@ rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
 rl harvests [--json]                # inbox of harvested knowledge
+rl session search <query>           # find a session by name, id prefix or cached blurb
 rl doctor                           # what's linked, registered, and how retention is set
 rl session <sub>                    # session plumbing: refresh, harvest, finish, archive, ...
 rl mem <sub>                        # memory plumbing

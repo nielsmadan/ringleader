@@ -29,6 +29,7 @@ def test_help_lists_commands(capsys):
         (["session", "refresh"], commands.sync.cmd_refresh),
         (["session", "set"], commands.sync.cmd_set),
         (["session", "name"], commands.name.cmd_name),
+        (["session", "search"], commands.search.cmd_search),
         (["session", "relocate"], commands.relocate.cmd_relocate),
         (["session", "mark", "harvested"], commands.mark_harvested.cmd_mark_harvested),
         (["session", "mark", "reviewed"], commands.mark_reviewed.cmd_mark_reviewed),

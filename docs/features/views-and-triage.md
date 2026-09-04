@@ -73,8 +73,12 @@ name ([syntax](../user/cli.md#rl-config-filter)).
 A match is stamped as `filteredBy` at scan time and drops the session out of `rl overview`,
 `rl triage`, `rl inbox` and the rollup counts, and out of `rl session enrich`, which would
 otherwise spend a model call classifying noise. Nothing is deleted: `rl overview --filtered`
-lists what is hidden and why, and `--include-filtered` puts the sessions back into any view.
-Edits take effect on the next scan, which every default view runs for you.
+lists what is hidden and why, and `--include-filtered` puts the sessions back into any
+browsing view. Edits take effect on the next scan, which every default view runs for you.
+
+`rl session search` deliberately does not honour the filter: a query you typed is a request
+for a specific session, so filtered hits are returned with a `[filtered]` label rather than
+withheld.
 
 ## Selectors
 

@@ -1,20 +1,35 @@
 from __future__ import annotations
 
-import re
-from functools import lru_cache
 
-_WILDCARDS = {"*": ".*", "?": "."}
-
-
-@lru_cache(maxsize=256)
-def _compiled(pattern: str) -> re.Pattern[str]:
-    return re.compile("".join(_WILDCARDS.get(ch, re.escape(ch)) for ch in pattern))
-
-
-def matches(name: str, pattern: str) -> bool:
+def matches(name: str, pattern: str, *, ignore_case: bool = False) -> bool:
     """Glob with `*` and `?` only: `[` and `]` stay literal, so a pattern like
-    `[cadet-city]*` matches the bracketed prefix instead of a character class."""
-    return _compiled(pattern).fullmatch(name) is not None
+    `[cadet-city]*` matches the bracketed prefix instead of a character class.
+
+    Backtracks linearly rather than through a regex: `search` runs patterns against
+    whole transcript blurbs, and `*a*a*a*c` compiled to `.*a.*a.*a.*c` takes
+    exponential time on a long subject that does not match."""
+    if ignore_case:
+        name, pattern = name.lower(), pattern.lower()
+    n = p = 0
+    star = -1
+    resume = 0
+    while n < len(name):
+        if p < len(pattern) and pattern[p] == "*":
+            star = p
+            resume = n
+            p += 1
+        elif p < len(pattern) and pattern[p] in ("?", name[n]):
+            n += 1
+            p += 1
+        elif star >= 0:
+            resume += 1
+            n = resume
+            p = star + 1
+        else:
+            return False
+    while p < len(pattern) and pattern[p] == "*":
+        p += 1
+    return p == len(pattern)
 
 
 def display_name(thread: dict) -> str | None:

@@ -69,7 +69,9 @@ def age_days(mtime_iso: str, now_iso: str) -> float:
 
 
 def is_filtered(thread: dict) -> bool:
-    """Matched a `rl config filter` pattern: hidden from every view, still on disk."""
+    """Matched a `rl config filter` pattern: hidden from every browsing view, still on
+    disk. `rl session search` is the exception — an explicit query returns filtered
+    sessions, labelled, because silently withholding a named hit is worse than noise."""
     return bool(thread.get("filteredBy"))
 
 
