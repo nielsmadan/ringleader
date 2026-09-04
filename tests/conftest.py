@@ -19,6 +19,8 @@ def isolate_agent_environment(monkeypatch, tmp_path):
         "PI_SESSION_ID",
         "OPENCODE_SESSION_ID",
         "CLAUDE_CODE_SESSION_ID",
+        "QWEN_HOME",
+        "KIMI_CODE_HOME",
     ):
         monkeypatch.delenv(name, raising=False)
 

@@ -457,7 +457,6 @@ def test_detected_agents_reads_qwens_default_home_without_an_override(tmp_path, 
     home = tmp_path / "home"
     (home / ".qwen").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("QWEN_HOME", raising=False)
     assert presence.detected_agents() == ("qwen",)
 
 
@@ -483,7 +482,6 @@ def test_detected_agents_reads_kimis_default_home_without_an_override(tmp_path, 
     home = tmp_path / "home"
     (home / ".kimi-code").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
     assert presence.detected_agents() == ("kimi",)
 
 
@@ -502,8 +500,6 @@ def test_detected_agents_orders_new_agents_after_the_original_four(tmp_path, mon
     for probe in (".claude", ".factory", ".qwen", ".kimi-code"):
         (home / probe).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("QWEN_HOME", raising=False)
-    monkeypatch.delenv("KIMI_CODE_HOME", raising=False)
     assert presence.detected_agents() == ("claude", "droid", "qwen", "kimi")
 
 
