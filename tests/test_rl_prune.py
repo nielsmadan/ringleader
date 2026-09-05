@@ -1,6 +1,7 @@
 import json
 import subprocess
 import sys
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -342,10 +343,12 @@ def test_prune_delete_removes_a_resurrected_archived_transcript(tmp_path, monkey
     monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
     monkeypatch.setattr("builtins.input", lambda prompt="": "y")
 
-    # a genuine, unrelated thread that is NOT prune-eligible (recent mtime) — its
-    # continued presence in `threads` after the run shows stub deletion really leaves
-    # `threads` alone, rather than the assertion being trivially true on an empty list.
-    live_thread = _thread(tmp_path, "live", size_bytes=100, mtime="2026-08-29T00:00:00+00:00")
+    # a genuine, unrelated thread that is NOT prune-eligible — its continued presence in
+    # `threads` after the run shows stub deletion really leaves `threads` alone, rather
+    # than the assertion being trivially true on an empty list. Dated relative to now:
+    # a literal decays past DEFAULT_OLDER_THAN_DAYS and silently inverts the fixture.
+    recent = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+    live_thread = _thread(tmp_path, "live", size_bytes=100, mtime=recent)
 
     reg = tmp_path / "registry.json"
     reg.write_text(
