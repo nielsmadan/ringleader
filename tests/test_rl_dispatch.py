@@ -115,3 +115,20 @@ def test_triage_memory_flag_removed():
     )
     assert r.returncode != 0
     assert "unrecognized arguments" in r.stderr or "--memory" in r.stderr
+
+
+def test_every_table_leaf_resolves_to_a_callable():
+    """The rows above pin particular wirings by hand; this pins that none is broken,
+    without growing a roster that has to be remembered."""
+    checked = 0
+    stack = [([], commands.TABLE)]
+    while stack:
+        crumbs, node = stack.pop()
+        for key, value in node.items():
+            path = [*crumbs, key]
+            if isinstance(value, dict):
+                stack.append((path, value))
+                continue
+            checked += 1
+            assert callable(value), f"rl {' '.join(path)} is not callable"
+    assert checked > 40, f"only {checked} leaves walked — TABLE shape changed?"

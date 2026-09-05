@@ -121,3 +121,33 @@ TABLE: dict[str, CommandFn | dict] = {
     "data": _DATA,
     "config": config.cmd_config,
 }
+
+
+# Leaves that parse their own sub-verb instead of nesting in TABLE. Declared by the
+# module that dispatches them, so a new subcommand cannot hide from `command_paths()`.
+_LEAF_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
+    "config": config.SUBCOMMANDS,
+    "usage": usage.SUBCOMMANDS,
+    "harvests": harvests_cmd.SUBCOMMANDS,
+    "install": setup.nouns_for("install"),
+    "update": setup.nouns_for("update"),
+    "uninstall": setup.nouns_for("uninstall"),
+}
+
+
+def command_paths() -> set[str]:
+    """Every command a user can type, space-joined. Walking TABLE alone under-reports:
+    six of its leaves parse a further sub-verb themselves."""
+    out: set[str] = set()
+
+    def walk(node: dict, prefix: str = "") -> None:
+        for key, value in node.items():
+            path = f"{prefix}{key}"
+            if isinstance(value, dict):
+                walk(value, path + " ")
+                continue
+            out.add(path)
+            out.update(f"{path} {sub}" for sub in _LEAF_SUBCOMMANDS.get(path, ()))
+
+    walk(TABLE)
+    return out

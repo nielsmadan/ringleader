@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
 
 from .. import namefilter, registry
 from ..config import load_config, save_config
@@ -13,17 +14,14 @@ _SET_ARGC = 2
 
 def cmd_config(argv: list[str]) -> int:
     if not argv:
-        print("usage: rl config <show|set|filter> [args]", file=sys.stderr)
+        print(f"usage: rl config <{'|'.join(SUBCOMMANDS)}> [args]", file=sys.stderr)
         return 2
     sub, rest = argv[0], argv[1:]
-    if sub == "show":
-        return _show()
-    if sub == "set":
-        return _set(rest)
-    if sub == "filter":
-        return _filter(rest)
-    print(f"rl config: unknown subcommand '{sub}'", file=sys.stderr)
-    return 2
+    action = _ACTIONS.get(sub)
+    if action is None:
+        print(f"rl config: unknown subcommand '{sub}'", file=sys.stderr)
+        return 2
+    return action(rest)
 
 
 def _show() -> int:
@@ -126,3 +124,13 @@ def _filter(args: list[str]) -> int:
     save_config(cfg)
     print(f"unfiltered '{pattern}'")
     return 0
+
+
+# dispatched from, and enumerated by `commands.command_paths()`: one declaration, so a
+# subcommand cannot exist without the coverage gate seeing it
+_ACTIONS: dict[str, Callable[[list[str]], int]] = {
+    "show": lambda rest: _show(),
+    "set": _set,
+    "filter": _filter,
+}
+SUBCOMMANDS: tuple[str, ...] = tuple(_ACTIONS)

@@ -11,9 +11,9 @@ here. That context is the whole point — you know things about this session tha
 never written to the transcript, and a model reading it later will not.
 
 This skill uses one mechanism your agent provides. `[SELECT]`: use your native
-structured-choice tool (Claude Code: `AskUserQuestion`) to confirm; if you have none, ask
-and read back the answer. Everything else — calling `rl`, the harvest sub-protocol — is in
-`references/playbook.md`.
+structured-choice tool (Claude Code: `AskUserQuestion`) to confirm; if you have none,
+present a **numbered list** and read back the answer. Everything else — calling `rl`, the
+harvest sub-protocol — is in `references/playbook.md`.
 
 ## Flow
 

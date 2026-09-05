@@ -21,8 +21,9 @@ Every installer **detects** the agents present, **previews** its edit, and skips
 
 ## Skills
 
-Seven bundled skills at `.agents/skills/ringleader-*`, each an agent-neutral `SKILL.md` plus a
-`references/playbook.md` synced from the canonical `PLAYBOOK.md` (`just sync-playbook`):
+Seven bundled skills at `.agents/skills/ringleader-*`, each an agent-neutral `SKILL.md`. Six
+also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
+(`just sync-playbook`); `ringleader-publish` ships `references/protocol.md` instead:
 
 | Skill | Does |
 |---|---|

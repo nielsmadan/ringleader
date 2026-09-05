@@ -192,6 +192,7 @@ _ACTIONS: dict[str, Callable[[list[str]], int]] = {
     "abandon": _cmd_abandon,
     "recover": _cmd_recover,
 }
+SUBCOMMANDS: tuple[str, ...] = tuple(_ACTIONS)
 
 
 def _cmd_list(argv: list[str]) -> int:

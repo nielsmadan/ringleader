@@ -300,7 +300,7 @@ def test_sandbox_recipe_wires_skills_then_enters_shell():
     )
 
     assert result.stderr.splitlines() == [
-        "uv run rl skills install --yes",
+        "uv run rl install skills --yes",
         "uv run python scripts/sandbox.py --shell",
     ]
 

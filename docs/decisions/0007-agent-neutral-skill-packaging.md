@@ -9,9 +9,9 @@ them is wired backwards.
 
 ## Decision
 
-Skills live at `.agents/skills/ringleader-*`, each shipping an agent-neutral `SKILL.md` plus a
-bundled `references/playbook.md` synced from the canonical `.agents/skills/PLAYBOOK.md`
-(`just sync-playbook`). `rl install skills` symlinks them into `~/.agents/skills` (Codex,
+Skills live at `.agents/skills/ringleader-*`, each shipping an agent-neutral `SKILL.md`, and
+each that needs the shared protocol also bundles a `references/playbook.md` synced from the
+canonical `.agents/skills/PLAYBOOK.md` (`just sync-playbook`). `rl install skills` symlinks them into `~/.agents/skills` (Codex,
 OpenCode, Pi) and `~/.claude/skills` (Claude Code).
 
 The Claude-only plugin manifest and its installer were removed.

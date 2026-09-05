@@ -36,9 +36,10 @@ pruning them before the GC clock deletes them.
 - **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Seven skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
   `ringleader-usage`, `ringleader-finish`, `ringleader-publish` — each ship an
-  agent-neutral `SKILL.md` plus a bundled `references/playbook.md`, synced from
-  the canonical `.agents/skills/PLAYBOOK.md`
-  (`just sync-playbook`). The first four replace the old, single-purpose session skills
+  agent-neutral `SKILL.md`. Six of them also bundle a `references/playbook.md` synced
+  from the canonical `.agents/skills/PLAYBOOK.md` (`just sync-playbook`, which derives
+  the list from the skills that ask for one); `ringleader-publish` ships its own protocol
+  reference instead. The first four replace the old, single-purpose session skills
   (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
   these four; `ringleader-usage` explains where tokens went; `ringleader-finish` finishes
   the session you're currently in, harvesting it from live context instead of waiting for

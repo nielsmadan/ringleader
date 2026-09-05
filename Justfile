@@ -2,9 +2,10 @@
 default:
     @just --list
 
-# `python -m`, not the console script: a script whose shebang went stale (a moved
-# checkout) is skipped by uv in favour of whatever is on PATH, which then fails with
-# a missing project dependency rather than saying the venv is broken.
+# A stale shebang (a moved checkout) makes uv skip the console script in favour of
+# whatever is on PATH, which then fails with a missing project dependency rather than
+# saying the venv is broken.
+# Run the test suite through `python -m`.
 test:
     @uv run python -m pytest -q
 
@@ -31,9 +32,9 @@ typecheck:
 hooks:
     @lefthook install
 
-# Migrate legacy repo state, then install the global `rl`.
 # --reinstall because the version never changes: without it uv audits the existing
 # install and keeps shipping the old code.
+# Migrate legacy repo state, then install the global `rl`.
 install-local:
     @uv run rl data migrate
     @uv tool install --reinstall --force .
@@ -56,7 +57,7 @@ reset-local:
 
 # Enter the throwaway skill-testing world without resetting its state.
 sandbox:
-    @uv run rl skills install --yes
+    @uv run rl install skills --yes
     @uv run python scripts/sandbox.py --shell
 
 # Reset the sandbox to the frozen fixture and empty registry.
@@ -66,7 +67,11 @@ sandbox-reset *ARGS:
 clean:
     @rm -rf .pytest_cache .ruff_cache .coverage htmlcov
 
+# Copy the playbook to each skill whose SKILL.md asks for it.
 sync-playbook:
-    @for s in init triage cleanup overview usage finish; do \
-      cp .agents/skills/PLAYBOOK.md ".agents/skills/ringleader-$s/references/playbook.md"; \
+    @for d in .agents/skills/ringleader-*; do \
+      if grep -qs 'references/playbook.md' "$d/SKILL.md"; then \
+        mkdir -p "$d/references"; \
+        cp .agents/skills/PLAYBOOK.md "$d/references/playbook.md"; \
+      fi; \
     done

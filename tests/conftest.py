@@ -1,4 +1,15 @@
+from pathlib import Path
+
 import pytest
+
+SKILLS_ROOT = Path(__file__).resolve().parent.parent / ".agents" / "skills"
+
+
+@pytest.fixture(scope="session")
+def skill_dirs():
+    """The bundled skills, discovered once. Shared so the files that check them cannot
+    disagree about what counts as a skill."""
+    return sorted(p for p in SKILLS_ROOT.glob("ringleader-*") if (p / "SKILL.md").is_file())
 
 
 @pytest.fixture(autouse=True)

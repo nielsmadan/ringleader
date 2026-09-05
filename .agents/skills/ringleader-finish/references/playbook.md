@@ -35,12 +35,28 @@ Flat commands:
   setting so live sessions aren't garbage-collected before you get to them.
 - `rl config show` / `rl config set …` — select the LLM backend used by
   `rl session enrich` and `rl session harvest`. Stores no secrets.
-- `rl harvests` — list the pending tool-native harvest queue. `snapshot`, `begin`,
-  `prepare`, `consume`, `abandon`, and `recover` are publisher plumbing, not triage commands.
+- `rl config filter list|add|remove` — hide sessions whose name matches an anchored glob.
+  A match is stamped `filteredBy` at scan time and drops the session out of `rl overview`,
+  `rl triage` and `rl session enrich`, so a session you cannot find may be filtered rather
+  than gone: `rl overview --filtered` lists what is hidden. It hides, it never deletes —
+  `rl prune` still removes a filtered session that is tiny and stale.
+- `rl harvests` — list the pending tool-native harvest queue. `rl harvests snapshot`,
+  `rl harvests begin`, `rl harvests prepare`, `rl harvests consume`, `rl harvests abandon`
+  and `rl harvests recover` are publisher plumbing driven by `ringleader-publish`, not
+  triage commands.
 
 Session subcommands (`rl session <sub>`):
 
 - `rl session refresh [--project X] [--tail N]` — rescan disk and update the registry.
+- `rl session search QUERY [--live] [--archived] [--limit N] [--json]` — find a session
+  when you have a word from its name but not its id. Case-insensitive substring, or an
+  anchored glob if the query contains `*` or `?`. Hits are ranked: names first, then a
+  session-id prefix, then the cached blurbs (ai title, what-it-is, summary, last prompt),
+  and a blurb hit adds a `↳ <field>: …` line quoting the text that matched (a name or id
+  hit needs none — the row already shows it). `--json` reports `matched_on` for every hit.
+  Archived and name-filtered sessions are included
+  and labelled rather than hidden. Reads the registry as it stands and never scans, so
+  run `rl session refresh` first if the session you want is minutes old.
 - `rl session set --session ID --status {active,unfinished,blocked,finished} --what WHAT --name NAME [--confidence N]`
   — record a classification for one session.
 - `rl session enrich [--project X] [--limit N]` — classify pending sessions via an LLM.
@@ -68,7 +84,7 @@ Session subcommands (`rl session <sub>`):
 
 Memory subcommands (`rl mem <sub>`) — used by the separate memory track, not by these
 five session-track skills, but part of the same CLI surface: `rl mem refresh`, `rl mem prune
-[--delete]`, `rl mem triage`, `rl mem overview`, `rl mem mark reviewed|cleaned`.
+[--delete]`, `rl mem triage`, `rl mem overview`, `rl mem mark reviewed`, `rl mem mark cleaned`.
 
 Data subcommands (`rl data <sub>`): `rl data export ID [--out PATH]`, `rl data tokens
 [--days N] [--archived] [--json]`, `rl data migrate [old_dir]`.

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from collections.abc import Callable
 from datetime import UTC, date, datetime, timedelta
 
 from ..paths import archive_root
@@ -253,13 +254,18 @@ def _cmd_export(argv: list[str], prog: str) -> int:
     return 0
 
 
+# dispatched from, and enumerated by `commands.command_paths()`
+_ACTIONS: dict[str, Callable[[list[str], str], int]] = {
+    "session": _cmd_session,
+    "windows": _cmd_windows,
+    "export": _cmd_export,
+}
+SUBCOMMANDS: tuple[str, ...] = tuple(_ACTIONS)
+
+
 def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
-    if argv and argv[0] == "session":
-        return _cmd_session(argv[1:], prog)
-    if argv and argv[0] == "windows":
-        return _cmd_windows(argv[1:], prog)
-    if argv and argv[0] == "export":
-        return _cmd_export(argv[1:], prog)
+    if argv and argv[0] in _ACTIONS:
+        return _ACTIONS[argv[0]](argv[1:], prog)
     ap = argparse.ArgumentParser(
         prog=prog,
         description="Token usage across coding-agent harnesses, read from local agent state.",

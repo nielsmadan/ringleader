@@ -81,3 +81,8 @@ def cmd_update(argv: list[str]) -> int:
 
 def cmd_uninstall(argv: list[str]) -> int:
     return _run("uninstall", argv, default_all=False)
+
+
+def nouns_for(verb: str) -> tuple[str, ...]:
+    """Which targets a verb actually supports — `rl update statusline` does not exist."""
+    return tuple(name for name, verbs in NOUNS.items() if verb in verbs)

@@ -26,18 +26,23 @@ this file only adds the flow.
    (see `references/playbook.md` § Calling `rl`), and mention to the user that
    `just install-local` (or `uv tool install .`) would put `rl` on `PATH` directly.
 
-3. **Check retention settings.** Run `rl doctor`. Relay its findings for each installed
+3. **Wire the skills into this agent.** Run `rl install skills`, which links the bundled
+   `ringleader-*` skills into the agent directories it finds. `rl doctor` reports what is
+   already wired, so skip this if it says they are. `rl update skills` refreshes them after
+   an upgrade and `rl uninstall skills` removes them.
+
+4. **Check retention settings.** Run `rl doctor`. Relay its findings for each installed
    harness. For Claude Code specifically, it reports the `cleanupPeriodDays` setting
    (`~/.claude/settings.json`) that controls how long a dormant session survives before
    Claude's own garbage collection deletes it — if `rl doctor` flags it as low or unset,
    explain the risk and offer to help the user raise it.
 
-4. **Bounded first triage.** Kick off the `triage` skill, scoped to the last 7 days
+5. **Bounded first triage.** Kick off the `triage` skill, scoped to the last 7 days
    (`--recent 7`), so onboarding produces a small, finishable first pass rather than the
    full backlog. Follow that skill's flow as-is; this step is purely a scope hand-off, not
    a separate implementation.
 
-5. **Close out.** Run the closeout from `references/playbook.md` § Opening, baseline,
+6. **Close out.** Run the closeout from `references/playbook.md` § Opening, baseline,
    closeout: the before → after table against step 1's baseline, what changed (pruned +
    disk reclaimed, classified, kept), what came back **blocked on the user**, and how much
    of the backlog is still untouched — everything older than 7 days, which is what
