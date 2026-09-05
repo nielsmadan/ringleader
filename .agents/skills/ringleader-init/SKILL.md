@@ -19,7 +19,7 @@ this file only adds the flow.
    checks the CLI, checks retention settings so sessions aren't garbage-collected, and then
    does one bounded triage pass over the last 7 days — that this pass will delete obvious junk and ask them for a decision per session,
    and that everything older is left for `cleanup`. Then record the baseline numbers before
-   anything changes; the closeout in step 6 is measured against them.
+   anything changes; the closeout in step 7 is measured against them.
 
 2. **Verify `rl` is installed.** Run `rl --help`. If it's not on `PATH`, this is a source
    checkout that hasn't been installed — use `uv run rl` for every command below instead
@@ -37,12 +37,25 @@ this file only adds the flow.
    Claude's own garbage collection deletes it — if `rl doctor` flags it as low or unset,
    explain the risk and offer to help the user raise it.
 
-5. **Bounded first triage.** Kick off the `triage` skill, scoped to the last 7 days
+5. **Check live-session presence.** Run `rl data presence status`. It reports whether the
+   shared status binary (hooklinesinker, bundled with ringleader — **not** a separate Brew
+   install) is active and whether ringleader is registered as one of its consumers. If it is
+   already set up, say so and move on. If it is not, explain before touching anything:
+   activating it writes status hooks into each detected agent's own configuration
+   (`~/.claude/settings.json`, `~/.codex/hooks.json`, the OpenCode plugin directory, the Pi
+   extension directory, `~/.factory/hooks.json`, `~/.qwen/settings.json`,
+   `~/.kimi-code/config.toml`) and registers ringleader alongside any other tool already using
+   the binary. Get the user's approval, then run `rl data presence install` for the agents they
+   chose — `rl data presence uninstall` later removes only ringleader's registration. If the
+   command reports no staged artifact (a source checkout), relay the command it names and
+   move on: everything else in ringleader works without it.
+
+6. **Bounded first triage.** Kick off the `triage` skill, scoped to the last 7 days
    (`--recent 7`), so onboarding produces a small, finishable first pass rather than the
    full backlog. Follow that skill's flow as-is; this step is purely a scope hand-off, not
    a separate implementation.
 
-6. **Close out.** Run the closeout from `references/playbook.md` § Opening, baseline,
+7. **Close out.** Run the closeout from `references/playbook.md` § Opening, baseline,
    closeout: the before → after table against step 1's baseline, what changed (pruned +
    disk reclaimed, classified, kept), what came back **blocked on the user**, and how much
    of the backlog is still untouched — everything older than 7 days, which is what

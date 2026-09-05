@@ -43,6 +43,9 @@ def test_help_lists_commands(capsys):
         (["data", "export"], commands.export.cmd_export),
         (["data", "tokens"], commands.tokens.cmd_tokens),
         (["data", "migrate"], commands.migrate.cmd_migrate),
+        (["data", "presence", "install"], commands.presence.cmd_install),
+        (["data", "presence", "status"], commands.presence.cmd_status),
+        (["data", "presence", "uninstall"], commands.presence.cmd_uninstall),
         (["harvests"], commands.harvests.cmd_harvests),
         (["config"], commands.config.cmd_config),
         (["session", "complete"], commands.complete.cmd_complete),
@@ -53,6 +56,13 @@ def test_new_paths_resolve(path, expected):
     for tok in path:
         node = node[tok]
     assert node is expected
+
+
+def test_presence_group_lists_its_verbs(capsys):
+    rc = main(["data", "presence"])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "install" in out and "status" in out and "uninstall" in out
 
 
 def test_group_with_no_subcommand_lists_subs(capsys):

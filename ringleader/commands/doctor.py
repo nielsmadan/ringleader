@@ -5,9 +5,11 @@ import json
 import os
 from pathlib import Path
 
+from ..presence import PresenceClient, presence_rows
 from . import hooks, skills, statusline
 
 MIN_RETENTION_DAYS = 30
+GLYPHS = {"ok": "✓", "warn": "⚠", "error": "✖"}
 
 
 def check_claude_retention(settings_path) -> dict:
@@ -55,5 +57,9 @@ def cmd_doctor(argv: list[str]) -> int:
     ):
         print(f"\n--- {label} ---")
         run(run_argv)
+
+    print("\n--- presence ---")
+    for row in presence_rows(PresenceClient()):
+        print(f"{GLYPHS[row['state']]} {row['label']}: {row['detail']}")
 
     return 0

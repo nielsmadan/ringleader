@@ -17,7 +17,19 @@ rl doctor               # what's linked, registered, and how retention is set
 Nouns: `skills`, `statusline`, `hooks`, `all`. Bare `rl install` does `all`. Each takes `--yes`;
 `statusline` also takes `--settings PATH`. `rl update` has no `statusline` noun.
 
-Every installer **detects** the agents present, **previews** its edit, and skips what is absent.
+These installers **detect** the agents present, **preview** their edits, and skip what is absent.
+
+## Live-session presence
+
+`rl data presence install` registers Ringleader as a consumer of the shared Hooklinesinker
+binary and installs its status hooks. `status` reports the wiring and running-session count;
+`uninstall` removes only Ringleader's registration. Hooks remain while another consumer needs them.
+
+Presence supports Claude Code, Codex, OpenCode, Pi, Factory Droid, Qwen Code, and Kimi Code.
+Installation names the detected agents and confirms before changing their configuration;
+repeat `--agent` to choose explicitly, or use `--yes` for unattended setup.
+`just install-local`, `just install-editable`, and `just refresh-local` run that setup too.
+Dormant-session views do not yet use presence to exclude running sessions.
 
 ## Skills
 

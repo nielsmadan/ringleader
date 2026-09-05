@@ -21,7 +21,7 @@ rl
 ├── config                      show | set <key> <value>
 ├── session <sub>               session plumbing (see below)
 ├── mem <sub>                   memory plumbing (see below)
-├── data <sub>                  export | tokens | migrate
+├── data <sub>                  export | tokens | migrate | presence
 └── workspace <sub>             move | retarget
 ```
 
@@ -138,6 +138,14 @@ Backs the `memory-triage` skill.
 | `rl data export <id>` | Render a session to markdown. `--out` |
 | `rl data tokens` | `rl usage` pinned to `--source claude`; same flags otherwise. |
 | `rl data migrate [<old_dir>]` | One-time move of legacy repo-root state into `~/.local/share/ringleader/`. Safe to re-run. |
+| `rl data presence install` | Register Ringleader with Hooklinesinker and install status hooks. Confirms first; `--agent` is repeatable and defaults to detected agents. `--yes`, `--json` |
+| `rl data presence status` | Report the active and bundled binaries, consumer registration, hooks, running-session count, and problems. `--json` |
+| `rl data presence uninstall` | Remove Ringleader's consumer registration. Hooks and the shared binary remain while other consumers are registered. Confirms first. `--yes`, `--json` |
+
+Presence installation and uninstallation require `--yes` when combined with `--json`.
+`just install-local`, `just install-editable`, and `just refresh-local` also run presence
+installation after installing Ringleader. A direct `uv tool install .` leaves activation
+to the explicit presence command or onboarding skill.
 
 ## `rl workspace`
 

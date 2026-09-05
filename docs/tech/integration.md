@@ -71,6 +71,23 @@ file, preserves the existing mode (the status-line script must stay executable),
 atomically. `diff()` renders the change for the confirmation prompt — every installer previews
 before it writes.
 
+### Shared presence
+
+`presence.PresenceClient` invokes Hooklinesinker's protocol-1 CLI with a two-second timeout.
+It never reads the helper's state files. Running IDs are qualified by agent; unavailable or
+malformed responses stay distinguishable from an empty set of running sessions.
+
+`commands/presence.py` exposes install, status, and uninstall under `rl data presence`.
+Installation verifies the bundled binary's checksum, compares it with the active version,
+registers the `ringleader` consumer, and delegates native hook edits to the helper.
+Each successful hook install is verified with `hooks status --json`; unsupported configurations
+are reported as failures. OpenCode, Pi, Qwen, and Kimi detection follows the helper's config
+directory overrides. Uninstall removes the shared binary and hooks only for the last consumer.
+
+`scripts/vendor-hooklinesinker.sh` stages a local release's three binaries and checksum
+manifest under `ringleader/_vendor/`. Hatchling includes those ignored artifacts in the wheel.
+Source installs without artifacts still work; presence installation reports the missing bundle.
+
 ### Which session am I in?
 
 `session_env.py` answers that from the **live process**, not from disk: `PROBES` maps a source

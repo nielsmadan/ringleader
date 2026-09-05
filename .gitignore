@@ -16,3 +16,6 @@ build/
 *.egg-info/
 # throwaway world built by `just sandbox`
 .sandbox/
+# vendored hooklinesinker release artifacts (staged by scripts/vendor-hooklinesinker.sh)
+ringleader/_vendor/*
+!ringleader/_vendor/.gitkeep

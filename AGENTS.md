@@ -71,6 +71,15 @@ pruning them before the GC clock deletes them.
   stamped as `filteredBy` at scan time and drop out of `overview`/`triage`/`inbox` and
   out of `rl session enrich`; `--include-filtered` (or `rl overview --filtered`) gets
   them back. `rl prune` still deletes them from disk when they are tiny and stale.
+- **Live sessions come from hooklinesinker, never from its files.** `ringleader/presence.py`
+  shells out to a bundled `hooklinesinker` binary (`sessions --json`, `consumers --json`,
+  `doctor --json`, 2s timeout) and parses protocol 1 only. Its state under
+  `$XDG_STATE_HOME/hooklinesinker` is private — do not read it. The binary is **not** a Brew
+  dependency: `scripts/vendor-hooklinesinker.sh` stages checksum-verified release artifacts
+  into the gitignored `ringleader/_vendor/<platform>/`, and `pyproject.toml`'s wheel
+  `artifacts` key is what carries them into the wheel. Activation is explicit
+  (`rl data presence install`) and never implicit — a caller that needs live sessions gets
+  `PresenceUnavailable` naming the setup command, not a silent install and not an empty result.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
   hiding, workspace relocation, workspace rebinding); `claude_code.py` and `codex.py`
@@ -98,7 +107,8 @@ rl session enrich                   # classify pending sessions via an LLM (vs. 
 rl session harvest <id> [--dry-run] # distill a finished session into a harvest via an LLM
 rl session complete <id>            # harvest, then archive (no-op archive if harvest didn't run)
 rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
-rl data <sub>                       # export, tokens, migrate
+rl data <sub>                       # export, tokens, migrate, presence
+rl data presence status [--json]    # is live-session presence wired up (install/uninstall too)
 rl config                           # select the AI engine for enrich (ai=claude/codex/llm; stores no secrets)
 rl config filter add '<glob>'       # hide sessions whose name matches (list/remove too)
 just test                           # tests; pytest config lives in pyproject.toml now

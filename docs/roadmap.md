@@ -5,13 +5,12 @@ They must be revalidated against the current source and external agent formats b
 
 ## Shared live-session presence
 
-Hooklinesinker was designed as a standalone, short-lived Rust hook CLI shared by Juggler and Ringleader.
-It would normalize Claude Code, Codex, OpenCode, and Pi lifecycle events into a versioned local presence ledger, verify liveness by process ID plus process start time, and expose only named capabilities such as `status`.
+Hooklinesinker and Ringleader's presence client are implemented. `rl data presence`
+provides installation, status, and scoped uninstallation; `rl doctor` reports presence health.
+The client reads Hooklinesinker's versioned CLI JSON and keeps its state files private.
 
-The design deliberately avoids a daemon, raw native-payload persistence, arbitrary sink fields, and hook failures that can break an agent invocation.
-Ringleader would use its JSON CLI for a verified `--running` selector; Juggler would hydrate from the same CLI and receive later events through a registered sink.
-
-No Hooklinesinker project, presence client, or running-session selector exists today.
+A verified `--running` session selector remains unimplemented. It will use the presence
+client's agent-qualified running-session IDs alongside Ringleader's transcript discovery.
 
 ## Cross-agent session portability
 
@@ -30,4 +29,3 @@ It refuses destination merges and does not provide a general transaction journal
 
 The broader design remains unimplemented: per-session native history moves for every supported agent, structured-field-only rewrites, staged publication with checksummed rollback, crash recovery, cross-filesystem manifest verification, and Hooklinesinker liveness gating.
 Any future work must preserve the current rule that historical prompts, commands, tool arguments, and tool results are never search-and-replaced.
-

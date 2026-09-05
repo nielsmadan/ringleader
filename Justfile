@@ -37,20 +37,31 @@ hooks:
 # Migrate legacy repo state, then install the global `rl`.
 install-local:
     @uv run rl data migrate
+    @just vendor
     @uv tool install --reinstall --force .
     @rl update all --yes
+    -@rl data presence install --yes
     @echo "Installed: $(which rl)"
 
 # Install `rl` editable: it tracks the working tree, so it never goes stale.
 install-editable:
     @uv run rl data migrate
+    @just vendor
     @uv tool install --reinstall --force -e .
     @rl update all --yes
+    -@rl data presence install --yes
     @echo "Installed (editable): $(which rl)"
 
 refresh-local:
+    @just vendor
     @uv tool install --reinstall --force .
     @rl update all --yes
+    -@rl data presence install --yes
+
+# Stage the pinned hooklinesinker artifacts into ringleader/_vendor. Without a sibling
+# release build there is nothing to stage, and `rl` installs without presence support.
+vendor *ARGS:
+    -@bash scripts/vendor-hooklinesinker.sh {{ARGS}}
 
 reset-local:
     @uv tool uninstall ringleader
