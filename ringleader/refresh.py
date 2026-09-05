@@ -27,10 +27,13 @@ def auto_refresh(  # noqa: PLR0913
     git_resolver=None,
     sources=None,
     name_filters=None,
+    persist=True,
 ):
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. Read commands run this before rendering; an unavailable source
-    retains its cached sessions. Classification and naming remain separate agentic steps."""
+    retains its cached sessions. Classification and naming remain separate agentic steps.
+
+    `persist=False` scans into memory only, for a preview that must leave no trace."""
     if projects_root is not None:
         if claude_projects_dir is not None:
             raise ValueError("pass claude_projects_dir, not both")
@@ -58,6 +61,7 @@ def auto_refresh(  # noqa: PLR0913
     if name_filters is None:
         name_filters = load_config().session_filters
     registry.apply_name_filters(reg, name_filters)
-    registry.save_registry(registry_path, reg)
+    if persist:
+        registry.save_registry(registry_path, reg)
     after = {t["sessionId"] for t in reg["threads"]}
     return reg, delta_note(len(after - before), len(before - after))

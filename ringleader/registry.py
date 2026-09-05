@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from . import namefilter, overview
+from .slug import is_beneath
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text
 
@@ -515,13 +516,18 @@ def pin_thread_location(t: dict, new_project: str, git: dict | None = None) -> N
     t["gitCloneUrl"] = git.get("clone_url")
 
 
-def relocate_thread(reg: dict, session_id: str, new_project: str, git: dict | None = None) -> dict:
-    """Pin a thread to a new cwd/git identity after its directory moved on disk."""
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            pin_thread_location(t, new_project, git)
-            return reg
-    raise KeyError(session_id)
+def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
+    """Carry a cached `gitRoot` across with the tree.
+
+    `pin_thread_location` keeps the cached git fields when the destination has no
+    resolvable git identity — a deleted worktree, say. That is right for the
+    identity itself, but the cached root is a path, and left alone it names a
+    location that no longer exists. Remapping keeps the identity and makes the
+    path true.
+    """
+    root = thread.get("gitRoot")
+    if isinstance(root, str) and (root == old or is_beneath(root, old)):
+        thread["gitRoot"] = new + root[len(old) :]
 
 
 def prune_session(reg: dict, session_id: str, deleted_at: str, *, reason: str = "prune") -> dict:

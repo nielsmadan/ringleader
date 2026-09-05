@@ -433,16 +433,16 @@ def test_reconcile_preserves_projects_cleaned_at():
     assert reg2["projectsCleanedAt"]["k1"] == "2026-06-05T00:00:00+00:00"
 
 
-from ringleader.registry import relocate_thread
+from ringleader.registry import pin_thread_location
+
+_NEW_GIT = {"key": "k", "label": "newrepo", "root": "/new/path", "remote": "r"}
 
 
-def test_relocate_thread_pins_location():
+def test_pin_thread_location_pins_cwd_and_git_identity():
     reg = reconcile(
         empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00", project="/old")], NOW
     )
-    relocate_thread(
-        reg, "s1", "/new/path", {"key": "k", "label": "newrepo", "root": "/new/path", "remote": "r"}
-    )
+    pin_thread_location(reg["threads"][0], "/new/path", _NEW_GIT)
     t = reg["threads"][0]
     assert t["project"] == "/new/path"
     assert t["gitProjectLabel"] == "newrepo" and t["gitProjectKey"] == "k"
@@ -453,9 +453,7 @@ def test_reconcile_preserves_pinned_location():
     reg = reconcile(
         empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00", project="/old")], NOW
     )
-    relocate_thread(
-        reg, "s1", "/new/path", {"key": "k", "label": "newrepo", "root": "/new/path", "remote": "r"}
-    )
+    pin_thread_location(reg["threads"][0], "/new/path", _NEW_GIT)
     # a later scan still reports the OLD cwd (baked into the transcript) + old git label
     reg2 = reconcile(
         reg, [_meta("s1", "2026-06-05T00:00:00+00:00", project="/old", git_label="oldrepo")], NOW
@@ -464,14 +462,6 @@ def test_reconcile_preserves_pinned_location():
     assert t["project"] == "/new/path"  # pinned — not reverted to /old
     assert t["gitProjectLabel"] == "newrepo"  # pinned git identity kept
     assert t["mtime"] == "2026-06-05T00:00:00+00:00"  # other metadata still refreshes
-
-
-def test_relocate_unknown_id_raises():
-    import pytest
-
-    reg = empty_registry()
-    with pytest.raises(KeyError):
-        relocate_thread(reg, "nope", "/x", None)
 
 
 from ringleader.registry import snooze_thread, wake_thread

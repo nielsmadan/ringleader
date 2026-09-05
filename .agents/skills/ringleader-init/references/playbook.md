@@ -70,7 +70,8 @@ Session subcommands (`rl session <sub>`):
 - `rl session unkeep ID` — undo a keep; the session returns to the inbox.
 - `rl session unarchive ID` — put an archived transcript back where it was so the
   agent can resume it again.
-- `rl session relocate ID PATH` — re-point a session at a directory it moved to on disk.
+- `rl session relocate ID PATH` — re-point one session at a directory it moved to on disk,
+  storage included, so it stays resumable from there.
 - `rl session archive ID [--summary-file PATH]` — move a finished session's transcript out
   of the live registry; optionally attach a markdown summary.
 - `rl session delete ID` — permanently delete a session's transcript.

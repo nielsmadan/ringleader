@@ -2,6 +2,7 @@ import json
 import sqlite3
 
 import pytest
+from ringleader import registry as registry_mod
 from ringleader.commands import move_workspace
 from ringleader.slug import is_beneath, remap, slugify
 
@@ -26,7 +27,9 @@ def _world(tmp_path, monkeypatch, *, drifted=False, extra_session=False):
     slug_dir = projects / slugify(str(launch))
     slug_dir.mkdir(parents=True)
     transcript = slug_dir / "s1.jsonl"
-    transcript.write_text('{"type":"user","message":{"content":"hi"}}\n')
+    transcript.write_text(
+        json.dumps({"type": "user", "cwd": str(ws), "message": {"content": "hi"}}) + "\n"
+    )
 
     threads = [
         {
@@ -39,7 +42,10 @@ def _world(tmp_path, monkeypatch, *, drifted=False, extra_session=False):
     ]
     if extra_session:
         other = slug_dir / "other.jsonl"
-        other.write_text('{"type":"user"}\n')
+        other.write_text(
+            json.dumps({"type": "user", "cwd": "/somewhere/else", "message": {"content": "x"}})
+            + "\n"
+        )
         threads.append(
             {
                 "sessionId": "other",
@@ -84,8 +90,6 @@ def test_move_relocates_directory_storage_and_registry(tmp_path, monkeypatch):
 def test_a_pinned_thread_survives_the_next_scan(tmp_path, monkeypatch):
     """Without the pin, reconcile would revert `project` from the transcript's
     stale baked-in cwd on the very next scan."""
-    from ringleader import registry as registry_mod
-
     ws, new, reg, _projects, _ = _world(tmp_path, monkeypatch)
     move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"])
 
@@ -321,31 +325,31 @@ def test_a_cached_git_root_moves_with_the_tree():
     # the destination had no git identity, so pin_thread_location kept the cached
     # root; it must still name the new location rather than the vanished one.
     t = {"gitRoot": "/ws/proj/.claude/worktrees/gone"}
-    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
+    registry_mod.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
     assert t["gitRoot"] == "/ws/new/dev1/.claude/worktrees/gone"
 
 
 def test_a_git_root_equal_to_the_moved_dir_is_remapped():
     t = {"gitRoot": "/ws/proj"}
-    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
+    registry_mod.remap_cached_git_root(t, "/ws/proj", "/ws/new/dev1")
     assert t["gitRoot"] == "/ws/new/dev1"
 
 
 def test_a_git_root_outside_the_moved_tree_is_untouched():
     t = {"gitRoot": "/ws/other"}
-    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    registry_mod.remap_cached_git_root(t, "/ws/proj", "/ws/new")
     assert t["gitRoot"] == "/ws/other"
 
 
 def test_a_sibling_with_a_shared_prefix_is_not_remapped():
     t = {"gitRoot": "/ws/proj-two"}
-    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    registry_mod.remap_cached_git_root(t, "/ws/proj", "/ws/new")
     assert t["gitRoot"] == "/ws/proj-two"
 
 
 def test_a_thread_without_a_git_root_is_left_alone():
     t = {}
-    move_workspace.remap_cached_git_root(t, "/ws/proj", "/ws/new")
+    registry_mod.remap_cached_git_root(t, "/ws/proj", "/ws/new")
     assert "gitRoot" not in t
 
 
@@ -432,7 +436,12 @@ def _codex_world(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
     rollout = rollouts / "rollout-c1.jsonl"
-    rollout.write_text('{"type":"user"}\n')
+    rollout.write_text(
+        json.dumps(
+            {"type": "session_meta", "payload": {"id": "c1", "cwd": str(ws), "source": "cli"}}
+        )
+        + "\n"
+    )
 
     con = sqlite3.connect(home / "state_5.sqlite")
     con.execute("CREATE TABLE threads (id TEXT PRIMARY KEY, rollout_path TEXT NOT NULL, cwd TEXT)")
@@ -564,3 +573,21 @@ def test_an_archived_session_is_rebound_at_its_original_path(tmp_path, monkeypat
     assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
 
     assert _codex_cwd(home, "c2") == str(new)
+
+
+def test_move_includes_a_session_the_registry_has_not_scanned_yet(tmp_path, monkeypatch):
+    """A session started (or forked) since the last scan is on disk but not in the
+    registry. The plan is built from the registry, so without a scan first it is
+    silently left behind at the old path."""
+    ws, new, reg, projects, _transcript = _world(tmp_path, monkeypatch)
+    unscanned = projects / slugify(str(ws)) / "fork.jsonl"
+    unscanned.write_text(
+        json.dumps({"type": "user", "cwd": str(ws), "message": {"content": "forked"}}) + "\n"
+    )
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    threads = {t["sessionId"]: t for t in json.loads(reg.read_text())["threads"]}
+    assert "fork" in threads, "the unscanned session never entered the plan"
+    assert threads["fork"]["project"] == str(new)
+    assert (projects / slugify(str(new)) / "fork.jsonl").exists()

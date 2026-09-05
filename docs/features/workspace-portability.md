@@ -52,24 +52,35 @@ rather than being one atomic verb.
 
 ## One session at a time
 
-`rl session relocate <id> <path>` re-points a **single** registry record. It does **not** move
-session storage, so the session stays unresumable from the new path. For a whole directory, use
-`workspace retarget`, which does both.
+`rl session relocate <id> <path>` is `retarget` scoped to a **single** session: it re-points the
+registry record *and* takes the agent's own session storage with it, through the same source
+capabilities — a rebinding source has its recorded cwd rewritten, a relocating source has that one
+transcript moved. Use `workspace retarget` for a whole directory. `--registry-only` re-points the
+record alone, for storage already moved by other means.
+
+A source with neither capability (opencode, pi) is not an error: the record is still worth
+re-pointing, and the command says it went registry-only.
 
 ## Key entry points
 
 - `commands/move_workspace.py` — `cmd_move()`, `cmd_retarget()`.
+- `commands/relocate.py` — `cmd_relocate()`; carries the same pin-vs-refuse decision for
+  one session, and is re-runnable because it skips a transcript already at the destination.
 - `sources/base.py` — `WorkspaceRelocatingSource` (`storage_for`, `relocate_storage`,
   `relocate_session`); both relocate methods raise rather than merge.
 - `sources/base.py` — `WorkspaceRebindingSource` (`rebind_workspace`); rewrites the agent's
   recorded cwd in place, so nothing collides and no transcript path changes.
-- `registry.pin_thread_location()` / `relocate_thread()`.
+- `registry.pin_thread_location()` / `remap_cached_git_root()`.
 - `slug.py` — reproduces Claude Code's directory encoding to find the storage.
 
 ## Gotchas
 
-- **`rl session relocate` is registry-only** and leaves the session unresumable. Easy to reach
-  for by mistake.
+- **`move` and `retarget` scan before planning.** The plan is built from the registry, so a
+  session started or forked since the last scan would otherwise be left behind at the old path —
+  the freshest session is the likeliest to be missing. `--no-scan` opts out. The planning scan is
+  never written: `_retarget_registry` re-runs it inside the lock when the run commits, so a dry
+  run, a refusal or a declined confirmation leaves the registry untouched, and a write that landed
+  while the confirmation prompt was open survives.
 - **`slug.py` reimplements a private function** of Claude Code's. It can break on an upgrade —
   re-verify against [reference/agent-session-management.md](../reference/agent-session-management.md).
 - **Sources with their own index need the picker cleared first**, or it points at a moved file.

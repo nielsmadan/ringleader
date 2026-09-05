@@ -100,7 +100,7 @@ cached parse for that source at once, which is the intended way to ship a parser
 - `prune_session()` — tombstone a deletion with a reason (`prune`, `deleted`, `gc`, `purged`).
 - `snooze_thread()` / `wake_thread()` / `keep_thread()` / `unkeep_thread()` — triage state.
 - `mark_finish_on_exit()` / `without_finish_mark()` — the sweep handshake ([0008](../decisions/0008-sweep-archives-only-quiet-transcripts.md)).
-- `pin_thread_location()` / `relocate_thread()` — see [workspace moves](#).
+- `pin_thread_location()` / `remap_cached_git_root()` — see [workspace moves](#).
 
 ## Gotchas
 

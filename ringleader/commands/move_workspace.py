@@ -32,10 +32,11 @@ import argparse
 import shutil
 import sys
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
 
-from .. import gitinfo, registry, scanner
+from .. import gitinfo, refresh, registry, scanner
 from ..slug import is_beneath, normalize, remap, slugify
 from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
@@ -407,47 +408,72 @@ def _rebind_archived(plan: _Plan, srcs: _Sources, verb: str) -> None:
             print(f"rl-workspace-{verb}: {sid[:8]} (archived): {e}", file=sys.stderr)
 
 
-def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
-    """Carry a cached `gitRoot` across with the tree.
-
-    `pin_thread_location` keeps the cached git fields when the destination has no
-    resolvable git identity — a deleted worktree, say. That is right for the
-    identity itself, but the cached root is a path, and left alone it names a
-    location that no longer exists. Remapping keeps the identity and makes the
-    path true.
-    """
-    root = thread.get("gitRoot")
-    if isinstance(root, str) and (root == old or is_beneath(root, old)):
-        thread["gitRoot"] = new + root[len(old) :]
-
-
-def _retarget_registry(
+def _retarget_registry(  # noqa: PLR0913
     registry_path: str,
     old: str,
     new: str,
     moved: dict,
     srcs: _Sources,
     stranded: set[str],
+    *,
+    rescan: bool = False,
 ) -> _Plan:
+    """Commit the move to the registry, under the lock.
+
+    The planning scan (`_planning_registry`) is deliberately not persisted, so it is
+    re-run here rather than replayed: the earlier snapshot predates an unbounded
+    confirmation prompt, and writing it back would revert whatever another `rl` process
+    committed while the prompt was open. Re-scanning inside the lock keeps the sessions
+    that scan found without clobbering anyone."""
     with publish_lock():
-        reg = registry.load_registry(registry_path)
+        if rescan:
+            reg, _ = refresh.auto_refresh(
+                registry_path, datetime.now(UTC).isoformat(), persist=False
+            )
+        else:
+            reg = registry.load_registry(registry_path)
         plan = build_plan(reg, old, new, srcs)
         plan.threads = [t for t in plan.threads if t[0]["sessionId"] not in stranded]
         for thread, new_project in plan.threads:
             registry.pin_thread_location(thread, new_project, _git_for(new_project))
-            remap_cached_git_root(thread, old, new)
+            registry.remap_cached_git_root(thread, old, new)
             if thread.get("file") in moved:
                 thread["file"] = moved[thread["file"]]
         for record, new_project in plan.arch:
             embedded = record["thread"]
             was = embedded["project"]
             registry.pin_thread_location(embedded, new_project, _git_for(new_project))
-            remap_cached_git_root(embedded, old, new)
+            registry.remap_cached_git_root(embedded, old, new)
             # the tombstone's own `project` is often a git label, not a path
             if record.get("project") == was:
                 record["project"] = new_project
         registry.save_registry(registry_path, reg)
         return plan
+
+
+def _planning_registry(registry_path: str, *, no_scan: bool) -> dict:
+    """The registry the plan is built from, scanned but never written.
+
+    A session started or forked since the last scan is on disk but absent from the
+    registry, and the plan is built from the registry — without scanning it is
+    silently left behind at the old path. Nothing is persisted here, so every gate
+    between planning and committing leaves the registry untouched; `_retarget_registry`
+    re-runs the scan under the lock when the run actually commits.
+    """
+    if no_scan:
+        return registry.load_registry(registry_path)
+    reg, _ = refresh.auto_refresh(registry_path, datetime.now(UTC).isoformat(), persist=False)
+    return reg
+
+
+def _repoint_editables(old: str, new: str) -> None:
+    for pth in repoint_editables(editable_installs(old), old, new):
+        print(
+            f"rl-workspace-move: could not repoint {pth} — the command it "
+            f"installs will fail until you run:\n"
+            f'  echo "{new}" > {pth}',
+            file=sys.stderr,
+        )
 
 
 def _run(argv: list[str], *, move_files: bool) -> int:
@@ -465,6 +491,11 @@ def _run(argv: list[str], *, move_files: bool) -> int:
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--dry-run", action="store_true", help="print the plan and stop")
     ap.add_argument("--yes", "-y", action="store_true", help="skip the confirmation prompt")
+    ap.add_argument(
+        "--no-scan",
+        action="store_true",
+        help="plan from the registry as it stands, without scanning for new sessions",
+    )
     if move_files:
         ap.add_argument("--allow-empty", action="store_true", help="move even if no sessions match")
     args = ap.parse_args(argv)
@@ -478,7 +509,8 @@ def _run(argv: list[str], *, move_files: bool) -> int:
         return 1
 
     srcs = _resolve_sources()
-    plan = build_plan(registry.load_registry(args.registry), old, new, srcs)
+    reg = _planning_registry(args.registry, no_scan=args.no_scan)
+    plan = build_plan(reg, old, new, srcs)
     empty = _refuse_empty(plan, old, verb, move_files=move_files, allow_empty=args.allow_empty)
     if empty is not None:
         return empty
@@ -511,17 +543,12 @@ def _run(argv: list[str], *, move_files: bool) -> int:
             return 1
 
     if move_files:
-        failed = repoint_editables(editable_installs(old), old, new)
-        for pth in failed:
-            print(
-                f"rl-workspace-{verb}: could not repoint {pth} — the command it "
-                f"installs will fail until you run:\n"
-                f'  echo "{new}" > {pth}',
-                file=sys.stderr,
-            )
+        _repoint_editables(old, new)
 
     moved, stranded = _relocate_storage(plan, srcs, verb)
-    applied = _retarget_registry(args.registry, old, new, moved, srcs, stranded)
+    applied = _retarget_registry(
+        args.registry, old, new, moved, srcs, stranded, rescan=not args.no_scan
+    )
     if move_files:
         print(f"moved {old} -> {new}")
     print(f"retargeted {len(applied.threads)} session(s), {len(applied.arch)} archived")

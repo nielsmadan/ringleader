@@ -115,7 +115,7 @@ export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `c
 | `rl session mark harvested <id>` | Record a session as harvested. `--paths a,b` records the docs. |
 | `rl session mark reviewed <id>` | Skip an open session until it changes. |
 | `rl session mark cleaned <selector>` | Record a project as just-triaged. `--at <iso>` |
-| `rl session relocate <id> <path>` | Re-point one record. **Registry only** — storage stays put, so the session is not resumable from the new path. |
+| `rl session relocate <id> <path>` | Re-point one session at a directory it moved to: its record and the agent's session storage, so it stays resumable. `--registry-only` |
 | `rl session whoami` | Print the source and session id `rl` resolves for the session it's running inside. Backs `--current`. |
 
 ## `rl mem`
@@ -143,8 +143,8 @@ Backs the `memory-triage` skill.
 
 | Command | Does |
 |---|---|
-| `rl workspace move <old> <new>` | Move the directory, its session storage, and the registry. Confirms first; **refuses rather than merges** into a destination that already holds session storage. `--dry-run`, `--yes`, `--allow-empty`. Build artifacts inside the tree are reported, never rewritten. |
-| `rl workspace retarget <old> <new>` | The last two halves, for a directory you already moved by hand. Makes `move` re-runnable after a partial failure. `--dry-run`, `--yes` |
+| `rl workspace move <old> <new>` | Move the directory, its session storage, and the registry. Confirms first; **refuses rather than merges** into a destination that already holds session storage. `--dry-run`, `--yes`, `--allow-empty`, `--no-scan`. Scans first so a session forked since the last scan is not left behind. Build artifacts inside the tree are reported, never rewritten. |
+| `rl workspace retarget <old> <new>` | The last two halves, for a directory you already moved by hand. Makes `move` re-runnable after a partial failure. `--dry-run`, `--yes`, `--no-scan` |
 
 ## `rl config`
 
