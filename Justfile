@@ -59,7 +59,7 @@ typecheck:
 # --reinstall because the version never changes: without it uv audits the existing
 # install and keeps shipping the old code.
 # Migrate legacy repo state, then install the global `rl`.
-install-local:
+install:
     @uv run rl data migrate
     @just vendor
     @uv tool install --reinstall --force .
@@ -71,23 +71,17 @@ install-local:
 install-editable:
     @uv run rl data migrate
     @just vendor
-    @uv tool install --reinstall --force -e .
+    @uv tool install --reinstall --force --editable .
     @rl update all --yes
     -@rl data presence install --yes
     @echo "Installed (editable): $(which rl)"
-
-refresh-local:
-    @just vendor
-    @uv tool install --reinstall --force .
-    @rl update all --yes
-    -@rl data presence install --yes
 
 # Stage the pinned hooklinesinker artifacts into ringleader/_vendor. Without a sibling
 # release build there is nothing to stage, and `rl` installs without presence support.
 vendor *ARGS:
     -@bash scripts/vendor-hooklinesinker.sh {{ARGS}}
 
-reset-local:
+uninstall:
     @uv tool uninstall ringleader
 
 # Enter the throwaway skill-testing world without resetting its state.

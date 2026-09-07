@@ -24,7 +24,7 @@ this file only adds the flow.
 2. **Verify `rl` is installed.** Run `rl --help`. If it's not on `PATH`, this is a source
    checkout that hasn't been installed — use `uv run rl` for every command below instead
    (see `references/playbook.md` § Calling `rl`), and mention to the user that
-   `just install-local` (or `uv tool install .`) would put `rl` on `PATH` directly.
+   `just install` (or `uv tool install .`) would put `rl` on `PATH` directly.
 
 3. **Wire the skills into this agent.** Run `rl install skills`, which links the bundled
    `ringleader-*` skills into the agent directories it finds. `rl doctor` reports what is

@@ -143,7 +143,7 @@ Backs the `memory-triage` skill.
 | `rl data presence uninstall` | Remove Ringleader's consumer registration. Hooks and the shared binary remain while other consumers are registered. Confirms first. `--yes`, `--json` |
 
 Presence installation and uninstallation require `--yes` when combined with `--json`.
-`just install-local`, `just install-editable`, and `just refresh-local` also run presence
+`just install` and `just install-editable` also run presence
 installation after installing Ringleader. A direct `uv tool install .` leaves activation
 to the explicit presence command or onboarding skill.
 

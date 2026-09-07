@@ -20,12 +20,12 @@ pruning them before the GC clock deletes them.
 - **`rl session finish` does not archive anything on its own.** It marks the session;
   `rl session sweep` archives it once the transcript is quiet, because moving a live
   transcript is undone by the agent's next write.
-- **`rl` is an installed console command, not a repo-local script.** `just install-local`
+- **`rl` is an installed console command, not a repo-local script.** `just install`
   (or `uv tool install --reinstall .` — plain `install` keeps stale code, the version
   never changes) puts it on `PATH`; from a source checkout without installing,
   use `uv run rl <sub>` instead. Its state — `registry.json` and `archive/` — lives under
   `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not in this repo.
-  `rl data migrate` (run automatically by `just install-local`) moves any legacy repo-root
+  `rl data migrate` (run automatically by `just install`) moves any legacy repo-root
   state there once.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
@@ -115,6 +115,9 @@ just test                           # tests; pytest config lives in pyproject.to
 just check                          # everything CI runs: ruff + format --check + mypy + tests
 just setup                          # install dependencies and hooks, then verify the checkout
 just doctor                         # verify tools and hook installation
+just install                        # install or replace the current-source CLI snapshot
+just install-editable               # link the installed CLI to this checkout
+just uninstall                      # remove the installed CLI, preserving user data
 ```
 
 From a source checkout without installing, prefix each `rl` call with `uv run` (`uv run rl overview`).

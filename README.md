@@ -11,7 +11,7 @@ lifecycle verbs decline its database-backed sessions.
 ## Install
 
 ```sh
-just install-local        # migrates any legacy repo-root state, then reinstalls `rl`
+just install        # migrates any legacy repo-root state, then reinstalls `rl`
 ```
 
 or directly `uv tool install --reinstall .` — the `--reinstall` matters, because the version
@@ -21,6 +21,9 @@ from anywhere, not `./rl`. From a source checkout without installing, use `uv ru
 
 **Working on ringleader itself?** Use `just install-editable` — a normal install copies the
 source, so the global `rl` silently falls behind your checkout until you reinstall.
+
+Re-run `just install` to refresh the snapshot, including when the version is unchanged.
+`just uninstall` removes the installed CLI and preserves your registry, archives, and configuration.
 
 State (registry, archive, pending harvest queue) lives under `~/.local/share/ringleader/`
 (or `$XDG_DATA_HOME/ringleader`) — not in this repo.
@@ -125,8 +128,8 @@ rl data presence status [--json]                       # what is wired up
 rl data presence uninstall [--yes]                     # remove only ringleader's consumer
 ```
 
-A plain `uv tool install .` leaves presence setup to you; `just install-local`,
-`just install-editable`, and `just refresh-local` also activate presence.
+A plain `uv tool install .` leaves presence setup to you; `just install` and
+`just install-editable` also activate presence.
 `ringleader-init` runs `status` and asks before running `install`. Installing registers
 ringleader as a *consumer* — several tools can share one binary and one set of hooks, and
 uninstalling removes only ringleader's registration, leaving the hooks in place for whoever
@@ -138,7 +141,7 @@ names `rl data presence install`.
 to that binary. `rl doctor` ends with a `presence` section, and
 `hooklinesinker doctor` reports the same checks first-hand.
 
-Working from a source checkout? `just install-local` stages the artifacts first (see
+Working from a source checkout? `just install` stages the artifacts first (see
 `scripts/vendor-hooklinesinker.sh`, which verifies a release build's `SHA256SUMS` before
 copying anything into `ringleader/_vendor/`). Without a staged artifact everything else still
 installs and works — only `rl data presence` reports what is missing.
@@ -146,7 +149,7 @@ installs and works — only `rl data presence` reports what is missing.
 For a local release build outside the default `../hooklinesinker/dist` location:
 
 ```sh
-HOOKLINESINKER_DIST=/path/to/hooklinesinker/dist just install-local
+HOOKLINESINKER_DIST=/path/to/hooklinesinker/dist just install
 ```
 
 The directory must contain all three release binaries and `SHA256SUMS`.

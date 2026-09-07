@@ -10,7 +10,7 @@ every project**; the user may optionally name one repo/dir to scope to instead.
 Deterministic actions are ringleader CLIs; integrating a fact into a repo's docs
 is a judgment call you make and apply by hand.
 
-Requires `rl` installed (`just install-local`) or, from a source checkout, run each
+Requires `rl` installed (`just install`) or, from a source checkout, run each
 command as `uv run rl <sub>`. Ask the user if they want to scope to a single
 repo/dir (a git-project label or path). If they name
 one, call it `<X>` and pass `--project <X>` to every command below. If they don't, skip

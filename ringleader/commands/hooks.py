@@ -282,7 +282,7 @@ def _json_plan(
 def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
     """Shared body for `install` (opt_in=True: wires up every detected agent) and
     `update` (opt_in=False: re-syncs only agents that already carry our entry, and
-    never opts a new one in — the contract `just install-local`'s unattended
+    never opts a new one in — the contract `just install`'s unattended
     `rl update all --yes` depends on)."""
     candidates = _json_agents(home)
     pi_dir = _pi_dir(home)

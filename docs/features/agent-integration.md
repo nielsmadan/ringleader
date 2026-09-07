@@ -28,7 +28,7 @@ binary and installs its status hooks. `status` reports the wiring and running-se
 Presence supports Claude Code, Codex, OpenCode, Pi, Factory Droid, Qwen Code, and Kimi Code.
 Installation names the detected agents and confirms before changing their configuration;
 repeat `--agent` to choose explicitly, or use `--yes` for unattended setup.
-`just install-local`, `just install-editable`, and `just refresh-local` run that setup too.
+`just install` and `just install-editable` run that setup too.
 Dormant-session views do not yet use presence to exclude running sessions.
 
 ## Skills

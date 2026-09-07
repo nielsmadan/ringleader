@@ -117,7 +117,7 @@ def test_uninstall_and_update_report_unreadable_directory(tmp_path, monkeypatch,
     """A directory that denies *listing* (not just per-entry stat) must not crash
     `rl uninstall skills` / `rl update skills`, and must be reported as unreadable —
     not silently treated as "nothing installed", which is a different (and possibly
-    false) claim. This matters because `just install-local` ends in an unattended
+    false) claim. This matters because `just install` ends in an unattended
     `rl update all --yes`.
 
     An unreadable directory is an environment condition, not a failure of the
@@ -151,7 +151,7 @@ def test_update_reports_unreadable_target_directory_without_crashing(tmp_path, m
     ENOENT-shaped errors and re-raise a genuine permission denial, so a directory the
     sandbox blocks outright (not just its listing) raised straight out of
     `_managed_links`'s `d.is_dir()` check before `cmd_update` ever reached `iterdir()`
-    — this is the exact path `just install-local`'s trailing `rl update all --yes` hit.
+    — this is the exact path `just install`'s trailing `rl update all --yes` hit.
     Reproduced by stripping traversal permission on the *parent* of the target skills
     dir: `is_dir()` on the child then fails to stat at all, without touching the
     child's own permission bits (chmod on the child itself can't produce this shape,
