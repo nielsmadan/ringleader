@@ -181,7 +181,8 @@ built), [decisions/](docs/decisions/overview.md) (ADRs), and
 ```sh
 just test              # pytest
 just check             # everything CI runs: ruff check + format --check + mypy + tests
-just hooks             # install the git hooks (lefthook)
+just setup             # install dependencies and hooks, then verify the checkout
+just doctor            # verify tools and hook installation
 just install-editable  # track the working tree
 just sandbox           # isolated throwaway world for exercising the skills
 just sync-playbook     # re-sync the bundled skill playbooks

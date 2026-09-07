@@ -2,6 +2,34 @@
 default:
     @just --list
 
+# Prepare this checkout for work: dependencies, hooks, then verify.
+setup:
+    @uv sync
+    @lefthook install
+    @just doctor
+
+# Verify the tools and checkout state this repo needs.
+doctor:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    fail=0
+    need() {
+        if command -v "$1" >/dev/null 2>&1; then
+            printf '  ok       %s\n' "$1"
+        else
+            printf '  MISSING  %-12s install: %s\n' "$1" "$2"; fail=1
+        fi
+    }
+    need uv "https://docs.astral.sh/uv/getting-started/installation/"
+    need lefthook "brew install lefthook"
+    if [ -f "$(git rev-parse --git-path hooks/pre-commit)" ]; then
+        printf '  ok       git hooks\n'
+    else
+        printf '  MISSING  %-12s run: just setup\n' 'git hooks'; fail=1
+    fi
+    [ "$fail" -eq 0 ] && printf 'Everything in place.\n'
+    exit $fail
+
 # A stale shebang (a moved checkout) makes uv skip the console script in favour of
 # whatever is on PATH, which then fails with a missing project dependency rather than
 # saying the venv is broken.
@@ -9,13 +37,13 @@ default:
 test:
     @uv run python -m pytest -q
 
-cov:
+coverage:
     @uv run python -m pytest --cov --cov-report=term-missing -q
 
 lint:
     @uv run ruff check
 
-fmt:
+format:
     @uv run ruff format
 
 # Everything CI runs.
@@ -27,10 +55,6 @@ check:
 
 typecheck:
     @uv run python -m mypy
-
-# Install git hooks (lefthook).
-hooks:
-    @lefthook install
 
 # --reinstall because the version never changes: without it uv audits the existing
 # install and keeps shipping the old code.
