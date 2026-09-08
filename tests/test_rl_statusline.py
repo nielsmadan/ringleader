@@ -43,8 +43,9 @@ def test_install_writes_a_backup(tmp_path):
 
     statusline.cmd_install(["--settings", str(p), "--yes"])
 
-    backups = [f for f in tmp_path.iterdir() if f.name != "settings.json"]
-    assert backups and backups[0].read_text() == original
+    backup = p.with_name(p.name + ".bak")
+    assert backup.exists()
+    assert backup.read_text() == original
 
 
 def test_install_is_idempotent(tmp_path):
