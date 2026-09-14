@@ -10,9 +10,6 @@ pre-commit:
 
 pre-push:
   commands:
-    ruff:
-      run: uv run ruff check
-    mypy:
-      run: uv run mypy
-    tests:
-      run: uv run pytest -q
+    check:
+      run: just check
+
