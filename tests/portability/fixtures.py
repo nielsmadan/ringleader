@@ -113,7 +113,10 @@ def pi_records(cwd, messages):
                 "id": f"{index:08x}",
                 "parentId": f"{index - 1:08x}" if index else None,
                 "timestamp": TIMESTAMP,
-                "message": item,
+                "message": {
+                    **({"stopReason": "stop"} if item["role"] == "assistant" else {}),
+                    **item,
+                },
             }
             for index, item in enumerate(messages)
         ],
