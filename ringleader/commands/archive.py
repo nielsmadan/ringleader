@@ -95,7 +95,7 @@ def archive_thread(
     )
     registry.archive_session(
         reg,
-        thread["sessionId"],
+        registry.qualified_id(thread),
         str(dest),
         _now(),
         summary=summary,
@@ -118,7 +118,7 @@ def cmd_archive(argv: list[str]) -> int:
 
     with publish_lock():
         reg = registry.load_registry(args.registry)
-        t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+        t = registry.find_session(reg, args.id)
         if t is None:
             print(f"rl-archive: unknown session {args.id}", file=sys.stderr)
             return 1
@@ -134,7 +134,7 @@ def cmd_archive(argv: list[str]) -> int:
             print(f"rl-archive: {e}", file=sys.stderr)
             return 1
 
-        registry.save_registry(args.registry, reg)
+        registry.commit_registry(args.registry, reg)
     summary_path = Path(dest).with_suffix(".md")
     extra = f" (+summary {summary_path.name})" if summary_path.exists() else ""
     print(f"archived {args.id} -> {dest}{extra}")

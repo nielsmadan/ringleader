@@ -4,7 +4,7 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from .. import registry, scanner
 from ..sources.base import IndexUpdate
@@ -12,10 +12,7 @@ from . import default_registry
 
 
 def _archived(reg: dict[str, Any], session_id: str) -> dict[str, Any] | None:
-    for ts in reg.get("archived", []):
-        if ts["sessionId"] == session_id:
-            return cast(dict[str, Any], ts)
-    return None
+    return registry.find_session(reg, session_id, bucket="archived")
 
 
 def restore(reg: dict[str, Any], ts: dict[str, Any]) -> tuple[str, IndexUpdate]:
@@ -61,7 +58,7 @@ def restore(reg: dict[str, Any], ts: dict[str, Any]) -> tuple[str, IndexUpdate]:
     if project:
         scanner.rebind_workspace(thread, str(dest), project)
 
-    registry.restore_session(reg, session_id, str(dest))
+    registry.restore_session(reg, registry.qualified_id(ts), str(dest))
     if ts.get("thread"):
         # belt and braces: `archive_session` strips the finish mark before storing, but
         # a record archived by an earlier build still carries it
@@ -91,7 +88,7 @@ def cmd_unarchive(argv: list[str]) -> int:
     except RuntimeError as e:
         print(f"rl-unarchive: {e}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     print(f"restored {args.id} -> {dest}")
     if shown is IndexUpdate.NO_ENTRY:

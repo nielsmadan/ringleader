@@ -363,7 +363,7 @@ def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict[str,
             print(f"rl-workspace-{verb}: {old_cwd}: {e}", file=sys.stderr)
             for thread, _ in plan.threads:
                 if thread.get("project") == old_cwd:
-                    stranded.add(thread["sessionId"])
+                    stranded.add(registry.qualified_id(thread))
     for thread, source, new_project in plan.per:
         try:
             moved[thread["file"]] = srcs.relocating[source].relocate_session(
@@ -371,14 +371,14 @@ def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict[str,
             )
         except (RuntimeError, OSError) as e:
             print(f"rl-workspace-{verb}: {thread['sessionId'][:8]}: {e}", file=sys.stderr)
-            stranded.add(thread["sessionId"])
+            stranded.add(registry.qualified_id(thread))
     for thread, source, new_project in plan.rebind:
         sid = thread["sessionId"]
         try:
             outcome = srcs.rebinding[source].rebind_workspace(sid, thread["file"], new_project)
         except (RuntimeError, OSError) as e:
             print(f"rl-workspace-{verb}: {sid[:8]}: {e}", file=sys.stderr)
-            stranded.add(sid)
+            stranded.add(registry.qualified_id(thread))
             continue
         if outcome is IndexUpdate.NO_INDEX:
             # Strand rather than pin. The index being absent is usually temporary — a
@@ -388,7 +388,7 @@ def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict[str,
                 f"rl-workspace-{verb}: {sid[:8]}: {source} has no session index here",
                 file=sys.stderr,
             )
-            stranded.add(sid)
+            stranded.add(registry.qualified_id(thread))
         elif outcome is IndexUpdate.NO_ENTRY:
             print(
                 f"rl-workspace-{verb}: {sid[:8]}: no {source} index entry for "
@@ -440,7 +440,7 @@ def _retarget_registry(  # noqa: PLR0913
         else:
             reg = registry.load_registry(registry_path)
         plan = build_plan(reg, old, new, srcs)
-        plan.threads = [t for t in plan.threads if t[0]["sessionId"] not in stranded]
+        plan.threads = [t for t in plan.threads if registry.qualified_id(t[0]) not in stranded]
         for thread, new_project in plan.threads:
             registry.pin_thread_location(thread, new_project, _git_for(new_project))
             registry.remap_cached_git_root(thread, old, new)
@@ -454,7 +454,7 @@ def _retarget_registry(  # noqa: PLR0913
             # the tombstone's own `project` is often a git label, not a path
             if record.get("project") == was:
                 record["project"] = new_project
-        registry.save_registry(registry_path, reg)
+        registry.commit_registry(registry_path, reg)
         return plan
 
 

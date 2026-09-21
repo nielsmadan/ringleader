@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -296,7 +297,7 @@ class InboxApp(App[None]):
             t
             for t in inbox
             if t.get("selectedForDay") != today
-            and t["sessionId"] not in self._staged_deletes
+            and registry.qualified_id(t) not in self._staged_deletes
             and not overview.is_filtered(t)
         ]
 
@@ -316,7 +317,13 @@ class InboxApp(App[None]):
             self._selected = self._compute_selected()
         elif tab == "harvesting":
             self._harvesting = self._compute_harvesting()
-            self._harvest_by_session = {h.session_id: h for h in harvests.load_harvests()}
+            self._harvest_by_session = {}
+            for item in harvests.load_harvests():
+                try:
+                    key = registry.session_identity(self._reg, item.session_id)
+                except registry.AmbiguousSession:
+                    continue
+                self._harvest_by_session[":".join(key)] = item
 
     def _active_rows(self) -> list[dict[str, Any]]:
         return cast(list[dict[str, Any]], getattr(self, f"_{self._active_tab}"))
@@ -324,7 +331,7 @@ class InboxApp(App[None]):
     def _row_label_for(self, t: dict[str, Any]) -> str:
         label = _row_label(t)
         if self._active_tab == "harvesting":
-            h = self._harvest_by_session.get(t["sessionId"])
+            h = self._harvest_by_session.get(registry.qualified_id(t))
             preview = ""
             if h is not None:
                 # skip the markdown title/heading lines (`# ...`, `## Summary`) to
@@ -453,25 +460,21 @@ class InboxApp(App[None]):
             if empty:
                 with publish_lock():
                     self._reg = registry.load_registry(self.registry_path)
-                    thread = next(
-                        (
-                            item
-                            for item in self._reg["threads"]
-                            if item["sessionId"] == t["sessionId"]
-                        ),
-                        None,
-                    )
+                    thread = registry.find_session(self._reg, registry.qualified_id(t))
                     if thread is not None:
                         archive_cmd.archive_thread(
                             self._reg, thread, archive_root_path=archive_root()
                         )
-                        registry.save_registry(self.registry_path, self._reg)
+                        registry.commit_registry(self.registry_path, self._reg)
             else:
                 md = harvest_cmd._render_md(t, data)
                 with publish_lock():
                     self._reg = registry.load_registry(self.registry_path)
+                    thread = registry.find_session(self._reg, registry.qualified_id(t))
+                    if thread is None:
+                        raise KeyError(registry.qualified_id(t))
                     path = harvests._write_harvest_unlocked(
-                        session_id=t["sessionId"],
+                        session_id=registry.qualified_id(t),
                         name=t.get("title") or t.get("suggestedName") or "",
                         folder_path=t.get("gitRoot") or t.get("project"),
                         repo_url=t.get("gitRemote"),
@@ -479,8 +482,8 @@ class InboxApp(App[None]):
                         harvested_at=_now_iso(),
                         content=md,
                     )
-                    registry.append_harvest_path(self._reg, t["sessionId"], str(path))
-                    registry.save_registry(self.registry_path, self._reg)
+                    registry.append_harvest_path(self._reg, registry.qualified_id(t), str(path))
+                    registry.commit_registry(self.registry_path, self._reg)
         except Exception as e:  # noqa: BLE001 -- report in the UI, do not crash it
             self.notify(f"harvest failed: {e}", title="rl inbox", severity="error")
             return
@@ -500,7 +503,7 @@ class InboxApp(App[None]):
         except RuntimeError as error:
             self.notify(str(error), title="rl inbox", severity="warning")
             return
-        self._staged_deletes.add(t["sessionId"])
+        self._staged_deletes.add(registry.qualified_id(t))
         self._undo_stack.append((idx, t))
         await self._remove_row(idx)
 
@@ -513,8 +516,20 @@ class InboxApp(App[None]):
         if not self._undo_stack:
             return
         idx, t = self._undo_stack.pop()
-        self._staged_deletes.discard(t["sessionId"])
+        self._staged_deletes.discard(registry.qualified_id(t))
         await self._insert_row(idx, t)
+
+    def _mutate_registry(self, mutation: Callable[[dict[str, Any]], object]) -> bool:
+        try:
+            self._reg = registry.mutate_registry(self.registry_path, mutation)
+        except (KeyError, OSError, registry.RegistryConflict) as error:
+            self.notify(
+                f"session changed or could not be saved: {error}",
+                title="rl inbox",
+                severity="warning",
+            )
+            return False
+        return True
 
     # -- snooze --------------------------------------------------------
 
@@ -529,8 +544,12 @@ class InboxApp(App[None]):
         until = await self.push_screen_wait(SnoozeModal())
         if until is None:
             return
-        registry.snooze_thread(self._reg, t["sessionId"], _now_iso(), until=until)
-        registry.save_registry(self.registry_path, self._reg)
+        if not self._mutate_registry(
+            lambda reg: registry.snooze_thread(
+                reg, registry.qualified_id(t), _now_iso(), until=until
+            )
+        ):
+            return
         await self._remove_row(idx)
 
     # -- keep long-term ----------------------------------------------------
@@ -544,8 +563,10 @@ class InboxApp(App[None]):
         if current is None:
             return
         idx, t = current
-        registry.keep_thread(self._reg, t["sessionId"], _now_iso())
-        registry.save_registry(self.registry_path, self._reg)
+        if not self._mutate_registry(
+            lambda reg: registry.keep_thread(reg, registry.qualified_id(t), _now_iso())
+        ):
+            return
         await self._remove_row(idx)
 
     # -- select for today --------------------------------------------------
@@ -557,8 +578,10 @@ class InboxApp(App[None]):
         if current is None:
             return
         idx, t = current
-        registry.select_for_day(self._reg, t["sessionId"], _today_str())
-        registry.save_registry(self.registry_path, self._reg)
+        if not self._mutate_registry(
+            lambda reg: registry.select_for_day(reg, registry.qualified_id(t), _today_str())
+        ):
+            return
         await self._remove_row(idx)
 
     async def on_list_view_selected(self, event: ListView.Selected) -> None:
@@ -576,8 +599,10 @@ class InboxApp(App[None]):
         if current is None:
             return
         idx, t = current
-        registry.clear_selected(self._reg, t["sessionId"])
-        registry.save_registry(self.registry_path, self._reg)
+        if not self._mutate_registry(
+            lambda reg: registry.clear_selected(reg, registry.qualified_id(t))
+        ):
+            return
         await self._remove_row(idx)
 
     # -- harvesting tab: archive ---------------------------------------------
@@ -593,19 +618,16 @@ class InboxApp(App[None]):
             scanner.filesystem_path(t, "archive")
             with publish_lock():
                 self._reg = registry.load_registry(self.registry_path)
-                thread = next(
-                    (item for item in self._reg["threads"] if item["sessionId"] == t["sessionId"]),
-                    None,
-                )
+                thread = registry.find_session(self._reg, registry.qualified_id(t))
                 if thread is not None:
                     archive_cmd.archive_thread(
                         self._reg, thread, archive_root_path=str(archive_root())
                     )
-                    registry.save_registry(self.registry_path, self._reg)
+                    registry.commit_registry(self.registry_path, self._reg)
         except (OSError, RuntimeError) as error:
             self.notify(str(error), title="rl inbox", severity="warning")
             return
-        self._harvest_by_session.pop(t["sessionId"], None)
+        self._harvest_by_session.pop(registry.qualified_id(t), None)
         await self._remove_row(idx)
 
     # -- detail --------------------------------------------------------
@@ -626,7 +648,10 @@ class InboxApp(App[None]):
         self.exit()
 
     async def _apply_staged_deletes(self) -> None:
-        candidates = [t for t in self._reg["threads"] if t["sessionId"] in self._staged_deletes]
+        self._reg = registry.load_registry(self.registry_path)
+        candidates = [
+            t for t in self._reg["threads"] if registry.qualified_id(t) in self._staged_deletes
+        ]
         deleted = prune.delete_sessions(self._reg, candidates, _now_iso())
-        registry.save_registry(self.registry_path, self._reg)
+        registry.commit_registry(self.registry_path, self._reg)
         print(f"deleting {deleted} session(s)")

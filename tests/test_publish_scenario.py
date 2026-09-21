@@ -274,10 +274,10 @@ def test_cli_finishing_retry_ignores_later_checkout_state(tmp_path, monkeypatch,
     else:
         assert cmd_harvests(["prepare", receipt["receiptId"], "--outcome", "no-change"]) == 0
         capsys.readouterr()
-    real_save = publish_state.registry.save_registry
+    real_save = publish_state.registry.commit_registry
     monkeypatch.setattr(
         publish_state.registry,
-        "save_registry",
+        "commit_registry",
         lambda *args: (_ for _ in ()).throw(OSError("save failed")),
     )
     consume_args = ["consume", receipt["receiptId"]]
@@ -285,7 +285,7 @@ def test_cli_finishing_retry_ignores_later_checkout_state(tmp_path, monkeypatch,
         consume_args.extend(("--commit", commit))
     with pytest.raises(OSError, match="save failed"):
         cmd_harvests(consume_args)
-    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+    monkeypatch.setattr(publish_state.registry, "commit_registry", real_save)
     assert not selected.path.exists()
     (checkout / "ordinary-work.txt").write_text("later work\n")
 

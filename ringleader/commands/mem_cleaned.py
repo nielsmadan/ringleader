@@ -26,6 +26,6 @@ def cmd_mem_cleaned(argv: list[str]) -> int:
     when = datetime.now(UTC).isoformat()
     for k in keys:
         registry.mark_memory_project_cleaned(reg, k, when)
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"marked memory cleaned: {', '.join(keys)}")
     return 0

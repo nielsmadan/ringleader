@@ -45,7 +45,7 @@ def auto_refresh(  # noqa: PLR0913
             raise ValueError("pass claude_projects_dir, not both")
         claude_projects_dir = projects_root
     reg = registry.load_registry(registry_path)
-    before = {t["sessionId"] for t in reg["threads"]}
+    before = {registry.identity(t) for t in reg["threads"]}
     unavailable_sources: set[str] = set()
     if sources is None:
         if claude_projects_dir is not None:
@@ -68,6 +68,6 @@ def auto_refresh(  # noqa: PLR0913
         name_filters = load_config().session_filters
     registry.apply_name_filters(reg, name_filters)
     if persist:
-        registry.save_registry(registry_path, reg)
-    after = {t["sessionId"] for t in reg["threads"]}
+        registry.commit_registry(registry_path, reg)
+    after = {registry.identity(t) for t in reg["threads"]}
     return reg, delta_note(len(after - before), len(before - after))

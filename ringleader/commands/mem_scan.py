@@ -22,7 +22,7 @@ def cmd_mem_scan(argv: list[str]) -> int:
     reg = registry.load_registry(args.registry)
     scanned = memory.scan_memory(memory.projects_dir())
     reg = registry.reconcile_memory(reg, scanned, _now())
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     rows = registry.memory_needing_review(reg)
     if args.project:

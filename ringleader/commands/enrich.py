@@ -87,7 +87,7 @@ def cmd_enrich(argv: list[str]) -> int:
             out = model.complete_json(_prompt(t, tails[source_key]), ENRICH_SCHEMA)
             registry.apply_classification(
                 reg,
-                t["sessionId"],
+                registry.qualified_id(t),
                 status=out["status"],
                 what_it_is=out["whatItIs"],
                 suggested_name=out["suggestedName"],
@@ -96,6 +96,6 @@ def cmd_enrich(argv: list[str]) -> int:
         except (ModelError, KeyError) as e:
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
             skipped += 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"enriched {done}, skipped {skipped} (model: {model.name})")
     return 0

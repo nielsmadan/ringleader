@@ -99,7 +99,7 @@ def _archive(reg: dict[str, Any], threads: list[dict[str, Any]], registry_path: 
             continue
         print(f"archived {t['sessionId']} -> {dest}")
     if threads:
-        registry.save_registry(registry_path, reg)
+        registry.commit_registry(registry_path, reg)
     return 1 if failed else 0
 
 
@@ -126,12 +126,12 @@ def cmd_sweep(argv: list[str]) -> int:
         if found is None:
             print("rl-sweep: not inside a recognised agent session", file=sys.stderr)
             return 1
-        session_id = found[1]
+        session_id = f"{found[0]}:{found[1]}"
 
     reg = registry.load_registry(args.registry)
 
     if session_id:
-        t = next((x for x in reg["threads"] if x["sessionId"] == session_id), None)
+        t = registry.find_session(reg, session_id)
         # not an error: the hook fires for every session, most of which aren't finished
         if t is None or not t.get("finishOnExit"):
             return 0

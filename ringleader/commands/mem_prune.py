@@ -24,7 +24,7 @@ def cmd_mem_prune(argv: list[str]) -> int:
     reg = registry.load_registry(args.registry)
     scanned = memory.scan_memory(memory.projects_dir())
     reg = registry.reconcile_memory(reg, scanned, _now())
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     cands = [e for e in reg["memoryEntries"] if e.get("obsoleteSignals")]
     if args.project:
@@ -49,15 +49,16 @@ def cmd_mem_prune(argv: list[str]) -> int:
         print("aborted, nothing deleted")
         return 0
     deleted = 0
-    deleted_paths = {e["path"] for e in cands}
+    deleted_paths: set[str] = set()
     for e in cands:
         try:
             Path(e["path"]).unlink(missing_ok=True)
             deleted += 1
+            deleted_paths.add(e["path"])
         except OSError as err:
             print(f"skipped {e['path']}: {err}", file=sys.stderr)
     reg["memoryEntries"] = [e for e in reg["memoryEntries"] if e["path"] not in deleted_paths]
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     by_dir = defaultdict(set)
     for raw_path in deleted_paths:

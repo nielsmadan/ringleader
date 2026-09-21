@@ -65,7 +65,7 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
         return 0, None
 
     reg = registry.load_registry(registry_path)
-    thread = next((item for item in reg["threads"] if item["sessionId"] == session_id), None)
+    thread = registry.find_session(reg, session_id)
     if thread is None:
         print(
             f"rl-harvest: unknown session {session_id} — run `rl session refresh` "
@@ -90,11 +90,11 @@ def _save_harvest_unlocked(
     session_id: str, registry_path: str, markdown: str
 ) -> tuple[dict[str, Any], Path]:
     reg = registry.load_registry(registry_path)
-    thread = next((item for item in reg["threads"] if item["sessionId"] == session_id), None)
+    thread = registry.find_session(reg, session_id)
     if thread is None:
         raise KeyError(session_id)
     path = harvests._write_harvest_unlocked(
-        session_id=thread["sessionId"],
+        session_id=registry.qualified_id(thread),
         name=thread.get("title") or thread.get("suggestedName") or "",
         folder_path=thread.get("gitRoot") or thread.get("project"),
         repo_url=thread.get("gitRemote"),
@@ -102,8 +102,8 @@ def _save_harvest_unlocked(
         harvested_at=_now(),
         content=markdown,
     )
-    registry.append_harvest_path(reg, thread["sessionId"], str(path))
-    registry.save_registry(registry_path, reg)
+    registry.append_harvest_path(reg, registry.qualified_id(thread), str(path))
+    registry.commit_registry(registry_path, reg)
     return thread, path
 
 
@@ -126,7 +126,7 @@ def cmd_harvest(argv: list[str]) -> int:
         if found is None:
             print("rl-harvest: not inside a recognised agent session", file=sys.stderr)
             return 1
-        session_id = found[1]
+        session_id = f"{found[0]}:{found[1]}"
     if not session_id:
         print("rl-harvest: need a session id, or --current", file=sys.stderr)
         return 1

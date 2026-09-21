@@ -21,6 +21,19 @@ def publish_lock() -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+@contextmanager
+def registry_lock(path: Path) -> Iterator[None]:
+    path = path.resolve()
+    lock_path = path.with_name(path.name + ".lock")
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with lock_path.open("a+b") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
 def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)

@@ -18,6 +18,6 @@ def cmd_mark_mem_reviewed(argv: list[str]) -> int:
     except KeyError:
         print(f"rl-mark-mem-reviewed: no memory entry at {args.path}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"reviewed {args.path}")
     return 0

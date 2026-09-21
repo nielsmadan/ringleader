@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 from typing import Any, TextIO
 
-from . import commands
+from . import commands, registry
 
 TABLE = commands.TABLE
 
@@ -69,6 +69,10 @@ def main(argv: list[str] | None = None) -> int:
             continue
         if not callable(entry):
             raise TypeError("invalid command table")
-        return entry(rest) or 0
+        try:
+            return entry(rest) or 0
+        except (registry.RegistryConflict, registry.AmbiguousSession) as error:
+            print(f"rl: {error}", file=sys.stderr)
+            return 1
     _group_usage(crumbs, node, sys.stdout)
     return 0

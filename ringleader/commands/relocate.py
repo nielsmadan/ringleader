@@ -100,7 +100,7 @@ def cmd_relocate(argv: list[str]) -> int:
 
     with publish_lock():
         reg = registry.load_registry(args.registry)
-        thread = next((t for t in reg["threads"] if t["sessionId"] == args.id), None)
+        thread = registry.find_session(reg, args.id)
         if thread is None:
             print(f"rl-relocate: unknown session {args.id}", file=sys.stderr)
             return 1
@@ -114,7 +114,7 @@ def cmd_relocate(argv: list[str]) -> int:
         registry.remap_cached_git_root(thread, was, new_path)
         if moved_to is not None:
             thread["file"] = moved_to
-        registry.save_registry(args.registry, reg)
+        registry.commit_registry(args.registry, reg)
 
     where = f"{gp.label} ({new_path})" if gp else new_path
     print(f"relocated {args.id} -> {where}")

@@ -153,4 +153,7 @@ def test_complete_and_concurrent_harvest_preserve_both_registry_updates(tmp_path
     assert len(saved["threads"][0]["harvestPath"]) == 1
     from ringleader import harvests
 
-    assert {item.session_id for item in harvests.load_harvests()} == {"s1", "s2"}
+    assert {item.session_id for item in harvests.load_harvests()} == {
+        "claude-code:s1",
+        "claude-code:s2",
+    }

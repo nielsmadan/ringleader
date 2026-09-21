@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from .. import registry
 from . import default_registry, unarchive
@@ -14,10 +14,7 @@ def _now() -> str:
 
 
 def _archived_tombstone(reg: dict[str, Any], session_id: str) -> dict[str, Any] | None:
-    for ts in reg.get("archived", []):
-        if ts["sessionId"] == session_id:
-            return cast(dict[str, Any], ts)
-    return None
+    return registry.find_session(reg, session_id, bucket="archived")
 
 
 def cmd_keep(argv: list[str]) -> int:
@@ -33,7 +30,7 @@ def cmd_keep(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
-    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+    t = registry.find_session(reg, args.id)
 
     if t is None:
         ts = _archived_tombstone(reg, args.id)
@@ -49,6 +46,7 @@ def cmd_keep(argv: list[str]) -> int:
         except RuntimeError as e:
             print(f"rl-keep: {e}", file=sys.stderr)
             return 1
+        registry.commit_registry(args.registry, reg)
         print(f"restored {args.id} -> {dest}")
         if not shown and (ts.get("thread") or {}).get("source") == "codex":
             print(
@@ -56,9 +54,9 @@ def cmd_keep(argv: list[str]) -> int:
                 "updated (it may have been archived by the agent itself)",
                 file=sys.stderr,
             )
-        t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+        t = registry.find_session(reg, args.id)
         if t is None:
-            registry.save_registry(args.registry, reg)
+            registry.commit_registry(args.registry, reg)
             print(
                 f"restored, but {args.id} has no registry record to keep — run `rl session refresh`"
             )
@@ -73,7 +71,7 @@ def cmd_keep(argv: list[str]) -> int:
         reg = registry.load_registry(args.registry)
         registry.keep_thread(reg, args.id, _now())
 
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     extra = f" (replaced decision '{previous}')" if previous else ""
     print(f"keeping {args.id} long-term{extra} — `rl session unkeep {args.id}` to undo")
     return 0
@@ -97,6 +95,6 @@ def cmd_unkeep(argv: list[str]) -> int:
     if not undone:
         print(f"rl-unkeep: {args.id} is not kept", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"unkept {args.id} — back in the triage inbox")
     return 0

@@ -21,6 +21,6 @@ def cmd_mark_harvested(argv: list[str]) -> int:
     except KeyError:
         print(f"rl-mark-harvested: unknown session {args.id}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"marked harvested {args.id} ({len(paths)} docs)")
     return 0

@@ -25,8 +25,8 @@ def stub_candidates(
 ) -> list[NormalizedSession]:
     """Transcripts on disk whose session was already archived — recreated by an agent
     that wrote after the archive moved the file."""
-    archived = {x["sessionId"] for x in reg.get("archived", [])}
-    return [s for s in sessions if s.session_id in archived]
+    archived = {registry.identity(x) for x in reg.get("archived", [])}
+    return [s for s in sessions if (s.source, s.session_id) in archived]
 
 
 def _project_shim(s: NormalizedSession) -> dict[str, Any]:
@@ -191,7 +191,7 @@ def cmd_prune(argv: list[str]) -> int:
     purged = prune.purge_archived(reg, arch, now, archive_root_path=str(archive_root()))
     removed_stubs = _delete_stubs(stubs)
     skipped = len(cands) - deleted
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(
         f"deleted {deleted} sessions, skipped {skipped}, purged {purged} archived, "
         f"removed {removed_stubs} resurrected"

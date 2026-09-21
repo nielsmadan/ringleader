@@ -19,7 +19,7 @@ def cmd_delete(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
-    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+    t = registry.find_session(reg, args.id)
     if t is None:
         print(f"rl-delete: unknown session {args.id}", file=sys.stderr)
         return 1
@@ -35,6 +35,6 @@ def cmd_delete(argv: list[str]) -> int:
     f.unlink(missing_ok=True)
     scanner.remove_companions(companions)
     registry.prune_session(reg, args.id, _now(), reason="deleted")
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"deleted {args.id}")
     return 0

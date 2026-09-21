@@ -206,7 +206,7 @@ async def test_delete_is_staged_and_undo_restores(tmp_path, monkeypatch):
     app = InboxApp(registry_path=str(reg_path))
     async with app.run_test() as pilot:
         await pilot.press("d")
-        assert app._staged_deletes == {"s0"}
+        assert app._staged_deletes == {"claude-code:s0"}
         assert len(app._inbox) == 1
         await pilot.press("u")
         assert app._staged_deletes == set()
@@ -336,7 +336,7 @@ async def test_exit_applies_staged_deletes(tmp_path, monkeypatch):
     session0_file = tmp_path / "s0.jsonl"
     async with app.run_test() as pilot:
         await pilot.press("d")
-        assert app._staged_deletes == {"s0"}
+        assert app._staged_deletes == {"claude-code:s0"}
         await pilot.press("q")
         await pilot.pause()
 
@@ -729,3 +729,35 @@ async def test_filtered_threads_are_kept_out_of_the_inbox(tmp_path, monkeypatch)
     app = InboxApp(registry_path=str(reg_path))
     async with app.run_test():
         assert "s0" not in [t["sessionId"] for t in app._inbox]
+
+
+async def test_inbox_keep_preserves_concurrent_lineage_and_memory(tmp_path, monkeypatch):
+    from ringleader import registry
+
+    reg_path = _setup(tmp_path, monkeypatch)
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test():
+        current = registry.load_registry(reg_path)
+        current["threads"][0]["lineage"] = {"parent": "codex:parent", "operation": "op1"}
+        current["memoryEntries"].append({"path": "/isolated/memory.md", "mtime": "now"})
+        registry.commit_registry(reg_path, current)
+        await app.action_keep()
+    saved = registry.load_registry(reg_path)
+    assert saved["threads"][0]["decision"] == "keep"
+    assert saved["threads"][0]["lineage"] == {"parent": "codex:parent", "operation": "op1"}
+    assert saved["memoryEntries"] == [{"path": "/isolated/memory.md", "mtime": "now"}]
+
+
+async def test_inbox_update_after_archive_keeps_archive_intact(tmp_path, monkeypatch):
+    from ringleader import registry
+
+    reg_path = _setup(tmp_path, monkeypatch)
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test():
+        current = registry.load_registry(reg_path)
+        registry.archive_session(current, "s0", "/isolated/archive", _fresh_iso())
+        registry.commit_registry(reg_path, current)
+        before = reg_path.read_bytes()
+        await app.action_keep()
+        assert reg_path.read_bytes() == before
+    assert registry.load_registry(reg_path)["archived"][0]["sessionId"] == "s0"

@@ -34,26 +34,46 @@ def prune_candidates(
     return out
 
 
+def _delete_candidate(reg: dict[str, Any], candidate: dict[str, Any], now_iso: str) -> bool:
+    thread = registry.find_session(reg, registry.qualified_id(candidate))
+    fields = ("decision", "file", "sourceRef", "mtime", "messageCount", "project")
+    if thread is None:
+        print(f"skipped {candidate['sessionId']}: session changed since selection", file=sys.stderr)
+        return False
+    try:
+        file = scanner.filesystem_path(thread, "prune")
+        if thread.get("decision") in {"keep", "harvested"} or any(
+            thread.get(field) != candidate.get(field) for field in fields
+        ):
+            print(
+                f"skipped {candidate['sessionId']}: session changed since selection",
+                file=sys.stderr,
+            )
+            return False
+        companions = scanner.companion_paths(thread.get("source"), file)
+        scanner.hide_from_picker(thread)
+        file.unlink(missing_ok=True)
+        scanner.remove_companions(companions)
+    except (RuntimeError, OSError) as error:
+        print(f"skipped {thread['sessionId']}: {error}", file=sys.stderr)
+        return False
+    registry.prune_session(reg, registry.qualified_id(thread), now_iso)
+    return True
+
+
 def delete_sessions(reg: dict[str, Any], candidates: list[dict[str, Any]], now_iso: str) -> int:
-    deleted = skipped = 0
-    for t in candidates:
-        try:
-            f = scanner.filesystem_path(t, "prune")
-            companions = scanner.companion_paths(t.get("source"), f)
-            scanner.hide_from_picker(t)
-        except RuntimeError as e:
-            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
-            skipped += 1
-            continue
-        try:
-            f.unlink(missing_ok=True)
-            scanner.remove_companions(companions)
-        except OSError as e:
-            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
-            skipped += 1
-            continue
-        registry.prune_session(reg, t["sessionId"], now_iso)
-        deleted += 1
+    deleted = 0
+    for candidate in candidates:
+        if isinstance(reg, registry.Registry) and reg.path is not None:
+
+            def remove(current: dict[str, Any], candidate: dict[str, Any] = candidate) -> None:
+                nonlocal deleted
+                deleted += _delete_candidate(current, candidate, now_iso)
+
+            current = registry.mutate_registry(reg.path, remove)
+            reg.replace(current)
+        else:
+            deleted += _delete_candidate(reg, candidate, now_iso)
     return deleted
 
 
@@ -114,6 +134,6 @@ def purge_archived(
                         target.unlink(missing_ok=True)  # <id>.jsonl / <id>.md
             with contextlib.suppress(OSError):
                 rp.parent.rmdir()  # drop the slug dir only if it is now empty
-        registry.purge_archived_session(reg, ts["sessionId"], now_iso)
+        registry.purge_archived_session(reg, registry.qualified_id(ts), now_iso)
         purged += 1
     return purged

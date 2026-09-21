@@ -22,6 +22,6 @@ def cmd_wake(argv: list[str]) -> int:
     except KeyError:
         print(f"rl-wake: unknown session {args.id}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"woke {args.id}")
     return 0

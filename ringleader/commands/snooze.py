@@ -30,7 +30,7 @@ def cmd_snooze(argv: list[str]) -> int:
     except KeyError:
         print(f"rl-snooze: unknown session {args.id}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     if until:
         print(f"snoozed {args.id} (auto-wakes {until}, or `rl session wake {args.id[:8]}…` sooner)")
     else:

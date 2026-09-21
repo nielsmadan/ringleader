@@ -35,6 +35,6 @@ def cmd_cleaned(argv: list[str]) -> int:
     when = args.at or _now()
     for k in keys:
         registry.mark_project_cleaned(reg, k, when)
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"marked cleaned: {', '.join(keys)} @ {when[:10]}")
     return 0

@@ -30,14 +30,15 @@ def cmd_scan(args: argparse.Namespace) -> None:
         unavailable_sources=unavailable_sources,
     )
     registry.apply_name_filters(reg, load_config().session_filters)
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     pending = registry.sessions_needing_classification(reg)
     pending = projects.filter_by_projects(pending, getattr(args, "project", None))
-    pending = [t for t in pending if (t.get("source") or "claude-code") not in unavailable_sources]
+    pending = [t for t in pending if registry.identity(t) in tails]
     emit = [
         {
             "sessionId": t["sessionId"],
+            "source": registry.identity(t)[0],
             "project": t["project"],
             "gitProject": t["gitProjectLabel"],
             "gitBranch": t["gitBranch"],
@@ -68,7 +69,7 @@ def cmd_apply(args: argparse.Namespace) -> None:
         suggested_name=args.name,
         confidence=args.confidence,
     )
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"applied {args.session}: {args.status}")
 
 

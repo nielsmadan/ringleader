@@ -70,7 +70,7 @@ def cmd_name(argv: list[str]) -> int:
             new_n += 1
         else:
             ren_n += 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(
         f"named {new_n}, renamed {ren_n}, "
         f"skipped {skipped} ({len(cap_skipped)} no-name-support), suffixed {suffixed}"

@@ -2,15 +2,16 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
+from copy import deepcopy
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from . import namefilter, overview
 from .slug import is_beneath
 from .sources.base import NormalizedSession, RawRef
-from .stateio import atomic_write_text
+from .stateio import atomic_write_text, registry_lock
 
 if TYPE_CHECKING:
     from .memory import MemoryEntry
@@ -63,7 +64,7 @@ def empty_registry() -> dict[str, Any]:
 def load_registry(path: str | Path) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
-        return empty_registry()
+        return Registry(empty_registry(), path=p)
     data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("lastScan", None)
@@ -74,12 +75,268 @@ def load_registry(path: str | Path) -> dict[str, Any]:
     data.setdefault("projectsCleanedAt", {})
     data.setdefault("memoryEntries", [])
     data.setdefault("memoryProjectsCleanedAt", {})
-    return data
+    return Registry(data, path=p)
+
+
+class RegistryConflict(RuntimeError):
+    pass
+
+
+class AmbiguousSession(ValueError):
+    pass
+
+
+class Registry(dict[str, Any]):
+    def __init__(self, data: dict[str, Any], *, path: Path | None = None) -> None:
+        super().__init__(data)
+        self.path = path if path is not None else getattr(data, "path", None)
+        self.baseline = deepcopy(dict(data))
+        self.scanned = False
+
+    def replace(self, current: dict[str, Any]) -> None:
+        self.clear()
+        self.update(current)
+        self.baseline = deepcopy(dict(current))
+        self.scanned = False
+
+
+def _write_registry(path: Path, reg: dict[str, Any]) -> None:
+    atomic_write_text(path.resolve(), json.dumps(reg, indent=2, ensure_ascii=False))
 
 
 def save_registry(path: str | Path, reg: dict[str, Any]) -> None:
-    p = Path(path)
-    atomic_write_text(p, json.dumps(reg, indent=2, ensure_ascii=False))
+    if isinstance(reg, Registry):
+        commit_registry(path, reg)
+        return
+    with registry_lock(Path(path)):
+        _write_registry(Path(path), reg)
+
+
+def mutate_registry(path: str | Path, mutation: Callable[[dict[str, Any]], object]) -> Registry:
+    with registry_lock(Path(path)):
+        current = load_registry(path)
+        mutation(current)
+        _write_registry(Path(path), current)
+        return Registry(current)
+
+
+_MISSING = object()
+_SESSION_BUCKETS = ("threads", "archived", "deleted")
+
+
+def _merge_fields(
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool = False
+) -> dict[str, Any]:
+    result = deepcopy(current)
+    for field in before.keys() | after.keys():
+        old, new, latest = (item.get(field, _MISSING) for item in (before, after, current))
+        if new in (old, latest):
+            continue
+        if all(isinstance(value, dict) for value in (old, new, latest)):
+            result[field] = _merge_fields(old, new, latest, scan=scan)
+        elif latest != old:
+            if scan:
+                continue
+            raise RegistryConflict(f"registry changed concurrently at {field}; retry the action")
+        elif new is _MISSING:
+            result.pop(field, None)
+        else:
+            result[field] = deepcopy(new)
+    return result
+
+
+def _session_rows(reg: dict[str, Any]) -> dict[tuple[str, str], tuple[str, dict[str, Any]]]:
+    return {identity(row): (bucket, row) for bucket in _SESSION_BUCKETS for row in reg[bucket]}
+
+
+def _scan_changes(
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    changed = dict(after)
+    protected: set[str] = set()
+    if current.get("mtime") != before.get("mtime"):
+        protected.update(_METADATA_FIELDS)
+        protected.update(_GIT_PROJECT_FIELDS)
+    if current.get("locationPinned"):
+        protected.update(_GIT_PROJECT_FIELDS)
+        protected.add("project")
+    for field in protected:
+        if field in before:
+            changed[field] = before[field]
+        else:
+            changed.pop(field, None)
+    return changed
+
+
+def _merge_sessions(  # noqa: PLR0912
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool
+) -> None:
+    old_rows, new_rows, latest_rows = map(_session_rows, (before, after, current))
+    for key in old_rows.keys() | new_rows.keys():
+        old, new, latest = (rows.get(key) for rows in (old_rows, new_rows, latest_rows))
+        if new in (old, latest):
+            continue
+        if old is None:
+            if latest is None:
+                assert new is not None
+                current[new[0]].append(deepcopy(new[1]))
+            elif not scan:
+                raise RegistryConflict(f"session already exists: {key}")
+            continue
+        if latest is None:
+            if not scan:
+                raise RegistryConflict(f"session disappeared concurrently: {key}")
+            continue
+        if (
+            not scan
+            and new is not None
+            and old[0] == "threads"
+            and new[0] in {"archived", "deleted"}
+            and latest[0] == "deleted"
+            and latest[1].get("reason") == "gc"
+        ):
+            current["deleted"].remove(latest[1])
+            latest = ("threads", latest[1].get("thread") or old[1])
+            current["threads"].append(latest[1])
+        if new is None:
+            if latest != old:
+                raise RegistryConflict(f"session changed concurrently: {key}")
+            current[latest[0]].remove(latest[1])
+        elif new[0] == old[0]:
+            if latest[0] != old[0]:
+                if not scan:
+                    raise RegistryConflict(f"session lifecycle changed concurrently: {key}")
+                continue
+            changed = _scan_changes(old[1], new[1], latest[1]) if scan else new[1]
+            merged = _merge_fields(old[1], changed, latest[1], scan=scan)
+            current[latest[0]][current[latest[0]].index(latest[1])] = merged
+        elif latest[0] == old[0]:
+            if scan and latest != old:
+                continue
+            moved = deepcopy(new[1])
+            if old[0] == "threads":
+                embedded = _merge_fields(
+                    old[1], new[1].get("thread") or old[1], latest[1], scan=scan
+                )
+                moved["thread"] = without_finish_mark(embedded)
+                moved["harvestPath"] = embedded.get("harvestPath")
+            elif new[0] == "threads" and isinstance(latest[1].get("thread"), dict):
+                moved = _merge_fields(old[1].get("thread") or {}, moved, latest[1]["thread"])
+            else:
+                moved = _merge_fields(old[1], moved, latest[1])
+            current[latest[0]].remove(latest[1])
+            current[new[0]].append(moved)
+        elif not scan:
+            raise RegistryConflict(f"session lifecycle changed concurrently: {key}")
+
+
+def _merge_memory(
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool
+) -> None:
+    old_rows, new_rows, latest_rows = (
+        {row["path"]: row for row in reg["memoryEntries"]} for reg in (before, after, current)
+    )
+    for path in old_rows.keys() | new_rows.keys():
+        old, new, latest = (rows.get(path) for rows in (old_rows, new_rows, latest_rows))
+        if new in (old, latest):
+            continue
+        if old is None:
+            if latest is None:
+                latest_rows[path] = deepcopy(new)
+            elif not scan:
+                raise RegistryConflict(f"memory entry already exists: {path}")
+        elif latest is None:
+            if not scan:
+                raise RegistryConflict(f"memory entry disappeared concurrently: {path}")
+        elif new is None:
+            if latest == old:
+                latest_rows.pop(path)
+            elif not scan:
+                raise RegistryConflict(f"memory entry changed concurrently: {path}")
+        elif not scan or latest.get("mtime") == old.get("mtime"):
+            latest_rows[path] = _merge_fields(old, new, latest, scan=scan)
+    current["memoryEntries"] = list(latest_rows.values())
+
+
+def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
+    if not isinstance(reg, Registry):
+        raise TypeError("registry mutations require a loaded snapshot")
+    with registry_lock(Path(path)):
+        current = load_registry(path)
+        _merge_sessions(reg.baseline, reg, current, scan=reg.scanned)
+        _merge_memory(reg.baseline, reg, current, scan=reg.scanned)
+        clocks = {"lastScan", "lastRoundupAt"}
+        excluded = {*_SESSION_BUCKETS, "memoryEntries", *clocks}
+
+        def other(data: dict[str, Any]) -> dict[str, Any]:
+            return {key: value for key, value in data.items() if key not in excluded}
+
+        current.update(_merge_fields(other(reg.baseline), other(reg), other(current)))
+        for clock in clocks:
+            if reg.get(clock) != reg.baseline.get(clock):
+                current[clock] = max(
+                    filter(None, (reg.get(clock), current.get(clock))), default=None
+                )
+        for key in other(reg.baseline).keys() - other(reg).keys():
+            if current.get(key) == reg.baseline[key]:
+                current.pop(key, None)
+        _write_registry(Path(path), current)
+    reg.replace(current)
+
+
+def identity(record: dict[str, Any]) -> tuple[str, str]:
+    embedded = record.get("thread") or {}
+    return (record.get("source") or embedded.get("source") or "claude-code", record["sessionId"])
+
+
+def qualified_id(record: dict[str, Any]) -> str:
+    return ":".join(identity(record))
+
+
+def find_session(
+    reg: dict[str, Any], selector: str, *, bucket: str = "threads", source: str | None = None
+) -> dict[str, Any] | None:
+    if ":" in selector:
+        selected_source, selector = selector.split(":", 1)
+        selected_source = "claude-code" if selected_source == "claude" else selected_source
+        if source is not None and source != selected_source:
+            raise ValueError("conflicting session sources")
+        source = selected_source
+    matches = [
+        record
+        for record in reg.get(bucket, [])
+        if record["sessionId"] == selector and (source is None or identity(record)[0] == source)
+    ]
+    all_matches = {
+        identity(record)
+        for name in _SESSION_BUCKETS
+        for record in reg.get(name, [])
+        if record["sessionId"] == selector and (source is None or identity(record)[0] == source)
+    }
+    if len(all_matches) > 1 or len(matches) > 1:
+        raise AmbiguousSession(f"ambiguous session {selector}; qualify it as AGENT:{selector}")
+    return matches[0] if matches else None
+
+
+def session_identity(reg: dict[str, Any], selector: str) -> tuple[str, str]:
+    for bucket in _SESSION_BUCKETS:
+        record = find_session(reg, selector, bucket=bucket)
+        if record is not None:
+            return identity(record)
+    if ":" in selector:
+        source, native_id = selector.split(":", 1)
+        return ("claude-code" if source == "claude" else source, native_id)
+    return ("claude-code", selector)
+
+
+def harvest_paths_by_identity(
+    reg: dict[str, Any], paths_by_session: dict[str, list[str]]
+) -> dict[tuple[str, str], list[str]]:
+    result: dict[tuple[str, str], list[str]] = {}
+    for selector, paths in paths_by_session.items():
+        existing = result.setdefault(session_identity(reg, selector), [])
+        existing.extend(path for path in paths if path not in existing)
+    return result
 
 
 def reconcile_harvest_paths(
@@ -89,15 +346,17 @@ def reconcile_harvest_paths(
     pending_root: str | Path | None = None,
     recorded_pending_paths: dict[str, list[str]] | None = None,
 ) -> dict[str, Any]:
+    qualified_paths = harvest_paths_by_identity(reg, paths_by_session)
     root = (
         Path(os.path.normpath(Path(pending_root).absolute())) if pending_root is not None else None
     )
     recorded = {
-        session_id: set(paths) for session_id, paths in (recorded_pending_paths or {}).items()
+        key: set(paths)
+        for key, paths in harvest_paths_by_identity(reg, recorded_pending_paths or {}).items()
     }
 
-    def is_pending_path(session_id: str, value: str) -> bool:
-        if value in recorded.get(session_id, set()):
+    def is_pending_path(key: tuple[str, str], value: str) -> bool:
+        if value in recorded.get(key, set()):
             return True
         candidate = Path(value)
         if root is None or not candidate.is_absolute():
@@ -106,19 +365,19 @@ def reconcile_harvest_paths(
         return normalized.is_relative_to(root)
 
     def update(record: dict[str, Any]) -> None:
-        session_id = record.get("sessionId")
-        if session_id in paths_by_session:
+        key = identity(record)
+        if key in qualified_paths:
             if root is None and not recorded_pending_paths:
-                paths = paths_by_session[session_id]
+                paths = qualified_paths[key]
             else:
                 existing = record.get("harvestPath")
                 existing_paths = [existing] if isinstance(existing, str) else existing or []
                 direct_paths = [
                     path
                     for path in existing_paths
-                    if isinstance(path, str) and not is_pending_path(session_id, path)
+                    if isinstance(path, str) and not is_pending_path(key, path)
                 ]
-                paths = list(dict.fromkeys([*direct_paths, *paths_by_session[session_id]]))
+                paths = list(dict.fromkeys([*direct_paths, *qualified_paths[key]]))
             record["harvestPath"] = paths or None
         embedded = record.get("thread")
         if isinstance(embedded, dict):
@@ -200,10 +459,10 @@ def cached_session(
 
 
 def _key(rec: dict[str, Any]) -> tuple[str, str]:
-    return (rec.get("source") or "claude-code", rec["sessionId"])
+    return identity(rec)
 
 
-def reconcile(
+def reconcile(  # noqa: PLR0912
     reg: dict[str, Any],
     scanned: Iterable[NormalizedSession],
     now_iso: str,
@@ -212,15 +471,18 @@ def reconcile(
 ) -> dict[str, Any]:
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
+    for tombstone in reg.get("deleted", []):
+        if tombstone.get("thread"):
+            by_id.setdefault(_key(tombstone), tombstone["thread"])
     # an agent that writes after we archived its transcript recreates the file;
     # re-registering it would undo the archive
-    archived_ids = {x["sessionId"] for x in reg.get("archived", [])}
+    archived_ids = {_key(x) for x in reg.get("archived", [])}
     seen = set()
     threads = []
 
     for md in scanned_dicts:
         k = (md["source"], md["session_id"])
-        if md["session_id"] in archived_ids and by_id.get(k) is None:
+        if k in archived_ids and by_id.get(k) is None:
             continue
         seen.add(k)
         existing = by_id.get(k)
@@ -243,13 +505,13 @@ def reconcile(
         else:
             threads.append(_new_thread(md))
 
-    deleted = list(reg.get("deleted", []))
+    deleted = [row for row in reg.get("deleted", []) if _key(row) not in seen]
     archived = list(reg.get("archived", []))
-    gone = {x["sessionId"] for x in deleted} | {x["sessionId"] for x in archived}
+    gone = {_key(x) for x in deleted} | {_key(x) for x in archived}
     for t in reg["threads"]:
         sid = t["sessionId"]
         key = _key(t)
-        if key in seen or sid in gone:
+        if key in seen or key in gone:
             continue
         if key[0] in unavailable_sources:
             threads.append(dict(t))
@@ -259,21 +521,23 @@ def reconcile(
                 "sessionId": sid,
                 "deletedAt": now_iso,
                 "reason": "gc",
+                "source": key[0],
+                "thread": dict(t),
                 "harvestPath": t.get("harvestPath"),
             }
         )
 
-    return {
-        "version": REGISTRY_VERSION,
-        "lastScan": now_iso,
-        "lastRoundupAt": reg.get("lastRoundupAt"),
-        "threads": threads,
-        "archived": archived,
-        "deleted": deleted,
-        "projectsCleanedAt": dict(reg.get("projectsCleanedAt", {})),
-        "memoryEntries": list(reg.get("memoryEntries", [])),
-        "memoryProjectsCleanedAt": dict(reg.get("memoryProjectsCleanedAt", {})),
-    }
+    result = deepcopy(reg)
+    result.update(
+        version=REGISTRY_VERSION,
+        lastScan=now_iso,
+        threads=threads,
+        archived=archived,
+        deleted=deleted,
+    )
+    if isinstance(result, Registry):
+        result.scanned = True
+    return result
 
 
 def needs_classification(thread: dict[str, Any]) -> bool:
@@ -304,76 +568,76 @@ def apply_classification(
     suggested_name: str,
     confidence: float | None = None,
 ) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["status"] = status
-            t["whatItIs"] = what_it_is
-            t["suggestedName"] = suggested_name
-            if confidence is not None:
-                t["statusConfidence"] = confidence
-            t["classifiedAtMtime"] = t["mtime"]
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["status"] = status
+        t["whatItIs"] = what_it_is
+        t["suggestedName"] = suggested_name
+        if confidence is not None:
+            t["statusConfidence"] = confidence
+        t["classifiedAtMtime"] = t["mtime"]
+        return reg
     raise KeyError(session_id)
 
 
 def apply_name(
     reg: dict[str, Any], session_id: str, name: str, *, source: str | None = None
 ) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id and (source is None or _key(t)[0] == source):
-            t["title"] = name
-            t["appliedName"] = name
-            t["namedAtMtime"] = t["mtime"]
-            return reg
+    t = find_session(reg, session_id, source=source)
+    if t is not None:
+        t["title"] = name
+        t["appliedName"] = name
+        t["namedAtMtime"] = t["mtime"]
+        return reg
     raise KeyError(session_id)
 
 
 def mark_harvested(
     reg: dict[str, Any], session_id: str, harvest_paths: list[str]
 ) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["decision"] = "harvested"
-            t["harvestPath"] = harvest_paths or None
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["decision"] = "harvested"
+        t["harvestPath"] = harvest_paths or None
+        return reg
     raise KeyError(session_id)
 
 
 def append_harvest_path(reg: dict[str, Any], session_id: str, harvest_path: str) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            existing = t.get("harvestPath")
-            paths = existing if isinstance(existing, list) else [existing] if existing else []
-            t["decision"] = "harvested"
-            t["harvestPath"] = [*paths, harvest_path]
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        existing = t.get("harvestPath")
+        paths = existing if isinstance(existing, list) else [existing] if existing else []
+        t["decision"] = "harvested"
+        t["harvestPath"] = [*paths, harvest_path]
+        return reg
     raise KeyError(session_id)
 
 
 def mark_reviewed(reg: dict[str, Any], session_id: str, mtime: str | None = None) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            # mtime override lets the caller record the live file mtime — e.g. after
-            # naming appended a record and bumped it — so the marker matches what the
-            # next scan will see (otherwise the session re-surfaces once).
-            t["reviewedAtMtime"] = mtime if mtime is not None else t["mtime"]
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        # mtime override lets the caller record the live file mtime — e.g. after
+        # naming appended a record and bumped it — so the marker matches what the
+        # next scan will see (otherwise the session re-surfaces once).
+        t["reviewedAtMtime"] = mtime if mtime is not None else t["mtime"]
+        return reg
     raise KeyError(session_id)
 
 
 def select_for_day(reg: dict[str, Any], session_id: str, day: str) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["selectedForDay"] = day
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["selectedForDay"] = day
+        return reg
     raise KeyError(session_id)
 
 
 def clear_selected(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["selectedForDay"] = None
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["selectedForDay"] = None
+        return reg
     raise KeyError(session_id)
 
 
@@ -391,16 +655,20 @@ def archive_session(
     project: str | None = None,
 ) -> dict[str, Any]:
     threads = reg["threads"]
-    idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
-    thread = threads.pop(idx) if idx is not None else None
+    thread = find_session(reg, session_id)
+    key = identity(thread) if thread is not None else session_identity(reg, session_id)
+    if thread is not None:
+        threads.remove(thread)
+    session_id = key[1]
     if thread is not None:
         thread = without_finish_mark(thread)
     harvest = thread.get("harvestPath") if thread else None
     archived = reg.setdefault("archived", [])
-    if not any(a["sessionId"] == session_id for a in archived):
+    if not any(identity(a) == key for a in archived):
         archived.append(
             {
                 "sessionId": session_id,
+                "source": key[0],
                 "archivedAt": archived_at,
                 "archivePath": archive_path,
                 "harvestPath": harvest,
@@ -428,19 +696,19 @@ def snooze_thread(
     """Set a session aside: still open/resumable, but hidden from the default
     rl overview until woken. `when` records when it was snoozed; `until`, if
     given, is an ISO timestamp after which the snooze auto-wakes."""
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["snoozedAt"] = when
-            t["snoozedUntil"] = until
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["snoozedAt"] = when
+        t["snoozedUntil"] = until
+        return reg
     raise KeyError(session_id)
 
 
 def wake_thread(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["snoozedAt"] = None
-            return reg
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["snoozedAt"] = None
+        return reg
     raise KeyError(session_id)
 
 
@@ -448,12 +716,12 @@ def keep_thread(reg: dict[str, Any], session_id: str, when: str) -> str | None:
     """Mark a session as kept long-term: it stays live and resumable but leaves the
     triage inbox permanently, regardless of later activity. Returns the decision it
     replaced (None if there wasn't one) so the caller can report it."""
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            previous: str | None = t.get("decision")
-            t["decision"] = "keep"
-            t["keptAt"] = when
-            return previous if previous != "keep" else None
+    t = find_session(reg, session_id)
+    if t is not None:
+        previous: str | None = t.get("decision")
+        t["decision"] = "keep"
+        t["keptAt"] = when
+        return previous if previous != "keep" else None
     raise KeyError(session_id)
 
 
@@ -461,11 +729,11 @@ def mark_finish_on_exit(reg: dict[str, Any], session_id: str, when: str) -> dict
     """Mark a session to be archived once its transcript goes quiet. The transcript
     cannot be moved while the agent is still writing to it, so `rl session sweep`
     does the archiving later; this only records the intent."""
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            t["finishOnExit"] = True
-            t["finishedAt"] = when
-            return cast(dict[str, Any], t)
+    t = find_session(reg, session_id)
+    if t is not None:
+        t["finishOnExit"] = True
+        t["finishedAt"] = when
+        return t
     raise KeyError(session_id)
 
 
@@ -482,13 +750,13 @@ def without_finish_mark(thread: dict[str, Any]) -> dict[str, Any]:
 def unkeep_thread(reg: dict[str, Any], session_id: str) -> bool:
     """Undo `keep_thread`, returning the session to the triage inbox. Returns False if
     the session wasn't kept — a non-"keep" decision (e.g. "harvested") is left alone."""
-    for t in reg["threads"]:
-        if t["sessionId"] == session_id:
-            if t.get("decision") != "keep":
-                return False
-            t["decision"] = None
-            t["keptAt"] = None
-            return True
+    t = find_session(reg, session_id)
+    if t is not None:
+        if t.get("decision") != "keep":
+            return False
+        t["decision"] = None
+        t["keptAt"] = None
+        return True
     raise KeyError(session_id)
 
 
@@ -498,11 +766,12 @@ def restore_session(reg: dict[str, Any], session_id: str, file_path: str) -> dic
 
     The record holds only a summary of the thread, so the thread row is not rebuilt
     here — reconcile re-creates it in full from the restored transcript."""
-    archived: list[dict[str, Any]] = reg.setdefault("archived", [])
-    idx = next((i for i, a in enumerate(archived) if a["sessionId"] == session_id), None)
-    if idx is None:
+    archived = reg.setdefault("archived", [])
+    record = find_session(reg, session_id, bucket="archived")
+    if record is None:
         raise KeyError(session_id)
-    return archived.pop(idx)
+    archived.remove(record)
+    return record
 
 
 def pin_thread_location(
@@ -543,17 +812,21 @@ def prune_session(
     reg: dict[str, Any], session_id: str, deleted_at: str, *, reason: str = "prune"
 ) -> dict[str, Any]:
     threads = reg["threads"]
-    idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
-    harvest = threads[idx].get("harvestPath") if idx is not None else None
-    if idx is not None:
-        threads.pop(idx)
+    thread = find_session(reg, session_id)
+    key = identity(thread) if thread is not None else session_identity(reg, session_id)
+    session_id = key[1]
+    harvest = thread.get("harvestPath") if thread is not None else None
+    if thread is not None:
+        threads.remove(thread)
     deleted = reg.setdefault("deleted", [])
-    if not any(d["sessionId"] == session_id for d in deleted):
+    if not any(identity(d) == key for d in deleted):
         deleted.append(
             {
                 "sessionId": session_id,
                 "deletedAt": deleted_at,
                 "reason": reason,
+                "source": key[0],
+                "thread": thread,
                 "harvestPath": harvest,
             }
         )
@@ -564,10 +837,10 @@ def purge_archived_session(reg: dict[str, Any], session_id: str, purged_at: str)
     """Archive retention removed the archived copy: the transcript is now really gone,
     so the record moves out of `archived` and into `deleted`."""
     archived = reg.setdefault("archived", [])
-    idx = next((i for i, a in enumerate(archived) if a["sessionId"] == session_id), None)
-    if idx is None:
+    rec = find_session(reg, session_id, bucket="archived")
+    if rec is None:
         return reg
-    rec = archived.pop(idx)
+    archived.remove(rec)
     rec["reason"] = "purged"
     rec["purgedAt"] = purged_at
     rec.setdefault("deletedAt", purged_at)
@@ -604,10 +877,13 @@ def reconcile_memory(
         nd = _mem_entry_dict(m)
         old = by_path.get(nd["path"])
         if old is not None:
+            nd = {**old, **nd}
             nd["reviewedAtMtime"] = old.get("reviewedAtMtime")
             nd["disposition"] = old.get("disposition")
         entries.append(nd)
-    reg = dict(reg)
+    reg = deepcopy(reg)
+    if isinstance(reg, Registry):
+        reg.scanned = True
     reg["memoryEntries"] = entries  # gone entries simply drop (no tombstone)
     reg["lastScan"] = now_iso
     reg.setdefault("memoryProjectsCleanedAt", {})

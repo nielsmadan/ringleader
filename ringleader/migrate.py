@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import shutil
+from contextlib import ExitStack
 from pathlib import Path
 
 from .paths import archive_root, default_registry, ensure_state_dir
+from .stateio import publish_lock, registry_lock
 
 
 def migrate(old_dir: Path) -> list[str]:
@@ -22,7 +24,13 @@ def migrate(old_dir: Path) -> list[str]:
 
     ensure_state_dir()
     moved: list[str] = []
-    for src, dest in to_move:
-        shutil.move(str(src), str(dest))
-        moved.append(str(dest))
+    with publish_lock():
+        for src, dest in to_move:
+            with ExitStack() as locks:
+                if src == old_registry:
+                    for path in sorted({src.resolve(), dest.resolve()}):
+                        locks.enter_context(registry_lock(path))
+                if src.exists() and not dest.exists():
+                    shutil.move(str(src), str(dest))
+                    moved.append(str(dest))
     return moved

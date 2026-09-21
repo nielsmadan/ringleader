@@ -729,7 +729,7 @@ def test_consume_and_concurrent_harvest_preserve_reconciled_and_new_paths(
     assert saved["archived"][0]["harvestPath"] is None
     assert len(saved["threads"][0]["harvestPath"]) == 1
     remaining = harvests.snapshot_harvests().items
-    assert [item.session_id for item in remaining] == ["writer"]
+    assert [item.session_id for item in remaining] == ["claude-code:writer"]
     assert saved["threads"][0]["harvestPath"] == [str(remaining[0].path)]
 
 
@@ -834,17 +834,17 @@ def test_consume_without_registry_record_is_retry_safe_after_registry_save_failu
     )
     prepare_publish(receipt.receipt_id, outcome="no-change")
     registry.save_registry(receipt.registry_path, registry.empty_registry())
-    real_save = publish_state.registry.save_registry
+    real_save = publish_state.registry.commit_registry
     monkeypatch.setattr(
         publish_state.registry,
-        "save_registry",
+        "commit_registry",
         lambda *args: (_ for _ in ()).throw(OSError("save failed")),
     )
     with pytest.raises(OSError, match="save failed"):
         consume_publish(receipt.receipt_id, commit=None)
     assert load_receipt(receipt.receipt_id).state == "finishing"
     assert not selected.path.exists()
-    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+    monkeypatch.setattr(publish_state.registry, "commit_registry", real_save)
     assert consume_publish(receipt.receipt_id, commit=None).consumed == 1
 
 
@@ -867,15 +867,15 @@ def test_finishing_retry_ignores_later_checkout_state(store, tmp_path, monkeypat
         prepare_publish(receipt.receipt_id, outcome="no-change")
         commit = None
     registry.save_registry(receipt.registry_path, registry.empty_registry())
-    real_save = publish_state.registry.save_registry
+    real_save = publish_state.registry.commit_registry
     monkeypatch.setattr(
         publish_state.registry,
-        "save_registry",
+        "commit_registry",
         lambda *args: (_ for _ in ()).throw(OSError("save failed")),
     )
     with pytest.raises(OSError, match="save failed"):
         consume_publish(receipt.receipt_id, commit=commit)
-    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+    monkeypatch.setattr(publish_state.registry, "commit_registry", real_save)
     assert load_receipt(receipt.receipt_id).state == "finishing"
     assert not selected.path.exists()
     (checkout / "ordinary-work.txt").write_text("later work\n")
@@ -893,15 +893,15 @@ def test_finishing_changed_retry_rejects_a_different_commit(store, tmp_path, mon
     selected = store("github.com/me/repo", ["selected"])[0]
     receipt, _checkout, commit = _prepare_changed_receipt(selected, tmp_path)
     registry.save_registry(receipt.registry_path, registry.empty_registry())
-    real_save = publish_state.registry.save_registry
+    real_save = publish_state.registry.commit_registry
     monkeypatch.setattr(
         publish_state.registry,
-        "save_registry",
+        "commit_registry",
         lambda *args: (_ for _ in ()).throw(OSError("save failed")),
     )
     with pytest.raises(OSError, match="save failed"):
         consume_publish(receipt.receipt_id, commit=commit)
-    monkeypatch.setattr(publish_state.registry, "save_registry", real_save)
+    monkeypatch.setattr(publish_state.registry, "commit_registry", real_save)
 
     with pytest.raises(PublishStateError, match="different commit"):
         consume_publish(receipt.receipt_id, commit="d" * 40)
@@ -1272,3 +1272,126 @@ def test_serialized_receipt_omits_harvest_bodies(store, tmp_path):
     text = (publish_receipts_dir() / f"{receipt.receipt_id}.json").read_text()
 
     assert "body that must stay private" not in text
+
+
+def test_qualified_harvest_roundtrips_publish_to_native_session(tmp_path):
+    checkout, branch, base = _clean_checkout(tmp_path)
+    registry_path = tmp_path / "registry.json"
+    reg = registry.empty_registry()
+    reg["threads"] = [
+        {
+            "sessionId": "shared",
+            "source": source,
+            "project": str(checkout),
+            "gitRemote": "https://github.com/me/repo",
+            "harvestPath": ["docs/existing.md"],
+        }
+        for source in ("claude-code", "codex")
+    ]
+    registry.save_registry(registry_path, reg)
+    markdown = tmp_path / "harvest.md"
+    markdown.write_text("# Useful result\n")
+    assert (
+        harvest_command.cmd_harvest(
+            ["codex:shared", "--registry", str(registry_path), "--from-file", str(markdown)]
+        )
+        == 0
+    )
+    item = harvests.snapshot_harvests().items[0]
+    assert item.session_id == "codex:shared"
+    current = registry.load_registry(registry_path)
+    registry.archive_session(current, "codex:shared", str(tmp_path / "archive.jsonl"), "now")
+    registry.commit_registry(registry_path, current)
+    receipt = begin_publish(
+        repo_key=item.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base,
+        registry_path=str(registry_path),
+        tokens=[item.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    assert consume_publish(receipt.receipt_id, commit=None).consumed == 1
+    saved = registry.load_registry(registry_path)
+    assert saved["archived"][0]["sessionId"] == "shared"
+    assert saved["archived"][0]["source"] == "codex"
+    assert saved["archived"][0]["harvestPath"] == ["docs/existing.md"]
+    assert saved["threads"][0]["harvestPath"] == ["docs/existing.md"]
+
+
+def test_publish_refuses_ambiguous_legacy_harvest_before_unlink(store, tmp_path):
+    item = store("github.com/me/repo", ["legacy"])[0]
+    checkout, branch, base = _clean_checkout(tmp_path)
+    registry_path = tmp_path / "registry.json"
+    reg = registry.empty_registry()
+    reg["archived"] = [
+        {"sessionId": item.session_id, "source": source, "harvestPath": [str(item.path)]}
+        for source in ("claude-code", "codex")
+    ]
+    registry.save_registry(registry_path, reg)
+    receipt = begin_publish(
+        repo_key=item.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base,
+        registry_path=str(registry_path),
+        tokens=[item.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    original = registry_path.read_bytes()
+    with pytest.raises(registry.AmbiguousSession, match="ambiguous session"):
+        consume_publish(receipt.receipt_id, commit=None)
+    assert registry_path.read_bytes() == original
+    assert item.path.read_text().endswith("legacy\n")
+
+
+@pytest.mark.parametrize(
+    "selected_reference,remaining_reference",
+    [
+        ("same", "claude-code:same"),
+        ("claude-code:same", "same"),
+    ],
+)
+@pytest.mark.parametrize("bucket", ["threads", "archived"])
+def test_consume_preserves_remaining_harvest_across_selector_spellings(
+    tmp_path, selected_reference, remaining_reference, bucket
+):
+    checkout, branch, base = _clean_checkout(tmp_path)
+    registry_path = tmp_path / "registry.json"
+    paths = [
+        harvests.write_harvest(
+            session_id=reference,
+            name="result",
+            folder_path=str(checkout),
+            repo_url="github.com/me/repo",
+            harvested_at="2026-09-21T12:00:00+00:00",
+            content="durable knowledge",
+        )
+        for reference in (selected_reference, remaining_reference)
+    ]
+    selected = next(item for item in harvests.snapshot_harvests().items if item.path == paths[0])
+    reg = registry.empty_registry()
+    reg[bucket] = [
+        {
+            "sessionId": "same",
+            "source": "claude-code",
+            "decision": "harvested",
+            "harvestPath": [str(path) for path in paths],
+        }
+    ]
+    registry.save_registry(registry_path, reg)
+    receipt = begin_publish(
+        repo_key=selected.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base,
+        registry_path=str(registry_path),
+        tokens=[selected.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    assert consume_publish(receipt.receipt_id, commit=None).consumed == 1
+    assert registry.load_registry(registry_path)[bucket][0]["harvestPath"] == [str(paths[1])]
+    assert [item.path for item in harvests.snapshot_harvests().items] == [paths[1]]

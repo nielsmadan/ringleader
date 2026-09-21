@@ -18,9 +18,7 @@ def cmd_complete(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     initial = registry.load_registry(args.registry)
-    initial_thread = next(
-        (item for item in initial["threads"] if item["sessionId"] == args.id), None
-    )
+    initial_thread = registry.find_session(initial, args.id)
     if initial_thread is not None:
         try:
             scanner.filesystem_path(initial_thread, "complete")
@@ -46,11 +44,11 @@ def cmd_complete(argv: list[str]) -> int:
         print(f"harvested {harvested_thread['sessionId']} -> {path}")
 
         reg = registry.load_registry(args.registry)
-        thread = next((item for item in reg["threads"] if item["sessionId"] == args.id), None)
+        thread = registry.find_session(reg, args.id)
         if thread is None or thread.get("decision") != "harvested":
             print("not completed: nothing was harvested (configure a model with `rl config`)")
             return 0
         dest = archive_cmd.archive_thread(reg, thread, archive_root_path=str(archive_root()))
-        registry.save_registry(args.registry, reg)
+        registry.commit_registry(args.registry, reg)
     print(f"completed {args.id} (archived -> {dest})")
     return 0

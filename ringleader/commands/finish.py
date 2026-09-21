@@ -29,13 +29,13 @@ def cmd_finish(argv: list[str]) -> int:
         if found is None:
             print("rl-finish: not inside a recognised agent session", file=sys.stderr)
             return 1
-        session_id = found[1]
+        session_id = f"{found[0]}:{found[1]}"
     if not session_id:
         print("rl-finish: need a session id, or --current", file=sys.stderr)
         return 1
 
     reg = registry.load_registry(args.registry)
-    t = next((x for x in reg["threads"] if x["sessionId"] == session_id), None)
+    t = registry.find_session(reg, session_id)
     if t is None:
         print(f"rl-finish: unknown session {session_id}", file=sys.stderr)
         return 1
@@ -54,6 +54,6 @@ def cmd_finish(argv: list[str]) -> int:
         return 1
 
     registry.mark_finish_on_exit(reg, session_id, datetime.now(UTC).isoformat())
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"{session_id} will be archived once its transcript goes quiet")
     return 0

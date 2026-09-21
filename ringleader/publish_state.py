@@ -11,7 +11,7 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from . import registry
 from .harvests import Harvest, harvests_dir, load_harvest_path, snapshot_harvests
@@ -571,13 +571,14 @@ def _remaining_items_after(receipt: PublishReceipt) -> tuple[Harvest, ...]:
 
 
 def _paths_by_session(
-    remaining: Sequence[Harvest], affected_items: Sequence[ReceiptItem]
+    reg: dict[str, Any], remaining: Sequence[Harvest], affected_items: Sequence[ReceiptItem]
 ) -> dict[str, list[str]]:
-    affected_sessions = {item.session_id for item in affected_items}
-    paths: dict[str, list[str]] = {session_id: [] for session_id in affected_sessions}
+    affected_sessions = {registry.session_identity(reg, item.session_id) for item in affected_items}
+    paths: dict[str, list[str]] = {":".join(key): [] for key in affected_sessions}
     for item in remaining:
-        if item.session_id in paths:
-            paths[item.session_id].append(str(item.path.absolute()))
+        key = registry.session_identity(reg, item.session_id)
+        if key in affected_sessions:
+            paths[":".join(key)].append(str(item.path.absolute()))
     return paths
 
 
@@ -622,13 +623,14 @@ def consume_publish(receipt_id: str, *, commit: str | None) -> ConsumeResult:
         selected = _reload_receipt_items(receipt, allow_missing=receipt.state == "finishing")
         reg = registry.load_registry(receipt.registry_path)
         remaining = _remaining_items_after(receipt)
-        remaining_paths = _paths_by_session(remaining, receipt.items)
+        remaining_paths = _paths_by_session(reg, remaining, receipt.items)
+        remaining_keys = registry.harvest_paths_by_identity(reg, remaining_paths)
         stranded = sorted(
             thread.get("sessionId")
             for thread in reg.get("threads", [])
             if thread.get("decision") == "harvested"
-            and thread.get("sessionId") in remaining_paths
-            and not remaining_paths[thread["sessionId"]]
+            and registry.identity(thread) in remaining_keys
+            and not remaining_keys[registry.identity(thread)]
         )
         if stranded:
             raise PublishStateError(f"archive live session before consuming: {stranded[0]}")
@@ -645,11 +647,11 @@ def consume_publish(receipt_id: str, *, commit: str | None) -> ConsumeResult:
         remaining = _remaining_items_after(receipt)
         registry.reconcile_harvest_paths(
             reg,
-            _paths_by_session(remaining, receipt.items),
+            _paths_by_session(reg, remaining, receipt.items),
             pending_root=harvests_dir(),
             recorded_pending_paths=_recorded_pending_paths(receipt),
         )
-        registry.save_registry(receipt.registry_path, reg)
+        registry.commit_registry(receipt.registry_path, reg)
         _remove_receipt_unlocked(receipt.receipt_id)
         return ConsumeResult(
             receipt_id=receipt.receipt_id,

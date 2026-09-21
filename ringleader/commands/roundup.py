@@ -34,13 +34,13 @@ def cmd_roundup(argv: list[str]) -> int:
         now,
         archive_root_path=str(archive_root()),
     )
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     enrich.cmd_enrich(["--registry", args.registry])
 
     reg = registry.load_registry(args.registry)
     reg["lastRoundupAt"] = now
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
 
     print(f"refreshed, pruned {deleted}, purged {purged} archived, enriched (see above)")
     return swept

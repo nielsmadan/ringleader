@@ -119,10 +119,10 @@ def test_archive_cli_retries_after_move_when_registry_save_failed(tmp_path, monk
     arc = tmp_path / "archive"
     summary = tmp_path / "summary.md"
     summary.write_text("# Crash recovery\n")
-    real_save = archive_mod.registry.save_registry
+    real_save = archive_mod.registry.commit_registry
     monkeypatch.setattr(
         archive_mod.registry,
-        "save_registry",
+        "commit_registry",
         lambda *args: (_ for _ in ()).throw(OSError("registry save failed")),
     )
 
@@ -142,7 +142,7 @@ def test_archive_cli_retries_after_move_when_registry_save_failed(tmp_path, monk
     assert not f.exists()
     assert (arc / "unknown" / "crash.jsonl").exists()
     assert (arc / "unknown" / "crash.md").read_text() == "# Crash recovery\n"
-    monkeypatch.setattr(archive_mod.registry, "save_registry", real_save)
+    monkeypatch.setattr(archive_mod.registry, "commit_registry", real_save)
 
     assert (
         archive_mod.cmd_archive(

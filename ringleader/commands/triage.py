@@ -17,7 +17,7 @@ def _now() -> str:
 def _memory_inbox(registry_path: str, projects_sel: list[str] | None, no_scan: bool) -> int:
     reg = registry.load_registry(registry_path)
     reg = registry.reconcile_memory(reg, memmod.scan_memory(memmod.projects_dir()), _now())
-    registry.save_registry(registry_path, reg)
+    registry.commit_registry(registry_path, reg)
     rows = registry.memory_needing_review(reg)
     if projects_sel:
         rows = projects.filter_by_projects(rows, projects_sel)

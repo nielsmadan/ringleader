@@ -16,7 +16,7 @@ def cmd_mark_reviewed(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
-    t = next((x for x in reg["threads"] if x["sessionId"] == args.id), None)
+    t = registry.find_session(reg, args.id)
     if t is None:
         print(f"rl-mark-reviewed: unknown session {args.id}", file=sys.stderr)
         return 1
@@ -32,6 +32,6 @@ def cmd_mark_reviewed(argv: list[str]) -> int:
     except KeyError:
         print(f"rl-mark-reviewed: unknown session {args.id}", file=sys.stderr)
         return 1
-    registry.save_registry(args.registry, reg)
+    registry.commit_registry(args.registry, reg)
     print(f"marked reviewed (open) {args.id}")
     return 0

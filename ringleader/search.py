@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from . import namefilter
+from . import namefilter, registry
 
 _BLURB_FIELDS = ("aiTitle", "whatItIs", "summary", "lastPrompt")
 
@@ -87,13 +87,11 @@ def _archived_thread(rec: dict[str, Any]) -> dict[str, Any]:
     """The tombstone's own fields fill the gaps in the thread it embeds rather than
     losing to it: `rl session archive` derives a summary from a sidecar when the thread
     has no `whatItIs`, and stores that only on the tombstone. A session archived without
-    a registry record embeds no thread at all, leaving these as the only fields to match.
-
-    `source` is deliberately absent — the tombstone never stores one, so any value put
-    here would be a guess that the renderer would then present as fact."""
+    a registry record embeds no thread at all, leaving these as the only fields to match."""
     thread = dict(rec.get("thread") or {})
     fallbacks = {
         "sessionId": rec.get("sessionId"),
+        "source": rec.get("source"),
         "project": rec.get("project"),
         "summary": rec.get("summary"),
         "mtime": rec.get("archivedAt"),
@@ -118,9 +116,11 @@ def search(reg: dict[str, Any], query: str, *, scope: Scope = Scope.ALL) -> list
     if scope in (Scope.ALL, Scope.ARCHIVED):
         # a session can legitimately sit in both buckets — that is an unarchive in
         # progress — and there the live thread is the current truth for it
-        live = {t.get("sessionId") for t in reg.get("threads", [])} if scope is Scope.ALL else set()
+        live = (
+            {registry.identity(t) for t in reg.get("threads", [])} if scope is Scope.ALL else set()
+        )
         for rec in reg.get("archived", []):
-            if rec.get("sessionId") in live:
+            if registry.identity(rec) in live:
                 continue
             m = _match_thread(_archived_thread(rec), q, glob, archived=True)
             if m is not None:

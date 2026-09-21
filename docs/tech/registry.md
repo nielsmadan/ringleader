@@ -16,6 +16,35 @@ the repo ([0010](../decisions/0010-keep-machine-local-state-outside-the-repo.md)
 
 ## How it works
 
+### Concurrent mutations
+
+`load_registry()` returns a dict-compatible snapshot with a private baseline.
+After bounded edits, `commit_registry()` locks `<registry>.lock`, reloads the file and
+applies the changes relative to that baseline. Session rows match by `(source, sessionId)`,
+memory rows by path, and nested mappings by field. Unrelated concurrent edits survive;
+conflicting edits to the same field raise `RegistryConflict` before any registry write.
+A successful commit refreshes the caller's snapshot and baseline. `save_registry()` is
+for initial plain-dict fixtures; production writers use the explicit commit API.
+
+`reconcile()` and `reconcile_memory()` retain baseline provenance. Scan-derived conflicts
+keep the newer committed value, pinned locations remain pinned, and scans cannot erase
+sessions added while discovery ran or resurrect a concurrently archived session.
+Unknown top-level fields and record metadata survive scans. Lifecycle moves retain the
+latest complete thread in their tombstone, including concurrent lineage changes. A scan's
+GC tombstone can be completed into an archive after its filesystem move finishes.
+
+`mutate_registry(path, callback)` supports short mutations against freshly loaded state;
+callback failure writes nothing. The inbox uses this for interactive metadata changes.
+Scans, model calls, confirmation prompts and filesystem moves run outside the registry
+lock. Pruning revalidates each candidate against current state and holds the registry lock
+through picker hiding, deletion and its tombstone write, so a committed keep decision wins
+over an earlier candidate list. Filesystem operations are not atomic with the registry; archive retries continue
+using the existing archive destination if the registry write failed.
+
+Lock order is **publish or operation lock, then registry lock**. Never acquire an outer
+lock or call another registry transaction inside a registry callback. Both transaction
+APIs release the lock on failure. `persist=False` refreshes create no file or lock.
+
 ### Top-level shape
 
 `empty_registry()` defines it; `REGISTRY_VERSION` is `2`.
@@ -40,7 +69,7 @@ editing:
 
 - **`_METADATA_FIELDS`** — derived from the source on every scan (`sourceRef`, optional `file`, `project`,
   `title`, `summary`, `lastPrompt`, `mtime`, `sizeBytes`, `messageCount`, `gitBranch`,
-  `fileFingerprint`, `cacheVersion`). Cheap and always safe to overwrite.
+  `fileFingerprint`, `cacheVersion`). Refreshed from scans unless a newer commit or pinned location supersedes the scan.
 - **`filteredBy`** — the `config.session_filters` pattern this session's name matched, or
   `None`. Stamped on every scan like the metadata fields, and read by the views to hide the
   session ([Filtering noisy sessions](../features/views-and-triage.md#filtering-noisy-sessions)).
@@ -58,8 +87,12 @@ A new thread starts at `status: "unclassified"` with the judgment fields empty.
 
 ### Identity
 
-`_key()` is `(source, sessionId)`, defaulting a missing source to `claude-code` so v1 records
-keep working. The session id is the registry's key, which is why
+`identity()` is `(source, sessionId)`. Archived/deleted records also carry their source;
+older tombstones can recover it from their embedded thread. A missing source defaults to
+`claude-code` so v1 records keep working. Selectors accept `AGENT:ID` (`claude` aliases
+`claude-code`). A bare ID must be unambiguous across live, archived and deleted records.
+New harvest frontmatter uses a qualified selector in its `sessionId` field; legacy bare
+references still work when unambiguous. Native registry `sessionId` values stay unchanged. The session id is the registry's key, which is why
 [workspace moves refuse rather than merge](../features/workspace-portability.md) — a merge
 would have to rewrite one.
 
