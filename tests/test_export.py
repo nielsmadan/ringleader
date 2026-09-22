@@ -115,3 +115,27 @@ def test_render_conversation_codex_null_content_does_not_crash(tmp_path):
     )
     out = export.render_conversation(f)
     assert "## USER" in out and "still works" in out
+
+
+def test_render_conversation_handles_pi(tmp_path):
+    f = tmp_path / "2026-09-21T10-00-00_0199aa.jsonl"
+    _write(
+        f,
+        [
+            {"type": "session", "id": "0199aa", "cwd": "/w/api", "version": 3},
+            {"type": "session_info", "name": "auth-refresh"},  # metadata → skipped
+            {
+                "type": "message",
+                "message": {"role": "user", "content": [{"type": "text", "text": "why the 401"}]},
+            },
+            {
+                "type": "message",
+                "message": {"role": "assistant", "content": "the token expired"},
+            },
+            {"type": "message", "message": {"role": "system", "content": "boot"}},  # not a turn
+        ],
+    )
+    out = export.render_conversation(f)
+    assert "## USER" in out and "why the 401" in out
+    assert "## ASSISTANT" in out and "the token expired" in out
+    assert "boot" not in out

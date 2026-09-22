@@ -8,6 +8,59 @@ from .sources.base import ConversationRenderingSource
 from .transcript import _text_blocks
 
 
+def _turn(role: object, txt: str) -> str | None:
+    if not txt:
+        return None
+    if role == "user":
+        return f"## USER\n\n{txt}\n"
+    if role == "assistant":
+        return f"## ASSISTANT\n\n{txt}\n"
+    return None
+
+
+def _tool_note(msg: dict) -> str | None:
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return None
+    names = [
+        name
+        for b in content
+        if isinstance(b, dict)
+        and b.get("type") == "tool_use"
+        and isinstance(name := b.get("name"), str)
+        and name
+    ]
+    return f"_(tools: {', '.join(names)})_\n" if names else None
+
+
+def _codex_text(payload: dict) -> str:
+    content = payload.get("content")
+    if not isinstance(content, list):
+        return ""
+    return " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
+
+
+def _record_chunks(o: dict) -> list[str]:
+    t = o.get("type")
+    if t == "user":
+        return [c for c in (_turn("user", _text_blocks(o.get("message", {})).strip()),) if c]
+    if t == "assistant":
+        msg = o.get("message", {})
+        parts = (_turn("assistant", _text_blocks(msg).strip()), _tool_note(msg))
+        return [c for c in parts if c]
+    if t == "message":  # pi
+        msg = o.get("message")
+        if not isinstance(msg, dict):
+            return []
+        return [c for c in (_turn(msg.get("role"), _text_blocks(msg).strip()),) if c]
+    if t == "response_item":  # codex
+        payload = o.get("payload") or {}
+        if payload.get("type") != "message":
+            return []
+        return [c for c in (_turn(payload.get("role"), _codex_text(payload)),) if c]
+    return []
+
+
 def _render_jsonl(path) -> str:
     out: list[str] = []
     with Path(path).open(encoding="utf-8", errors="replace") as fh:
@@ -19,46 +72,7 @@ def _render_jsonl(path) -> str:
                 o = json.loads(raw)
             except json.JSONDecodeError:
                 continue
-            t = o.get("type")
-            if t == "user":
-                txt = _text_blocks(o.get("message", {})).strip()
-                if txt:
-                    out.append(f"## USER\n\n{txt}\n")
-            elif t == "assistant":
-                msg = o.get("message", {})
-                txt = _text_blocks(msg).strip()
-                if txt:
-                    out.append(f"## ASSISTANT\n\n{txt}\n")
-                content = msg.get("content")
-                tools = (
-                    [
-                        name
-                        for b in content
-                        if isinstance(b, dict)
-                        and b.get("type") == "tool_use"
-                        and isinstance(name := b.get("name"), str)
-                        and name
-                    ]
-                    if isinstance(content, list)
-                    else []
-                )
-                names = [n for n in tools if isinstance(n, str) and n]
-                if names:
-                    out.append(f"_(tools: {', '.join(names)})_\n")
-            elif t == "response_item":
-                p = o.get("payload", {})
-                if p.get("type") == "message":
-                    role = p.get("role")
-                    content = p.get("content")
-                    txt = (
-                        " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
-                        if isinstance(content, list)
-                        else ""
-                    )
-                    if txt and role == "user":
-                        out.append(f"## USER\n\n{txt}\n")
-                    elif txt and role == "assistant":
-                        out.append(f"## ASSISTANT\n\n{txt}\n")
+            out.extend(_record_chunks(o))
     return "\n".join(out)
 
 
