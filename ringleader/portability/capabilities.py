@@ -9,6 +9,8 @@ from .compare import Normalization
 from .model import Conversation, Identity, PreservationError
 from .snapshot import SourceSnapshot
 
+CONFIGURATION_PAIR_LENGTH = 2
+
 
 @dataclass(frozen=True)
 class NativeRoots:
@@ -52,6 +54,10 @@ class Compatibility:
     diagnostics: tuple[str, ...]
     runtime_version: str | None = None
     schema_identity: str | None = None
+    target_configuration: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_configuration(self.target_configuration)
 
     def require(self) -> FormatProfile:
         if not self.supported or self.profile is None:
@@ -111,6 +117,22 @@ class TargetRequest:
     roots: NativeRoots
     profile: FormatProfile
     title: str
+    target_configuration: tuple[tuple[str, str], ...] = ()
+
+    def __post_init__(self) -> None:
+        _validate_configuration(self.target_configuration)
+
+
+def _validate_configuration(value: tuple[tuple[str, str], ...]) -> None:
+    if type(value) is not tuple or any(
+        type(item) is not tuple
+        or len(item) != CONFIGURATION_PAIR_LENGTH
+        or any(type(part) is not str or not part for part in item)
+        for item in value
+    ):
+        raise PreservationError("Target configuration requires nonempty string key/value pairs")
+    if len({item[0] for item in value}) != len(value):
+        raise PreservationError("Duplicate target configuration key")
 
 
 class DeepReader(Protocol):
@@ -147,6 +169,10 @@ class NativeRegistration(Protocol):
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool: ...
 
 
+class NativeIdentityAllocator(Protocol):
+    def allocate_identity(self) -> Identity: ...
+
+
 @dataclass(frozen=True)
 class Adapter:
     agent: str
@@ -155,6 +181,7 @@ class Adapter:
     launcher: NativeLauncher | None = None
     registration: NativeRegistration | None = None
     index: NativeIndex | None = None
+    identity_allocator: NativeIdentityAllocator | None = None
 
 
 class AdapterRegistry:

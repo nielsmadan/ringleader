@@ -309,3 +309,154 @@ also delete the isolated source rollout after snapshot and retain its image byte
 No inherited credentials, hooks, extensions, external inference or tool execution
 are used. The run validates app-server views/model requests; interactive TUI
 rendering is not separately exercised.
+
+## OpenCode 1.18.30 (source/schema verified; native execution unverified)
+
+The `opencode-1.18.30-v1` adapter targets the legacy `session`/`message`/`part`
+graph in an already initialized native `opencode.db`. The pinned sources are
+[the v1 schema](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/schema/src/v1/session.ts),
+[the model-context builder](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/opencode/src/session/message-v2.ts),
+[generated SQL](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/database/schema.gen.ts),
+[the migration journal](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/database/migration.gen.ts),
+and [native project resolution](https://github.com/anomalyco/opencode/blob/v1.18.30/packages/core/src/project.ts).
+The tool state schema declares `status: Schema.Literal("error")`; the adapter
+preserves these completed error results as `ToolResult.is_error=True` with their
+full error strings. Pending/running tools are incomplete and rejected.
+
+The exact fresh native schema fixture in
+`tests/portability/opencode-1.18.30.json` contains all 37 generated CREATE statements
+(including the native migration table) and all 38 migration IDs. The writer gate
+hashes the full SQLite schema, normalizing SQL whitespace, and the sorted migration
+IDs. The supported identity is
+`opencode-1.18.30:4e1c29893bede253e37904f6e62e09cd5c82bc37da02c7c147f665c6bd1dbbf9`.
+An upgraded database with extra historical migration tables, another channel's
+schema, missing migrations, or unknown tables fails this strict profile. The
+adapter never initializes or migrates a live database. Source compatibility uses
+this pinned graph/schema profile independently of the installed executable version.
+
+`NativeRoots.store` is the native `opencode` data directory, and `source_ref` is
+`opencode.db`. The source reader first takes a stable bounded DB/WAL copy, then uses one explicit
+SQLite read transaction across
+the selected session, project reference, messages, parts, and V2 presence checks.
+It checks native ownership and parent references and snapshots local file bytes
+with bounded identity/change checks while that transaction remains open. The
+result owns attachment bytes. Target staging embeds supported images/PDFs as data
+URLs, so removing the source store does not break the new history. Schema
+preflight reads stable copies of the database and WAL in temporary storage, so it
+does not create source or target WAL/SHM sidecars. Staging is pure and returns an opaque DB
+payload, with no published files.
+
+Supported shared content includes nonempty ordered user/assistant prose,
+historical instructions explicitly labeled as history, completed JSON-object tool
+calls followed by one contiguous result message in call order, successful outputs
+with images/PDFs, and completed error outputs without attachments. Tool results
+require one text block followed by any attachments. Full output strings are never
+truncated. Source reasoning and recognized accounting/snapshot/patch telemetry are
+excluded; unknown conversational fields fail. Native text marked `synthetic` is
+preserved as authored text unless a structural native compaction part identifies
+its role. Original timestamps and provenance survive in verified structural
+annotations, while new sessions have fresh sortable native IDs, current creation
+and recency, and zero fabricated usage.
+
+Native tool parts store a call and result together. The reader represents their
+ordered calls and matching results as assistant/tool messages; the writer checks
+this grouping against actual native parts. Session metadata carries only the
+original provenance, timestamps, historical instruction/omission labels and
+structural message boundaries. It does not contain a canonical replay copy that
+could conceal missing native output. Mutating a labeled historical instruction or
+an annotated native timestamp fails readback. The writer compares full canonical
+history and active context before returning a stage.
+
+Native compaction reading preserves the mandatory user context prompt and assistant
+summary, then reorders the retained tail for model context. The pinned builder's
+literal prompt is `What did we do so far?`. Writing a checkpoint requires that
+native question/summary pair to already exist adjacently in visible history and
+its retained tail to be a contiguous preceding suffix. Arbitrary summaries,
+independent retained context, and `following_context` cannot be represented by this
+writer and fail explicitly. Plain deterministic compact histories roundtrip;
+compact transforms that produce an independent checkpoint require another target.
+
+The following native states also fail specifically before publication: session
+revert; active V2 `session_message`, `session_input`, or `session_context_epoch`
+rows; ongoing compaction; incomplete assistant turns; assistant errors/aborts;
+ignored text; empty conversational text; tool `time.compacted`; interrupted tool
+metadata; any other nonempty tool-state metadata; provider-sensitive part metadata; user `system` instructions; structured
+output; subtask/agent/retry parts; prose after tools within one native message;
+assistant file parts; text-file/directory transformations; remote attachments; and
+non-embedded tool attachments. Nonempty tool-state metadata is rejected because
+the native UI can render fallback shell output, edit diffs/diagnostics, patch files
+and question answers from it, independently of model output. No metadata key is
+currently allowlisted as irrelevant. This distinguishes ordinary source limitations from
+the smaller shared-supported conversion matrix. Attachment placement in actual
+model requests is provider dependent: the pinned source retains media in tool
+results for Anthropic/OpenAI, while other providers may extract a synthetic user
+media message. That runtime behavior has not been measured here.
+
+Project IDs follow native resolution: normalized origin remote hashed with SHA-1,
+then the existing common-directory `opencode` cache, then the lexically first root
+commit, then `global`. Non-git projects use the filesystem root as worktree.
+Registration resolves again and checks the staged identity; it never writes
+`.git/opencode`. A single `BEGIN IMMEDIATE` transaction inserts only the new
+project (when absent), session, messages and parts. Primary keys, ownership checks,
+foreign keys and the pinned schema guard prevent merging into existing graphs.
+A random ownership marker in session metadata plus immutable identity fields
+provides recovery evidence. Recovery acknowledges a graph already committed by
+this operation and leaves subsequent native renames, message edits and appended
+turns intact. A collision or missing marker fails; no rows are replaced or deleted.
+The optional adapter identity allocator supplies `ses_` IDs, and message/part IDs
+use the native sortable 12-hex/14-alphanumeric suffix shape.
+
+Target continuation requires an explicit native `provider/model`. The pinned
+prompt implementation says `if (current?.model)`, then selects that session model
+before falling back to historical user-message models. Accordingly, the new session
+and native user messages carry the resolved destination model. Historical assistant
+metadata is explicitly marked `ringleader-history`, never selected as fresh policy.
+Supported configuration precedence is `$XDG_CONFIG_HOME/opencode/config.json`, then
+`opencode.json`, then `opencode.jsonc`; all three must contain strict JSON when
+present. Actual JSONC comments, environment/file interpolation in the model,
+`OPENCODE_CONFIG`, `OPENCODE_CONFIG_CONTENT`, `OPENCODE_CONFIG_DIR`, automatic model
+discovery and any project `opencode.json`/`opencode.jsonc` or matching `.opencode/` config
+are unsupported, even when a project file is empty or contains no model. Home `.opencode` JSON/JSONC
+config, any `default_agent` key, nonempty global `agent`/`mode` definitions, and
+discovered `agent`/`agents`/`mode`/`modes` directories under native global, home or
+project config roots also fail. These definitions can select a different model
+before the stored session model is considered.
+`Compatibility.target_configuration` exposes the resolved provider/model;
+`TargetRequest.target_configuration` binds that inspection and makes configuration
+drift fail during staging. Resolution is scoped to each target's roots/cwd.
+Launch is `opencode --session <new-id>` in the destination cwd, with explicit
+HOME/XDG roots and `OPENCODE_DB` selecting the staged native database.
+
+The installed executable at `/Users/nielsmadan/.opencode/bin/opencode` was denied
+read access; `nono why --self` reported `path_not_granted`. Its version is unknown.
+No alternative executable was downloaded, copied or relocated. Unit tests and
+schema/source inspection establish the supported implementation, **not native
+runtime acceptance**. The following harness is provided for an authorized session
+with OpenCode **exactly 1.18.30**, Bun, and a clean official v1.18.30 source checkout
+whose dependencies are already installed:
+
+```sh
+uv run python scripts/smoke-portability-opencode.py \
+  --executable /absolute/path/to/opencode \
+  --native-source /absolute/path/to/official-opencode-v1.18.30 \
+  --evidence /absolute/new/opencode-evidence
+```
+
+It uses disposable HOME, XDG config/data/cache/state, TMP and cwd, with an allowlisted
+environment, no inherited credentials/plugins/hooks, disabled updates/model fetch,
+and no provider calls. Import/export/list validate native schema acceptance and
+cold discovery in separate CLI processes; a separate Bun invocation calls the
+pinned native `filterCompacted`/`toModelMessages` directly, with network fetch
+explicitly disabled. Its assertion compares the complete ordered model-message
+projection: roles, historical instruction and omission text, tool names/arguments,
+call/result identity, status and full outputs, user and successful-tool media
+bytes/MIME, and checkpoint exclusions/retained-tail order. The three cases are full,
+plain compact, and native retained-tail compaction. Only model-schema representation
+normalizations are accepted: text string versus one text block, embedded base64
+versus data URLs, and native omission of an empty text block when tool media exists.
+Native media filenames remain verified in import/export graph comparison; the
+context builder drops tool-media filenames. The harness also checks transactional registration through
+native export. Native import is used only on these disposable validation copies:
+its multi-commit/upsert behavior is unsuitable for final publication. The harness
+has only passed argument/compile checks here; native execution, TUI rendering and
+actual resumed provider request construction remain unverified.
