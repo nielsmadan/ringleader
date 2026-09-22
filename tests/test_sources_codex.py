@@ -7,6 +7,7 @@ from ringleader.sources.base import (
     NameApplyingSource,
     PickerHidingSource,
     RawRef,
+    SessionLaunchingSource,
     Source,
     WorkspaceRebindingSource,
 )
@@ -85,6 +86,7 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, NameApplyingSource)
     assert isinstance(src, PickerHidingSource)
     assert isinstance(src, WorkspaceRebindingSource)
+    assert isinstance(src, SessionLaunchingSource)
     assert src.name == "codex"
     assert src.capabilities == frozenset(
         {
@@ -93,6 +95,7 @@ def test_source_satisfies_protocol(tmp_path):
             "hides_from_picker",
             "shows_in_picker",
             "rebinds_workspace",
+            "launches_sessions",
         }
     )
 

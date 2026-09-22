@@ -157,6 +157,18 @@ class WorkspaceRebindingSource(Source, Protocol):
 
 
 @runtime_checkable
+class SessionLaunchingSource(Source, Protocol):
+    """A source whose agent can be re-entered at one of its own sessions, or started
+    fresh carrying an opening prompt. Both return argv whose first element is the
+    binary, never a shell string — and neither carries a directory, because every
+    agent resolves a session id relative to the directory it is launched in, so the
+    caller chdirs first."""
+
+    def resume_argv(self, session_id: str) -> tuple[str, ...]: ...
+    def launch_argv(self, prompt: str) -> tuple[str, ...]: ...
+
+
+@runtime_checkable
 class PickerShowingSource(Source, Protocol):
     """The inverse of `PickerHidingSource`: restore an entry the tool previously
     hid, so a session put back on disk becomes resumable again. `file_path` is the

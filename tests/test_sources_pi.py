@@ -2,7 +2,12 @@ import json
 from pathlib import Path
 
 import pytest
-from ringleader.sources.base import NameApplyingSource, RawRef, Source
+from ringleader.sources.base import (
+    NameApplyingSource,
+    RawRef,
+    SessionLaunchingSource,
+    Source,
+)
 from ringleader.sources.pi import PiSource
 
 SESSION_ID = "019f9b5d-a83f-7f7f-aae9-b65fc6f1a65a"
@@ -32,8 +37,11 @@ def test_source_satisfies_protocol(tmp_path):
 
     assert isinstance(source, Source)
     assert isinstance(source, NameApplyingSource)
+    assert isinstance(source, SessionLaunchingSource)
     assert source.name == "pi"
-    assert source.capabilities == frozenset({"applies_names", "filesystem_lifecycle"})
+    assert source.capabilities == frozenset(
+        {"applies_names", "filesystem_lifecycle", "launches_sessions"}
+    )
 
 
 def test_discover_finds_sessions_and_excludes_nested_subagents(tmp_path):

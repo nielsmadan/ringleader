@@ -147,6 +147,7 @@ class CodexSource:
                 "hides_from_picker",
                 "shows_in_picker",
                 "rebinds_workspace",
+                "launches_sessions",
             }
         )
     )
@@ -162,6 +163,12 @@ class CodexSource:
     @property
     def root(self) -> Path:
         return self.sessions_dir
+
+    def resume_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("codex", "resume", session_id)
+
+    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+        return ("codex", prompt)
 
     def _session_index_path(self) -> Path:
         if self.session_index_file is None:

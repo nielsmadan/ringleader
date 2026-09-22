@@ -42,7 +42,12 @@ class ClaudeCodeSource:
     name: str = "claude-code"
     capabilities: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            {"applies_names", "filesystem_lifecycle", "relocates_workspace"}
+            {
+                "applies_names",
+                "filesystem_lifecycle",
+                "relocates_workspace",
+                "launches_sessions",
+            }
         )
     )
 
@@ -52,6 +57,12 @@ class ClaudeCodeSource:
     @property
     def root(self) -> Path:
         return self.projects_dir
+
+    def resume_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("claude", "--resume", session_id)
+
+    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+        return ("claude", prompt)
 
     def storage_for(self, cwd: str) -> Path:
         return self.projects_dir / slugify(normalize(cwd))

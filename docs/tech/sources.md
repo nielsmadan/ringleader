@@ -59,6 +59,7 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 | `PickerShowingSource` | `shows_in_picker` | `show_in_picker()` |
 | `WorkspaceRelocatingSource` | `relocates_workspace` | `storage_for()`, `relocate_storage()`, `relocate_session()` |
 | `WorkspaceRebindingSource` | `rebinds_workspace` | `rebind_workspace()` |
+| `SessionLaunchingSource` | `launches_sessions` | `resume_argv()`, `launch_argv()` |
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
@@ -83,6 +84,14 @@ and records the workspace in a `cwd` column of its state db, which `codex resume
 picker on — so a move relocates nothing and rewrites that one entry instead. Nothing can collide
 and no transcript path changes, which is why it is a separate protocol rather than a branch
 inside the relocating one. Miss it and the session stays reachable only by its id.
+
+**Session launching** is what `rl resume` dispatches through. `resume_argv()` re-enters an
+existing session; `launch_argv()` starts a fresh one carrying an opening prompt, which is how a
+cross-agent handoff seeds the target. Both return argv whose first element is the binary, and
+neither carries a directory — every agent resolves a session id relative to the directory it is
+launched in, so the caller chdirs first and a path in argv would be a second, conflicting answer.
+All four sources opt in, including OpenCode, whose read-only store does not stop its CLI being
+launched.
 
 All three index writers (`hide_from_picker`, `show_in_picker`, `rebind_workspace`) return an
 **`IndexUpdate`**, not a bool: `NO_INDEX` (this source keeps no index here) and `NO_ENTRY` (it

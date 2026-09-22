@@ -109,7 +109,9 @@ class PiSource:
     tail_turns: int = 30
     name: str = "pi"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"applies_names", "filesystem_lifecycle"})
+        default_factory=lambda: frozenset(
+            {"applies_names", "filesystem_lifecycle", "launches_sessions"}
+        )
     )
 
     def __post_init__(self) -> None:
@@ -118,6 +120,12 @@ class PiSource:
     @property
     def root(self) -> Path:
         return self.sessions_dir
+
+    def resume_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("pi", "--session", session_id)
+
+    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+        return ("pi", prompt)
 
     def discover(self) -> Iterator[RawRef]:
         if not self.sessions_dir.exists():

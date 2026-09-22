@@ -229,7 +229,7 @@ class OpenCodeSource:
     tail_turns: int = 30
     name: str = "opencode"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"renders_conversation"})
+        default_factory=lambda: frozenset({"renders_conversation", "launches_sessions"})
     )
 
     def __post_init__(self) -> None:
@@ -238,6 +238,12 @@ class OpenCodeSource:
     @property
     def root(self) -> Path:
         return self.db_path
+
+    def resume_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("opencode", "--session", session_id)
+
+    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+        return ("opencode", "--prompt", prompt)
 
     def available(self) -> bool:
         try:
