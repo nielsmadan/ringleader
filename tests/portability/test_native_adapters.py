@@ -8,7 +8,7 @@ from ringleader.portability import native
 from ringleader.portability.adapters import builtin_adapters
 from ringleader.portability.capabilities import NativeRoots, RunResult, SourceRequest, TargetRequest
 from ringleader.portability.claude import PROFILE as CLAUDE_PROFILE
-from ringleader.portability.claude import ClaudeAdapter
+from ringleader.portability.claude import ClaudeAdapter, _images
 from ringleader.portability.claude import read as read_claude
 from ringleader.portability.compare import compare
 from ringleader.portability.model import (
@@ -69,7 +69,7 @@ def shared():
             Message(
                 "3",
                 "tool",
-                (ToolResult("call", (Text("Error"), AttachmentRef("img")), True),),
+                (ToolResult("call", (Text("Image result"), AttachmentRef("img")), False),),
                 provenance,
             ),
             Message(
@@ -697,3 +697,72 @@ def test_unrepresentable_historical_time_is_not_silently_redated(adapter, profil
     original = replace(original, history=history, context=history)
     with pytest.raises(PreservationError, match="Cannot preserve native historical timestamp"):
         stage_for(adapter, profile, tmp_path, original)
+
+
+def test_claude_failed_images_refused_in_source_and_target(tmp_path):
+    original = shared()
+    history = tuple(
+        replace(
+            message,
+            content=tuple(
+                replace(item, is_error=True) if isinstance(item, ToolResult) else item
+                for item in message.content
+            ),
+        )
+        for message in original.history
+    )
+    with pytest.raises(PreservationError, match="strips failed tool-result images"):
+        stage_for(
+            ClaudeAdapter(),
+            CLAUDE_PROFILE,
+            tmp_path,
+            replace(original, history=history, context=history),
+        )
+    stage = stage_for(ClaudeAdapter(), CLAUDE_PROFILE, tmp_path)
+    rows = native.records(stage.files[0].data)
+    result = next(
+        row
+        for row in rows
+        if row.get("message", {}).get("content", [{}])[0].get("type") == "tool_result"
+    )
+    result["message"]["content"][0]["is_error"] = True
+    with pytest.raises(PreservationError, match="strips failed tool-result images"):
+        read_claude(native.jsonl(rows), stage.identity)
+
+
+def test_claude_textual_failure_and_successful_images_preserved(tmp_path):
+    original = shared()
+    extra = [
+        Message(
+            "error-call",
+            "assistant",
+            (ToolCall("error", "read", "{}", "json"),),
+            original.history[0].provenance,
+        ),
+        Message(
+            "error-result",
+            "tool",
+            (ToolResult("error", (Text("permission denied"),), True),),
+            original.history[0].provenance,
+        ),
+    ]
+    history = native.linked([*original.history, *extra])
+    original = replace(original, history=history, context=history)
+    stage = stage_for(ClaudeAdapter(), CLAUDE_PROFILE, tmp_path, original)
+    compare(
+        original, ClaudeAdapter().read_stage(stage), ClaudeAdapter().normalizations(CLAUDE_PROFILE)
+    )
+    rows = native.records(stage.files[0].data)
+    images = [image for row in rows for image in _images(row.get("message", {}).get("content"))]
+    assert [set(image) for image in images] == [{"type", "source"}, {"type", "source"}]
+    assert ClaudeAdapter().read_stage(stage).attachments[0].name == "capture.png"
+
+
+@pytest.mark.parametrize("field,value", [("sha256", "0" * 64), ("media_type", "image/jpeg")])
+def test_claude_attachment_annotations_validate_native_bytes_and_mime(tmp_path, field, value):
+    stage = stage_for(ClaudeAdapter(), CLAUDE_PROFILE, tmp_path)
+    rows = native.records(stage.files[0].data)
+    first = next(row for row in rows if row.get("ringleaderAttachments"))
+    first["ringleaderAttachments"][0][field] = value
+    with pytest.raises(PreservationError, match="disagrees with native bytes or MIME"):
+        read_claude(native.jsonl(rows), stage.identity)

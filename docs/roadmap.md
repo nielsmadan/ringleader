@@ -9,22 +9,20 @@ Hooklinesinker and Ringleader's presence client are implemented. `rl data presen
 provides installation, status, and scoped uninstallation; `rl doctor` reports presence health.
 The client reads Hooklinesinker's versioned CLI JSON and keeps its state files private.
 
-A verified `--running` session selector remains unimplemented. It will use the presence
-client's agent-qualified running-session IDs alongside Ringleader's transcript discovery.
+Verified `--running` selection is implemented for session conversion. See
+[session portability](features/session-portability.md) for current behavior.
 
-## Cross-agent session portability
+## Broader native session compatibility
 
-The proposed portability layer converts native agent sessions through one versioned canonical conversation model rather than pairwise converters.
-Independent adapter capabilities would cover conversation reading, native writing, launching, and relocation for Claude Code, Codex, OpenCode, and Pi.
-
-The design includes out-of-place conversion, same- or cross-agent forks, deterministic compact conversion, resume and handoff commands, lineage, staged round-trip validation, and per-session transactional publication.
-It excludes hidden model reasoning, cache state, token accounting, and re-execution of historical tool calls.
-
-The canonical model, the four adapters, and the conversion, fork, and lineage commands remain
-unimplemented. `rl resume` now exists, but it is not the command this design describes: it
-re-enters a session through the agent's own resume verb, and its `--to` is a seeded handoff
-rather than a native conversion — see
+Conversion, compact conversion, forks, resume, handoff, lineage, and durable
+publication are implemented under `rl session` for pinned profiles. The top-level
+`rl resume --to` still uses a seeded Markdown handoff, as described in
 [ADR 0011](decisions/0011-seeded-handoff-over-native-conversion.md).
+Future work includes additional
+native versions/schemas, more ordinary conversational shapes, broader OpenCode
+configuration, and independent OpenCode runtime validation. The current strict
+limitations and evidence tiers are in the
+[native reference](reference/session-portability-native.md).
 
 ## Transactional native relocation
 

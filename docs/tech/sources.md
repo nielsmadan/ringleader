@@ -167,3 +167,13 @@ quirk nobody anticipated means adding a protocol rather than widening every impl
 - [reference/agent-session-management.md](../reference/agent-session-management.md) — the
   external behavior these protocols model, verified per agent and version
 - [registry.md](registry.md) — how `NormalizedSession` lands in state
+
+## Deep session portability
+
+`Source` remains the cheap discovery/metadata seam. Full conversations, native
+writers, launch argv, roots, index publication and database registration live in
+independent capabilities under `portability/`; they are resolved by its adapter
+registry. OpenCode source locators may point at copied schema-compatible databases
+without weakening target publication layout rules. See
+[session portability internals](session-portability.md) and
+[verified external formats](../reference/session-portability-native.md).

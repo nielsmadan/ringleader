@@ -217,7 +217,7 @@ rl session convert --open --to <agent> [--from <agent>] [--workspace <path>]
 rl session convert --running --to <agent> [--from <agent>] [--workspace <path>]
 rl session fork <id> [--to <agent>] [--compact] [--resume] [--json]
 rl session handoff <id> --to <agent> [--compact] [--json]
-rl session resume <id>
+rl session resume <id> [--json]
 rl session lineage <id> [--json]
 rl data transaction list [--json]
 rl data transaction resume <transaction-id> [--json]
@@ -252,7 +252,9 @@ and deleted sessions cannot be resumed.
 
 `--dry-run`, lineage, transaction listing, and the conversion sections of `rl doctor`
 do not write registry, journals, or native stores. Version probes use disposable
-roots. Doctor reports writer compatibility and unfinished conversion journals.
+roots. Doctor reports writer compatibility for its current cwd/native roots and unfinished
+conversion journals; success there does not establish compatibility in another
+workspace. Batch preflight resolves each source workspace separately.
 OpenCode's initial profile is schema-backed, with native runtime smoke explicitly
 unverified; it requires an initialized compatible database and supported explicit
 model configuration. Other adapters require their verified native versions.
@@ -261,8 +263,19 @@ Transaction resume performs forward recovery. Rollback removes only provably
 private staging and refuses after external publication may have occurred. Use the
 transaction ID printed by conversion or `rl data transaction list`.
 
-All these commands accept `--registry PATH` and `--operations PATH` to select
-ringleader state. Native roots follow `HOME` and `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
+All these commands accept `--json`, `--registry PATH` (default
+`$XDG_DATA_HOME/ringleader/registry.json`, or `~/.local/share/ringleader/registry.json`),
+and `--operations PATH` (default `conversion/` under the ringleader data directory,
+independent of a `--registry` override). JSON controls rl's
+output; a successful resume then hands output to the native CLI. `--compact` defaults
+off; `--dry-run` exists only on convert and defaults off. Convert requires `--to`;
+fork defaults `--to` to the source agent and defaults `--resume` off; handoff requires
+`--to` and always launches. Convert's `--from` and `--workspace` filters apply with
+any selector, and its `--compact`, `--dry-run`, and `--json` flags apply to all batch
+forms. Lineage requires an ID; transaction resume/rollback require an exact operation
+ID, while transaction list takes no positional arguments.
+
+Native roots follow `HOME` and `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
 `XDG_DATA_HOME`, `XDG_STATE_HOME`, and `TMPDIR`, with their native defaults. Agent
 stores follow `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `PI_CODING_AGENT_DIR`.
 Scanner overrides `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, and

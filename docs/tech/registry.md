@@ -54,6 +54,7 @@ APIs release the lock on failure. `persist=False` refreshes create no file or lo
 | `threads` | live sessions — the working set |
 | `archived` | archived sessions, each with the full thread record for restore |
 | `deleted` | tombstones for transcripts that are gone |
+| `conversionLineage` | authoritative operation-keyed source/target conversion and fork relations |
 | `memoryEntries` | the memory track's parallel working set |
 | `projectsCleanedAt` / `memoryProjectsCleanedAt` | per-project "last triaged" stamps |
 | `lastScan` / `lastRoundupAt` | staleness signals, used by `rl inbox` to decide whether to roundup |
@@ -82,6 +83,11 @@ editing:
   `appliedName`, `decision`, `harvestPath`, `tags`, plus the lifecycle stamps
   (`snoozedAt`, `keptAt`, `finishOnExit`, `selectedForDay`, `reviewedAtMtime`,
   `classifiedAtMtime`, `namedAtMtime`) and `locationPinned`. **Never overwritten by a scan.**
+
+Conversion fields `lineage` and `nativeRoots` are preserved by scans and lifecycle
+transitions. `conversionLineage` retains relationships even after target deletion;
+operation journals under `conversion/` supply recovery evidence. See
+[session portability](session-portability.md).
 
 A new thread starts at `status: "unclassified"` with the judgment fields empty.
 

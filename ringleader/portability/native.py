@@ -92,6 +92,12 @@ def linked(messages: list[Message] | tuple[Message, ...]) -> tuple[Message, ...]
     )
 
 
+def same_messages(left: tuple[Message, ...], right: tuple[Message, ...]) -> bool:
+    return tuple(replace(item, id="", parent_id=None) for item in left) == tuple(
+        replace(item, id="", parent_id=None) for item in right
+    )
+
+
 def timestamp(value: Any, provenance: Provenance) -> HistoricalTimestamp | None:
     return HistoricalTimestamp(str(value), provenance) if value is not None else None
 
@@ -307,11 +313,11 @@ def emit_blocks(
                     f"{dialect} cannot import attachment media type {asset.media_type}"
                 )
             data = base64.b64encode(asset.data).decode()
-            block: dict[str, Any] = {"type": "image", "ringleaderName": asset.name}
+            block: dict[str, Any] = {"type": "image"}
             if dialect == "claude":
                 block["source"] = {"type": "base64", "media_type": asset.media_type, "data": data}
             else:
-                block.update(data=data, mimeType=asset.media_type)
+                block.update(data=data, mimeType=asset.media_type, ringleaderName=asset.name)
             output.append(block)
         elif isinstance(item, ToolCall):
             if item.argument_format != "json" or not isinstance(json.loads(item.arguments), dict):

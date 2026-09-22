@@ -354,8 +354,8 @@ class PiAdapter:
             raise PreservationError("Unverified Pi writer profile")
         if not conversation.history:
             raise PreservationError("Pi requires a nonempty conversation")
-        if not conversation.checkpoints and native.linked(conversation.context) != native.linked(
-            conversation.history
+        if not conversation.checkpoints and not native.same_messages(
+            conversation.context, conversation.history
         ):
             raise PreservationError(
                 "Pi cannot represent distinct history/context without a checkpoint"

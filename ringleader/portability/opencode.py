@@ -391,6 +391,10 @@ def _restore_message(message: Message, descriptor: Any) -> Message:
         result.provenance.source.agent == "opencode"
         and result.provenance.evidence.startswith(TOOL_TIME_EVIDENCE)
         and result.provenance.evidence != message.provenance.evidence
+        and not (
+            any(isinstance(item, ToolOmission) for item in result.content)
+            and not any(isinstance(item, ToolCall | ToolResult) for item in result.content)
+        )
     ):
         raise PreservationError("OpenCode original tool timestamps disagree with native state")
     if result.timestamp is not None and native.historical_time(

@@ -14,6 +14,8 @@ with [Agent setup](agent-setup.md).
 
 ## Guides
 
+- [Converting and continuing sessions](session-portability.md) — native conversion, forks,
+  handoff, compatibility, and recovery.
 - [The triage workflow](triage-workflow.md) — the recurring loop: what to look at, what to
   decide, and how to park what you're not deciding yet.
 - [Finishing a session](finishing-a-session.md) — harvesting from inside a live session, and why

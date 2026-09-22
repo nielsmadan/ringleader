@@ -8,7 +8,9 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 from dataclasses import replace
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from uuid import uuid4
 
@@ -26,6 +28,7 @@ from ringleader.portability.model import (
     Identity,
     Instruction,
     Message,
+    PreservationError,
     Provenance,
     Text,
     ToolCall,
@@ -80,7 +83,7 @@ assert(context[0].content[0].text.includes(compact === 'yes' ? 'checkpoint summa
 assert(context[1].role === 'assistant' && context[1].content[1].type === 'toolCall', 'native model tool call');
 assert(context[1].content[1].arguments.path === 'example.txt', 'native model tool arguments');
 assert(context[2].role === 'toolResult' && context[2].toolCallId === context[1].content[1].id, 'native model tool pairing');
-assert(context[2].isError === true && context[2].content[0].text === 'read failed', 'native error semantics');
+assert(context[2].isError === false && context[2].content[0].text === 'read failed', 'native error semantics');
 assert(context[2].content[1].data === process.env.SMOKE_IMAGE, 'native model owned tool image');
 assert(context[3].content[0].text === 'Final answer', 'native context order');
 assert(historical[1].usage.totalTokens === 0, 'zero imported usage');
@@ -93,9 +96,11 @@ assert(payload.messages[0].content[0].text.includes(compact === 'yes' ? 'checkpo
 if (compact === 'no') assert(payload.messages[0].content[2].source.data === process.env.SMOKE_IMAGE, 'provider user image');
 assert(payload.messages[1].content[1].type === 'tool_use' && payload.messages[1].content[1].input.path === 'example.txt', 'provider tool call');
 const providerResult = payload.messages[2].content[0];
-assert(providerResult.type === 'tool_result' && providerResult.tool_use_id === payload.messages[1].content[1].id && providerResult.is_error, 'provider matched error result');
+assert(providerResult.type === 'tool_result' && providerResult.tool_use_id === payload.messages[1].content[1].id && providerResult.is_error === false, 'provider matched error result');
 assert(providerResult.content[1].source.data === process.env.SMOKE_IMAGE, 'provider tool image');
 assert(payload.messages[3].content[0].text === 'Final answer', 'provider answer order');
+const failed = await payloadFor(context.map(x => x.role === 'toolResult' ? {...x,isError:true} : x));
+assert(failed.messages[2].content[0].is_error === true && failed.messages[2].content[0].content[1].source.data === process.env.SMOKE_IMAGE, 'Pi failed tool image preserved');
 const plainUser = {role:'user',content:'question',timestamp:1577934245000};
 const plainAssistant = {...historical[3]};
 for (const stopReason of ['aborted','error']) {
@@ -154,11 +159,11 @@ call = messages[1].message['content'][1]
 assert call['type'] == 'tool_use' and call['name'] == 'read' and call['input'] == {'path':'example.txt'}
 result = messages[2].message['content'][0]
 assert result['type'] == 'tool_result' and result['tool_use_id'] == call['id']
-assert result['is_error'] is True and result['content'][0]['text'] == 'read failed'
+assert result['is_error'] is False and result['content'][0]['text'] == 'read failed'
 assert result['content'][1]['source']['data'] == os.environ['SMOKE_IMAGE']
 assert messages[3].message['content'][0]['text'] == 'Final answer'
 assert messages[1].message['usage'] == {'input_tokens':0,'output_tokens':0}
-print(json.dumps({'native':'Claude SDK v0.2.156','active_visible_chain':len(messages),'picker':True,'cli_model_context':'not probed','historicalTimestamps':True,'freshCreationAndRecency':True}))
+print(json.dumps({'native':'Claude SDK v0.2.156','active_visible_chain':len(messages),'picker':True,'evidence_scope':'SDK picker and history only','historicalTimestamps':True,'freshCreationAndRecency':True}))
 """
 
 
@@ -186,7 +191,7 @@ def fixture() -> Conversation:
             Message(
                 "result",
                 "tool",
-                (ToolResult("read-id", (Text("read failed"), AttachmentRef("image")), True),),
+                (ToolResult("read-id", (Text("read failed"), AttachmentRef("image")), False),),
                 provenance,
             ),
             Message("answer", "assistant", (Text("Final answer"),), provenance),
@@ -312,6 +317,10 @@ def smoke_case(base, adapter, profile, original, compact, options):
             agent,
             {"PYTHONPATH": str(options.claude_sdk), "SMOKE_IMAGE": PNG},
         )
+    if agent == "claude-code":
+        payloads = claude_payload(stage, compact, options.claude, options.evidence)
+    else:
+        payloads = None
     assert path.read_bytes() == stage.files[0].data
     launch = adapter.launch_request(identity, roots)
     assert launch.cwd == roots.cwd
@@ -320,17 +329,175 @@ def smoke_case(base, adapter, profile, original, compact, options):
         "--session" if agent == "pi" else "--resume",
         identity.native_id,
     )
-    return {"agent": agent, "compact": compact, "result": json.loads(output)}
+    return {
+        "agent": agent,
+        "compact": compact,
+        "result": json.loads(output),
+        "native_payloads": payloads,
+    }
+
+
+def claude_payload(stage, compact, executable, evidence):
+    results = []
+    for variant in ("success-image", "textual-failure", "failed-image-negative"):
+        base = evidence / f"claude-{compact}-{variant}"
+        roots = isolated_roots(base)
+        rows = native.records(stage.files[0].data)
+        if variant != "success-image":
+            for row in rows:
+                for block in row.get("message", {}).get("content", []):
+                    if block.get("type") == "tool_result":
+                        block["is_error"] = True
+                        if variant == "textual-failure":
+                            block["content"] = block["content"][:1]
+                            row["ringleaderAttachments"] = []
+        data = native.jsonl(rows)
+        if variant == "failed-image-negative":
+            try:
+                ClaudeAdapter().read_stage(
+                    replace(stage, files=(replace(stage.files[0], data=data),))
+                )
+            except PreservationError as exc:
+                assert "strips failed tool-result images" in str(exc)
+            else:
+                raise AssertionError("Failed-image source was accepted")
+        path = roots.store / stage.source_ref
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        (base / "staged-original.jsonl").write_bytes(data)
+        captures = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self, captures=captures):
+                body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+                captures.append({"path": self.path, "body": body})
+                response = json.dumps(
+                    {
+                        "type": "error",
+                        "error": {
+                            "type": "invalid_request_error",
+                            "message": "offline capture complete",
+                        },
+                    }
+                ).encode()
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(response)))
+                self.end_headers()
+                self.wfile.write(response)
+
+            def log_message(self, *args):
+                pass
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        environment = {
+            "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+            "LANG": "en_US.UTF-8",
+            **dict(native.env(roots, "claude-code")),
+            "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{server.server_port}",
+            "ANTHROPIC_API_KEY": "offline-not-a-credential",
+            "CLAUDE_CODE_SIMPLE": "1",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "CLAUDE_CODE_DISABLE_OFFICIAL_MARKETPLACE_AUTOINSTALL": "1",
+        }
+        argv = [
+            executable,
+            "--bare",
+            "--print",
+            "--resume",
+            stage.identity.native_id,
+            "--model",
+            "claude-sonnet-4-5",
+            "--tools",
+            "",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--settings",
+            '{"disableAllHooks":true}',
+            "--setting-sources",
+            "",
+            "--no-chrome",
+            "--disable-slash-commands",
+            "OFFLINE_CAPTURE_ONLY",
+        ]
+        try:
+            result = subprocess.run(
+                argv,
+                cwd=roots.cwd,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                check=False,
+            )
+        finally:
+            server.shutdown()
+            thread.join(timeout=5)
+            server.server_close()
+        (base / "stdout.txt").write_text(result.stdout)
+        (base / "stderr.txt").write_text(result.stderr)
+        (base / "requests.json").write_text(json.dumps(captures, indent=2))
+        assert result.returncode == 1 and "offline capture complete" in result.stdout, (
+            result.stdout,
+            result.stderr,
+        )
+        assert len(captures) == 1 and captures[0]["path"].startswith("/v1/messages")
+        messages = captures[0]["body"]["messages"]
+        assert [m["role"] for m in messages] == ["user", "assistant", "user", "assistant", "user"]
+        first = messages[0]["content"]
+        assert first[0]["text"] == ("checkpoint summary" if compact else "Keep original history")
+        if not compact:
+            assert first[2] == {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": PNG},
+            }
+        call = messages[1]["content"][1]
+        assert (
+            call["type"] == "tool_use"
+            and call["name"] == "read"
+            and call["input"] == {"path": "example.txt"}
+        )
+        tool = messages[2]["content"][0]
+        assert tool["tool_use_id"] == call["id"] and tool["is_error"] == (
+            variant != "success-image"
+        )
+        if variant == "success-image":
+            assert tool["content"] == [
+                {"type": "text", "text": "read failed"},
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/png", "data": PNG},
+                },
+            ]
+        else:
+            assert tool["content"] in ([{"type": "text", "text": "read failed"}], "read failed")
+        assert messages[3]["content"][0]["text"] == "Final answer"
+        assert (base / "staged-original.jsonl").read_bytes() == data
+        results.append(
+            {
+                "variant": variant,
+                "checkpoint": compact,
+                "payload": True,
+                "expected_http_error": result.returncode,
+            }
+        )
+    return results
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--evidence", required=True, type=Path)
     parser.add_argument("--pi-module", required=True, type=Path)
     parser.add_argument("--claude-sdk", required=True, type=Path)
     parser.add_argument("--node", default=shutil.which("node"))
     parser.add_argument("--claude", default=shutil.which("claude"))
     parser.add_argument("--pi", default=shutil.which("pi"))
     options = parser.parse_args()
+    options.evidence = options.evidence.resolve()
+    options.evidence.mkdir(parents=True, exist_ok=False)
     options.pi_module = options.pi_module.resolve()
     options.claude_sdk = options.claude_sdk.resolve()
     with tempfile.TemporaryDirectory(prefix="rl-native-smoke-") as temporary:

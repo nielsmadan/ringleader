@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import base64
 import re
 import unicodedata
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
+from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -23,6 +26,7 @@ from .capabilities import (
 from .compare import Normalization
 from .model import (
     Attachment,
+    AttachmentRef,
     Checkpoint,
     Conversation,
     Identity,
@@ -62,6 +66,79 @@ IGNORED = {
 SYSTEM_TELEMETRY = {"turn_duration", "api_error", "stop_hook_summary", "local_command"}
 
 
+def _images(blocks: Any) -> list[dict[str, Any]]:
+    if not isinstance(blocks, list):
+        return []
+    images = []
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        if block.get("type") == "image":
+            images.append(block)
+        elif block.get("type") == "tool_result":
+            images.extend(_images(block.get("content")))
+    return images
+
+
+def _attachment_annotations(
+    message: Message, assets: dict[str, Attachment]
+) -> list[dict[str, Any]]:
+    references = []
+    for item in message.content:
+        if isinstance(item, AttachmentRef):
+            references.append(item)
+        elif isinstance(item, ToolResult):
+            references.extend(part for part in item.output if isinstance(part, AttachmentRef))
+    return [
+        {
+            "sha256": sha256(assets[item.attachment_id].data).hexdigest(),
+            "media_type": assets[item.attachment_id].media_type,
+            "name": assets[item.attachment_id].name,
+        }
+        for item in references
+    ]
+
+
+def _content(row: dict[str, Any], message: dict[str, Any]) -> Any:
+    content = deepcopy(message.get("content"))
+    annotations = row.get("ringleaderAttachments")
+    if annotations is None:
+        return content
+    images = _images(content)
+    if not isinstance(annotations, list) or len(annotations) != len(images):
+        raise PreservationError("Invalid Claude attachment annotations")
+    for image, annotation in zip(images, annotations, strict=True):
+        if (
+            not isinstance(annotation, dict)
+            or set(annotation) != {"sha256", "media_type", "name"}
+            or not isinstance(annotation["name"], str | type(None))
+        ):
+            raise PreservationError("Invalid Claude attachment annotation")
+        source = image.get("source", {})
+        try:
+            digest = sha256(base64.b64decode(source["data"], validate=True)).hexdigest()
+        except (KeyError, ValueError, TypeError) as exc:
+            raise PreservationError("Invalid Claude annotated image") from exc
+        if annotation["sha256"] != digest or annotation["media_type"] != source.get("media_type"):
+            raise PreservationError(
+                "Claude attachment annotation disagrees with native bytes or MIME"
+            )
+        image["ringleaderName"] = annotation["name"]
+    return content
+
+
+def _reject_failed_images(message: Message) -> None:
+    if any(
+        isinstance(item, ToolResult)
+        and item.is_error
+        and any(isinstance(part, AttachmentRef) for part in item.output)
+        for item in message.content
+    ):
+        raise PreservationError(
+            "Claude 2.1.278 strips failed tool-result images from model context"
+        )
+
+
 def _message(row: dict[str, Any], identity: Identity, assets: list[Attachment]) -> Message:
     message = row.get("message")
     if not isinstance(message, dict) or message.get("role") != row["type"]:
@@ -76,10 +153,11 @@ def _message(row: dict[str, Any], identity: Identity, assets: list[Attachment]) 
     result = Message(
         row["uuid"],
         row["type"],
-        native.blocks(message.get("content"), assets, "claude"),
+        native.blocks(_content(row, message), assets, "claude"),
         provenance,
         timestamp=native.timestamp(row.get("timestamp"), provenance),
     )
+    _reject_failed_images(result)
     native.reject_assistant_images(result, "Claude")
     return native.restore(result, row)
 
@@ -331,8 +409,8 @@ class ClaudeAdapter:
             raise PreservationError("Unverified Claude writer profile")
         if not conversation.history:
             raise PreservationError("Claude requires a nonempty conversation")
-        if not conversation.checkpoints and native.linked(conversation.context) != native.linked(
-            conversation.history
+        if not conversation.checkpoints and not native.same_messages(
+            conversation.context, conversation.history
         ):
             raise PreservationError(
                 "Claude cannot represent distinct history/context without a checkpoint"
@@ -358,6 +436,7 @@ class ClaudeAdapter:
 
         def emit(message: Message, key: str, **extra: Any) -> None:
             nonlocal parent
+            _reject_failed_images(message)
             native.reject_assistant_images(message, "Claude")
             historical = (
                 native.historical_time(message, now_time).isoformat().replace("+00:00", "Z")
@@ -397,6 +476,7 @@ class ClaudeAdapter:
                     "version": "2.1.278",
                     "message": message_data,
                     "ringleader": native.message_annotations(message),
+                    "ringleaderAttachments": _attachment_annotations(message, assets),
                     **extra,
                 }
             )

@@ -120,6 +120,38 @@ A `<selector>` is a git-project label (`ringleader`) or a cwd path — **not** a
 
 → [Full CLI reference](docs/user/cli.md)
 
+## Continue a session in another agent
+
+```sh
+rl session refresh
+rl session convert pi:<id> --to claude --dry-run
+rl session convert pi:<id> --to claude
+rl session fork <id> --compact
+rl session handoff <id> --to codex
+rl session lineage <id>
+```
+
+Conversion preserves the source and creates a native target in the source's
+recorded workspace. A repeat reuses that result; `fork` always creates a new one.
+`handoff` forks and resumes. `--compact` deterministically replaces complete tool
+exchanges with explicit omission markers while keeping instructions and prose.
+`--open` selects visible open work; `--running` selects verified live sessions.
+Selection reads the registry without implicitly refreshing it.
+
+Support is pinned to Claude Code 2.1.278, Codex 0.155.1, Pi 0.85.1, and OpenCode's
+exact 1.18.30 v1 schema. Codex/OpenCode require initialized compatible databases;
+OpenCode also requires supported explicit model configuration, and its native
+runtime smoke remains unverified. Ordinary sessions with unsupported context,
+compaction, tools, or attachments fail explicitly. Preview first; `rl doctor`
+checks compatibility for its current workspace and native roots.
+
+After an interruption, use `rl data transaction list` and `resume <transaction-id>`.
+Rollback removes only private staging; published targets are recovered forward.
+Archived/deleted conversion results are reported rather than recreated. Workspace
+relocation remains `rl workspace move`/`retarget`.
+
+→ [Conversion workflow, limitations, and recovery](docs/user/session-portability.md)
+
 ## Live session presence
 
 Ringleader's presence commands report which agent sessions are live using

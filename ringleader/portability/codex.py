@@ -993,7 +993,10 @@ def _turn_starts(conversation: Conversation) -> set[str]:
             if message.provenance.source.agent == "codex" and evidence.startswith("codex-turn:")
             else None
         )
-        if not starts or (source_turn != previous if source_turn else message.role == "user"):
+        user_input = message.role == "user" and not all(
+            isinstance(part, ToolResult) for part in message.content
+        )
+        if not starts or (source_turn != previous if source_turn else user_input):
             if pending:
                 raise PreservationError(
                     "Codex historical tool exchange crosses a native turn boundary"

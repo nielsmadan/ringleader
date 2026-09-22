@@ -15,7 +15,7 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
 ## Sections
 
 - [user/](user/index.md): how-to guides for people running `rl` (first setup, the triage loop,
-  finishing sessions). README links here. Human-format; agents don't load these by default.
+  finishing and converting sessions). README links here. Human-format; agents don't load these by default.
 - [features/](features/overview.md): what each feature does, kept in sync with the code. The
   behavior reference for contributors and agents. Owned by the `doc` skill.
 - [tech/](tech/overview.md): module internals, the scan/reconcile data flow, and the
@@ -38,5 +38,5 @@ re-verified when a dependency moves, not when we change.
 ## A note on state
 
 Nothing under `docs/` describes machine-local state. `registry.json`, `archive/`, `harvests/`
-and `publish/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
+`publish/`, and `conversion/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
 are never committed — see [tech/registry.md](tech/registry.md).

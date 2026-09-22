@@ -10,6 +10,8 @@ go deeper, per subsystem.
 
 - [registry.md](registry.md) — `registry.py`: the one state file, its schema, the three
   field-refresh rules, and the reconcile contract.
+- [session-portability.md](session-portability.md) — deep adapters, canonical preservation,
+  snapshots, native publication, lineage, and forward recovery.
 - [sources.md](sources.md) — `sources/`: the `Source` protocol and the opt-in capability
   protocols that model each agent's quirks.
 - [scanning-and-refresh.md](scanning-and-refresh.md) — `scanner.py`, `refresh.py`, `gitinfo.py`,
@@ -60,9 +62,11 @@ read path over the same transcript files or database rows for token accounting.
   (`~/.local/share/ringleader/`, or `$XDG_DATA_HOME/ringleader`). `paths.py` is the only module
   that knows where anything lives; `ensure_state_dir()` is the write-path accessor, and the
   plain accessors deliberately do not create directories as a side effect.
-- **Anything that edits a file we don't own goes through `safe_write` / `stateio`.** Back up,
-  preserve mode, replace atomically, and preview a diff before writing. That covers the registry
-  itself, agent settings files, and the status line.
+- **Configuration edits use `safe_write` / `stateio`.** Back up, preserve mode, replace
+  atomically, and preview changes to agent settings and the status line. Registry writes
+  use locked bounded mutations. Native session publication has a different contract:
+  create-only files, append-only name indexes, schema-gated SQL inserts, and durable
+  intents. Never replace a shared native database or truncate an index for rollback.
 - **Destructive verbs preview by default.** `prune` and `mem prune` require `--delete`;
   `workspace move` confirms; installers show a diff. The flag is the action, not the preview.
 

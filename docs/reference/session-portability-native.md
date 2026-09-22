@@ -25,7 +25,9 @@ agent to load current destination project instructions. Version preflight uses
 separate disposable roots, never the destination store. The smoke runner uses a
 complete allowlisted environment with PATH, locale, disposable roots, and its
 explicit probe inputs; it inherits no authentication, native settings, hooks, or
-extensions. There are no provider requests.
+extensions. Actual Claude/Codex request capture terminates at a loopback HTTP mock
+before inference; Pi intercepts the provider payload before transport. No external
+provider requests or real tool execution occur.
 
 ## Claude Code
 
@@ -48,7 +50,12 @@ The writer emits fresh session/message IDs, current session metadata, a tail
 blocks, and embedded base64 images in user/tool-result content. Assistant image
 blocks are rejected in both reader and writer: the pinned SDK v0.2.156
 `types.py` assistant `ContentBlock` union contains text, thinking, and tool blocks,
-with no image member. Actual Claude CLI context remains unprobed.
+with no image member. Actual Claude 2.1.278 bare-mode request capture independently
+establishes supported resumed history. Failed tool-result images are stripped by
+the native CLI; reader and writer explicitly reject that shape. Successful result
+images and textual failures survive. This distinction holds with and without a
+compaction checkpoint. Bare mode disables automatic CLAUDE.md discovery, so it does
+not establish normal-mode project instruction loading.
 
 Historical message times remain in each native message row. A leading
 `custom-title` metadata record carries the current import time; the SDK therefore
@@ -130,47 +137,103 @@ Historical timezone-bearing ISO times and Pi/OpenCode epoch milliseconds are als
 written into native message timestamps. Unrepresentable historical values fail
 instead of silently becoming import time. Messages without source times use the
 current time.
-Attachment names accompany target-owned image bytes. The only comparison
-normalization is JSON tool-argument whitespace.
+Claude attachment names live in per-row `ringleaderAttachments` annotations,
+separate from provider `message.content`. Each annotation binds its positional
+image to the SHA-256 of the actual native bytes and its MIME type; readback verifies
+both before restoring the name. Native provider image blocks contain only `type`
+and `source`, never `ringleaderName`. Pi retains its native image annotation, while
+its independently captured provider transform reconstructs clean image blocks.
+The only content normalization is JSON tool-argument whitespace; regenerated
+message IDs/parent references do not change ordered message semantics.
 
 ## Repeatable native verification
 
 Install the pinned SDK into a disposable validation directory (no project runtime
-dependency), then run from this checkout:
+dependency), then run from this checkout. The Pi path below is resolved from the
+installed package layout used by the measured 0.85.1 npm installation:
 
 ```sh
-uv pip install --target "$validation_dir" claude-agent-sdk==0.2.156
+validation_root="$(mktemp -d "${TMPDIR:-/tmp}/rl-native.XXXXXX")"
+pi_package="$(python3 -c 'from pathlib import Path; import shutil; print(Path(shutil.which("pi")).resolve().parent.parent / "@earendil-works/pi-coding-agent")')"
+claude_executable="$(python3 -c 'from pathlib import Path; import shutil; print(Path(shutil.which("claude")).resolve())')"
+uv pip install --target "$validation_root/sdk" claude-agent-sdk==0.2.156
 uv run python scripts/smoke-portability-native.py \
-  --claude-sdk "$validation_dir" \
-  --pi-module "$pi_package/dist/core/session-manager.js"
+  --claude "$claude_executable" \
+  --claude-sdk "$validation_root/sdk" \
+  --pi-module "$pi_package/dist/core/session-manager.js" \
+  --evidence "$validation_root/evidence"
 ```
 
-Optional `--claude`, `--pi`, and `--node` arguments select executable paths.
-All native probes run on disposable copies, with isolated HOME, native roots,
-XDG directories, TMPDIR, and cwd. The isolated source store is deleted before
-probing target bytes. The smoke asserts that native reads did not change those
-bytes. It verifies plain and checkpoint sessions separately.
+Optional `--pi` and `--node` arguments select executable paths. The actual installed
+Claude binary is used, without an authentication wrapper. The harness validates
+both versions/help, deletes the isolated source store before probing target bytes,
+and preserves frozen stage originals. Native sessions run on separate disposable
+copies with isolated HOME/native/XDG/config/cache/state/TMP/cwd and an allowlisted
+environment. The evidence directory contains synthetic request captures and
+stdout/stderr; remove that disposable directory when no longer needed.
 
-Measured result: both installed CLIs passed version/help probes. The pinned
-Claude SDK independently found both picker titles and read each four-message
-active visible chain, including actual tool calls/results, errors, and image bytes.
-Its chain reader deliberately excludes the earlier logical-parent history.
-This is **not proof of the Claude CLI's resumed model context**; that probe remains
-unrun. Pi's installed `SessionManager` independently listed both targets, read all
-four historical messages, and rebuilt each four-message model context through
-`convertToLlm`; tools, arguments, result pairing, errors, images, ordering, cwd,
-name, and zero usage all passed. Its argument parser accepted `--session <id>`.
-The extended smoke also executes Pi's installed `transformMessages` and captures
-the installed Anthropic provider's actual outbound payload through `onPayload`,
-with an injected mock client and an exception before transport. Both supported
-histories preserve their text, tools, errors, images, and order in that payload.
-Negative probes reproduce the dropped aborted/error turns, discarded assistant
-images, and inserted synthetic results for interrupted tool exchanges; Python
-regressions assert those inputs now fail. Multiple contiguous results remain
-supported. Historical 2020 timestamps survive both writers; the SDK verifies
-fresh Claude creation/recency, and Pi verifies fresh creation with historical
-picker modified time. No network transport, native inference, or tool execution
-was performed.
+Measured result, 2026-09-22: the pinned Claude SDK finds picker titles and reads
+four-message plain/checkpoint chains. Six actual Claude CLI `/v1/messages`
+requests cover both forms with successful tool images, textual failures, and a
+deliberately modified failed-image negative fixture. The harness asserts ordered
+roles/text, instructions, tool names/arguments/pairing/error flags and exact image
+bytes/MIME. Positive provider image blocks have native schema fields only.
+Negative fixtures prove the CLI drops failed-result images and the adapter refuses
+them. Each request receives HTTP400 from the local mock; subprocess exit1 is
+expected capture completion, not API success or model inference.
+
+Isolation uses `--bare`, `CLAUDE_CODE_SIMPLE=1`, disabled nonessential traffic and
+official marketplace auto-install, loopback `ANTHROPIC_BASE_URL`, a fake API key,
+empty tools/MCP/settings sources, disabled slash commands, no Chrome, and disabled
+hooks. No inherited authentication, extensions, hooks or project files are loaded.
+Bare-mode history reconstruction is established; normal-mode project instruction
+loading and interactive TUI rendering remain unverified.
+
+Pi's installed SessionManager lists targets, reads full history and rebuilds
+context through `convertToLlm`. `transformMessages` and the installed Anthropic
+provider's `onPayload` callback independently capture full/checkpoint payloads,
+throwing before transport. Text/tools/arguments/pairs/errors/images/order and native
+launch arguments pass, including both successful and failed-result images.
+Negative probes reproduce ignored embedded `retainedTail`, dropped aborted/error
+turns, discarded assistant images, and synthetic results after interrupted tools.
+Historical timestamps and the Pi picker recency limitation are asserted separately.
+
+## Acceptance fixtures and public CLI recovery procedure
+
+`tests/portability/test_matrix.py` contains two separate full/compact 4×4 matrices.
+The shared-content matrix uses generated native stores, service publication and
+readback, repeat reuse, and all same-agent forks; it is roundtrip evidence. The
+independent matrix uses ordinary native-shaped Claude/Pi tool-error histories,
+OpenCode native tool graphs, and Codex native exec display/model output with
+ambiguous base instructions. It asserts exact refusals where these semantics
+cannot be written. Existing adapter fixtures cover native compaction and distinct
+post-checkpoint streams. None of these tests substitutes for native runtime proof.
+
+For reproducible public CLI QA, use the source checkout entrypoint
+`.venv/bin/python -m ringleader` in a subprocess with an allowlisted environment.
+Create a disposable HOME/XDG/config/cache/state/TMP/cwd and pass explicit
+`--registry` and `--operations` paths. `tests.portability.test_cli.seed` creates
+owned fixture transcripts/registry rows; `test_service.source` and `service`
+provide actual adapters and isolated state. For launch construction tests only,
+put recording executables on that subprocess's PATH: `--version` returns the
+pinned version; resume arguments write argv/cwd into a disposable evidence file.
+Label these as launch-plumbing tests, never native acceptance.
+
+Compare the entire disposable tree before/after `convert --dry-run`. Then run
+convert/repeat/fork/compact/lineage in separate processes; remove source bytes and
+read back target attachments. Exercise a valid+missing-source batch twice, and
+archive/delete owned results through the public commands before repeating convert.
+Hold `operations/operations.lock` with an exclusive `flock`, start a CLI fork,
+observe it pending, mutate an unrelated registry field through `mutate_registry`,
+release the lock, and verify both updates.
+
+To reproduce crash recovery without changing product code, construct the fixture
+service with `fault=crash_at("after:file:0:action")`, catch the test `Crash`, then
+invoke public `data transaction resume` on its journal from a fresh process. A
+second `after:create` fixture exercises private rollback. A published transaction
+must refuse rollback. Capture exit/stdout/stderr plus native/registry state for
+each command; release locks, wait for owned processes, and delete disposable
+stores afterward. These fault hooks are Python test inputs, not CLI flags.
 
 ## Codex
 
@@ -261,7 +324,7 @@ not create SQLite WAL sidecars in the destination. The final registration rechec
 schema under `BEGIN IMMEDIATE`, inserts only the new thread, and enforces ID/path
 uniqueness without replacing the DB or migrating it.
 
-Task 6's journal must record three external intents in order:
+The service journal records three external intents in order:
 
 1. `Adapter.index.index_intent(stage)` describes the append-only native name row;
    `append_index(stage)` writes and fsyncs it. It must precede rollout visibility.
