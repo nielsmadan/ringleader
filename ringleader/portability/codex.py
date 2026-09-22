@@ -4,7 +4,7 @@ import base64
 import json
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
 from . import codex_state, native
@@ -13,6 +13,7 @@ from .capabilities import (
     FormatProfile,
     NativeFile,
     NativeIndexIntent,
+    NativeMetadata,
     NativeRoots,
     NativeStage,
     Runner,
@@ -1234,6 +1235,20 @@ class CodexAdapter:
             schema,
         )
 
+    def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
+        rows = native.records(
+            next(item.data for item in stage.files if item.relative_path == stage.source_ref)
+        )
+        meta = rows[0]["payload"]
+        payload = json.loads(stage.database_payload or "null")
+        if not isinstance(payload, dict) or (payload["id"], payload["cwd"], payload["name"]) != (
+            meta["id"],
+            meta["cwd"],
+            meta["ringleader_title"],
+        ):
+            raise PreservationError("Codex staged picker metadata disagrees with rollout")
+        return NativeMetadata(Identity("codex", meta["id"]), meta["cwd"], meta["ringleader_title"])
+
     def read_stage(self, stage: NativeStage) -> Conversation:
         item = next(item for item in stage.files if item.relative_path == stage.source_ref)
         return read_rollout(item.data, stage.identity)
@@ -1252,6 +1267,11 @@ class CodexAdapter:
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         native.safe_id(identity, "codex")
         return native.run_request(self.executable, ("resume", identity.native_id), roots, "codex")
+
+    def registration_status(
+        self, stage: NativeStage
+    ) -> Literal["absent", "owned", "archived", "conflict"]:
+        return codex_state.registration_status(stage)
 
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool:
         return codex_state.registration(stage, recover=recover)

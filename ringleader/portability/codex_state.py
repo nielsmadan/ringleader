@@ -9,7 +9,7 @@ import tomllib
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 
 from .capabilities import NativeRoots, NativeStage
 from .model import PreservationError
@@ -132,7 +132,11 @@ def registration(stage: NativeStage, *, recover: bool = False) -> bool:
         ).fetchone():
             raise PreservationError("Codex target rollout path collision")
         data = (stage.roots.store / stage.source_ref).read_bytes()
-        if hashlib.sha256(data).hexdigest() != transcript.digest:
+        if not (
+            data.startswith(transcript.data)
+            if recover
+            else hashlib.sha256(data).hexdigest() == transcript.digest
+        ):
             raise PreservationError("Codex published rollout differs from staged bytes")
         allowed = {row[1] for row in connection.execute("PRAGMA table_info(threads)")}
         if not set(payload) <= allowed:
@@ -241,3 +245,33 @@ def _append_name(stage: NativeStage, connection: sqlite3.Connection) -> bool:
         return True
     finally:
         os.close(descriptor)
+
+
+def registration_status(stage: NativeStage) -> Literal["absent", "owned", "archived", "conflict"]:
+    payload = json.loads(stage.database_payload or "null")
+    if not isinstance(payload, dict) or payload.get("id") != stage.identity.native_id:
+        raise PreservationError("Missing Codex registration evidence")
+    connection = sqlite3.connect(
+        database_path(stage.roots).resolve().as_uri() + "?mode=ro", uri=True
+    )
+    try:
+        schema_identity(connection)
+        row = connection.execute(
+            "SELECT rollout_path,cwd,source,created_at,archived FROM threads WHERE id=?",
+            (stage.identity.native_id,),
+        ).fetchone()
+        if row is None:
+            return "absent"
+        expected = (
+            payload["rollout_path"],
+            payload["cwd"],
+            payload["source"],
+            payload["created_at"],
+        )
+        if row[1:4] != expected[1:]:
+            return "conflict"
+        if row[4] and Path(row[0]).name == Path(expected[0]).name:
+            return "archived"
+        return "owned" if Path(row[0]).resolve() == Path(expected[0]).resolve() else "conflict"
+    finally:
+        connection.close()

@@ -82,6 +82,10 @@ def ensure_handoffs_dir() -> Path:
     return d
 
 
+def conversion_operations_dir() -> Path:
+    return state_dir() / "conversion"
+
+
 def archive_root() -> Path:
     return state_dir() / "archive"
 

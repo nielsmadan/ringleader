@@ -11,6 +11,7 @@ from .capabilities import (
     Compatibility,
     FormatProfile,
     NativeFile,
+    NativeMetadata,
     NativeRoots,
     NativeStage,
     Runner,
@@ -490,6 +491,15 @@ class PiAdapter:
             (NativeFile(ref, native.jsonl(rows), True),),
             ref,
         )
+
+    def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
+        rows = native.records(
+            next(item.data for item in stage.files if item.relative_path == stage.source_ref)
+        )
+        titles = [row for row in rows if row.get("type") == "session_info"]
+        if not titles:
+            raise PreservationError("Pi staged picker title is missing")
+        return NativeMetadata(Identity("pi", rows[0]["id"]), rows[0]["cwd"], titles[-1]["name"])
 
     def read_stage(self, stage: NativeStage) -> Conversation:
         if stage.profile != PROFILE:

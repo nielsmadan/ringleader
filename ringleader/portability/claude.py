@@ -12,6 +12,7 @@ from .capabilities import (
     Compatibility,
     FormatProfile,
     NativeFile,
+    NativeMetadata,
     NativeRoots,
     NativeStage,
     Runner,
@@ -449,6 +450,20 @@ class ClaudeAdapter:
             request.roots,
             (NativeFile(ref, native.jsonl(rows), True),),
             ref,
+        )
+
+    def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
+        rows = native.records(
+            next(item.data for item in stage.files if item.relative_path == stage.source_ref)
+        )
+        messages = [row for row in rows if "cwd" in row]
+        titles = [row for row in rows if row.get("type") == "custom-title"]
+        if not messages or not titles or any(row["cwd"] != messages[0]["cwd"] for row in messages):
+            raise PreservationError("Claude staged picker metadata is inconsistent")
+        return NativeMetadata(
+            Identity("claude-code", titles[-1]["sessionId"]),
+            messages[0]["cwd"],
+            titles[-1]["customTitle"],
         )
 
     def read_stage(self, stage: NativeStage) -> Conversation:

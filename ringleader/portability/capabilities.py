@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Literal, Protocol
 
 from .compare import Normalization
 from .model import Conversation, Identity, PreservationError
@@ -140,10 +140,18 @@ class DeepReader(Protocol):
     def snapshot(self, request: SourceRequest) -> SourceSnapshot: ...
 
 
+@dataclass(frozen=True)
+class NativeMetadata:
+    identity: Identity
+    cwd: str
+    title: str | None
+
+
 class NativeWriter(Protocol):
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility: ...
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage: ...
     def read_stage(self, stage: NativeStage) -> Conversation: ...
+    def stage_metadata(self, stage: NativeStage) -> NativeMetadata: ...
     def normalizations(self, profile: FormatProfile) -> tuple[Normalization, ...]: ...
 
 
@@ -166,6 +174,9 @@ class NativeIndex(Protocol):
 
 
 class NativeRegistration(Protocol):
+    def registration_status(
+        self, stage: NativeStage
+    ) -> Literal["absent", "owned", "archived", "conflict"]: ...
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool: ...
 
 

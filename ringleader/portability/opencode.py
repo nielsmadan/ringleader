@@ -10,7 +10,7 @@ import time
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import unquote, urlsplit
 
 from . import native
@@ -18,6 +18,7 @@ from . import opencode_state as state
 from .capabilities import (
     Compatibility,
     FormatProfile,
+    NativeMetadata,
     NativeRoots,
     NativeStage,
     Runner,
@@ -693,10 +694,21 @@ class OpenCodeAdapter:
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         return _stage(conversation, request, self)
 
+    def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
+        session = state.decode(stage.database_payload or b"null")["session"]
+        return NativeMetadata(
+            Identity("opencode", session["id"]), session["directory"], session["title"]
+        )
+
     def read_stage(self, stage: NativeStage) -> Conversation:
         if stage.database_payload is None or stage.schema_identity != state.SCHEMA_ID:
             raise PreservationError("Missing OpenCode staged graph")
         return parse(_payload_export(state.decode(stage.database_payload)), stage.identity)
+
+    def registration_status(
+        self, stage: NativeStage
+    ) -> Literal["absent", "owned", "archived", "conflict"]:
+        return state.registration_status(stage)
 
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool:
         self.read_stage(stage)

@@ -9,7 +9,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 from .capabilities import NativeRoots, NativeStage
@@ -224,3 +224,28 @@ def registration(stage: NativeStage, *, recover: bool = False) -> bool:
         if "connection" in locals():
             connection.rollback()
             connection.close()
+
+
+def registration_status(stage: NativeStage) -> Literal["absent", "owned", "archived", "conflict"]:
+    payload = decode(stage.database_payload or b"null")
+    if (
+        not isinstance(payload, dict)
+        or payload.get("session", {}).get("id") != stage.identity.native_id
+    ):
+        raise PreservationError("Missing OpenCode registration evidence")
+    connection = sqlite3.connect(
+        database_path(stage.roots).resolve().as_uri() + "?mode=ro", uri=True
+    )
+    try:
+        connection.row_factory = sqlite3.Row
+        schema_identity(connection)
+        row = connection.execute(
+            "SELECT * FROM session WHERE id=?", (stage.identity.native_id,)
+        ).fetchone()
+        if row is None:
+            return "absent"
+        if not _owned(dict(row), payload["session"]):
+            return "conflict"
+        return "archived" if row["time_archived"] is not None else "owned"
+    finally:
+        connection.close()
