@@ -316,6 +316,10 @@ class ClaudeAdapter:
 
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         validate(conversation)
+        if any(checkpoint.following_context is not None for checkpoint in conversation.checkpoints):
+            raise PreservationError(
+                "This native profile cannot preserve an independent post-checkpoint model stream"
+            )
         native.safe_id(request.identity, "claude-code")
         try:
             UUID(request.identity.native_id)

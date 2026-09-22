@@ -105,9 +105,11 @@ def env(roots: NativeRoots, agent: str) -> tuple[tuple[str, str], ...]:
         "XDG_STATE_HOME": str(roots.home / "state"),
         "TMPDIR": str(roots.cache / "tmp"),
     }
-    values["CLAUDE_CONFIG_DIR" if agent == "claude-code" else "PI_CODING_AGENT_DIR"] = str(
-        roots.store
-    )
+    values[
+        {"claude-code": "CLAUDE_CONFIG_DIR", "pi": "PI_CODING_AGENT_DIR", "codex": "CODEX_HOME"}[
+            agent
+        ]
+    ] = str(roots.store)
     return tuple(values.items())
 
 

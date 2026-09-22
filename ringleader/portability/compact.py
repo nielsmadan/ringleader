@@ -136,9 +136,17 @@ def _paired_history_ids(history: tuple[Message, ...], selected: set[str]) -> set
 
 
 def _checkpoint_history(conversation: Conversation) -> tuple[tuple[Message, ...], int]:
-    summary = conversation.checkpoints[-1].summary
+    latest = conversation.checkpoints[-1]
+    summary = latest.summary
+    boundary = next(
+        index
+        for index, message in enumerate(conversation.history)
+        if message.id == latest.after_message_id
+    )
     tail_ids = _paired_history_ids(
-        conversation.history, {message.id for message in conversation.context[len(summary) :]}
+        conversation.history,
+        {message.id for message in conversation.context[len(summary) :]}
+        | {message.id for message in conversation.history[boundary + 1 :]},
     )
     selected: list[Message] = []
     inserted = False
@@ -212,6 +220,7 @@ def compact(conversation: Conversation) -> CompactResult:
                 summary=summary,
                 retained_message_ids=(),
                 retained_context=_reparent(list(context[len(summary) :])),
+                following_context=None,
             ),
         )
     result = replace(

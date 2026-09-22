@@ -171,3 +171,141 @@ supported. Historical 2020 timestamps survive both writers; the SDK verifies
 fresh Claude creation/recency, and Pi verifies fresh creation with historical
 picker modified time. No network transport, native inference, or tool execution
 was performed.
+
+## Codex
+
+Writer profile: `codex-0.155.1-legacy`, exact CLI output `codex-cli 0.155.1`.
+The reader recognizes legacy JSONL independently of the installed executable.
+References are pinned to [Codex rust-v0.155.1](https://github.com/openai/codex/tree/rust-v0.155.1/codex-rs):
+`protocol/src/{models,protocol,dynamic_tools,items}.rs`,
+`app-server/src/request_processors.rs`, `app-server-protocol/src/protocol/thread_history.rs`,
+`rollout/src/{policy,session_index,recorder}.rs`, and `state/migrations/`.
+`NativeRoots.store` is `CODEX_HOME`; resume is `codex resume <uuid>` from destination cwd.
+
+Visible `event_msg` history and model `response_item` context are independent.
+Function/custom call kinds, arguments, paired full outputs, embedded image bytes,
+historical message times, task boundaries, and explicit compaction
+`replacement_history` are preserved. User text containing `<INSTRUCTIONS>` is
+ordinary user content. Ambiguous nonempty `SessionMeta.base_instructions` becomes
+a historical context-only `Instruction` with native provenance stating that the
+metadata does not identify its author/default origin. The target's base instructions
+remain unset, allowing current destination policy and project instructions to load.
+Claude/Pi currently reject this context-only visibility split.
+
+Compactions with separate visible/model suffixes use optional canonical
+`Checkpoint.following_context`. Its content must match the active context after
+summary and retained context. Older serialized checkpoints default this field to
+`None`; all other unknown/missing fields retain strict decoding. Compact conversion
+selects visible post-boundary messages by their historical position, preserving
+prose even when model IDs/content/provenance differ. Claude/Pi explicitly reject
+this independent post-checkpoint suffix; Codex writes it as native model items.
+
+Native cold-read testing found a critical distinction: the generic history builder
+understands dynamic tools, but the app-server's legacy API filters those events
+through persistence policy. `DynamicToolCallRequest` and `DynamicToolCallResponse`
+are transient and disappear from `thread/read`. Historical tool display therefore
+uses durable `mcp_tool_call_end` events under the synthetic server name
+`ringleader_history`, with the original tool name, arguments, complete text/image
+output and success state. Matching call/result events update one native UI item.
+The adapter verifies their identical native payloads before recovering the
+canonical call/result grouping. No server is configured and no tool is executed.
+Model items remain native matched function/custom calls and outputs.
+Visible and model tool maps stay separate, including MCP display names such as
+`read` paired with the model name `mcp__files__read`. Source MCP server identity
+is retained as historical provenance.
+
+The source reader also recognizes complete native exec-command begin/end records,
+patch completion records, and durable `item_completed` `FunctionCallOutput` items.
+Exec stdout, stderr, aggregated and formatted output remain exact strings in labeled
+native-output blocks. Patch output retains exact stdout/stderr and all recognized
+Add/Delete/Update fields, including move paths, in a labeled JSON block. Command
+metadata stays in provenance; independently truncated model output stays separate.
+Completed function outputs require an unambiguous matching response output ID and
+tool name. Unknown patch fields and ambiguous correlations fail explicitly.
+Pinned `rollout/src/policy.rs` marks exec begin/end transient, so 0.155.1's cold API
+omits them even when present in an older rollout. Its cold API does expose durable
+patch completions and completed function outputs. The reader preserves supported
+legacy exec records independently of that installed display policy; writing converts
+all three historical families to the durable MCP display described above.
+
+Codex serializes model tool output bodies without a success boolean. Each written
+model result therefore starts with an explicit native text block,
+`[Historical tool result: succeeded]` or `[Historical tool result: failed]`, followed
+by the untouched original output blocks. Readback verifies that text before
+recovering the canonical error flag. Native loopback request captures prove both
+markers survive, including success/failure results with identical original output.
+Annotations never substitute for missing native text, tool data or images.
+
+Unsupported shapes fail explicitly: paginated/inherited/compressed histories,
+unknown required rows/events/response blocks, incomplete tasks/tool pairs,
+non-image/audio/remote/local-path attachments, non-default image-detail hints,
+assistant images, namespaced model tools, MCP structured content, and authored
+instruction overrides present only in `turn_context`. Nonempty assistant message
+phases in either stream and visible `local_audio` also fail before canonicalization.
+Metadata/accounting and
+structurally tagged hidden reasoning are excluded. Visible tool families beyond
+MCP, complete exec, patch and matched completed function outputs fail explicitly.
+Empty canonical messages and visible images without preceding
+user text are also unsupported.
+
+### Registration and recovery boundary
+
+The adapter requires an initialized native home with completed startup backfill.
+It gates `state_5.sqlite` against the exact measured schema (including tables,
+indexes and triggers) and all 55 successful migration checksums. The fixture
+`tests/portability/codex-state-5.json` contains that independently generated native
+schema/migration identity. Unsupported versions/schemas, missing databases and
+configured `sqlite_home`/`CODEX_SQLITE_HOME` overrides fail before staging. Version
+probes and schema inspection use disposable roots/copies; read-only preflight does
+not create SQLite WAL sidecars in the destination. The final registration rechecks
+schema under `BEGIN IMMEDIATE`, inserts only the new thread, and enforces ID/path
+uniqueness without replacing the DB or migrating it.
+
+Task 6's journal must record three external intents in order:
+
+1. `Adapter.index.index_intent(stage)` describes the append-only native name row;
+   `append_index(stage)` writes and fsyncs it. It must precede rollout visibility.
+   Retries recognize the original row and preserve later native/user renames.
+   An existing conflicting name or incomplete index record fails; the whole shared
+   index is never rewritten or truncated.
+   Before creating/appending the index, a SQLite write transaction gates the schema
+   and checks thread identity, while both native rollout directories are checked
+   for that UUID. An unnamed existing thread also fails without index mutation.
+   Retry ownership requires the original index intent plus matching rollout bytes
+   and, when registered, immutable DB identity fields.
+2. Create-only publication of the staged rollout. Its `visibility=True` marks a
+   forward-recovery boundary: native filesystem fallback can discover it already.
+3. `Adapter.registration.register_stage(stage)` inserts the staged database payload.
+   `recover=True` recognizes a matching row only with original immutable identity
+   fields and the staged transcript as an unchanged prefix. Native append/resume
+   and path canonicalization are tolerated; collisions or replaced content fail.
+
+Session creation/recency and native name-index times are current. Historical row
+and turn timestamps remain historical; usage is zero. File publication and the two
+indexes cannot have one atomic visibility point. These are narrow publication
+primitives; the durable operation journal remains the conversion service's job.
+
+### Repeatable Codex verification
+
+```sh
+uv run python scripts/smoke-portability-codex.py --evidence /absolute/new/evidence-dir
+```
+
+The script initializes disposable homes and waits for backfill before import. It
+first measures native parsing of exec, patch and completed-function source fixtures,
+including the transient-exec distinction above. Unit fixtures cover successful and
+failed exec/patch output, empty patch stdout, all four file-change cases, compact
+conversion and native roundtrip.
+It then
+proves DB registration, native list/read with cwd/source filtering, full ordered
+visible messages/tool names/arguments/outputs/errors/images, titles, cold restart,
+and resume. Resume happens in separate disposable sessions. Five actual native
+outbound model requests are captured by a loopback HTTP server returning an error
+before inference: plain history, retained-tail compaction, independent model suffix,
+identical success/failure output, and distinct MCP display/model names. They retain model call/output pairing, full
+output/image bytes, status markers and destination `AGENTS.md` instructions.
+Original staged rollout bytes remain unchanged by the cold-read probes. Unit tests
+also delete the isolated source rollout after snapshot and retain its image bytes.
+No inherited credentials, hooks, extensions, external inference or tool execution
+are used. The run validates app-server views/model requests; interactive TUI
+rendering is not separately exercised.

@@ -103,6 +103,7 @@ class Checkpoint:
     summary: tuple[Message, ...]
     retained_message_ids: tuple[str, ...] = ()
     retained_context: tuple[Message, ...] | None = None
+    following_context: tuple[Message, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +259,8 @@ def validate(conversation: Conversation) -> None:
         if not checkpoint.summary:
             raise PreservationError("Checkpoint requires an explicit context summary")
         validate_messages(checkpoint.summary, attachment_ids)
+        if checkpoint.following_context is not None:
+            validate_messages(checkpoint.following_context, attachment_ids)
         if checkpoint.retained_context is not None:
             if checkpoint.retained_message_ids:
                 raise PreservationError(
@@ -274,7 +277,11 @@ def validate(conversation: Conversation) -> None:
                 if latest.retained_context is not None
                 else (by_id[item] for item in latest.retained_message_ids)
             ),
-            *conversation.history[positions[latest.after_message_id] + 1 :],
+            *(
+                latest.following_context
+                if latest.following_context is not None
+                else conversation.history[positions[latest.after_message_id] + 1 :]
+            ),
         )
         if tuple(_without_parent(item) for item in conversation.context) != tuple(
             _without_parent(item) for item in expected

@@ -342,6 +342,10 @@ class PiAdapter:
 
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         validate(conversation)
+        if any(checkpoint.following_context is not None for checkpoint in conversation.checkpoints):
+            raise PreservationError(
+                "This native profile cannot preserve an independent post-checkpoint model stream"
+            )
         _validate_replay(conversation.history)
         _validate_replay(conversation.context)
         native.safe_id(request.identity, "pi")

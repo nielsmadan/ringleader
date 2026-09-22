@@ -130,11 +130,31 @@ class NativeLauncher(Protocol):
 
 
 @dataclass(frozen=True)
+class NativeIndexIntent:
+    relative_path: str
+    data: bytes
+
+    def __post_init__(self) -> None:
+        NativeFile(self.relative_path, self.data)
+
+
+class NativeIndex(Protocol):
+    def index_intent(self, stage: NativeStage) -> NativeIndexIntent: ...
+    def append_index(self, stage: NativeStage) -> bool: ...
+
+
+class NativeRegistration(Protocol):
+    def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool: ...
+
+
+@dataclass(frozen=True)
 class Adapter:
     agent: str
     reader: DeepReader | None = None
     writer: NativeWriter | None = None
     launcher: NativeLauncher | None = None
+    registration: NativeRegistration | None = None
+    index: NativeIndex | None = None
 
 
 class AdapterRegistry:

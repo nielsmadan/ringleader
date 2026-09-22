@@ -44,6 +44,8 @@ def _decode(value: Any, expected: Any) -> Any:
         names = {field.name for field in fields(expected)}
         if not isinstance(value, dict) or value.get("type") != expected.__name__:
             raise PreservationError("Unknown canonical object type")
+        if expected.__name__ == "Checkpoint" and "following_context" not in value:
+            value = {**value, "following_context": None}
         if set(value) != names | {"type"}:
             raise PreservationError(f"Unknown or missing fields in {expected.__name__}")
         hints = get_type_hints(expected)

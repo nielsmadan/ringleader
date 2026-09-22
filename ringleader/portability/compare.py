@@ -107,6 +107,9 @@ def preservation_projection(
                 _messages(item.retained_context, conversation, kinds)
                 if item.retained_context is not None
                 else None,
+                _messages(item.following_context, conversation, kinds)
+                if item.following_context is not None
+                else None,
             )
             for item in conversation.checkpoints
         ),
