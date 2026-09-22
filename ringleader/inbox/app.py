@@ -20,7 +20,7 @@ from ..fuzzytime import parse_duration
 from ..models import active_model
 from ..paths import archive_root, default_registry
 from ..stateio import publish_lock
-from ..tui.keys import NAV_BINDINGS
+from ..tui.keys import nav_bindings
 
 
 def _now_iso() -> str:
@@ -209,7 +209,7 @@ class InboxApp(App):
     """
 
     BINDINGS: ClassVar[list[BindingType]] = [
-        *NAV_BINDINGS,
+        *nav_bindings(),
         # this list has no text input, so the bare motions are free to take as well
         Binding("j", "cursor_down", "down", show=False),
         Binding("k", "cursor_up", "up", show=False),

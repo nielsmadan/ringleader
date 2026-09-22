@@ -125,7 +125,8 @@ class PiSource:
         return ("pi", "--session", session_id)
 
     def launch_argv(self, prompt: str) -> tuple[str, ...]:
-        return ("pi", prompt)
+        # without the terminator pi reads a leading `-` as a flag
+        return ("pi", "--", prompt)
 
     def discover(self) -> Iterator[RawRef]:
         if not self.sessions_dir.exists():

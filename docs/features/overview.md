@@ -15,6 +15,8 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
   `inbox`), git-project grouping, selectors, and `roundup`.
 - [harvest-and-publish.md](harvest-and-publish.md) — distilling a session into durable markdown,
   the pending queue, and the guarded path that writes it into a repo.
+- [resuming-sessions.md](resuming-sessions.md) — `rl resume`: the cross-agent picker, the
+  three directory scopes, and handing a session to a different agent.
 - [pruning-and-retention.md](pruning-and-retention.md) — deleting tiny/stale sessions, archive
   retention, and tombstones. Which verbs preview and which delete.
 - [usage-analytics.md](usage-analytics.md) — token spend across four harnesses, per-session
@@ -33,6 +35,7 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
 | [session-lifecycle](session-lifecycle.md) | [registry](../tech/registry.md), `commands/finish.py`, `sweep.py`, `archive.py` |
 | [views-and-triage](views-and-triage.md) | [scanning-and-refresh](../tech/scanning-and-refresh.md), [inbox](../tech/inbox.md), `overview.py` |
 | [harvest-and-publish](harvest-and-publish.md) | [publish](../tech/publish.md), [models](../tech/models.md) |
+| [resuming-sessions](resuming-sessions.md) | [resume](../tech/resume.md), [sources](../tech/sources.md) |
 | [pruning-and-retention](pruning-and-retention.md) | [registry](../tech/registry.md), `prune.py` |
 | [usage-analytics](usage-analytics.md) | [usage](../tech/usage.md) |
 | [workspace-portability](workspace-portability.md) | [sources](../tech/sources.md), [scanning-and-refresh](../tech/scanning-and-refresh.md) |

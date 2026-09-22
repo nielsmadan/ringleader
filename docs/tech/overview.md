@@ -25,6 +25,8 @@ go deeper, per subsystem.
 - [integration.md](integration.md) — `commands/skills.py`, `hooks.py`, `statusline.py`,
   `session_env.py`, `safe_write.py`: editing four other programs' configs, removably.
 - [inbox.md](inbox.md) — `inbox/app.py`: the Textual TUI.
+- [resume.md](resume.md) — `resume.py`, `picker/app.py`, `commands/resume.py`: selecting a
+  dormant session and handing the process to an agent.
 - `search.py` / `searchview.py` / `tty.py` — `rl session search`: the matcher (tiers,
   scope, archived-tombstone fallbacks) is kept apart from the renderer that colours it,
   so `jsonout.py` never depends on terminal formatting. `tty.py` owns the `--color`

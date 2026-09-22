@@ -9,6 +9,7 @@ from conftest import SKILLS_ROOT
 # why `test_every_exemption_is_load_bearing` makes an unused one fail.
 UNDOCUMENTED_BY_DESIGN = {
     "inbox": "interactive TUI; an agent cannot drive it",
+    "resume": "a human re-enters a session; not part of the curation track",
     "workspace": "relocation track, not the session track",
     "session sweep": "run by the session-end hook, not by an agent",
     "update hooks": "hook lifecycle; the user runs it directly",

@@ -13,7 +13,7 @@ LAUNCH = {
     "claude-code": ("claude", "read the file"),
     "codex": ("codex", "read the file"),
     "opencode": ("opencode", "--prompt", "read the file"),
-    "pi": ("pi", "read the file"),
+    "pi": ("pi", "--", "read the file"),
 }
 
 
@@ -41,6 +41,13 @@ def test_resume_argv_matches_the_agent_cli(name):
 @pytest.mark.parametrize("name", sorted(LAUNCH))
 def test_launch_argv_carries_the_prompt(name):
     assert _sources()[name].launch_argv("read the file") == LAUNCH[name]
+
+
+def test_pi_terminates_its_options_so_a_prompt_is_not_read_as_a_flag():
+    """`pi [options] [--] [@files...] [messages...]` — without the terminator a prompt
+    opening with `-` is read as a flag. `@files` follow `--`, so it does not shield those."""
+    argv = _sources()["pi"].launch_argv("-p please continue")
+    assert argv == ("pi", "--", "-p please continue")
 
 
 @pytest.mark.parametrize("name", sorted(RESUME))

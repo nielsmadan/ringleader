@@ -27,6 +27,13 @@ pruning them before the GC clock deletes them.
   `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not in this repo.
   `rl data migrate` (run automatically by `just install`) moves any legacy repo-root
   state there once.
+- **`rl resume` replaces the `rl` process.** It `chdir`s to the session's directory and
+  `execvpe`s the agent, so anything after it in a shell script never runs. `--dry-run` prints the
+  directory and the argv and launches nothing. Resuming in a *different* agent (`--to`) is a
+  **seeded handoff**, not a conversion: the target starts a NEW session that has read a Markdown
+  export of the old one, written under `~/.local/share/ringleader/handoffs/` — nothing prunes that
+  directory. The source session is never modified. See
+  `docs/decisions/0011-seeded-handoff-over-native-conversion.md`.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
@@ -82,14 +89,15 @@ pruning them before the GC clock deletes them.
   `PresenceUnavailable` naming the setup command, not a silent install and not an empty result.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
-  hiding, workspace relocation, workspace rebinding); `claude_code.py` and `codex.py`
-  implement it.
+  hiding, workspace relocation, workspace rebinding, session launching); all four of
+  `claude_code.py`, `codex.py`, `opencode.py` and `pi.py` implement it.
   Registry/overview/triage code talks to `Source`, never to a transcript format.
   See `docs/tech/sources.md`.
 
 ## Commands
 
 ```sh
+rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
 rl inbox                            # TUI (Textual, shipped as a dep) to blitz dormant sessions inbox-zero style
 rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot; rl inbox runs it when stale
 rl overview [<selector>] [--json]   # the view; project rollup by default

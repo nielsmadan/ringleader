@@ -20,7 +20,11 @@ Independent adapter capabilities would cover conversation reading, native writin
 The design includes out-of-place conversion, same- or cross-agent forks, deterministic compact conversion, resume and handoff commands, lineage, staged round-trip validation, and per-session transactional publication.
 It excludes hidden model reasoning, cache state, token accounting, and re-execution of historical tool calls.
 
-None of the canonical model, four adapters, conversion, fork, resume, handoff, or lineage commands is implemented.
+The canonical model, the four adapters, and the conversion, fork, and lineage commands remain
+unimplemented. `rl resume` now exists, but it is not the command this design describes: it
+re-enters a session through the agent's own resume verb, and its `--to` is a seeded handoff
+rather than a native conversion — see
+[ADR 0011](decisions/0011-seeded-handoff-over-native-conversion.md).
 
 ## Transactional native relocation
 

@@ -51,6 +51,20 @@ def publish_receipts_dir() -> Path:
     return state_dir() / "publish" / "receipts"
 
 
+def handoffs_dir() -> Path:
+    return state_dir() / "handoffs"
+
+
+def ensure_handoffs_dir() -> Path:
+    """The handoffs dir, created owner-only: its listing names which sessions were handed
+    off and when, which is as private as the transcripts it holds."""
+    ensure_state_dir()
+    d = handoffs_dir()
+    d.mkdir(mode=0o700, exist_ok=True)
+    d.chmod(0o700)
+    return d
+
+
 def archive_root() -> Path:
     return state_dir() / "archive"
 

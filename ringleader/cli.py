@@ -15,6 +15,7 @@ _FLAT = (
     "doctor",
     "harvests",
     "config",
+    "resume",
     "inbox",
     "install",
     "update",

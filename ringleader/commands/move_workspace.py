@@ -37,7 +37,7 @@ from functools import cache
 from pathlib import Path
 
 from .. import gitinfo, refresh, registry, scanner
-from ..slug import is_beneath, normalize, remap, slugify
+from ..slug import is_beneath, normalize, remap, slugify, stored_under
 from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
 from . import default_registry
@@ -91,7 +91,7 @@ def _drifted(thread: dict) -> bool:
     """True when the session's recorded cwd is not the directory it was launched in
     — a worktree, or any session that cd'd. Its storage lives under the launch dir's
     slug, so it can never ride along with a rename keyed on the recorded cwd."""
-    return Path(thread["file"]).parent.name != slugify(normalize(thread["project"]))
+    return not stored_under(thread["file"], thread["project"])
 
 
 def _listing(slug_dir: Path) -> list[Path]:

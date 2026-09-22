@@ -57,6 +57,11 @@ def normalize(path: str | Path) -> str:
     return os.path.abspath(os.path.expanduser(str(path)))
 
 
+def stored_under(file: str | Path, path: str | Path) -> bool:
+    """True when `file` sits in the directory Claude Code slugs `path` to."""
+    return Path(file).parent.name == slugify(normalize(path))
+
+
 def is_beneath(path: str | None, root: str) -> bool:
     """Lexical containment, respecting directory boundaries so `/a/b-two` is not
     beneath `/a/b`. Deliberately not `projects.matches()`: that compares git

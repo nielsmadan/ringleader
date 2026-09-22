@@ -39,7 +39,7 @@ Most actions are inbox-only; the handlers check `_active_tab` and no-op elsewher
 | `;` | detail view (project, status, whatItIs, last prompt, git branch, condensed transcript) |
 | `q` | quit |
 
-`ctrl+j` / `ctrl+k` come from `tui/keys.py:NAV_BINDINGS`, the motions shared by every
+`ctrl+j` / `ctrl+k` come from `tui/keys.py:nav_bindings(*, priority=False)`, the motions shared by every
 ringleader TUI. They are ctrl-modified because a TUI that filters as you type cannot spend bare
 `j` and `k` on navigation. The inbox has no text input, so it binds the bare keys as well.
 

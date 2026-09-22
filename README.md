@@ -61,6 +61,10 @@ rl install             # skills, session-end hook, statusline capture
 - **Archive, don't delete** — for file-backed sources, archiving *moves* the transcript out of the agent's store, so
   `claude --resume` can't see it, and `rl session unarchive` puts it back.
   → [Archives and retention](docs/user/archives-and-retention.md)
+- **Resume** — `rl resume` is one picker over every agent's sessions, filtered as you type.
+  Pick one and it re-enters it with that agent's own resume command, in the right directory —
+  or hands it to a *different* agent, seeded with a transcript of the old session.
+  → [Resuming sessions](docs/features/resuming-sessions.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
 - **Usage** — where your tokens went, across four harnesses, plus 5h/weekly subscription
   windows. → [Usage analytics](docs/user/usage-analytics.md)
@@ -93,6 +97,7 @@ rl uninstall skills    # remove only what this tool created
 ## Commands
 
 ```sh
+rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl inbox                            # TUI to blitz dormant sessions inbox-zero style
 rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot
 rl overview [<selector>] [--json]   # the view; project rollup by default
