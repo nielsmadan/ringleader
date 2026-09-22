@@ -24,6 +24,11 @@ configuration, and independent OpenCode runtime validation. The current strict
 limitations and evidence tiers are in the
 [native reference](reference/session-portability-native.md).
 
+Cross-machine bundles, full branch-tree reproduction and model-generated summaries
+were outside the conversion scope and remain unimplemented. Recovery journals are
+bound to their original registry; moving them to another registry would need an
+explicit migration mechanism.
+
 ## Transactional native relocation
 
 Current workspace portability moves a checkout, relocates supported session storage, and pins registry locations, with `retarget` available after a partial failure.

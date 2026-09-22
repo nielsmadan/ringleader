@@ -4,6 +4,8 @@
 `adapters.py` binds deep readers, native writers, launchers, roots, optional identity
 allocation, native name-index operations, and DB registration. Command handlers
 resolve capabilities; they do not branch on native transcript formats.
+See [the preservation decision](../decisions/0012-preserve-native-session-semantics.md)
+for the model, publication and concurrency tradeoffs.
 
 ## Preservation and snapshots
 
@@ -63,6 +65,15 @@ possible visibility, and acknowledges owned records while preserving subsequent
 native modifications. Uncertain ownership or a missing target after an ambiguous
 intent fails with inspection guidance. Rollback only removes proven private
 staging; private publisher generations and unverified residues are journaled.
+
+File publication prepares a hidden sibling beside the target, so the journal and
+native store may reside on different filesystems. The complete file is linked into
+place without overwriting an existing target. If private preparation cannot establish
+ownership, recovery can retain the residue and journal a new publisher generation,
+but only before that file's final publication intent. An earlier index append may
+already prevent rollback; it does not prevent this private preparation retry.
+Once the final-file intent exists, a missing or replaced target requires inspection
+rather than another publication attempt. Cleanup never guesses ownership from a path.
 
 Registry `conversionLineage` is authoritative for source/target relationships;
 thread `lineage` and `nativeRoots` support discovery/launch and survive lifecycle

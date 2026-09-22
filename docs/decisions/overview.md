@@ -15,6 +15,7 @@ history. Current behavior remains canonical in `docs/features/` and `docs/tech/`
 - [0009: Reuse the agent CLI's auth; store no secrets](0009-reuse-agent-cli-auth-and-store-no-secrets.md)
 - [0010: Keep machine-local state outside the repo](0010-keep-machine-local-state-outside-the-repo.md)
 - [0011: Hand off to another agent by seeding it, not by converting the session](0011-seeded-handoff-over-native-conversion.md)
+- [0012: Preserve native session semantics during conversion](0012-preserve-native-session-semantics.md)
 
-These were harvested from the original `SPEC.md` and the design docs under the former
+The initial decisions were harvested from the original `SPEC.md` and the design docs under the former
 `docs/specs/`, which have been retired in favor of this tree.
