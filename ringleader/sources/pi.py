@@ -15,7 +15,11 @@ from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
 def default_sessions_dir() -> Path:
     env = os.environ.get("PI_SESSIONS_DIR")
-    return Path(env) if env else Path.home() / ".pi" / "agent" / "sessions"
+    return (
+        Path(env)
+        if env
+        else Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi/agent") / "sessions"
+    )
 
 
 def _iso_mtime(p: Path) -> str:

@@ -17,7 +17,11 @@ from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
 def default_projects_dir() -> Path:
     env = os.environ.get("SESSION_TRACKER_PROJECTS_DIR")
-    return Path(env) if env else Path.home() / ".claude" / "projects"
+    return (
+        Path(env)
+        if env
+        else Path(os.environ.get("CLAUDE_CONFIG_DIR") or Path.home() / ".claude") / "projects"
+    )
 
 
 def _iter_session_files(root: Path) -> Iterator[Path]:

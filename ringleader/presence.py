@@ -208,11 +208,14 @@ def _load_json(text: str) -> dict[str, Any] | None:
 
 
 def _record(raw: object) -> PresenceSession | None:
-    if not isinstance(raw, dict) or raw.get("protocol", PROTOCOL) != PROTOCOL:
+    if not isinstance(raw, dict):
+        return None
+    protocol = raw.get("protocol", PROTOCOL)
+    if type(protocol) is not int or protocol != PROTOCOL or type(raw.get("running")) is not bool:
         return None
     agent = raw.get("agent")
     identity = raw.get("session")
-    if not isinstance(agent, str) or not isinstance(identity, dict):
+    if not isinstance(agent, str) or not agent or not isinstance(identity, dict):
         return None
     session_id = identity.get("id")
     if not isinstance(session_id, str) or not session_id:
@@ -220,7 +223,7 @@ def _record(raw: object) -> PresenceSession | None:
     return PresenceSession(
         agent=agent,
         session_id=session_id,
-        running=bool(raw.get("running")),
+        running=raw["running"],
         cwd=identity.get("cwd"),
         binding_id=raw.get("bindingId"),
     )
@@ -243,7 +246,7 @@ def _parse_sessions(text: str) -> PresenceResult:
             problems=(f"could not parse hooklinesinker sessions --json: {text[:200]}",),
             available=False,
         )
-    if payload.get("protocol") != PROTOCOL:
+    if type(payload.get("protocol")) is not int or payload.get("protocol") != PROTOCOL:
         return PresenceResult(
             problems=(
                 (
@@ -253,10 +256,18 @@ def _parse_sessions(text: str) -> PresenceResult:
             ),
             available=False,
         )
+    raw_sessions = payload.get("sessions")
+    if not isinstance(raw_sessions, list):
+        return PresenceResult(
+            problems=("hooklinesinker sessions envelope requires a sessions list",), available=False
+        )
+    if "problems" in payload and not isinstance(payload["problems"], list):
+        return PresenceResult(
+            problems=("hooklinesinker sessions envelope requires a problems list",), available=False
+        )
     sessions = []
     problems = list(_envelope_problems(payload.get("problems")))
-    raw_sessions = payload.get("sessions")
-    for raw in raw_sessions if isinstance(raw_sessions, list) else []:
+    for raw in raw_sessions:
         parsed = _record(raw)
         if parsed is None:
             problems.append(f"skipped an unrecognized status record: {json.dumps(raw)[:120]}")

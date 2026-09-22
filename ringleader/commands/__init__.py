@@ -10,6 +10,7 @@ from . import (
     cleaned,
     complete,
     config,
+    conversion,
     delete,
     doctor,
     enrich,
@@ -39,6 +40,7 @@ from . import (
     sweep,
     sync,
     tokens,
+    transactions,
     triage,
     unarchive,
     usage,
@@ -60,6 +62,11 @@ def _reserved(label: str) -> CommandFn:
 
 
 _SESSION = {
+    "convert": conversion.cmd_convert,
+    "fork": conversion.cmd_fork,
+    "handoff": conversion.cmd_handoff,
+    "resume": conversion.cmd_resume,
+    "lineage": conversion.cmd_lineage,
     "refresh": sync.cmd_refresh,
     "set": sync.cmd_set,
     "enrich": enrich.cmd_enrich,
@@ -95,6 +102,11 @@ _MEM = {
     },
 }
 _DATA = {
+    "transaction": {
+        "list": transactions.cmd_list,
+        "resume": transactions.cmd_resume,
+        "rollback": transactions.cmd_rollback,
+    },
     "export": export.cmd_export,
     "tokens": tokens.cmd_tokens,
     "migrate": migrate.cmd_migrate,

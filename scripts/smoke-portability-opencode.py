@@ -138,7 +138,7 @@ def expected_context(conversation):
                         output.append(("media", asset.media_type, asset.data))
                 content.append(("result", item.call_id, calls[item.call_id], item.is_error, output))
             else:
-                raise AssertionError(f"Unsupported expected context content: {item!r}")
+                raise TypeError(f"Unsupported expected context content: {item!r}")
         result.append((role, content))
     return result
 

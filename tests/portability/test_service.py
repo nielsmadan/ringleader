@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
@@ -256,7 +257,7 @@ def test_codex_index_database_boundaries(tmp_path, point):
     assert result.lifecycle == "active"
     index = (staged.roots.store / "session_index.jsonl").read_text().splitlines()
     assert len(index) == 1
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         assert db.execute("SELECT id,tokens_used FROM threads").fetchall() == [
             (result.target.native_id, 0)
         ]
@@ -313,13 +314,13 @@ def test_committed_database_before_receipt_preserves_native_edits(tmp_path, agen
     if agent == "codex":
         with (target.store / staged.source_ref).open("ab") as stream:
             stream.write(b'{"native":"appended"}\n')
-        with sqlite3.connect(target.store / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(target.store / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET name='Renamed', tokens_used=123 WHERE id=?",
                 (operation.target.native_id,),
             )
     else:
-        with sqlite3.connect(target.store / "opencode.db") as db:
+        with closing(sqlite3.connect(target.store / "opencode.db")) as db, db:
             db.execute(
                 "UPDATE session SET title='Renamed' WHERE id=?", (operation.target.native_id,)
             )
@@ -419,10 +420,10 @@ def test_native_archive_and_delete_are_returned_without_registry_tombstone(tmp_p
     database = target.store / ("state_5.sqlite" if agent == "codex" else "opencode.db")
     table = "threads" if agent == "codex" else "session"
     assignment = "archived=1" if agent == "codex" else "time_archived=1"
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute(f"UPDATE {table} SET {assignment} WHERE id=?", (result.target.native_id,))
     assert service(tmp_path).convert(conversion).lifecycle == "archived"
-    with sqlite3.connect(database) as db:
+    with closing(sqlite3.connect(database)) as db, db:
         db.execute(f"DELETE FROM {table} WHERE id=?", (result.target.native_id,))
     assert service(tmp_path).convert(conversion).lifecycle == "missing"
 
@@ -688,12 +689,12 @@ def test_unrelated_same_id_database_collision_is_refused(tmp_path, agent, point)
     if point == "before:database:action":
         adapter.registration.register_stage(staged)
     if agent == "codex":
-        with sqlite3.connect(target.store / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(target.store / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET cwd='/unrelated' WHERE id=?", (operation.target.native_id,)
             )
     else:
-        with sqlite3.connect(target.store / "opencode.db") as db:
+        with closing(sqlite3.connect(target.store / "opencode.db")) as db, db:
             db.execute("UPDATE session SET metadata='{}' WHERE id=?", (operation.target.native_id,))
     before = tree(target.store)
     with pytest.raises(PreservationError, match="conflict"):
@@ -713,7 +714,7 @@ def test_opencode_database_restart_boundaries(tmp_path, point):
             restarted.resume(operation.id)
     else:
         assert restarted.resume(operation.id).lifecycle == "active"
-    with sqlite3.connect(target.store / "opencode.db") as db:
+    with closing(sqlite3.connect(target.store / "opencode.db")) as db, db:
         expected = 0 if point == "after:database:intent" else 1
         assert db.execute("SELECT count(*) FROM session").fetchone() == (expected,)
 
@@ -877,7 +878,7 @@ def test_native_codex_archive_moves_path_and_preserves_lifecycle(tmp_path):
     archived = store / "archived_sessions" / old.name
     archived.parent.mkdir()
     old.rename(archived)
-    with sqlite3.connect(store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(store / "state_5.sqlite")) as db, db:
         db.execute(
             "UPDATE threads SET archived=1,rollout_path=? WHERE id=?",
             (str(archived), result.target.native_id),
@@ -1036,7 +1037,7 @@ def test_native_archive_before_first_registry_receipt_completes_after_crashes(tm
         tmp_path, "opencode", target=opencode_roots.__wrapped__(tmp_path / "target")
     )
     worker, operation, staged = operation_after_crash(tmp_path, conversion, "after:database:action")
-    with sqlite3.connect(staged.roots.store / "opencode.db") as db:
+    with closing(sqlite3.connect(staged.roots.store / "opencode.db")) as db, db:
         db.execute("UPDATE session SET time_archived=1 WHERE id=?", (operation.target.native_id,))
     before = tree(staged.roots.store)
     worker.fault = crash_at(point)
@@ -1059,7 +1060,7 @@ def test_codex_continuation_before_database_intent_finishes_forward(tmp_path, co
     adapter = worker.adapters.get("codex")
     if continued in ("registered", "both"):
         adapter.registration.register_stage(staged)
-        with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+        with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
             db.execute(
                 "UPDATE threads SET name='Native rename',tokens_used=55 WHERE id=?",
                 (operation.target.native_id,),
@@ -1073,7 +1074,7 @@ def test_codex_continuation_before_database_intent_finishes_forward(tmp_path, co
     before = path.read_bytes()
     assert service(tmp_path).resume(operation.id).lifecycle == "active"
     assert path.read_bytes() == before
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         row = db.execute(
             "SELECT name,tokens_used FROM threads WHERE id=?", (operation.target.native_id,)
         ).fetchone()

@@ -19,6 +19,9 @@ class NativeRoots:
     cwd: Path
     config: Path
     cache: Path
+    data: Path | None = None
+    state: Path | None = None
+    temporary: Path | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,14 @@ class NativeIdentityAllocator(Protocol):
     def allocate_identity(self) -> Identity: ...
 
 
+class NativeRootResolver(Protocol):
+    def resolve_source(self, cwd: Path, recorded: str | None) -> tuple[NativeRoots, str]: ...
+
+    def source_ref(self, roots: NativeRoots, recorded: str | None) -> str: ...
+
+    def resolve(self, cwd: Path, *, source_ref: str | None = None) -> NativeRoots: ...
+
+
 @dataclass(frozen=True)
 class Adapter:
     agent: str
@@ -193,6 +204,7 @@ class Adapter:
     registration: NativeRegistration | None = None
     index: NativeIndex | None = None
     identity_allocator: NativeIdentityAllocator | None = None
+    roots: NativeRootResolver | None = None
 
 
 class AdapterRegistry:
@@ -210,6 +222,15 @@ class AdapterRegistry:
             return self._adapters[canonical]
         except KeyError as exc:
             raise PreservationError(f"No portability adapter registered for {agent}") from exc
+
+    def agents(self) -> tuple[str, ...]:
+        return tuple(self._adapters)
+
+    def roots(self, agent: str, cwd: Path, *, source_ref: str | None = None) -> NativeRoots:
+        resolver = self.get(agent).roots
+        if resolver is None:
+            raise PreservationError(f"Native root resolution is unavailable for {agent}")
+        return resolver.resolve(cwd, source_ref=source_ref)
 
     def reader(self, agent: str) -> DeepReader:
         reader = self.get(agent).reader

@@ -69,7 +69,9 @@ def dumps(conversation: Conversation) -> bytes:
 
 def loads(data: bytes) -> Conversation:
     try:
-        conversation = _decode(json.loads(data, object_pairs_hook=unique_object), Conversation)
+        conversation: Conversation = _decode(
+            json.loads(data, object_pairs_hook=unique_object), Conversation
+        )
     except (ValueError, TypeError, UnicodeError) as exc:
         raise PreservationError(f"Invalid canonical document: {exc}") from exc
     validate(conversation)

@@ -47,7 +47,11 @@ def _state_db(codex_home: Path) -> Path | None:
 
 def default_codex_dir() -> Path:
     env = os.environ.get("CODEX_SESSIONS_DIR")
-    return Path(env) if env else Path.home() / ".codex" / "sessions"
+    return (
+        Path(env)
+        if env
+        else Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "sessions"
+    )
 
 
 def _iso_mtime(p: Path) -> str:

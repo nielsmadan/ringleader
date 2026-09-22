@@ -204,3 +204,72 @@ it alone.
 
 - `rl config --help` and `rl session mark --help` print `unknown subcommand` instead of help;
   both hand-roll their dispatch. Use `rl config` / `rl session mark` bare to list subcommands.
+
+## Session portability
+
+These commands read the current registry without scanning. Run `rl session refresh`
+first when a source is absent. IDs accept exact native IDs, `AGENT:ID`, then unambiguous
+prefixes; `claude` aliases `claude-code`. Names are not ID selectors.
+
+```sh
+rl session convert <id>... --to <agent> [--compact] [--dry-run] [--json]
+rl session convert --open --to <agent> [--from <agent>] [--workspace <path>]
+rl session convert --running --to <agent> [--from <agent>] [--workspace <path>]
+rl session fork <id> [--to <agent>] [--compact] [--resume] [--json]
+rl session handoff <id> --to <agent> [--compact] [--json]
+rl session resume <id>
+rl session lineage <id> [--json]
+rl data transaction list [--json]
+rl data transaction resume <transaction-id> [--json]
+rl data transaction rollback <transaction-id> [--json]
+```
+
+Supported agent names are `claude-code`, `codex`, `opencode`, and `pi`. Conversion
+preserves the source and creates a destination session in its effective recorded
+workspace. Repeating a conversion reuses the same result; an archived or deleted
+result is reported with its lifecycle and is not recreated. Fork always creates a
+fresh identity and defaults to the source agent. Handoff forks and then resumes.
+`--compact` deterministically replaces complete tool exchanges with omission
+markers and reports approximate sizes/counts; it makes no model call.
+
+Explicit IDs, `--open`, and `--running` are mutually exclusive. `--open` selects
+sessions whose effective status is active, unfinished, or blocked. It excludes
+currently snoozed and name-filtered sessions, and includes kept sessions with an
+open status. `--running` requires a complete authoritative presence response and
+selects verified running sessions regardless of lifecycle, snooze, or name filters.
+Unavailable or partial presence fails with setup guidance. `--from` filters the
+source agent. `--workspace` filters resolved workspaces at or below that directory;
+it does not retarget output. Explicit IDs may select hidden or archived histories;
+archived bytes are read in place. A batch retains successes and exits nonzero if
+any source fails. JSON conversion output has `results` and `errors` arrays.
+
+Resume replaces `rl` with the native CLI, preserving terminal input/output and the
+inherited environment. It uses the recorded effective workspace and, for converted
+sessions, recorded native roots. Fork with `--resume` and handoff validate the
+executable and workspace before publication. A later launch failure retains the
+target and prints its qualified ID and exact `rl session resume` command. Archived
+and deleted sessions cannot be resumed.
+
+`--dry-run`, lineage, transaction listing, and the conversion sections of `rl doctor`
+do not write registry, journals, or native stores. Version probes use disposable
+roots. Doctor reports writer compatibility and unfinished conversion journals.
+OpenCode's initial profile is schema-backed, with native runtime smoke explicitly
+unverified; it requires an initialized compatible database and supported explicit
+model configuration. Other adapters require their verified native versions.
+
+Transaction resume performs forward recovery. Rollback removes only provably
+private staging and refuses after external publication may have occurred. Use the
+transaction ID printed by conversion or `rl data transaction list`.
+
+All these commands accept `--registry PATH` and `--operations PATH` to select
+ringleader state. Native roots follow `HOME` and `XDG_CONFIG_HOME`, `XDG_CACHE_HOME`,
+`XDG_DATA_HOME`, `XDG_STATE_HOME`, and `TMPDIR`, with their native defaults. Agent
+stores follow `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and `PI_CODING_AGENT_DIR`.
+Scanner overrides `SESSION_TRACKER_PROJECTS_DIR`, `CODEX_SESSIONS_DIR`, and
+`PI_SESSIONS_DIR` can select a native store only when they end in `projects`,
+`sessions`, and `sessions`, respectively, and agree with any explicit agent root.
+Arbitrary leaf overrides remain readable source locations but cannot be native
+publication or launch destinations. OpenCode uses `XDG_DATA_HOME/opencode/opencode.db`;
+an explicit `OPENCODE_DB` must agree for publication or launch. Read-only OpenCode
+sources may use a copied database at any recorded path or `OPENCODE_DB` path,
+including a different filename; schema and snapshot validation still apply.

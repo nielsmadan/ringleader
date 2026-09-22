@@ -4,6 +4,7 @@ import base64
 import json
 import re
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from pathlib import Path
 
@@ -55,7 +56,7 @@ def roots(tmp_path):
         '{"model":"anthropic/offline-fixture"}'
     )
     schema = json.loads(Path("tests/portability/opencode-1.18.30.json").read_text())
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         for statement in schema["sql"]:
             connection.execute(statement)
         connection.executemany(
@@ -167,7 +168,7 @@ def ordinary_export(roots, *, compaction=False):
 
 def seed(roots, export):
     key = export["info"]["id"]
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         if not connection.execute("SELECT 1 FROM project WHERE id='global'").fetchone():
             insert(
                 connection,
@@ -358,7 +359,7 @@ def test_registration_atomic_collision_recovery_and_native_edits(roots):
     adapter = OpenCodeAdapter()
     result = stage(roots)
     assert adapter.register_stage(result) is True
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
         connection.execute(
             "UPDATE session SET title=?,time_updated=? WHERE id=?",
@@ -369,7 +370,7 @@ def test_registration_atomic_collision_recovery_and_native_edits(roots):
         ).fetchone()[0]
         connection.execute("UPDATE message SET data=? WHERE id=?", ('{"native":"edit"}', first))
     assert adapter.register_stage(result, recover=True) is False
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         assert connection.execute(
             "SELECT title,time_updated FROM session WHERE id=?", (result.identity.native_id,)
         ).fetchone() == ("native rename", 999)
@@ -396,14 +397,14 @@ def test_registration_atomic_collision_recovery_and_native_edits(roots):
     payload["session"]["metadata"] = encode(meta).decode()
     with pytest.raises(PreservationError, match="UNIQUE"):
         adapter.register_stage(replace(second, database_payload=encode(payload)))
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         assert connection.execute("SELECT id FROM session").fetchall() == [
             (result.identity.native_id,)
         ]
 
 
 def test_schema_guards_and_missing_native_database(roots):
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         assert schema_identity(connection) == SCHEMA_ID
         connection.execute("CREATE TABLE unsupported (id TEXT)")
     with pytest.raises(PreservationError, match="schema/migrations"):
@@ -416,7 +417,7 @@ def test_schema_guards_and_missing_native_database(roots):
 @pytest.mark.parametrize("table", ["session_message", "session_input", "session_context_epoch"])
 def test_v2_rows_never_masquerade_as_legacy(roots, table):
     seed(roots, ordinary_export(roots))
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         if table == "session_message":
             connection.execute(
                 "INSERT INTO session_message VALUES ('v2','ses_native','user',1,1,1,'{}')"
@@ -491,7 +492,7 @@ def test_snapshot_uses_one_consistent_sqlite_read_transaction(roots, monkeypatch
 
     seed(roots, ordinary_export(roots))
     path = roots.store / "opencode.db"
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("PRAGMA journal_mode=WAL")
     original_connect = sqlite3.connect
     trace = []
@@ -506,7 +507,7 @@ def test_snapshot_uses_one_consistent_sqlite_read_transaction(roots, monkeypatch
                 trace.append(sql)
                 if sql.startswith("SELECT * FROM message") and not changed:
                     changed = True
-                    with original_connect(path) as writer:
+                    with closing(original_connect(path)) as writer, writer:
                         data = json.loads(
                             writer.execute(
                                 "SELECT data FROM part WHERE id='prt_msg_2_1'"
@@ -543,7 +544,7 @@ def test_registration_rolls_back_new_project_and_graph(roots, monkeypatch):
     monkeypatch.setattr(opencode_state, "insert", fail_part)
     with pytest.raises(PreservationError, match="injected part failure"):
         OpenCodeAdapter().register_stage(result)
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         assert {
             table: connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             for table in ("project", "session", "message", "part")
@@ -568,7 +569,7 @@ def test_attachments_are_target_owned_after_source_removal(roots):
     result = adapter.stage(
         original, TargetRequest(adapter.allocate_identity(), roots, PROFILE, original.title)
     )
-    with sqlite3.connect(roots.store / "opencode.db") as connection:
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
         connection.execute("DELETE FROM part WHERE session_id='ses_native'")
         connection.execute("DELETE FROM message WHERE session_id='ses_native'")
         connection.execute("DELETE FROM session WHERE id='ses_native'")

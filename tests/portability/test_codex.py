@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from contextlib import closing
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
@@ -34,7 +35,7 @@ def initialized(tmp_path):
     target = roots(tmp_path)
     target.store.mkdir(parents=True)
     fixture = json.loads(Path(__file__).with_name("codex-state-5.json").read_text())
-    with sqlite3.connect(target.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(target.store / "state_5.sqlite")) as db, db:
         for kind in ("table", "index", "trigger", "view"):
             for row in fixture["schema"]:
                 if row[0] == kind:
@@ -56,6 +57,35 @@ def stage(tmp_path, original=None):
     return CodexAdapter().stage(
         original, TargetRequest(Identity("codex", str(uuid4())), target, PROFILE, original.title)
     )
+
+
+@pytest.mark.parametrize("invalid_schema", [False, True])
+def test_schema_inspection_closes_connection(tmp_path, monkeypatch, invalid_schema):
+    target = initialized(tmp_path)
+    if invalid_schema:
+        with closing(sqlite3.connect(target.store / "state_5.sqlite")) as db, db:
+            db.execute("UPDATE backfill_state SET status='running'")
+    connections = []
+    connect = sqlite3.connect
+
+    def record_connection(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        connections.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", record_connection)
+    try:
+        if invalid_schema:
+            with pytest.raises(PreservationError, match="backfill"):
+                inspect_database(target)
+        else:
+            assert inspect_database(target) == SCHEMA_ID
+        assert len(connections) == 1
+        with pytest.raises(sqlite3.ProgrammingError, match="closed database"):
+            connections[0].execute("SELECT 1")
+    finally:
+        for connection in connections:
+            connection.close()
 
 
 def publish_files(staged):
@@ -92,7 +122,7 @@ def test_registration_atomic_collision_recovery_and_other_rows(tmp_path):
     assert adapter.register_stage(staged, recover=True) is False
     with pytest.raises(PreservationError, match="collision"):
         adapter.register_stage(staged)
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         row = db.execute("SELECT id,cwd,name,history_mode FROM threads").fetchone()
         assert row == (
             staged.identity.native_id,
@@ -117,7 +147,7 @@ def test_registration_atomic_collision_recovery_and_other_rows(tmp_path):
 def test_registration_rechecks_schema_inside_transaction(tmp_path, mutation):
     staged = stage(tmp_path)
     publish_files(staged)
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         db.execute(
             {
                 "column": "ALTER TABLE threads ADD COLUMN surprise TEXT",
@@ -127,7 +157,7 @@ def test_registration_rechecks_schema_inside_transaction(tmp_path, mutation):
         )
     with pytest.raises(PreservationError, match=r"schema|backfill"):
         CodexAdapter().register_stage(staged)
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         assert db.execute("SELECT count(*) FROM threads").fetchone() == (0,)
 
 
@@ -371,7 +401,7 @@ def test_model_status_markers_are_native_and_verified(tmp_path):
 
 def test_read_only_preflight_does_not_create_wal_sidecars(tmp_path):
     target = initialized(tmp_path)
-    with sqlite3.connect(target.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(target.store / "state_5.sqlite")) as db, db:
         db.execute("PRAGMA journal_mode=WAL")
     db.close()
     before = {p.name: p.read_bytes() for p in target.store.iterdir()}
@@ -393,7 +423,7 @@ def test_concurrent_registration_preserves_unrelated_threads(tmp_path):
     with ThreadPoolExecutor(max_workers=2) as workers:
         results = list(workers.map(adapter.register_stage, [staged, other]))
     assert results == [True, True]
-    with sqlite3.connect(staged.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(staged.roots.store / "state_5.sqlite")) as db, db:
         assert set(db.execute("SELECT id,name FROM threads")) == {
             (staged.identity.native_id, "Portable example"),
             (other.identity.native_id, "Other"),
@@ -584,7 +614,7 @@ def test_name_append_rejects_unnamed_database_identity_before_mutation(tmp_path,
     publish_files(existing)
     adapter = CodexAdapter()
     adapter.register_stage(existing)
-    with sqlite3.connect(existing.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(existing.roots.store / "state_5.sqlite")) as db, db:
         db.execute("UPDATE threads SET name=NULL WHERE id=?", (existing.identity.native_id,))
     index = existing.roots.store / "session_index.jsonl"
     prior = b'{"id":"other","thread_name":"Keep","updated_at":"2020"}\n'
@@ -607,7 +637,7 @@ def test_name_append_rejects_unnamed_database_identity_before_mutation(tmp_path,
     with pytest.raises(PreservationError, match="session ID collision"):
         adapter.append_index(colliding)
     assert index.read_bytes() == prior if existing_index else not index.exists()
-    with sqlite3.connect(existing.roots.store / "state_5.sqlite") as db:
+    with closing(sqlite3.connect(existing.roots.store / "state_5.sqlite")) as db, db:
         assert db.execute(
             "SELECT name FROM threads WHERE id=?", (existing.identity.native_id,)
         ).fetchone() == (None,)

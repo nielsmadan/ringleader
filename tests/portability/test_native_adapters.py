@@ -681,13 +681,10 @@ def test_native_historical_timestamps_survive_import(adapter, profile, tmp_path,
     rows = native.records(stage.files[0].data)
     native_messages = [row for row in rows if "message" in row]
     expected = datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC)
-    assert all(
-        datetime.fromisoformat(row["timestamp"].replace("Z", "+00:00")) == expected
-        for row in native_messages
-    )
+    assert all(datetime.fromisoformat(row["timestamp"]) == expected for row in native_messages)
     if profile.agent == "pi":
         assert all(row["message"]["timestamp"] == 1577934245000 for row in native_messages)
-    created = datetime.fromisoformat(rows[0]["timestamp"].replace("Z", "+00:00"))
+    created = datetime.fromisoformat(rows[0]["timestamp"])
     assert before.timestamp() - 0.001 <= created.timestamp() <= after.timestamp()
     compare(original, adapter.read_stage(stage), adapter.normalizations(profile))
 

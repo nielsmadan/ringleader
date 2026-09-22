@@ -6,6 +6,7 @@ import json
 import os
 import sqlite3
 import tomllib
+from contextlib import closing
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -90,7 +91,7 @@ def inspect_database(roots: NativeRoots) -> str:
         directory = Path(temporary)
         for item in files:
             (directory / item.name).write_bytes(item.data)
-        with sqlite3.connect(directory / "state.sqlite") as connection:
+        with closing(sqlite3.connect(directory / "state.sqlite")) as connection:
             return schema_identity(connection)
 
 

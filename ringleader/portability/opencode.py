@@ -637,7 +637,9 @@ class OpenCodeAdapter:
         try:
             if request.identity.agent != "opencode":
                 raise PreservationError("Not an OpenCode source")
-            state.inspect_database(request.roots)
+            path = native.source_path(request.source_ref, request.roots)
+            with state.database_copy(path) as isolated, database_snapshot(isolated) as connection:
+                state.schema_identity(connection)
             return Compatibility(True, PROFILE, (), schema_identity=state.SCHEMA_ID)
         except (OSError, PreservationError) as exc:
             return Compatibility(False, None, (str(exc),))
@@ -646,8 +648,6 @@ class OpenCodeAdapter:
         if request.identity.agent != "opencode" or request.branch_id is not None:
             raise PreservationError("OpenCode source requires its complete selected native session")
         path = native.source_path(request.source_ref, request.roots)
-        if path.resolve() != state.database_path(request.roots).resolve():
-            raise PreservationError("OpenCode source_ref must identify roots.store/opencode.db")
         with state.database_copy(path) as isolated, database_snapshot(isolated) as connection:
             state.schema_identity(connection)
             export, graph = _read_graph(connection, request.identity)
@@ -725,7 +725,8 @@ class OpenCodeAdapter:
             "XDG_DATA_HOME": str(roots.store.parent),
             "XDG_CONFIG_HOME": str(roots.config),
             "XDG_CACHE_HOME": str(roots.cache),
-            "XDG_STATE_HOME": str(roots.home / "state"),
+            "XDG_STATE_HOME": str(roots.state or roots.home / "state"),
+            "TMPDIR": str(roots.temporary or roots.cache / "tmp"),
             "OPENCODE_DB": str(state.database_path(roots)),
         }
         return RunRequest(

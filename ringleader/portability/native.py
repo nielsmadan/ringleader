@@ -101,9 +101,9 @@ def env(roots: NativeRoots, agent: str) -> tuple[tuple[str, str], ...]:
         "HOME": str(roots.home),
         "XDG_CONFIG_HOME": str(roots.config),
         "XDG_CACHE_HOME": str(roots.cache),
-        "XDG_DATA_HOME": str(roots.home / "data"),
-        "XDG_STATE_HOME": str(roots.home / "state"),
-        "TMPDIR": str(roots.cache / "tmp"),
+        "XDG_DATA_HOME": str(roots.data or roots.home / "data"),
+        "XDG_STATE_HOME": str(roots.state or roots.home / "state"),
+        "TMPDIR": str(roots.temporary or roots.cache / "tmp"),
     }
     values[
         {"claude-code": "CLAUDE_CONFIG_DIR", "pi": "PI_CODING_AGENT_DIR", "codex": "CODEX_HOME"}[
@@ -386,7 +386,7 @@ def historical_time(message: Message, fallback: datetime) -> datetime:
             r"-?\d+(?:\.\d+)?", value
         ):
             return datetime.fromtimestamp(float(value) / 1000, UTC)
-        result = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        result = datetime.fromisoformat(value)
         if result.tzinfo is None:
             raise ValueError("timezone is missing")
         return result.astimezone(UTC)

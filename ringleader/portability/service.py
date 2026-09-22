@@ -4,9 +4,10 @@ import fcntl
 import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from .. import registry
@@ -69,7 +70,7 @@ class BatchResult:
     error: str | None = None
 
 
-def _record(reg: dict, target: Identity) -> tuple[str, dict | None]:
+def _record(reg: dict[str, Any], target: Identity) -> tuple[str, dict[str, Any] | None]:
     for bucket, lifecycle in (
         ("deleted", "deleted"),
         ("archived", "archived"),
@@ -81,10 +82,11 @@ def _record(reg: dict, target: Identity) -> tuple[str, dict | None]:
     return "missing", None
 
 
-def _lineage(record: dict) -> dict | None:
+def _lineage(record: dict[str, Any]) -> dict[str, Any] | None:
     while record:
         if record.get("lineage"):
-            return record["lineage"]
+            lineage: dict[str, Any] = record["lineage"]
+            return lineage
         record = record.get("thread") or {}
     return None
 
@@ -226,7 +228,7 @@ class ConversionService:
                 results.append(
                     BatchResult(request.source.identity, self.convert(request, dry_run=dry_run))
                 )
-            except Exception as exc:
+            except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
                 results.append(BatchResult(request.source.identity, error=str(exc)))
         return tuple(results)
 
@@ -240,7 +242,7 @@ class ConversionService:
     def transactions(self) -> tuple[Operation, ...]:
         return tuple(self.store.load(key) for key in self.store.ids())
 
-    def lineage(self, identity: Identity) -> tuple[dict, ...]:
+    def lineage(self, identity: Identity) -> tuple[dict[str, Any], ...]:
         reg = registry.load_registry(self.registry_path)
         entries = dict(reg.get("conversionLineage", {}))
         for bucket in ("threads", "archived", "deleted"):
@@ -279,7 +281,7 @@ class ConversionService:
     ) -> ConversionResult:
         try:
             return self._resume(operation, artifacts, reused=reused)
-        except Exception as exc:
+        except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
             current = self.store.load(operation.id)
             self.store.save(replace(current, last_error=str(exc)))
             raise
@@ -318,7 +320,11 @@ class ConversionService:
         return self._result(operation, artifacts, reused=reused)
 
     def _retire(
-        self, operation: Operation, artifacts: Artifacts, lifecycle: str, record: dict | None
+        self,
+        operation: Operation,
+        artifacts: Artifacts,
+        lifecycle: str,
+        record: dict[str, Any] | None,
     ) -> Operation:
         stage = artifacts.stage.native()
         if not operation.terminal_lifecycle:
@@ -611,7 +617,7 @@ class ConversionService:
             "profile": stage.profile.name,
         }
 
-        def mutation(reg: dict) -> None:
+        def mutation(reg: dict[str, Any]) -> None:
             _lifecycle, existing = _record(reg, operation.target)
             if existing is not None:
                 existing_lineage = _lineage(existing)
@@ -619,6 +625,7 @@ class ConversionService:
                     raise PreservationError("Registry lineage collision")
                 while existing:
                     existing["lineage"] = lineage
+                    existing.setdefault("nativeRoots", asdict(artifacts.stage.roots))
                     existing = existing.get("thread")
             elif create_active and operation.id not in reg.get("conversionLineage", {}):
                 record = registry._new_thread(
@@ -635,6 +642,7 @@ class ConversionService:
                     }
                 )
                 record["lineage"] = lineage
+                record["nativeRoots"] = asdict(artifacts.stage.roots)
                 reg["threads"].append(record)
             reg.setdefault("conversionLineage", {})[operation.id] = lineage
 

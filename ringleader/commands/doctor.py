@@ -6,8 +6,11 @@ import os
 from pathlib import Path
 from typing import Any
 
+from ..paths import conversion_operations_dir, default_registry
+from ..portability.diagnostics import compatibility_rows, unfinished_rows
 from ..presence import PresenceClient, presence_rows
 from . import hooks, skills, statusline
+from .conversion import service
 
 MIN_RETENTION_DAYS = 30
 GLYPHS = {"ok": "✓", "warn": "⚠", "error": "✖"}
@@ -44,6 +47,8 @@ def cmd_doctor(argv: list[str]) -> int:
         default=os.environ.get("RINGLEADER_CLAUDE_SETTINGS")
         or str(Path.home() / ".claude" / "settings.json"),
     )
+    ap.add_argument("--registry", default=str(default_registry()))
+    ap.add_argument("--operations", default=str(conversion_operations_dir()))
     args = ap.parse_args(argv)
     r = check_claude_retention(args.settings)
     mark = "✓" if r["ok"] else "⚠"
@@ -63,4 +68,18 @@ def cmd_doctor(argv: list[str]) -> int:
     for row in presence_rows(PresenceClient()):
         print(f"{GLYPHS[row['state']]} {row['label']}: {row['detail']}")
 
+    worker = service(args)
+    print("\n--- conversion compatibility ---")
+    for row in compatibility_rows(worker, Path.cwd()):
+        detail = row["profile"] or "unsupported"
+        diagnostics = "; ".join(row["diagnostics"])
+        print(f"{row['agent']}: {detail}" + (f"; {diagnostics}" if diagnostics else ""))
+    print("\n--- unfinished conversion transactions ---")
+    operations = unfinished_rows(worker)
+    for operation in operations:
+        print(
+            f"{operation['id']}: {operation['state']}; {operation['error'] or 'resume or private-only rollback'}"
+        )
+    if not operations:
+        print("None.")
     return 0

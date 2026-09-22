@@ -336,3 +336,25 @@ example, extracting durable knowledge from multiple finished sessions at once be
 single synthesis write.
 
 **Fallback:** run the same extractions one at a time, in sequence.
+
+## Native session portability
+
+On an explicit portability request, `rl session convert <id>... --to AGENT` preserves
+sources and reuses prior identical conversions. `--dry-run` validates without writes;
+`--compact` deterministically omits complete tool exchanges. Exact qualified IDs and
+unambiguous prefixes are accepted. `--open` excludes snoozed/name-filtered sessions
+and includes kept open work; `--running` requires complete authoritative presence.
+`--from` filters agents and `--workspace` filters source workspaces without retargeting.
+
+`rl session fork <id> [--to AGENT]` always creates a fresh identity. `--resume` launches
+it; `rl session handoff <id> --to AGENT` forks and launches directly. These launches
+replace the current process. `rl session resume <id>` uses the recorded workspace;
+archived/deleted targets produce lifecycle diagnostics. Archived source histories
+can be converted in place. `rl session lineage <id>` reads authoritative relationships.
+
+Use `rl data transaction list` to inspect unfinished conversion operations,
+`rl data transaction resume <id>` for forward recovery, and
+`rl data transaction rollback <id>` only for private staging; published targets are
+never deleted by rollback. Batch failures retain successful results. These commands
+accept `--json`, `--registry PATH`, and `--operations PATH`. See `docs/user/cli.md`
+for native root precedence, supported profiles, and the OpenCode verification limit.

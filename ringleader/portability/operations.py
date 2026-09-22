@@ -7,7 +7,7 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from ..stateio import atomic_write_bytes
 from .capabilities import (
@@ -31,16 +31,46 @@ class StoredRoots:
     cwd: str
     config: str
     cache: str
+    data: str | None = None
+    state: str | None = None
+    temporary: str | None = None
 
     @classmethod
     def capture(cls, roots: NativeRoots) -> StoredRoots:
-        return cls(*(str(getattr(roots, key).resolve()) for key in cls.__annotations__))
+        return cls(
+            str(roots.home.resolve()),
+            str(roots.store.resolve()),
+            str(roots.cwd.resolve()),
+            str(roots.config.resolve()),
+            str(roots.cache.resolve()),
+            *(
+                str(value.resolve()) if value is not None else None
+                for value in (roots.data, roots.state, roots.temporary)
+            ),
+        )
 
     def native(self) -> NativeRoots:
-        paths = tuple(Path(getattr(self, key)) for key in self.__annotations__)
-        if any(not path.is_absolute() or str(path.resolve()) != str(path) for path in paths):
+        paths = tuple(
+            Path(value) if (value := getattr(self, key)) is not None else None
+            for key in self.__annotations__
+        )
+        if any(
+            not path.is_absolute() or str(path.resolve()) != str(path)
+            for path in paths
+            if path is not None
+        ):
             raise PreservationError("Operation roots changed or are not canonical absolute paths")
-        return NativeRoots(*paths)
+        return NativeRoots(
+            Path(self.home),
+            Path(self.store),
+            Path(self.cwd),
+            Path(self.config),
+            Path(self.cache),
+            *(
+                Path(value) if value is not None else None
+                for value in (self.data, self.state, self.temporary)
+            ),
+        )
 
 
 @dataclass(frozen=True)
@@ -95,7 +125,7 @@ class Artifacts:
             encode(
                 (
                     self.snapshot.identity(self.options),
-                    self.stage.roots,
+                    (self.stage.roots.store, self.stage.roots.cwd),
                     self.stage.profile,
                     self.compatibility.schema_identity,
                     self.compatibility.target_configuration,
@@ -163,9 +193,9 @@ def durable_directory(path: Path) -> None:
     fsync_directory(path.parent)
 
 
-def decode(data: bytes, expected: type):
+def decode[T](data: bytes, expected: type[T]) -> T:
     try:
-        return _decode(json.loads(data, object_pairs_hook=unique_object), expected)
+        return cast(T, _decode(json.loads(data, object_pairs_hook=unique_object), expected))
     except (ValueError, TypeError, UnicodeError) as exc:
         raise PreservationError(f"Invalid conversion operation: {exc}") from exc
 

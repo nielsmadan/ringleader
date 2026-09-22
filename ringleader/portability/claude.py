@@ -223,7 +223,8 @@ def _default_leaf(graph: list[dict[str, Any]]) -> str:
     if not preferred:
         raise PreservationError("Claude transcript has no conversational leaf")
     positions = {row["uuid"]: i for i, row in enumerate(graph)}
-    return max(preferred, key=lambda row: positions[row["uuid"]])["uuid"]
+    leaf: str = max(preferred, key=lambda row: positions[row["uuid"]])["uuid"]
+    return leaf
 
 
 def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conversation:
