@@ -176,6 +176,31 @@ async def test_j_k_move_cursor(tmp_path, monkeypatch):
         assert list_view.index == 0
 
 
+async def test_ctrl_j_k_move_cursor(tmp_path, monkeypatch):
+    """The shared ringleader TUI motions, so a list that filters as you type can offer the
+    same keys without taking them from its input."""
+    reg_path = _setup(tmp_path, monkeypatch)
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test() as pilot:
+        list_view = app._list_view()
+        assert list_view.index == 0
+        await pilot.press("ctrl+j")
+        assert list_view.index == 1
+        await pilot.press("ctrl+k")
+        assert list_view.index == 0
+
+
+async def test_arrow_keys_move_cursor(tmp_path, monkeypatch):
+    reg_path = _setup(tmp_path, monkeypatch)
+    app = InboxApp(registry_path=str(reg_path))
+    async with app.run_test() as pilot:
+        list_view = app._list_view()
+        await pilot.press("down")
+        assert list_view.index == 1
+        await pilot.press("up")
+        assert list_view.index == 0
+
+
 async def test_delete_is_staged_and_undo_restores(tmp_path, monkeypatch):
     reg_path = _setup(tmp_path, monkeypatch)
     app = InboxApp(registry_path=str(reg_path))

@@ -27,7 +27,7 @@ Most actions are inbox-only; the handlers check `_active_tab` and no-op elsewher
 
 | Key | Action |
 |---|---|
-| `j` / `k` (or ↓ / ↑) | move the cursor |
+| `ctrl+j` / `ctrl+k` (or `j` / `k`, ↓ / ↑) | move the cursor |
 | `tab` / `shift+tab` | cycle tabs (`priority=True`, to beat Screen's default focus-next) |
 | `h` | harvest — an empty digest archives immediately, a non-empty one moves the row to **harvesting** |
 | `d` | stage a delete, applied on exit |
@@ -38,6 +38,10 @@ Most actions are inbox-only; the handlers check `_active_tab` and no-op elsewher
 | `enter` | select for today → **selected** |
 | `;` | detail view (project, status, whatItIs, last prompt, git branch, condensed transcript) |
 | `q` | quit |
+
+`ctrl+j` / `ctrl+k` come from `tui/keys.py:NAV_BINDINGS`, the motions shared by every
+ringleader TUI. They are ctrl-modified because a TUI that filters as you type cannot spend bare
+`j` and `k` on navigation. The inbox has no text input, so it binds the bare keys as well.
 
 `enter` never fires its binding directly — `ListView` consumes it and posts `Selected`, so
 `on_list_view_selected` dispatches per tab. The binding is kept for the footer text.
