@@ -26,6 +26,7 @@ from .compact import CompactReport, compact
 from .compare import compare
 from .model import Identity, PreservationError
 from .operations import (
+    OPERATION_VERSION,
     Artifacts,
     Operation,
     OperationStore,
@@ -175,7 +176,7 @@ class ConversionService:
         if stage.schema_identity != compatibility.schema_identity:
             raise PreservationError("Native schema changed during staging")
         artifacts = Artifacts(
-            1,
+            OPERATION_VERSION,
             snapshot,
             expected,
             StoredStage.capture(stage),
@@ -184,6 +185,7 @@ class ConversionService:
             options,
             "fork" if request.fork else "convert",
             transformed.report if transformed else None,
+            str(self.registry_path.resolve()),
         )
         if dry_run:
             return ConversionResult(
@@ -196,23 +198,25 @@ class ConversionService:
                 report=artifacts.report,
                 diagnostics=compatibility.diagnostics,
             )
+        reuse_key = artifacts.key()
         with self._lock():
             if not request.fork:
                 for operation_id in self.store.ids():
                     prior = self.store.load(operation_id)
-                    if prior.key == artifacts.key() and prior.state != "rolled_back":
+                    if prior.key == reuse_key and prior.state != "rolled_back":
                         prior_artifacts = self.store.artifacts(prior)
                         if prior_artifacts.kind == "convert":
                             return self._run(prior, prior_artifacts, reused=True)
             operation = Operation(
-                1,
+                OPERATION_VERSION,
                 uuid4().hex,
-                artifacts.key(),
+                reuse_key,
                 digest(encode(artifacts)),
                 source.identity,
                 identity,
                 datetime.now(UTC).isoformat(),
                 "prepared",
+                artifacts.registry_path,
             )
             self._point("before:create", operation)
             self.store.create(operation, artifacts)
@@ -232,9 +236,16 @@ class ConversionService:
                 results.append(BatchResult(request.source.identity, error=str(exc)))
         return tuple(results)
 
+    def _check_registry(self, artifacts: Artifacts | Operation) -> None:
+        if artifacts.registry_path != str(self.registry_path.resolve()):
+            raise PreservationError(
+                f"Conversion belongs to registry {artifacts.registry_path}; repeat with --registry {artifacts.registry_path}"
+            )
+
     def resume(self, operation_id: str) -> ConversionResult:
         with self._lock():
             operation = self.store.load(operation_id)
+            self._check_registry(operation)
             if operation.state == "rolled_back":
                 raise PreservationError("Conversion was rolled back; start a new conversion")
             return self._run(operation, self.store.artifacts(operation), reused=True)
@@ -279,6 +290,7 @@ class ConversionService:
     def _run(
         self, operation: Operation, artifacts: Artifacts, *, reused: bool = False
     ) -> ConversionResult:
+        self._check_registry(artifacts)
         try:
             return self._resume(operation, artifacts, reused=reused)
         except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
@@ -690,6 +702,7 @@ class ConversionService:
     def rollback(self, operation_id: str) -> Operation:
         with self._lock():
             operation = self.store.load(operation_id)
+            self._check_registry(operation)
             if operation.state == "rolled_back":
                 self.store._path(operation.id, "artifacts.json").unlink(missing_ok=True)
                 fsync_directory(self.store.directory(operation.id))

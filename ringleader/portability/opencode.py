@@ -479,20 +479,17 @@ def parse(
     return conversation
 
 
-def _attachment_paths(value: Any) -> set[Path]:
-    if isinstance(value, dict):
-        paths: set[Path] = set()
-        if value.get("type") == "file" and str(value.get("url", "")).startswith("file:"):
-            parsed = urlsplit(value["url"])
+def _attachment_paths(export: dict[str, Any]) -> set[Path]:
+    paths: set[Path] = set()
+    for row in export["messages"]:
+        for part in row["parts"]:
+            if part.get("type") != "file" or not str(part.get("url", "")).startswith("file:"):
+                continue
+            parsed = urlsplit(part["url"])
             if parsed.netloc not in ("", "localhost"):
                 raise PreservationError("Remote OpenCode attachment path")
             paths.add(Path(unquote(parsed.path)).resolve())
-        for item in value.values():
-            paths.update(_attachment_paths(item))
-        return paths
-    if isinstance(value, list):
-        return set().union(*(_attachment_paths(item) for item in value))
-    return set()
+    return paths
 
 
 def _read_graph(connection: Any, identity: Identity) -> tuple[dict[str, Any], dict[str, Any]]:

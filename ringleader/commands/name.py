@@ -15,7 +15,7 @@ def _now() -> str:
 
 
 def _can_name(t: dict[str, Any]) -> bool:
-    src = scanner.source_by_name(t.get("source") or "claude-code")
+    src = scanner.source_for_thread(t)
     return bool(src and "applies_names" in src.capabilities and isinstance(src, NameApplyingSource))
 
 
@@ -54,7 +54,7 @@ def cmd_name(argv: list[str]) -> int:
 
     new_n = ren_n = skipped = suffixed = 0
     for t, name, kind in selected:
-        src = scanner.source_by_name(t.get("source") or "claude-code")
+        src = scanner.source_for_thread(t)
         try:
             if not isinstance(src, NameApplyingSource):
                 raise OSError("unknown session source")

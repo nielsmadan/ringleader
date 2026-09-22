@@ -261,7 +261,10 @@ model configuration. Other adapters require their verified native versions.
 
 Transaction resume performs forward recovery. Rollback removes only provably
 private staging and refuses after external publication may have occurred. Use the
-transaction ID printed by conversion or `rl data transaction list`.
+transaction ID printed by conversion or `rl data transaction list`. Repeat the
+original `--registry` override when recovering an operation: journals bind the
+resolved registry path, and a mismatch fails with the required path before any
+publication or cleanup.
 
 All these commands accept `--json`, `--registry PATH` (default
 `$XDG_DATA_HOME/ringleader/registry.json`, or `~/.local/share/ringleader/registry.json`),
@@ -285,4 +288,6 @@ Arbitrary leaf overrides remain readable source locations but cannot be native
 publication or launch destinations. OpenCode uses `XDG_DATA_HOME/opencode/opencode.db`;
 an explicit `OPENCODE_DB` must agree for publication or launch. Read-only OpenCode
 sources may use a copied database at any recorded path or `OPENCODE_DB` path,
-including a different filename; schema and snapshot validation still apply.
+including a different filename; schema and snapshot validation still apply. Imported
+sessions retain their native roots for later scans, naming and lifecycle actions,
+even when the current environment selects another store.

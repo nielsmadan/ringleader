@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar, cast
@@ -504,7 +505,7 @@ class InboxApp(App[None]):
             self.notify(str(error), title="rl inbox", severity="warning")
             return
         self._staged_deletes.add(registry.qualified_id(t))
-        self._undo_stack.append((idx, t))
+        self._undo_stack.append((idx, deepcopy(t)))
         await self._remove_row(idx)
 
     async def action_undo(self) -> None:
@@ -650,7 +651,7 @@ class InboxApp(App[None]):
     async def _apply_staged_deletes(self) -> None:
         self._reg = registry.load_registry(self.registry_path)
         candidates = [
-            t for t in self._reg["threads"] if registry.qualified_id(t) in self._staged_deletes
+            t for _, t in self._undo_stack if registry.qualified_id(t) in self._staged_deletes
         ]
         deleted = prune.delete_sessions(self._reg, candidates, _now_iso())
         registry.commit_registry(self.registry_path, self._reg)

@@ -198,7 +198,8 @@ def test_session_scan_omits_pending_threads_from_an_unavailable_source(
         )
     )
 
-    def unavailable_sources(*, unavailable_sources):
+    def unavailable_sources(*, unavailable_sources, recorded_threads):
+        assert [thread["sessionId"] for thread in recorded_threads] == ["ses_1"]
         unavailable_sources.add("opencode")
         return []
 

@@ -25,7 +25,16 @@ from ringleader.portability.capabilities import NativeRoots, TargetRequest
 from ringleader.portability.codex import PROFILE, CodexAdapter, read_rollout
 from ringleader.portability.codex_state import inspect_database
 from ringleader.portability.compare import compare
-from ringleader.portability.model import HistoricalTimestamp, Identity, Text, ToolResult
+from ringleader.portability.model import (
+    AttachmentRef,
+    HistoricalTimestamp,
+    Identity,
+    Instruction,
+    Text,
+    ToolCall,
+    ToolOmission,
+    ToolResult,
+)
 from tests.portability.fixtures import (
     SESSION_ID,
     checkpoint_conversation,
@@ -141,31 +150,192 @@ def publish(original, roots):
     return staged
 
 
-def assert_visible(thread, title, identical=False):
-    assert thread["name"] == title
-    assert thread["source"] == "cli"
-    assert thread["historyMode"] == "legacy"
+def _text(part):
+    if isinstance(part, Text):
+        return part.text
+    if isinstance(part, Instruction):
+        origin = part.provenance
+        return f"[Historical {part.authority} instruction; origin {origin.source.agent}:{origin.source.native_id} at {origin.locator}]\n{part.text}"
+    if isinstance(part, ToolOmission):
+        return (
+            f"[Omitted {part.calls} tool calls and {part.results} results: {', '.join(part.names)}]"
+        )
+    raise AssertionError(f"Unexpected canonical prose: {part}")
+
+
+def _expected_blocks(parts, assets):
+    return tuple(
+        ("image", assets[part.attachment_id].media_type, assets[part.attachment_id].data)
+        if isinstance(part, AttachmentRef)
+        else ("text", _text(part))
+        for part in parts
+    )
+
+
+def _image_url(url):
+    assert url.startswith("data:")
+    mime, encoded = url[5:].split(";base64,", 1)
+    return ("image", mime, base64.b64decode(encoded, validate=True))
+
+
+def _actual_blocks(parts):
+    result = []
+    for part in parts:
+        kind = part["type"]
+        if kind in ("text", "input_text", "output_text"):
+            result.append(("text", part["text"]))
+        elif kind == "input_image":
+            result.append(_image_url(part["image_url"]))
+        elif kind == "image" and "url" in part:
+            result.append(_image_url(part["url"]))
+        elif kind == "image" and "data" in part:
+            result.append(
+                ("image", part["mimeType"], base64.b64decode(part["data"], validate=True))
+            )
+        else:
+            raise AssertionError(f"Unknown native content: {kind}")
+    return tuple(result)
+
+
+def _expected_model(original):
+    assets = {a.id: a for a in original.attachments}
+    result = []
+    calls = {
+        part.call_id: part
+        for message in original.context
+        for part in message.content
+        if isinstance(part, ToolCall)
+    }
+    for message in original.context:
+        prose = []
+        role = "user" if message.role in ("system", "developer") else message.role
+        for part in (*message.content, None):
+            if part is None or isinstance(part, ToolCall | ToolResult):
+                if prose:
+                    result.append(("message", role, _expected_blocks(prose, assets)))
+                    prose = []
+                if isinstance(part, ToolCall):
+                    args = (
+                        json.loads(part.arguments)
+                        if part.argument_format == "json"
+                        else part.arguments
+                    )
+                    result.append(("call", part.argument_format, part.call_id, part.name, args))
+                elif isinstance(part, ToolResult):
+                    status = "failed" if part.is_error else "succeeded"
+                    output = (
+                        ("text", f"[Historical tool result: {status}]"),
+                        *_expected_blocks(part.output, assets),
+                    )
+                    result.append(
+                        ("result", calls[part.call_id].argument_format, part.call_id, output)
+                    )
+            else:
+                prose.append(part)
+    return result
+
+
+def assert_model(body, original, cwd, *, project_instructions=True):
+    items = body["input"]
+    expected = _expected_model(original)
+    assert len(items) == len(expected) + 3
+    actual = []
+    for item in items[:-3]:
+        kind = item["type"]
+        if kind == "message":
+            actual.append((kind, item["role"], _actual_blocks(item["content"])))
+        elif kind in ("function_call", "custom_tool_call"):
+            form = "json" if kind == "function_call" else "freeform"
+            args = json.loads(item["arguments"]) if form == "json" else item["input"]
+            actual.append(("call", form, item["call_id"], item["name"], args))
+        elif kind in ("function_call_output", "custom_tool_call_output"):
+            form = "json" if kind == "function_call_output" else "freeform"
+            actual.append(("result", form, item["call_id"], _actual_blocks(item["output"])))
+        else:
+            raise AssertionError(f"Unexpected model item: {kind}")
+    assert actual == expected, (actual, expected)
+    bootstrap, environment, prompt = items[-3:]
+    assert [item["role"] for item in items[-3:]] == ["developer", "user", "user"]
+    assert all(item["type"] == "message" and item.get("id") for item in items[-3:])
+    skill_block, permission_block = bootstrap["content"]
+    assert skill_block["type"] == permission_block["type"] == "input_text"
+    assert skill_block["text"].startswith("<skills_instructions>")
+    assert permission_block["text"].startswith("<permissions instructions>")
+    if project_instructions:
+        assert environment["content"][0] == {
+            "type": "input_text",
+            "text": f"# AGENTS.md instructions for {cwd}\n\n<INSTRUCTIONS>\nCURRENT_PROJECT_INSTRUCTIONS: keep test fixtures intact.\n\n</INSTRUCTIONS>",
+        }
+    assert len(environment["content"]) == 1 + int(project_instructions)
+    assert environment["content"][-1]["text"].startswith("<environment_context>\n")
+    assert f"<cwd>{cwd}</cwd>" in environment["content"][-1]["text"]
+    assert prompt["content"] == [{"type": "input_text", "text": "CAPTURE_ONLY"}]
+    for message in original.context:
+        for part in message.content:
+            if isinstance(part, Instruction):
+                assert part.text not in (body.get("instructions") or "")
+
+
+def assert_visible(thread, original):
+    assert thread["name"] == original.title
+    assert thread["source"] == "cli" and thread["historyMode"] == "legacy"
     assert thread["sessionId"] == thread["id"]
-    items = [item for turn in thread["turns"] for item in turn["items"]]
-    assert [item["type"] for item in items] == [
-        "userMessage",
-        "userMessage",
-        "agentMessage",
-        "mcpToolCall",
-        "mcpToolCall",
-        "agentMessage",
-    ]
-    assert items[1]["content"][0]["text"] == "# AGENTS.md instructions: this is my literal input"
-    assert items[2]["text"] == "Checking both."
-    assert items[3]["tool"] == "read" and items[3]["arguments"] == {"file": "a"}
-    assert items[3]["result"]["content"][0]["text"] == ("identical" if identical else "contents")
-    assert items[4]["tool"] == "shell" and items[4]["arguments"] == "cat b"
-    assert items[4]["status"] == "failed"
-    assert items[4]["result"]["content"][0]["text"] == ("identical" if identical else "failed")
-    if not identical:
-        assert items[4]["result"]["content"][1]["data"]
-    assert items[-1]["text"] == "One succeeded."
-    assert all(turn["status"] == "completed" for turn in thread["turns"])
+    assets = {a.id: a for a in original.attachments}
+    results = {
+        p.call_id: p for m in original.history for p in m.content if isinstance(p, ToolResult)
+    }
+    expected = []
+    for message in original.history:
+        for part in message.content:
+            if isinstance(part, ToolCall):
+                output = results[part.call_id]
+                arguments = (
+                    json.loads(part.arguments) if part.argument_format == "json" else part.arguments
+                )
+                expected.append(
+                    (
+                        "tool",
+                        part.call_id,
+                        part.name,
+                        arguments,
+                        output.is_error,
+                        _expected_blocks(output.output, assets),
+                    )
+                )
+            elif isinstance(part, ToolResult):
+                continue
+            elif isinstance(part, AttachmentRef):
+                kind, blocks = expected[-1]
+                assert kind == "user"
+                expected[-1] = (kind, (*blocks, *_expected_blocks((part,), assets)))
+            elif message.role == "assistant":
+                expected.append(("assistant", _text(part)))
+            else:
+                expected.append(("user", (("text", _text(part)),)))
+    actual = []
+    for turn in thread["turns"]:
+        assert turn["status"] == "completed"
+        for item in turn["items"]:
+            kind = item["type"]
+            if kind == "userMessage":
+                actual.append(("user", _actual_blocks(item["content"])))
+            elif kind == "agentMessage":
+                actual.append(("assistant", item["text"]))
+            elif kind == "mcpToolCall":
+                assert item["status"] in ("completed", "failed")
+                actual.append(
+                    (
+                        "tool",
+                        item["id"],
+                        item["tool"],
+                        item["arguments"],
+                        item["status"] == "failed",
+                        _actual_blocks(item["result"]["content"]),
+                    )
+                )
+            else:
+                raise AssertionError(f"Unknown visible item: {kind}")
+    assert actual == expected, (actual, expected)
 
 
 class Capture(BaseHTTPRequestHandler):
@@ -186,42 +356,6 @@ class Capture(BaseHTTPRequestHandler):
 
     def log_message(self, *args):
         pass
-
-
-def assert_model(body, checkpoint, identical=False):
-    items = body["input"]
-    calls = [item for item in items if item.get("type") in ("function_call", "custom_tool_call")]
-    assert [(call["name"], call.get("arguments", call.get("input"))) for call in calls] == [
-        ("read", '{"file":"a"}'),
-        ("shell", "cat b"),
-    ]
-    outputs = [
-        item
-        for item in items
-        if item.get("type") in ("function_call_output", "custom_tool_call_output")
-    ]
-    assert outputs[0]["output"][0]["text"] == "[Historical tool result: succeeded]"
-    assert outputs[0]["output"][1]["text"] == ("identical" if identical else "contents")
-    assert outputs[1]["output"][0]["text"] == "[Historical tool result: failed]"
-    assert outputs[1]["output"][1]["text"] == ("identical" if identical else "failed")
-    if not identical:
-        assert outputs[1]["output"][2]["image_url"].startswith("data:image/png;base64,")
-    assert [item["call_id"] for item in outputs] == [item["call_id"] for item in calls]
-    texts = [
-        part["text"]
-        for item in items
-        if item.get("type") == "message"
-        for part in item["content"]
-        if part["type"] in ("input_text", "output_text")
-    ]
-    assert "Checking both." in texts and "One succeeded." in texts
-    assert any("CURRENT_PROJECT_INSTRUCTIONS" in text for text in texts)
-    if checkpoint:
-        assert any("summarized" in text or text == "Summary" for text in texts)
-    historical = [text for text in texts if "Historical user instruction" in text]
-    if not checkpoint:
-        assert len(historical) == 1
-    assert body.get("instructions") is None or "Preserve my formatting." not in body["instructions"]
 
 
 def verify_native_sources(executable, base):
@@ -302,15 +436,7 @@ def verify_distinct_mcp_streams(executable, base):
                 (mcp_base / (method.split("/")[1] + ".json")).write_text(
                     json.dumps(result, indent=2)
                 )
-                items = [item for turn in result["thread"]["turns"] for item in turn["items"]]
-                assert [item["type"] for item in items] == [
-                    "userMessage",
-                    "mcpToolCall",
-                    "agentMessage",
-                ]
-                assert items[1]["tool"] == "read"
-                assert items[1]["arguments"] == {"path": "a"}
-                assert items[1]["result"]["content"][0]["text"] == "complete native visible output"
+                assert_visible(result["thread"], source)
                 if method == "thread/read":
                     assert (roots.store / staged.source_ref).read_bytes() == staged.files[0].data
                     continue
@@ -328,14 +454,7 @@ def verify_distinct_mcp_streams(executable, base):
                     ).stdout
                 body = json.loads(raw)
                 (mcp_base / "model.json").write_text(json.dumps(body, indent=2))
-                call = next(item for item in body["input"] if item.get("type") == "function_call")
-                output = next(
-                    item for item in body["input"] if item.get("type") == "function_call_output"
-                )
-                assert call["name"] == "mcp__files__read"
-                assert call["arguments"] == '{"path":"a"}'
-                assert output["call_id"] == call["call_id"]
-                assert output["output"][1]["text"] == "model output truncated independently"
+                assert_model(body, source, roots.cwd, project_instructions=False)
             finally:
                 client.close()
     finally:
@@ -396,7 +515,10 @@ def run(executable, base):
                 response = client.call(
                     "thread/read", {"threadId": item.identity.native_id, "includeTurns": True}
                 )
-                assert_visible(response["thread"], "Portable example", index == len(staged) - 1)
+                (base / f"visible-{index}.json").write_text(
+                    json.dumps(response["thread"], indent=2)
+                )
+                assert_visible(response["thread"], originals[index])
                 if index == 0:
                     assert response["thread"]["turns"][0]["startedAt"] == int(
                         datetime(2020, 1, 2, 3, 4, 5, tzinfo=UTC).timestamp()
@@ -433,7 +555,7 @@ def run(executable, base):
                         "cwd": str(resume_roots.cwd),
                     },
                 )
-                assert_visible(resumed["thread"], "Portable example", index == len(originals) - 1)
+                assert_visible(resumed["thread"], original)
                 client.call(
                     "turn/start",
                     {
@@ -448,7 +570,7 @@ def run(executable, base):
                     ).stdout
                 body = json.loads(raw)
                 (base / f"model-{index}.json").write_text(json.dumps(body, indent=2))
-                assert_model(body, index in (1, 2), index == len(originals) - 1)
+                assert_model(body, original, resume_roots.cwd)
             finally:
                 client.close()
     finally:

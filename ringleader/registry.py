@@ -75,6 +75,8 @@ def load_registry(path: str | Path) -> dict[str, Any]:
     data.setdefault("projectsCleanedAt", {})
     data.setdefault("memoryEntries", [])
     data.setdefault("memoryProjectsCleanedAt", {})
+    current_ids = {identity(row) for bucket in ("threads", "archived") for row in data[bucket]}
+    data["deleted"] = [row for row in data["deleted"] if identity(row) not in current_ids]
     return Registry(data, path=p)
 
 
@@ -172,14 +174,17 @@ def _merge_sessions(  # noqa: PLR0912
     before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool
 ) -> None:
     old_rows, new_rows, latest_rows = map(_session_rows, (before, after, current))
-    for key in old_rows.keys() | new_rows.keys():
+    buckets = {
+        bucket: {identity(row): row for row in current[bucket]} for bucket in _SESSION_BUCKETS
+    }
+    for key in dict.fromkeys((*old_rows, *new_rows)):
         old, new, latest = (rows.get(key) for rows in (old_rows, new_rows, latest_rows))
         if new in (old, latest):
             continue
         if old is None:
             if latest is None:
                 assert new is not None
-                current[new[0]].append(deepcopy(new[1]))
+                buckets[new[0]][key] = deepcopy(new[1])
             elif not scan:
                 raise RegistryConflict(f"session already exists: {key}")
             continue
@@ -195,13 +200,13 @@ def _merge_sessions(  # noqa: PLR0912
             and latest[0] == "deleted"
             and latest[1].get("reason") == "gc"
         ):
-            current["deleted"].remove(latest[1])
+            del buckets["deleted"][key]
             latest = ("threads", latest[1].get("thread") or old[1])
-            current["threads"].append(latest[1])
+            buckets["threads"][key] = latest[1]
         if new is None:
             if latest != old:
                 raise RegistryConflict(f"session changed concurrently: {key}")
-            current[latest[0]].remove(latest[1])
+            del buckets[latest[0]][key]
         elif new[0] == old[0]:
             if latest[0] != old[0]:
                 if not scan:
@@ -209,7 +214,7 @@ def _merge_sessions(  # noqa: PLR0912
                 continue
             changed = _scan_changes(old[1], new[1], latest[1]) if scan else new[1]
             merged = _merge_fields(old[1], changed, latest[1], scan=scan)
-            current[latest[0]][current[latest[0]].index(latest[1])] = merged
+            buckets[latest[0]][key] = merged
         elif latest[0] == old[0]:
             if scan and latest != old:
                 continue
@@ -224,10 +229,13 @@ def _merge_sessions(  # noqa: PLR0912
                 moved = _merge_fields(old[1].get("thread") or {}, moved, latest[1]["thread"])
             else:
                 moved = _merge_fields(old[1], moved, latest[1])
-            current[latest[0]].remove(latest[1])
-            current[new[0]].append(moved)
+            del buckets[latest[0]][key]
+            buckets[new[0]][key] = moved
         elif not scan:
             raise RegistryConflict(f"session lifecycle changed concurrently: {key}")
+
+    for bucket in _SESSION_BUCKETS:
+        current[bucket] = list(buckets[bucket].values())
 
 
 def _merge_memory(

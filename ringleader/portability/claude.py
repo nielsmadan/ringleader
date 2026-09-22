@@ -296,12 +296,14 @@ def _default_leaf(graph: list[dict[str, Any]]) -> str:
         while row["type"] not in ("user", "assistant") and row.get("parentUuid"):
             row = by_id[row["parentUuid"]]
         if row["type"] in ("user", "assistant"):
-            candidates.append(row)
-    preferred = [row for row in candidates if not row.get("isMeta")] or candidates
+            candidates.append((row, terminal))
+    preferred = [pair for pair in candidates if not pair[0].get("isMeta")] or candidates
     if not preferred:
         raise PreservationError("Claude transcript has no conversational leaf")
     positions = {row["uuid"]: i for i, row in enumerate(graph)}
-    leaf: str = max(preferred, key=lambda row: positions[row["uuid"]])["uuid"]
+    leaf: str = max(
+        preferred, key=lambda pair: (positions[pair[0]["uuid"]], positions[pair[1]["uuid"]])
+    )[1]["uuid"]
     return leaf
 
 

@@ -1028,9 +1028,23 @@ class CodexAdapter:
         if request.identity.agent != "codex":
             raise PreservationError("Codex source requires codex identity")
         path = native.source_path(request.source_ref, request.roots)
-        files = snapshot_files((("rollout", path),), max_bytes=native.MAX_BYTES)
+        index = request.roots.store / "session_index.jsonl"
+        for _ in range(3):
+            present = index.exists()
+            paths = (("rollout", path),) + ((("index", index),) if present else ())
+            files = snapshot_files(paths, max_bytes=native.MAX_BYTES)
+            if index.exists() == present:
+                break
+        else:
+            raise PreservationError("Codex name index changed during snapshot")
         conversation = read_rollout(files[0].data, request.identity, request.branch_id)
-        return SourceSnapshot(conversation, files, PROFILE.name)
+        if present and files[1].data.strip():
+            for row in native.records(files[1].data):
+                if row.get("id") == request.identity.native_id and isinstance(
+                    row.get("thread_name"), str
+                ):
+                    conversation = replace(conversation, title=row["thread_name"].strip() or None)
+        return SourceSnapshot(conversation, (files[0],), PROFILE.name)
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         result = native.probe_version(self.executable, "codex", runner)

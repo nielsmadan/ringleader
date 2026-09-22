@@ -23,6 +23,8 @@ from .model import Conversation, Identity, PreservationError, unique_object, val
 from .serialization import _decode, _encode
 from .snapshot import SourceSnapshot, TransformOptions
 
+OPERATION_VERSION = 2
+
 
 @dataclass(frozen=True)
 class StoredRoots:
@@ -119,6 +121,7 @@ class Artifacts:
     options: TransformOptions
     kind: Literal["convert", "fork"]
     report: CompactReport | None
+    registry_path: str
 
     def key(self) -> str:
         return digest(
@@ -154,6 +157,7 @@ class Operation:
     target: Identity
     created_at: str
     state: Literal["prepared", "running", "complete", "rolled_back"]
+    registry_path: str
     steps: tuple[Step, ...] = ()
     last_error: str | None = None
     terminal_lifecycle: Literal["archived", "deleted"] | None = None
@@ -231,7 +235,7 @@ class OperationStore:
 
     def load(self, operation_id: str) -> Operation:
         operation = decode(self._path(operation_id, "journal.json").read_bytes(), Operation)
-        if operation.version != 1 or operation.id != operation_id:
+        if operation.version != OPERATION_VERSION or operation.id != operation_id:
             raise PreservationError("Unknown conversion journal version or identity")
         names = [step.name for step in operation.steps]
         if len(set(names)) != len(names):
@@ -252,7 +256,9 @@ class OperationStore:
         validate(artifacts.snapshot.conversation)
         validate(artifacts.conversation)
         if (
-            artifacts.version != 1
+            artifacts.version != OPERATION_VERSION
+            or artifacts.registry_path != operation.registry_path
+            or not Path(operation.registry_path).is_absolute()
             or artifacts.key() != operation.key
             or artifacts.snapshot.conversation.source != operation.source
             or stage.identity != operation.target

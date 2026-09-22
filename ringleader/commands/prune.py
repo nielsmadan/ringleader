@@ -54,7 +54,10 @@ def _scope_stubs(
 def _find_stubs(reg: dict[str, Any], selectors: list[str] | None = None) -> list[NormalizedSession]:
     if not reg.get("archived"):
         return []
-    scanned = scanner.scan(sources=scanner.active_sources(), cached_threads=reg["threads"])
+    scanned = scanner.scan(
+        sources=scanner.active_sources(recorded_threads=reg["threads"]),
+        cached_threads=reg["threads"],
+    )
     stubs = stub_candidates(reg, scanned)
     if selectors:
         stubs = _scope_stubs(stubs, selectors)

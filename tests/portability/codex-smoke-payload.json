@@ -1,0 +1,133 @@
+{
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "[Historical user instruction; origin pi:source-session at instructions]\nPreserve my formatting."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "# AGENTS.md instructions: this is my literal input"
+        },
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "Checking both."
+        }
+      ]
+    },
+    {
+      "type": "function_call",
+      "name": "read",
+      "arguments": "{\"file\":\"a\"}",
+      "call_id": "a"
+    },
+    {
+      "type": "custom_tool_call",
+      "call_id": "b",
+      "name": "shell",
+      "input": "cat b"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "a",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "[Historical tool result: succeeded]"
+        },
+        {
+          "type": "input_text",
+          "text": "contents"
+        }
+      ]
+    },
+    {
+      "type": "custom_tool_call_output",
+      "call_id": "b",
+      "output": [
+        {
+          "type": "input_text",
+          "text": "[Historical tool result: failed]"
+        },
+        {
+          "type": "input_text",
+          "text": "failed"
+        },
+        {
+          "type": "input_image",
+          "image_url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "output_text",
+          "text": "One succeeded."
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_01a0c705-77bd-7dd3-ba03-97111e0b3ce4",
+      "role": "developer",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "<skills_instructions>\nNative fixture bootstrap\n</skills_instructions>"
+        },
+        {
+          "type": "input_text",
+          "text": "<permissions instructions>\nNative fixture permissions\n</permissions instructions>"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_01a0c705-77bd-7dd3-ba03-972adc669ea4",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "# AGENTS.md instructions for /native-probe/cwd\n\n<INSTRUCTIONS>\nCURRENT_PROJECT_INSTRUCTIONS: keep test fixtures intact.\n\n</INSTRUCTIONS>"
+        },
+        {
+          "type": "input_text",
+          "text": "<environment_context>\n<cwd>/native-probe/cwd</cwd>\n</environment_context>"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "id": "msg_01a0c705-77c5-74c3-bfc4-4fb4b628a285",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "CAPTURE_ONLY"
+        }
+      ]
+    }
+  ]
+}

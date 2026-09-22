@@ -244,6 +244,10 @@ References are pinned to [Codex rust-v0.155.1](https://github.com/openai/codex/t
 `app-server/src/request_processors.rs`, `app-server-protocol/src/protocol/thread_history.rs`,
 `rollout/src/{policy,session_index,recorder}.rs`, and `state/migrations/`.
 `NativeRoots.store` is `CODEX_HOME`; resume is `codex resume <uuid>` from destination cwd.
+Source snapshots read the rollout and native `session_index.jsonl` together under
+stability checks. The latest matching name row overrides transcript annotations;
+that selected title participates in reuse identity. Unrelated name-index changes
+do not invalidate an otherwise unchanged source snapshot.
 
 Visible `event_msg` history and model `response_item` context are independent.
 Function/custom call kinds, arguments, paired full outputs, embedded image bytes,
@@ -367,6 +371,13 @@ outbound model requests are captured by a loopback HTTP server returning an erro
 before inference: plain history, retained-tail compaction, independent model suffix,
 identical success/failure output, and distinct MCP display/model names. They retain model call/output pairing, full
 output/image bytes, status markers and destination `AGENTS.md` instructions.
+The independent oracle compares the complete ordered historical model prefix,
+including all user/assistant text, instruction labels, image MIME types and decoded
+bytes, tool names, arguments, pair IDs and success/failure markers. It separately
+validates the fresh destination-policy/environment/request suffix. Visible history
+receives the same content/order checks through the native read API. Mutation tests
+use captured historical fixtures (with a sanitized bootstrap/environment suffix)
+to prove corrupted or missing content fails both oracles.
 Original staged rollout bytes remain unchanged by the cold-read probes. Unit tests
 also delete the isolated source rollout after snapshot and retain its image bytes.
 No inherited credentials, hooks, extensions, external inference or tool execution

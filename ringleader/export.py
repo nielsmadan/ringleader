@@ -84,7 +84,7 @@ def render_conversation(
         return _render_jsonl(subject)
 
     source_name = subject.get("source") or "claude-code"
-    src = source or scanner.source_by_name(source_name)
+    src = source or scanner.source_for_thread(subject)
     if src and "renders_conversation" in src.capabilities:
         if not isinstance(src, ConversationRenderingSource):
             raise RuntimeError(f"{source_name} advertises conversation rendering but cannot render")

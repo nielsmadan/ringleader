@@ -25,6 +25,10 @@ memory rows by path, and nested mappings by field. Unrelated concurrent edits su
 conflicting edits to the same field raise `RegistryConflict` before any registry write.
 A successful commit refreshes the caller's snapshot and baseline. `save_registry()` is
 for initial plain-dict fixtures; production writers use the explicit commit API.
+Session merges use ordered identity maps, keeping bulk scan updates linear in the
+number of rows. Loading removes stale deleted tombstones for identities that also
+have live or archived rows before capturing the baseline; old GC duplicates cannot
+mask subsequent decisions or lifecycle changes.
 
 `reconcile()` and `reconcile_memory()` retain baseline provenance. Scan-derived conflicts
 keep the newer committed value, pinned locations remain pinned, and scans cannot erase
@@ -38,7 +42,8 @@ callback failure writes nothing. The inbox uses this for interactive metadata ch
 Scans, model calls, confirmation prompts and filesystem moves run outside the registry
 lock. Pruning revalidates each candidate against current state and holds the registry lock
 through picker hiding, deletion and its tombstone write, so a committed keep decision wins
-over an earlier candidate list. Filesystem operations are not atomic with the registry; archive retries continue
+over an earlier candidate list. Inbox deletion retains the original staged candidate
+for this check, so intervening activity or relocation cancels its deletion. Filesystem operations are not atomic with the registry; archive retries continue
 using the existing archive destination if the registry write failed.
 
 Lock order is **publish or operation lock, then registry lock**. Never acquire an outer

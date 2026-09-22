@@ -51,7 +51,9 @@ def auto_refresh(  # noqa: PLR0913
         if claude_projects_dir is not None:
             sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
         else:
-            sources = scanner.active_sources(unavailable_sources=unavailable_sources)
+            sources = scanner.active_sources(
+                unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
+            )
     scanned = scanner.scan(
         sources=sources,
         git_resolver=git_resolver,

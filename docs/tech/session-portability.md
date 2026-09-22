@@ -25,7 +25,10 @@ marker replaces the native tool parts.
 `snapshot.py` bounds and verifies file identity/content and attachment reads with
 retries. OpenCode snapshots stable DB/WAL copies then reads the graph in one SQLite
 transaction. Neither preview nor schema inspection creates native-store sidecars.
-An adapter cannot silently truncate an unfinished source turn.
+An adapter cannot silently truncate an unfinished source turn. Claude selection
+retains the terminal record on the selected branch, so trailing unsupported records
+are validated even when the last visible message precedes them. OpenCode attachment
+discovery visits native file parts only; file-shaped tool arguments remain inert data.
 
 ## Service and persistence
 
@@ -35,6 +38,12 @@ before recording an operation. `operations.py` persists versioned, digest-checke
 artifacts and intents under `conversion/`; full execution roots are stored for
 recovery. Semantic reuse identity includes target store/cwd/profile/schema/resolved
 configuration and source snapshot/options/title, but not incidental TMP/cache paths.
+The requested reuse key is computed once before taking the operation lock.
+
+Journal/artifact version 2 binds each operation to its resolved registry path.
+Resume, rollback and reuse reject a different registry before changing state, with
+the original path in the diagnostic. Legacy unbound version 1 journals fail closed;
+they cannot safely infer which registry originally owned the operation.
 
 The conversion operation lock precedes the short registry mutation lock. Slow
 snapshot/staging work happens outside it. Registry updates reload current state and

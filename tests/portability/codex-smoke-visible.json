@@ -1,0 +1,132 @@
+{
+  "name": "Portable example",
+  "source": "cli",
+  "historyMode": "legacy",
+  "sessionId": "7344216a-4eaa-4879-b2a5-8a491deab2a8",
+  "id": "7344216a-4eaa-4879-b2a5-8a491deab2a8",
+  "turns": [
+    {
+      "id": "c112212d-b99a-4783-8679-0c830ec2eb08",
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "item-1",
+          "clientId": null,
+          "content": [
+            {
+              "type": "text",
+              "text": "[Historical user instruction; origin pi:source-session at instructions]\nPreserve my formatting.",
+              "text_elements": []
+            }
+          ]
+        }
+      ],
+      "itemsView": "full",
+      "status": "completed",
+      "error": null,
+      "startedAt": 1577934245,
+      "completedAt": 1577934245,
+      "durationMs": null
+    },
+    {
+      "id": "215b8cee-2db4-4dca-8a82-e2058a0a51b7",
+      "items": [
+        {
+          "type": "userMessage",
+          "id": "item-2",
+          "clientId": null,
+          "content": [
+            {
+              "type": "text",
+              "text": "# AGENTS.md instructions: this is my literal input",
+              "text_elements": []
+            },
+            {
+              "type": "image",
+              "detail": null,
+              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+            }
+          ]
+        },
+        {
+          "type": "agentMessage",
+          "id": "item-3",
+          "text": "Checking both.",
+          "phase": null,
+          "memoryCitation": null,
+          "delivery": null,
+          "questions": null
+        },
+        {
+          "type": "mcpToolCall",
+          "id": "a",
+          "server": "ringleader_history",
+          "tool": "read",
+          "status": "completed",
+          "arguments": {
+            "file": "a"
+          },
+          "appContext": null,
+          "pluginId": null,
+          "readOnlyHint": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "contents"
+              }
+            ],
+            "structuredContent": null,
+            "_meta": null
+          },
+          "error": null,
+          "durationMs": 0
+        },
+        {
+          "type": "mcpToolCall",
+          "id": "b",
+          "server": "ringleader_history",
+          "tool": "shell",
+          "status": "failed",
+          "arguments": "cat b",
+          "appContext": null,
+          "pluginId": null,
+          "readOnlyHint": null,
+          "result": {
+            "content": [
+              {
+                "type": "text",
+                "text": "failed"
+              },
+              {
+                "type": "image",
+                "mimeType": "image/png",
+                "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+                "ringleaderName": "image.png"
+              }
+            ],
+            "structuredContent": null,
+            "_meta": null
+          },
+          "error": null,
+          "durationMs": 0
+        },
+        {
+          "type": "agentMessage",
+          "id": "item-4",
+          "text": "One succeeded.",
+          "phase": null,
+          "memoryCitation": null,
+          "delivery": null,
+          "questions": null
+        }
+      ],
+      "itemsView": "full",
+      "status": "completed",
+      "error": null,
+      "startedAt": 1577934245,
+      "completedAt": 1577934245,
+      "durationMs": null
+    }
+  ]
+}

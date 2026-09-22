@@ -36,12 +36,29 @@ def _new_sources() -> list[Source]:
 SOURCES = _new_sources()
 
 
-def active_sources(*, unavailable_sources: set[str] | None = None) -> list[Source]:
+def active_sources(
+    *,
+    unavailable_sources: set[str] | None = None,
+    recorded_threads: Iterable[dict[str, Any]] = (),
+) -> list[Source]:
     # Fresh instances (not SOURCES) so each call re-reads the env-based default
     # roots — SOURCES is constructed once at import time and would otherwise
     # keep whatever root was current then, which breaks under monkeypatched env.
     active = []
-    for source in _new_sources():
+    candidates = _new_sources()
+
+    def source_key(source: Source) -> tuple[str, Path]:
+        return source.name, cast(Path, getattr(source, "root", None)).resolve()
+
+    known = {source_key(source) for source in candidates}
+    for thread in recorded_threads:
+        if not thread.get("nativeRoots"):
+            continue
+        recorded_source = source_for_thread(thread)
+        if recorded_source is not None and source_key(recorded_source) not in known:
+            candidates.append(recorded_source)
+            known.add(source_key(recorded_source))
+    for source in candidates:
         available = getattr(source, "available", None)
         # `root` is not part of the Source protocol: a source that only parses
         # transcripts has no session storage of its own to report.
@@ -75,6 +92,24 @@ def source_by_name(name: str) -> Any:
     return next((source for source in _new_sources() if source.name == name), None)
 
 
+def source_for_thread(thread: dict[str, Any]) -> Source | None:
+    name = thread.get("source") or "claude-code"
+    stored = thread.get("nativeRoots")
+    if not stored:
+        return cast(Source | None, source_by_name(name))
+    store = Path(stored["store"])
+    if not store.is_absolute():
+        raise ValueError("Recorded native store must be absolute")
+    factories: dict[str, Callable[[], Source]] = {
+        "claude-code": lambda: ClaudeCodeSource(projects_dir=store / "projects"),
+        "codex": lambda: CodexSource(sessions_dir=store / "sessions"),
+        "pi": lambda: PiSource(sessions_dir=store / "sessions"),
+        "opencode": lambda: OpenCodeSource(db_path=store / "opencode.db"),
+    }
+    factory = factories.get(name)
+    return factory() if factory else cast(Source | None, source_by_name(name))
+
+
 def supports(source: Source | None, capability: str, protocol: type) -> bool:
     """Both halves of an opt-in capability: the string says the source means to offer
     it, the protocol says it actually can. They are declared separately, so checking
@@ -91,7 +126,7 @@ def sources_with(capability: str, protocol: type) -> dict[str, Any]:
 
 def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
     source_name = thread.get("source") or "claude-code"
-    source = source_by_name(source_name)
+    source = source_for_thread(thread)
     file_path = thread.get("file")
     if (
         source is None
@@ -129,7 +164,7 @@ def hide_from_picker(thread: dict[str, Any]) -> IndexUpdate:
     keep an index alongside the transcripts. Raises if the source has such an
     index but cannot be updated — callers must not then move or delete the
     transcript, or the picker is left pointing at a file that is gone."""
-    src = source_by_name(thread.get("source") or "claude-code")
+    src = source_for_thread(thread)
     if not supports(src, "hides_from_picker", PickerHidingSource):
         return IndexUpdate.NO_INDEX
     return cast(PickerHidingSource, src).hide_from_picker(thread["sessionId"], thread["file"])
@@ -139,7 +174,7 @@ def show_in_picker(thread: dict[str, Any], original_path: str) -> IndexUpdate:
     """Restore a picker entry hidden by `hide_from_picker`. `original_path` is where
     the transcript lived when it was hidden — the index still points there — so the
     file must be back at that path before calling this."""
-    src = source_by_name(thread.get("source") or "claude-code")
+    src = source_for_thread(thread)
     if not supports(src, "shows_in_picker", PickerShowingSource):
         return IndexUpdate.NO_INDEX
     return cast(PickerShowingSource, src).show_in_picker(thread["sessionId"], original_path)
@@ -149,7 +184,7 @@ def rebind_workspace(thread: dict[str, Any], file_path: str, new_cwd: str) -> In
     """Point the agent's own index at a session's new workspace, for sources that
     record it separately from the transcript. `file_path` is where the index believes
     the transcript lives, which after an archive is not where it is now."""
-    src = source_by_name(thread.get("source") or "claude-code")
+    src = source_for_thread(thread)
     if not supports(src, "rebinds_workspace", WorkspaceRebindingSource):
         return IndexUpdate.NO_INDEX
     return cast(WorkspaceRebindingSource, src).rebind_workspace(

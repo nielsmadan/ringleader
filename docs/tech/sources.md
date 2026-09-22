@@ -174,6 +174,14 @@ quirk nobody anticipated means adding a protocol rather than widening every impl
 writers, launch argv, roots, index publication and database registration live in
 independent capabilities under `portability/`; they are resolved by its adapter
 registry. OpenCode source locators may point at copied schema-compatible databases
-without weakening target publication layout rules. See
+without weakening target publication layout rules.
+
+Imported threads carry their native store in `nativeRoots`. Normal discovery scans
+those stores alongside current environment defaults; lifecycle, naming, rendering
+and workspace rebinding resolve the recorded store for each thread. Changing
+`CODEX_HOME` after an import therefore neither loses the imported session during
+reconciliation nor directs picker updates into the current home's database.
+
+See
 [session portability internals](session-portability.md) and
 [verified external formats](../reference/session-portability-native.md).
