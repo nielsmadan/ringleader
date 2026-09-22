@@ -98,6 +98,7 @@ rl uninstall skills    # remove only what this tool created
 
 ```sh
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
+rl resume --last                    # re-enter the most recent session here, no picker
 rl inbox                            # TUI to blitz dormant sessions inbox-zero style
 rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot
 rl overview [<selector>] [--json]   # the view; project rollup by default

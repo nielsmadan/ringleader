@@ -102,9 +102,13 @@ def _parser() -> argparse.ArgumentParser:
         description="Re-enter a dormant session with its own agent, or hand it off to "
         "another one. An exact session id, or an unambiguous id prefix of at least four "
         "characters, resumes straight away; any other query opens the picker with that "
-        "filter already typed.",
+        "filter already typed. --last takes the most recent session in scope without "
+        "asking, across every agent.",
     )
     ap.add_argument("query", nargs="?", default="", help="session id, id prefix, or picker filter")
+    ap.add_argument(
+        "--last", action="store_true", help="resume the most recent session in scope, no picker"
+    )
     ap.add_argument("--to", metavar="AGENT", help="resume with this agent instead of its own")
     ap.add_argument(
         "--dry-run", action="store_true", help="print the directory and argv, launch nothing"
@@ -194,6 +198,24 @@ def _for_query(
     )
 
 
+def _for_last(
+    args: argparse.Namespace, reg: dict, scope: Scope, cwd: str, refresher: Refresher
+) -> tuple[dict, dict]:
+    """The most recent session in scope, and the registry it came from. Like a query, an
+    empty scope earns one scan before it is refused — never a picker, since --last asked
+    not to be asked."""
+    for attempt in (reg, None):
+        current = (
+            attempt
+            if attempt is not None
+            else refresher(args.registry, datetime.now(UTC).isoformat())[0]
+        )
+        rows = resume.candidates(current, scope=scope, cwd=cwd)
+        if rows:
+            return rows[0], current
+    raise _Abort(f"no sessions {_where(scope, cwd)}, even after a fresh scan{_WIDEN[scope]}")
+
+
 def _choose(
     args: argparse.Namespace,
     reg: dict,
@@ -203,6 +225,9 @@ def _choose(
     target: str | None,
 ) -> _Pick | None:
     scope = _scope(args)
+    if args.last:
+        thread, reg = _for_last(args, reg, scope, cwd, refresher)
+        return _Pick(thread, _eligible(reg), None)
     if args.query:
         direct, reg = _for_query(args, reg, scope, cwd, refresher)
         if direct is not None:
@@ -329,6 +354,8 @@ def cmd_resume(
     presence: Presence | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
+    if args.last and args.query:
+        return _fail(f"--last takes the most recent session, so it cannot also take '{args.query}'")
     try:
         plan = _resolve(args, picker or _run_picker, refresher or refresh.auto_refresh)
         if plan is None:

@@ -11,11 +11,26 @@ started in the session's directory.
 
 ```sh
 rl resume                  # picker, sessions recorded in this directory
+rl resume --last           # the most recent session here, no picker
 rl resume 3f2a91c7         # unambiguous id prefix — no picker, straight in
 rl resume auth             # picker, pre-filtered to "auth"
 rl resume 3f2a91c7 --to codex   # hand it to a different agent
 rl resume 3f2a91c7 --dry-run    # print the directory and argv, launch nothing
 ```
+
+## The most recent one
+
+`rl resume --last` takes the newest session in scope and re-enters it, with no picker and no
+prompt. It obeys the scope flags, so `--last --recursive` is the newest anywhere beneath this
+directory and `--last --all` the newest on the machine.
+
+Each agent already has its own version of this — `claude -c`, `codex resume --last`,
+`opencode -c`, `pi -c`. What none of them can do is cross the agent boundary: if the last thing
+you touched here was a Codex session, `claude -c` cannot reach it. `--last` re-enters whichever
+agent the session actually belonged to, which is the only reason it earns its place.
+
+It refuses rather than falling back to the picker — `--last` asked not to be asked. An empty
+scope earns one scan before it gives up, and `--last` cannot be combined with a query.
 
 ## Scopes
 

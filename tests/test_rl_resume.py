@@ -876,3 +876,88 @@ def test_a_missing_binary_is_reported_before_the_transcript_is_rendered(tmp_path
     assert rc == 1
     assert "codex is not installed" in capsys.readouterr().err
     assert runner.calls == []
+
+
+# --- --last ------------------------------------------------------------------
+
+
+def test_last_resumes_the_most_recent_session_without_opening_the_picker(tmp_path, monkeypatch):
+    older = _session(tmp_path, "aaa111", mtime="2026-09-01T00:00:00+00:00")
+    newer = _session(tmp_path, "bbb222", mtime="2026-09-20T00:00:00+00:00")
+    reg = _registry(tmp_path, older, newer)
+    runner, picker = Runner(), Picker()
+    monkeypatch.chdir(tmp_path / "work" / "api")
+
+    assert _run(["--last", "--registry", reg], runner=runner, picker=picker) == 0
+    assert runner.argv == ("claude", "--resume", "bbb222")
+    assert picker.calls == []
+
+
+def test_last_re_enters_whichever_agent_the_session_belonged_to(tmp_path, monkeypatch):
+    """The reason this beats `claude -c`: the most recent session in a directory may
+    belong to any agent, and each agent's own shortcut only knows its own."""
+    claude = _session(tmp_path, "aaa111", source="claude-code", mtime="2026-09-01T00:00:00+00:00")
+    codex = _session(tmp_path, "bbb222", source="codex", mtime="2026-09-20T00:00:00+00:00")
+    runner = Runner()
+    monkeypatch.chdir(tmp_path / "work" / "api")
+
+    assert _run(["--last", "--registry", _registry(tmp_path, claude, codex)], runner=runner) == 0
+    assert runner.argv == ("codex", "resume", "bbb222")
+
+
+def test_last_obeys_the_scope_flags(tmp_path, monkeypatch):
+    here = _session(tmp_path, "aaa111", mtime="2026-09-01T00:00:00+00:00")
+    below = _session(
+        tmp_path,
+        "bbb222",
+        project=tmp_path / "work" / "api" / "sub",
+        mtime="2026-09-20T00:00:00+00:00",
+    )
+    reg = _registry(tmp_path, here, below)
+    scoped, recursive = Runner(), Runner()
+    monkeypatch.chdir(tmp_path / "work" / "api")
+
+    assert _run(["--last", "--registry", reg], runner=scoped) == 0
+    assert scoped.argv == ("claude", "--resume", "aaa111")
+
+    assert _run(["--last", "--recursive", "--registry", reg], runner=recursive) == 0
+    assert recursive.argv == ("claude", "--resume", "bbb222")
+
+
+def test_last_hands_the_most_recent_session_to_another_agent(tmp_path, monkeypatch):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    runner = Runner()
+    monkeypatch.chdir(tmp_path / "work" / "api")
+
+    assert _run(["--last", "--to", "codex", "--registry", reg], runner=runner) == 0
+    assert runner.argv[0] == "codex"
+    assert len(_handoffs()) == 1
+
+
+def test_last_scans_once_before_refusing_an_empty_scope(tmp_path, monkeypatch):
+    reg = _registry(tmp_path)
+    found = _session(tmp_path, "aaa111")
+    runner, rescan = Runner(), Rescanner([found])
+    monkeypatch.chdir(tmp_path / "work" / "api")
+
+    assert _run(["--last", "--registry", reg], runner=runner, refresher=rescan) == 0
+    assert rescan.calls == [reg]
+    assert runner.argv == ("claude", "--resume", "aaa111")
+
+
+def test_last_reports_an_empty_scope_that_survives_a_scan(tmp_path, capsys):
+    runner = Runner()
+    rc = _run(["--last", "--registry", _registry(tmp_path)], runner=runner, refresher=Rescanner([]))
+
+    assert rc == 1
+    assert "even after a fresh scan" in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_last_refuses_to_also_take_a_query(tmp_path, capsys):
+    runner = Runner()
+    rc = _run(["auth", "--last", "--registry", _registry(tmp_path)], runner=runner)
+
+    assert rc == 1
+    assert "cannot also take 'auth'" in capsys.readouterr().err
+    assert runner.calls == []

@@ -98,6 +98,7 @@ pruning them before the GC clock deletes them.
 
 ```sh
 rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
+rl resume --last                    # re-enter the most recent session in scope, no picker
 rl inbox                            # TUI (Textual, shipped as a dep) to blitz dormant sessions inbox-zero style
 rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot; rl inbox runs it when stale
 rl overview [<selector>] [--json]   # the view; project rollup by default

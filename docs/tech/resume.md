@@ -77,8 +77,10 @@ Validates, then execs exactly once. Order matters — every check runs before an
 because after `execvpe` there is no recovering:
 
 1. resolve the target agent name (`claude` → `claude-code`)
-2. resolve the session — an exact id or an unambiguous prefix of at least four characters skips
-   the picker; anything else pre-fills it
+2. resolve the session — `--last` takes the newest candidate in scope, an exact id or an
+   unambiguous prefix of at least four characters skips the picker, and anything else pre-fills
+   it. Both non-interactive paths earn one scan on a miss, then refuse; neither falls back to the
+   picker
 3. resolve and verify the launch directory
 4. check the binary is on `PATH` — before the render, so a missing binary costs nothing
 5. render the handoff transcript, if any
