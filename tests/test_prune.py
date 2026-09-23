@@ -1,6 +1,7 @@
 from ringleader.prune import (
     DEFAULT_MAX_TURNS,
     archive_purge_candidates,
+    delete_sessions,
     prune_candidates,
     purge_archived,
 )
@@ -240,3 +241,36 @@ def test_purge_archived_refuses_non_jsonl(tmp_path):
     n = purge_archived(reg, [ts], NOW, archive_root_path=str(root))
 
     assert n == 0 and other.exists() and "purgedAt" not in ts
+
+
+def _droid_thread(tmp_path, sid="d"):
+    slug = tmp_path / "sessions" / "-w-api"
+    slug.mkdir(parents=True)
+    transcript = slug / f"{sid}.jsonl"
+    transcript.write_text("{}\n")
+    (slug / f"{sid}.settings.json").write_text("{}")
+    (slug / f"{sid}.settings.json.bak").write_text("{}")
+    return {"sessionId": sid, "source": "droid", "file": str(transcript), "mtime": OLD}
+
+
+def test_deleting_a_droid_session_removes_its_settings_sidecars(tmp_path):
+    thread = _droid_thread(tmp_path)
+    reg = _reg([thread])
+
+    assert delete_sessions(reg, [thread], NOW) == 1
+    assert list((tmp_path / "sessions" / "-w-api").iterdir()) == []
+
+
+def test_purging_an_archived_droid_session_removes_its_settings_sidecars(tmp_path):
+    slug = tmp_path / "archive" / "repo"
+    slug.mkdir(parents=True)
+    jsonl = slug / "d.jsonl"
+    jsonl.write_text("x")
+    (slug / "d.settings.json").write_text("{}")
+    (slug / "d.settings.json.bak").write_text("{}")
+    ts = _archived_ts("d", OLD, archive_path=str(jsonl))
+    ts["source"] = "droid"
+    reg = _reg_ts([ts])
+
+    assert purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive")) == 1
+    assert not slug.exists()

@@ -52,8 +52,9 @@ pruning them before the GC clock deletes them.
   the session you're currently in, harvesting it from live context instead of waiting for
   triage to read the transcript later. `memory-triage` is untouched and still lives in
   `.claude/skills/`. Wire them into an agent with `rl install
-  skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi)
-  and `~/.claude/skills` (Claude Code); `rl update`/`rl uninstall` round out the surface,
+  skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi),
+  `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid — its own native personal
+  skills dir, not the shared one); `rl update`/`rl uninstall` round out the surface,
   and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer
   are gone. See `.agents/skills/SMOKE.md` for the manual smoke checklist.
 - **`rl workspace move` changes three things at once.** The directory on disk, the
@@ -89,10 +90,22 @@ pruning them before the GC clock deletes them.
   `PresenceUnavailable` naming the setup command, not a silent install and not an empty result.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
-  hiding, workspace relocation, workspace rebinding, session launching); all four of
-  `claude_code.py`, `codex.py`, `opencode.py` and `pi.py` implement it.
+  hiding, companion files, workspace relocation, workspace rebinding, session launching); all
+  five of `claude_code.py`, `codex.py`, `droid.py`, `opencode.py` and `pi.py` implement it.
   Registry/overview/triage code talks to `Source`, never to a transcript format.
+  `companion_files` is the one to remember when writing a lifecycle verb: per-transcript state
+  lives beside the transcript (Claude Code's `<sessionId>/` dir, droid's `.settings.json`
+  sidecars) and every archive/delete/prune/unarchive path goes through
+  `scanner.companion_paths()` rather than deriving a sibling path itself.
   See `docs/tech/sources.md`.
+- **Droid reuses Claude Code's directory encoding, verbatim.** `~/.factory/sessions/` is keyed
+  by `slug.slugify(normalize(cwd))` — the same reimplemented-private-function `slug.py` holds
+  for Claude Code — so that module now has two agents that break when either upgrades. Droid
+  keeps **no picker index**, so deleting a transcript is a complete delete; it also has no
+  append-style title record, so `rl session name` does not reach it. `FACTORY_HOME_OVERRIDE`
+  replaces HOME (not the `.factory` name) and is what the tests and sandbox isolate with.
+  Droid's tokens live in the `.settings.json` sidecar, not the transcript, and are never
+  priced — Factory bills credits. See `docs/reference/agent-session-management.md`.
 
 ## Commands
 
@@ -104,7 +117,7 @@ rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one 
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
-rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
+rl usage [--breakdown] [--by X]     # token usage across claude/codex/droid/opencode/pi
 rl usage session <id>               # where one session's tokens went
 rl usage windows                    # 5h/weekly limits: codex from disk, claude if captured
 rl install statusline               # capture claude's 5h/weekly limits via the statusLine hook

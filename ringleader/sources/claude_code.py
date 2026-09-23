@@ -44,6 +44,7 @@ class ClaudeCodeSource:
         default_factory=lambda: frozenset(
             {
                 "applies_names",
+                "companion_files",
                 "filesystem_lifecycle",
                 "relocates_workspace",
                 "launches_sessions",
@@ -67,6 +68,9 @@ class ClaudeCodeSource:
     def storage_for(self, cwd: str) -> Path:
         return self.projects_dir / slugify(normalize(cwd))
 
+    def companion_paths(self, file_path: str) -> tuple[Path, ...]:
+        return (Path(file_path).with_suffix(""),)  # <sessionId>.jsonl -> <sessionId>/
+
     def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]:
         """Rename the whole slug directory for `old_cwd`. Every session launched
         there moves with it, so the caller must own all of them."""
@@ -86,7 +90,7 @@ class ClaudeCodeSource:
         src = Path(file_path)
         dst_dir = self.storage_for(new_cwd)
         dst = dst_dir / src.name
-        sidecar = src.with_suffix("")
+        sidecar = self.companion_paths(file_path)[0]
         if dst.exists() or (sidecar.is_dir() and (dst_dir / sidecar.name).exists()):
             raise RuntimeError(f"{dst} already exists")
         dst_dir.mkdir(parents=True, exist_ok=True)

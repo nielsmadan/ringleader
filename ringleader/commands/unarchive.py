@@ -49,9 +49,9 @@ def restore(reg: dict, ts: dict) -> tuple[str, IndexUpdate]:
 
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
-    sidecar = src.with_suffix("")
-    if sidecar.exists():
-        shutil.move(str(sidecar), str(dest.with_suffix("")))
+    for companion in scanner.companion_paths(thread.get("source"), src):
+        if companion.exists():
+            shutil.move(str(companion), str(dest.parent / companion.name))
 
     shown = scanner.show_in_picker(thread, str(dest))
     # The workspace may have moved while this session sat in the archive, in which case

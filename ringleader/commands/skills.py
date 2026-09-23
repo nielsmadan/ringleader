@@ -6,7 +6,7 @@ import stat
 import sys
 from pathlib import Path
 
-from ..paths import bundled_skills_dir, exists_or_report
+from ..paths import bundled_skills_dir, exists_or_report, factory_dir, factory_label
 
 PREFIX = "ringleader-"
 
@@ -27,6 +27,9 @@ def _install_dirs(home: Path) -> list[tuple[str, Path]]:
     for label, probe in (("codex", ".codex"), ("opencode", ".config/opencode"), ("pi", ".pi")):
         if exists_or_report(home / probe):
             out.append((label, shared))
+    factory = factory_dir()
+    if exists_or_report(factory):
+        out.append(("droid", factory / "skills"))
     return out
 
 
@@ -105,7 +108,10 @@ def cmd_install(argv: list[str]) -> int:
         return 1
     targets = _install_dirs(home)
     if not targets:
-        print("no supported agents detected (~/.claude, ~/.codex, ~/.config/opencode, ~/.pi)")
+        print(
+            "no supported agents detected "
+            f"(~/.claude, ~/.codex, ~/.config/opencode, ~/.pi, {factory_label()})"
+        )
         return 0
     if not _confirm(targets, bundled, args.yes):
         print("aborted")

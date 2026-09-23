@@ -1,10 +1,11 @@
 """`rl install/update/uninstall/status hooks` — register ringleader's session-end hook
 into each detected agent's own configuration.
 
-Three formats: Claude Code and Codex both keep a JSON `hooks.SessionEnd` list of
-groups (read/patch/write); Pi discovers extensions by symlink, same as `skills.py`
-links skill directories; OpenCode has no session-end event at all and is only ever
-reported on, never written to.
+Three formats: Claude Code, Codex and Droid all keep a JSON list of `SessionEnd`
+groups (read/patch/write), nested under a `hooks` key except in Droid's standalone
+`hooks.json`, which is keyed by event name directly; Pi discovers extensions by
+symlink, same as `skills.py` links skill directories; OpenCode has no session-end
+event at all and is only ever reported on, never written to.
 """
 
 from __future__ import annotations
@@ -13,12 +14,20 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 from .. import safe_write
-from ..paths import exists_or_report
+from ..paths import exists_or_report, factory_dir, factory_label
 
 HOOK_EVENT = "SessionEnd"
-TIMEOUT_SECONDS = {"claude": 5, "codex": 3}
+TIMEOUT_SECONDS = {"claude": 5, "codex": 3, "droid": 5}
+
+
+class JsonAgent(NamedTuple):
+    label: str
+    path: Path
+    flat: bool
+    prune_when_empty: bool = False
 
 
 def bundled_dir() -> Path:
@@ -33,13 +42,30 @@ def _pi_extension() -> Path:
     return bundled_dir() / "pi-ringleader-finish.ts"
 
 
-def _json_agents(home: Path) -> list[tuple[str, Path]]:
-    """(agent label, hooks-config path) for each detected JSON-hook agent."""
-    out: list[tuple[str, Path]] = []
+def _droid_agent(factory: Path) -> JsonAgent:
+    """Droid reads `hooks.json` *or* the legacy `hooks/hooks.json`, never both, so
+    creating the former would silently disable everything in the latter — and an empty
+    one shadows it just as well. `prune_when_empty` therefore only applies where there
+    is no legacy file to un-shadow: deleting an emptied `hooks.json` beside one would
+    re-activate hooks the user had shadowed, whoever created the file."""
+    standalone = factory / "hooks.json"
+    legacy = factory / "hooks" / "hooks.json"
+    if not exists_or_report(standalone) and exists_or_report(legacy):
+        return JsonAgent("droid", legacy, flat=True)
+    return JsonAgent("droid", standalone, flat=True, prune_when_empty=not exists_or_report(legacy))
+
+
+def _json_agents(home: Path) -> list[JsonAgent]:
+    """One entry per detected JSON-hook agent: its label, its hooks-config path, and
+    whether that file is keyed by event name directly rather than under `hooks`."""
+    out: list[JsonAgent] = []
     if exists_or_report(home / ".claude"):
-        out.append(("claude", home / ".claude" / "settings.json"))
+        out.append(JsonAgent("claude", home / ".claude" / "settings.json", flat=False))
     if exists_or_report(home / ".codex"):
-        out.append(("codex", home / ".codex" / "hooks.json"))
+        out.append(JsonAgent("codex", home / ".codex" / "hooks.json", flat=False))
+    factory = factory_dir()
+    if exists_or_report(factory):
+        out.append(_droid_agent(factory))
     return out
 
 
@@ -102,11 +128,20 @@ def _load_json_or_none(path: Path) -> dict | None:
     return None if loaded is None else loaded[1]
 
 
-def _has_our_entry(data: dict) -> bool:
+def _event_container(data: dict, *, flat: bool) -> dict | None:
+    """The object that holds the event lists: the file's root when it is keyed by event
+    name, else its `hooks` value."""
+    if flat:
+        return data
     hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
+    return hooks if isinstance(hooks, dict) else None
+
+
+def _has_our_entry(data: dict, *, flat: bool) -> bool:
+    container = _event_container(data, flat=flat)
+    if container is None:
         return False
-    events = hooks.get(HOOK_EVENT)
+    events = container.get(HOOK_EVENT)
     if not isinstance(events, list):
         return False
     for group in events:
@@ -118,16 +153,20 @@ def _has_our_entry(data: dict) -> bool:
     return False
 
 
-def _with_our_entry(data: dict, timeout_seconds: int) -> dict:
+def _with_our_entry(data: dict, timeout_seconds: int, *, flat: bool) -> dict:
     """`data`, with our SessionEnd group appended if not already present. Mutates and
-    returns `data` in place; raises `ValueError` (caller skips the file) if `hooks` or
-    `hooks.SessionEnd` already exist with the wrong shape."""
-    hooks = data.setdefault("hooks", {})
-    if not isinstance(hooks, dict):
-        raise ValueError("'hooks' is not an object")
-    events = hooks.setdefault(HOOK_EVENT, [])
+    returns `data` in place; raises `ValueError` (caller skips the file) if the event
+    key or its container already exist with the wrong shape."""
+    if flat:
+        container = data
+    else:
+        container = data.setdefault("hooks", {})
+        if not isinstance(container, dict):
+            raise ValueError("'hooks' is not an object")
+    events = container.setdefault(HOOK_EVENT, [])
     if not isinstance(events, list):
-        raise ValueError(f"'hooks.{HOOK_EVENT}' is not an array")
+        key = HOOK_EVENT if flat else f"hooks.{HOOK_EVENT}"
+        raise ValueError(f"'{key}' is not an array")
     found = False
     for group in events:
         if not isinstance(group, dict):
@@ -152,13 +191,13 @@ def _with_our_entry(data: dict, timeout_seconds: int) -> dict:
     return data
 
 
-def _without_our_entries(data: dict) -> tuple[dict, int]:
+def _without_our_entries(data: dict, *, flat: bool) -> tuple[dict, int]:
     """A copy of `data` with only our SessionEnd entries removed; a foreign entry in
     the same or another group survives untouched. Returns (new_data, removed_count)."""
-    hooks = data.get("hooks")
-    if not isinstance(hooks, dict):
+    container = _event_container(data, flat=flat)
+    if container is None:
         return data, 0
-    events = hooks.get(HOOK_EVENT)
+    events = container.get(HOOK_EVENT)
     if not isinstance(events, list):
         return data, 0
     removed = 0
@@ -173,24 +212,26 @@ def _without_our_entries(data: dict) -> tuple[dict, int]:
         removed += len(group["hooks"]) - len(kept)
         if kept:
             new_events.append({**group, "hooks": kept})
-    new_hooks = dict(hooks)
+    new_container = dict(container)
     if new_events:
-        new_hooks[HOOK_EVENT] = new_events
+        new_container[HOOK_EVENT] = new_events
     else:
-        new_hooks.pop(HOOK_EVENT, None)
+        new_container.pop(HOOK_EVENT, None)
+    if flat:
+        return new_container, removed
     new_data = dict(data)
-    if new_hooks:
-        new_data["hooks"] = new_hooks
+    if new_container:
+        new_data["hooks"] = new_container
     else:
         new_data.pop("hooks", None)
     return new_data, removed
 
 
-def _planned_text(data: dict, timeout_seconds: int) -> str | None:
+def _planned_text(data: dict, timeout_seconds: int, *, flat: bool) -> str | None:
     """The full text to write once our entry is in `data`, or None if it is already
-    there. Raises `ValueError` (caller skips the file) on a wrong-shaped `hooks` key."""
+    there. Raises `ValueError` (caller skips the file) on a wrong-shaped event key."""
     before = json.dumps(data, indent=2)
-    after = json.dumps(_with_our_entry(data, timeout_seconds), indent=2)
+    after = json.dumps(_with_our_entry(data, timeout_seconds, flat=flat), indent=2)
     return None if after == before else after + "\n"
 
 
@@ -212,6 +253,18 @@ def _write_json(path: Path, text: str) -> tuple[int, int]:
         print(f"could not write {path}: {e}", file=sys.stderr)
         return 0, 1
     print(f"  wrote {path}" + (f" (backup: {backup})" if backup else ""))
+    return 1, 0
+
+
+def _remove_json(path: Path) -> tuple[int, int]:
+    """Delete a hooks file that held nothing but our entry, backing up nothing: the
+    diff above showed all of it. Returns (changed, failed)."""
+    try:
+        path.unlink()
+    except OSError as e:
+        print(f"could not remove {path}: {e}", file=sys.stderr)
+        return 0, 1
+    print(f"  removed {path}")
     return 1, 0
 
 
@@ -258,25 +311,45 @@ def _sync_pi(pi_dir: Path) -> tuple[int, int]:
 
 
 def _json_plan(
-    candidates: list[tuple[str, Path]], *, opt_in: bool
+    candidates: list[JsonAgent], *, opt_in: bool
 ) -> tuple[list[tuple[str, Path, str, str | None]], int]:
     """(label, path, current text, text to write or None if already installed) per
     writable target, plus a count of targets skipped as malformed."""
     plan: list[tuple[str, Path, str, str | None]] = []
     failed = 0
-    for label, path in candidates:
-        loaded = _load_json_raw(path)
+    for agent in candidates:
+        loaded = _load_json_raw(agent.path)
         if loaded is None:
             continue
         raw, data = loaded
-        if not (opt_in or _has_our_entry(data)):
+        if not (opt_in or _has_our_entry(data, flat=agent.flat)):
             continue
         try:
-            plan.append((label, path, raw, _planned_text(data, TIMEOUT_SECONDS[label])))
+            text = _planned_text(data, TIMEOUT_SECONDS[agent.label], flat=agent.flat)
         except ValueError as e:
-            print(f"{path}: {e}; leaving untouched", file=sys.stderr)
+            print(f"{agent.path}: {e}; leaving untouched", file=sys.stderr)
             failed += 1
+            continue
+        plan.append((agent.label, agent.path, raw, text))
     return plan, failed
+
+
+def _warn_if_droid_settings_shadowed(plan: list[tuple[str, Path, str, str | None]]) -> None:
+    """Droid merges its hooks file over `settings.json` per event, hooks file winning,
+    so our SessionEnd replaces one declared there rather than joining it."""
+    if not any(label == "droid" and text is not None for label, _p, _r, text in plan):
+        return
+    settings = factory_dir() / "settings.json"
+    loaded = _load_json_raw(settings)
+    if loaded is None:
+        return
+    declared = loaded[1].get("hooks")
+    if isinstance(declared, dict) and declared.get(HOOK_EVENT):
+        print(
+            f"warning: {settings} declares a {HOOK_EVENT} hook that droid will ignore "
+            "while ours is installed",
+            file=sys.stderr,
+        )
 
 
 def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
@@ -287,7 +360,7 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
     candidates = _json_agents(home)
     pi_dir = _pi_dir(home)
     if not candidates and pi_dir is None:
-        print("no supported agents detected (~/.claude, ~/.codex, ~/.pi)")
+        print(f"no supported agents detected (~/.claude, ~/.codex, {factory_label()}, ~/.pi)")
         return 0
 
     json_plan, failed = _json_plan(candidates, opt_in=opt_in)
@@ -311,6 +384,7 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
         print(safe_write.diff(path, raw, text), end="")
     if pi_target is not None:
         print(f"  pi: {pi_target / _pi_extension().name}")
+    _warn_if_droid_settings_shadowed(json_plan)
     if not yes and input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
         print("aborted")
         return 1 if failed else 0
@@ -352,14 +426,17 @@ def cmd_uninstall(argv: list[str]) -> int:
     home = Path.home()
 
     json_victims: list[tuple[str, Path, str, str]] = []
-    for label, path in _json_agents(home):
-        loaded = _load_json_raw(path)
-        if loaded is None or not _has_our_entry(loaded[1]):
+    for agent in _json_agents(home):
+        loaded = _load_json_raw(agent.path)
+        if loaded is None or not _has_our_entry(loaded[1], flat=agent.flat):
             continue
         raw, data = loaded
-        new_data, removed = _without_our_entries(data)
-        if removed:
-            json_victims.append((label, path, raw, json.dumps(new_data, indent=2) + "\n"))
+        new_data, removed = _without_our_entries(data, flat=agent.flat)
+        if not removed:
+            continue
+        gone = agent.prune_when_empty and not new_data
+        text = "" if gone else json.dumps(new_data, indent=2) + "\n"
+        json_victims.append((agent.label, agent.path, raw, text))
 
     pi_dir = _pi_dir(home)
     pi_link = None
@@ -374,7 +451,7 @@ def cmd_uninstall(argv: list[str]) -> int:
 
     print("Will remove:")
     for label, path, raw, text in json_victims:
-        print(f"  {label}: {path}")
+        print(f"  {label}: {path}" + ("" if text else " (deleting the file)"))
         print(safe_write.diff(path, raw, text), end="")
     if pi_link is not None:
         print(f"  pi: {pi_link}")
@@ -384,7 +461,7 @@ def cmd_uninstall(argv: list[str]) -> int:
 
     failed = 0
     for _label, path, _raw, text in json_victims:
-        _c, f = _write_json(path, text)
+        _c, f = _write_json(path, text) if text else _remove_json(path)
         failed += f
 
     if pi_link is not None:
@@ -403,13 +480,13 @@ def cmd_status(argv: list[str]) -> int:
     home = Path.home()
     any_agent = False
 
-    for label, path in _json_agents(home):
+    for agent in _json_agents(home):
         any_agent = True
-        print(f"{label}: {path}")
-        data = _load_json_or_none(path)
+        print(f"{agent.label}: {agent.path}")
+        data = _load_json_or_none(agent.path)
         if data is None:
             status = "could not read/parse (see above)"
-        elif _has_our_entry(data):
+        elif _has_our_entry(data, flat=agent.flat):
             status = "installed"
         else:
             status = "not installed"

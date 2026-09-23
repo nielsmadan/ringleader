@@ -129,6 +129,20 @@ class PickerHidingSource(Source, Protocol):
 
 
 @runtime_checkable
+class CompanionFileSource(Source, Protocol):
+    """A source whose agent keeps per-transcript state beside the transcript —
+    Claude Code's `<sessionId>/` directory, droid's `<sessionId>.settings.json`
+    sidecars. Archive, delete and prune have to carry or remove them with the
+    transcript, or the session is split from its own state.
+
+    The return is a set of candidate paths derived from the transcript's, not a
+    listing of what is there: callers check existence themselves, and the same
+    derivation names the destination once a transcript has moved."""
+
+    def companion_paths(self, file_path: str) -> tuple[Path, ...]: ...
+
+
+@runtime_checkable
 class WorkspaceRelocatingSource(Source, Protocol):
     """A source whose agent keys session storage by the directory a session was
     launched in, so moving a workspace leaves its sessions unreachable from the new

@@ -25,9 +25,10 @@ prompt. It obeys the scope flags, so `--last --recursive` is the newest anywhere
 directory and `--last --all` the newest on the machine.
 
 Each agent already has its own version of this — `claude -c`, `codex resume --last`,
-`opencode -c`, `pi -c`. What none of them can do is cross the agent boundary: if the last thing
-you touched here was a Codex session, `claude -c` cannot reach it. `--last` re-enters whichever
-agent the session actually belonged to, which is the only reason it earns its place.
+`droid resume --last`, `opencode -c`, `pi -c`. What none of them can do is cross the agent
+boundary: if the last thing you touched here was a Codex session, `claude -c` cannot reach it.
+`--last` re-enters whichever agent the session actually belonged to, which is the only reason it
+earns its place.
 
 It refuses rather than falling back to the picker — `--last` asked not to be asked. An empty
 scope earns one scan before it gives up, and `--last` cannot be combined with a query.
@@ -66,6 +67,7 @@ does not ask, because it starts a new session and leaves the source untouched.
 |---|---|
 | `claude-code` | `claude --resume <id>` |
 | `codex` | `codex resume <id>` |
+| `droid` | `droid resume <id>` |
 | `opencode` | `opencode --session <id>` |
 | `pi` | `pi --session <id>` |
 
@@ -82,10 +84,11 @@ Resuming always `chdir`s first. This is not a convenience: `claude --resume <id>
 within the current directory's project dir, and there is no global by-id lookup, so starting in
 the wrong place means the session is simply not found.
 
-The directory is usually the session's recorded cwd. For a Claude session whose transcript is
-filed under a *different* directory's slug — a worktree, or a session that cd'd — the recorded cwd
-is the wrong answer, and the launch directory is recovered from a sibling session filed in the
-same place. Such a session is badged `drifted`.
+The directory is usually the session's recorded cwd. For a Claude Code or Droid session whose
+transcript is filed under a *different* directory's slug — a worktree, or a session that cd'd —
+the recorded cwd is the wrong answer, and the launch directory is recovered from a sibling
+session filed in the same place. Such a session is badged `drifted`. Both agents key storage by
+the launch directory's slug, so both need the recovery.
 
 ## Freshness
 

@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Sequence
 from enum import Enum
+from functools import cache
 from itertools import pairwise
 from pathlib import Path
 
 from . import namefilter, overview, scanner, search
 from .search import _BLURB_FIELDS
 from .slug import stored_under
-from .sources.base import SessionLaunchingSource
+from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource
 
 _UNKNOWN = "(unknown)"
 
@@ -195,13 +196,32 @@ def launchable_agents() -> tuple[str, ...]:
     )
 
 
+@cache
+def _slug_keyed_sources() -> frozenset[str]:
+    """Sources whose agent files a transcript under the *launch* directory's slug, so
+    a session that cd'd is stored where its recorded cwd does not predict."""
+    return frozenset(
+        source.name
+        for source in (source_type() for source_type in scanner.SOURCE_TYPES)
+        if scanner.supports(source, "relocates_workspace", WorkspaceRelocatingSource)
+    )
+
+
+def _in_source_root(name: str, file: str) -> bool:
+    source = scanner.source_by_name(name)
+    return source is not None and Path(file).parent == Path(source.root)
+
+
 def drifted(thread: dict) -> bool:
     # the transcript is filed under the *launch* dir's slug; a different slug means it cd'd
-    if source_of(thread) != "claude-code":
+    name = source_of(thread)
+    if name not in _slug_keyed_sources():
         return False
     file, project = thread.get("file"), thread.get("project")
     if not file or not project:
         return False
+    if _in_source_root(name, file):
+        return False  # droid's global-root layout: no slug dir to compare against
     return not stored_under(file, project)
 
 
@@ -213,7 +233,9 @@ def launch_cwd(thread: dict, threads: Sequence[dict] = ()) -> str | None:
         return str(project)
     parent = Path(thread["file"]).parent
     for other in threads:
-        if source_of(other) != "claude-code" or not other.get("file") or not other.get("project"):
+        if source_of(other) != source_of(thread):
+            continue
+        if not other.get("file") or not other.get("project"):
             continue
         if Path(other["file"]).parent == parent and not drifted(other):
             return str(other["project"])

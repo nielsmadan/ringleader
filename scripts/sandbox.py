@@ -81,7 +81,7 @@ def validate_fixture(root: Path, descriptor: dict) -> tuple[dict, str]:
     if missing:
         raise FixtureError(f"fixture file is missing: {missing[0]}")
 
-    source_counts = {"claude-code": 0, "codex": 0}
+    source_counts = dict.fromkeys(descriptor.get("session_counts", {}), 0)
     raw_bytes = 0
     for entry in entries:
         path = root / entry["path"]
@@ -93,6 +93,8 @@ def validate_fixture(root: Path, descriptor: dict) -> tuple[dict, str]:
         if entry.get("kind") == "session":
             if entry.get("bucket") != _message_bucket(entry.get("message_count", 0)):
                 raise FixtureError(f"fixture message bucket mismatch: {entry['path']}")
+            if entry["source"] not in source_counts:
+                raise FixtureError(f"fixture names an undeclared source: {entry['source']}")
             source_counts[entry["source"]] += 1
 
     if source_counts != descriptor.get("session_counts"):
@@ -125,6 +127,8 @@ def build(
     if sandbox_root.exists():
         shutil.rmtree(sandbox_root)
     (sandbox_root / "data").mkdir(parents=True)
+    # FACTORY_HOME_OVERRIDE is droid's HOME, so its store sits one .factory down
+    (sandbox_root / "droid" / ".factory" / "sessions").mkdir(parents=True)
 
     stamp = time.time() if now is None else now
     for entry in manifest["files"]:
@@ -149,6 +153,7 @@ def build(
     print(f'export XDG_DATA_HOME="{sandbox_root / "data"}"')
     print(f'export SESSION_TRACKER_PROJECTS_DIR="{sandbox_root / "claude"}"')
     print(f'export CODEX_SESSIONS_DIR="{sandbox_root / "codex"}"')
+    print(f'export FACTORY_HOME_OVERRIDE="{sandbox_root / "droid"}"')
     print(f'export RINGLEADER_CLAUDE_SETTINGS="{settings}"')
     return fingerprint
 
@@ -160,7 +165,7 @@ def ensure_sandbox(
     *,
     retention: int = 7,
 ) -> None:
-    directories = ("data", "claude", "codex")
+    directories = ("data", "claude", "codex", "droid")
     if (
         all((sandbox_root / name).is_dir() for name in directories)
         and (sandbox_root / "claude-settings.json").is_file()
@@ -179,6 +184,7 @@ def shell_environment(sandbox_root: Path, base: dict[str, str] | None = None) ->
         XDG_DATA_HOME=str(sandbox_root / "data"),
         SESSION_TRACKER_PROJECTS_DIR=str(sandbox_root / "claude"),
         CODEX_SESSIONS_DIR=str(sandbox_root / "codex"),
+        FACTORY_HOME_OVERRIDE=str(sandbox_root / "droid"),
         RINGLEADER_CLAUDE_SETTINGS=str(sandbox_root / "claude-settings.json"),
     )
     return environment

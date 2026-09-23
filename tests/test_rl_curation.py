@@ -52,8 +52,22 @@ def _session(tmp, sid="a"):
     return f
 
 
-def _registry(tmp, sid, f, *, harvest=None):
+def _droid_session(tmp, sid="d"):
+    # mimic ~/.factory/sessions/<encoded>/<uuid>.jsonl + its two settings sidecars
+    proj = tmp / "_factory" / ".factory" / "sessions" / "-Users-me-proj"
+    proj.mkdir(parents=True, exist_ok=True)
+    f = proj / f"{sid}.jsonl"
+    f.write_text("{}\n", encoding="utf-8")
+    (proj / f"{sid}.settings.json").write_text('{"model":"opus"}', encoding="utf-8")
+    (proj / f"{sid}.settings.json.bak").write_text("{}", encoding="utf-8")
+    return f
+
+
+def _registry(tmp, sid, f, *, harvest=None, source=None):
     reg = tmp / "registry.json"
+    thread = {"sessionId": sid, "file": str(f), "harvestPath": harvest}
+    if source:
+        thread["source"] = source
     reg.write_text(
         json.dumps(
             {
@@ -61,7 +75,7 @@ def _registry(tmp, sid, f, *, harvest=None):
                 "lastScan": None,
                 "archived": [],
                 "deleted": [],
-                "threads": [{"sessionId": sid, "file": str(f), "harvestPath": harvest}],
+                "threads": [thread],
             }
         ),
         encoding="utf-8",
@@ -516,3 +530,73 @@ def test_mark_reviewed_sets_reviewed_marker(tmp_path):
     r = _run("rl-session mark reviewed", reg, "r")
     assert r.returncode == 0 and "reviewed" in r.stdout.lower()
     assert json.loads(reg.read_text())["threads"][0]["reviewedAtMtime"] is not None
+
+
+def test_archive_carries_a_droid_sessions_settings_sidecars_into_the_archive(tmp_path):
+    """Droid keeps a session's token accounting in `<id>.settings.json` beside the
+    transcript, so archiving without them splits the session from its own state."""
+    f = _droid_session(tmp_path, "d")
+    reg = _registry(tmp_path, "d", f, source="droid")
+    arc = tmp_path / "archive"
+
+    r = _run("rl-session archive", reg, "d", "--archive-root", str(arc))
+
+    assert r.returncode == 0 and "archived d" in r.stdout
+    assert sorted(p.name for p in (arc / "droid").iterdir()) == [
+        "d.jsonl",
+        "d.settings.json",
+        "d.settings.json.bak",
+    ]
+    assert list(f.parent.iterdir()) == []
+    assert (arc / "droid" / "d.settings.json").read_text() == '{"model":"opus"}'
+
+
+def test_unarchive_puts_a_droid_sessions_settings_sidecars_back(tmp_path):
+    original = tmp_path / "_factory" / ".factory" / "sessions" / "-Users-me-proj" / "d.jsonl"
+    original.parent.mkdir(parents=True)
+    arc = tmp_path / "archive" / "droid"
+    arc.mkdir(parents=True)
+    (arc / "d.jsonl").write_text("{}\n", encoding="utf-8")
+    (arc / "d.settings.json").write_text('{"model":"opus"}', encoding="utf-8")
+    (arc / "d.settings.json.bak").write_text("{}", encoding="utf-8")
+    reg = tmp_path / "registry.json"
+    reg.write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "lastScan": None,
+                "threads": [],
+                "deleted": [],
+                "archived": [
+                    {
+                        "sessionId": "d",
+                        "source": "droid",
+                        "archivePath": str(arc / "d.jsonl"),
+                        "originalPath": str(original),
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    r = _run("rl-session unarchive", reg, "d")
+
+    assert r.returncode == 0 and "restored d" in r.stdout
+    assert sorted(p.name for p in original.parent.iterdir()) == [
+        "d.jsonl",
+        "d.settings.json",
+        "d.settings.json.bak",
+    ]
+    assert (original.parent / "d.settings.json").read_text() == '{"model":"opus"}'
+    assert list(arc.iterdir()) == []
+
+
+def test_delete_removes_a_droid_sessions_settings_sidecars_too(tmp_path):
+    f = _droid_session(tmp_path, "d")
+    reg = _registry(tmp_path, "d", f, source="droid")
+
+    r = _run("rl-session delete", reg, "d")
+
+    assert r.returncode == 0 and "deleted d" in r.stdout
+    assert list(f.parent.iterdir()) == []

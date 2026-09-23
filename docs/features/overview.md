@@ -19,7 +19,7 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
   three directory scopes, and handing a session to a different agent.
 - [pruning-and-retention.md](pruning-and-retention.md) — deleting tiny/stale sessions, archive
   retention, and tombstones. Which verbs preview and which delete.
-- [usage-analytics.md](usage-analytics.md) — token spend across four harnesses, per-session
+- [usage-analytics.md](usage-analytics.md) — token spend across five harnesses, per-session
   breakdowns, subscription windows, and cross-machine merge.
 - [workspace-portability.md](workspace-portability.md) — moving a checkout without stranding its
   sessions; why the registry has to be pinned and why a move refuses to merge.

@@ -10,7 +10,7 @@ with [Agent setup](agent-setup.md).
 
 - [Getting started](getting-started.md) — install, first scan, and your first triage pass.
 - [Agent setup](agent-setup.md) — skills, the session-end hook, and the status-line capture,
-  across Claude Code, Codex, OpenCode and Pi.
+  across Claude Code, Codex, Droid, OpenCode and Pi.
 
 ## Guides
 

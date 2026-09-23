@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from datetime import UTC, datetime
 
@@ -65,22 +64,19 @@ def _report_stubs(stubs: list) -> None:
 def _delete_stubs(stubs: list) -> int:
     removed = 0
     for s in stubs:
+        thread = {"source": s.source, "sessionId": s.session_id, "file": s.file}
         try:
-            f = scanner.filesystem_path(
-                {"source": s.source, "sessionId": s.session_id, "file": s.file}, "prune"
-            )
-            sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+            f = scanner.filesystem_path(thread, "prune")
+            companions = scanner.companion_paths(s.source, f)
             # same order as prune.delete_sessions: deleting first would strand a live
             # entry in the agent's picker, pointing at a transcript that is gone
-            scanner.hide_from_picker(
-                {"source": s.source, "sessionId": s.session_id, "file": s.file}
-            )
+            scanner.hide_from_picker(thread)
         except RuntimeError as e:
             print(f"skipped {s.session_id}: {e}", file=sys.stderr)
             continue
         try:
             f.unlink(missing_ok=True)
-            shutil.rmtree(sidecar, ignore_errors=True)
+            scanner.remove_companions(companions)
         except OSError as e:
             print(f"skipped {s.session_id}: {e}", file=sys.stderr)
             continue

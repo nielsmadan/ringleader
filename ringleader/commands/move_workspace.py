@@ -166,9 +166,14 @@ def collisions(plan: _Plan, srcs: _Sources) -> list[str]:
         if dst.exists():
             out.append(str(dst))
     for thread, source, new_project in plan.per:
-        dst = srcs.relocating[source].storage_for(new_project) / Path(thread["file"]).name
-        if dst.exists():
-            out.append(str(dst))
+        dst_dir = srcs.relocating[source].storage_for(new_project)
+        transcript = Path(thread["file"])
+        if (dst_dir / transcript.name).exists():
+            out.append(str(dst_dir / transcript.name))
+        for companion in scanner.companion_paths(source, transcript):
+            # only ones we would actually move: that is what relocate_session refuses on
+            if companion.exists() and (dst_dir / companion.name).exists():
+                out.append(str(dst_dir / companion.name))
     return out
 
 

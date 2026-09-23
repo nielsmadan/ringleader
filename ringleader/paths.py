@@ -22,6 +22,23 @@ def exists_or_report(p: Path) -> bool:
     return True
 
 
+def factory_home() -> Path:
+    """The HOME Droid resolves its `.factory` dir against — `FACTORY_HOME_OVERRIDE`
+    replaces HOME itself, not the `.factory` name."""
+    override = os.environ.get("FACTORY_HOME_OVERRIDE")
+    return Path(override) if override else Path.home()
+
+
+def factory_dir() -> Path:
+    return factory_home() / ".factory"
+
+
+def factory_label() -> str:
+    """How to name droid's config dir in a message: `~/.factory` normally, the real
+    path once `FACTORY_HOME_OVERRIDE` moves it somewhere the reader can't guess."""
+    return "~/.factory" if factory_home() == Path.home() else str(factory_dir())
+
+
 def state_dir() -> Path:
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "ringleader"

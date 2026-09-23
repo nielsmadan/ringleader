@@ -5,6 +5,7 @@
   "schema_version": 1,
   "session_counts": {
     "claude-code": 70,
-    "codex": 30
+    "codex": 30,
+    "droid": 0
   }
 }

@@ -117,11 +117,13 @@ def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):
     claude = tmp_path / "claude"
     codex = tmp_path / "codex"
     pi = tmp_path / "pi"
+    factory = tmp_path / "factory"
     claude.mkdir()
     monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(claude))
     monkeypatch.setenv("CODEX_SESSIONS_DIR", str(codex))
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
     monkeypatch.setenv("PI_SESSIONS_DIR", str(pi))
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(factory))
     from ringleader import scanner
 
     names = {s.name for s in scanner.active_sources()}
@@ -130,6 +132,13 @@ def test_active_sources_autodetects_by_root(tmp_path, monkeypatch):
     assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex"}
     pi.mkdir()
     assert {s.name for s in scanner.active_sources()} == {"claude-code", "codex", "pi"}
+    (factory / ".factory" / "sessions").mkdir(parents=True)
+    assert {s.name for s in scanner.active_sources()} == {
+        "claude-code",
+        "codex",
+        "droid",
+        "pi",
+    }
 
 
 def test_unreadable_source_root_is_unavailable_not_absent(tmp_path, monkeypatch, capsys):

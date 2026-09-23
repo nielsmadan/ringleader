@@ -11,7 +11,7 @@ rl
 ├── overview [<selector>]       the view: project rollup, or a deep-dive
 ├── triage                      sessions awaiting a decision
 ├── prune                       delete tiny + stale sessions (preview by default)
-├── usage                       token usage across claude/codex/opencode/pi
+├── usage                       token usage across claude/codex/droid/opencode/pi
 │   ├── session <id>            where one session's tokens went
 │   ├── windows                 5h/weekly subscription limits
 │   └── export                  dump usage for merging across machines
@@ -31,7 +31,7 @@ rl
 
 | Command | Does | Key flags |
 |---|---|---|
-| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then choose the session's own agent (default) or hand it to another. | `--last`, `--to claude\|codex\|opencode\|pi`, `--dry-run`, `--all`, `--recursive`, `--registry` |
+| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then choose the session's own agent (default) or hand it to another. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--dry-run`, `--all`, `--recursive`, `--registry` |
 | `rl inbox` | Textual TUI over the dormant-session queue, in three tabs. `j`/`k` move, `h` harvest, `d` delete, `u` undo, `s` snooze, `K` keep, `a` archive, `enter` select, `;` detail, `q` quit. Offers a `roundup` when state is stale. | `--registry` |
 | `rl roundup` | Refresh, prune (**deletes**), and enrich in one pass. | `--yes` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |

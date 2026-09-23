@@ -281,6 +281,28 @@ def _write_claude_transcript(path: Path, *, inp: int, out: int) -> None:
     )
 
 
+def _write_droid_session(path: Path, *, inp: int, out: int) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(
+            {
+                "type": "session_start",
+                "id": path.stem,
+                "cwd": "/Users/x/wrksp/foo",
+                "callingSessionId": None,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    usage = {"inputTokens": inp, "outputTokens": out}
+    path.with_name(path.stem + ".settings.json").write_text(
+        json.dumps({"model": "auto", "inclusiveTokenUsage": usage, "tokenUsage": usage}),
+        encoding="utf-8",
+    )
+    path.with_name(path.stem + ".settings.json.bak").write_text("{}", encoding="utf-8")
+
+
 def _write_codex_transcript(path: Path, *, inp: int, cached: int, out: int) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -317,7 +339,19 @@ def _write_codex_transcript(path: Path, *, inp: int, cached: int, out: int) -> N
     )
 
 
-def test_collect_archived_covers_both_claude_and_codex(monkeypatch, tmp_path):
+def test_collect_reads_droid_sessions_through_the_reader_registry(tmp_path):
+    _write_droid_session(
+        tmp_path / "-Users-x-wrksp-foo" / "44444444-4444-4444-8444-444444444444.jsonl",
+        inp=100,
+        out=10,
+    )
+
+    recs = usage_cmd.collect(["droid"], dirs={"droid": {"sessions_dir": tmp_path}})
+
+    assert [(r.source, r.total) for r in recs] == [("droid", 110)]
+
+
+def test_collect_archived_covers_claude_codex_and_droid(monkeypatch, tmp_path):
     _write_claude_transcript(tmp_path / "-Users-x-wrksp-foo" / "sess-claude.jsonl", inp=9, out=1)
     _write_codex_transcript(
         tmp_path
@@ -326,6 +360,11 @@ def test_collect_archived_covers_both_claude_and_codex(monkeypatch, tmp_path):
         inp=20,
         cached=6,
         out=5,
+    )
+    _write_droid_session(
+        tmp_path / "-Users-x-wrksp-bar" / "44444444-4444-4444-8444-444444444444.jsonl",
+        inp=100,
+        out=10,
     )
     monkeypatch.setattr(usage_cmd, "archive_root", lambda: tmp_path)
 
@@ -336,9 +375,10 @@ def test_collect_archived_covers_both_claude_and_codex(monkeypatch, tmp_path):
     assert (
         by_source["codex"].total == 25
     )  # 20 input (incl 6 cached) -> 14+6 + 5 out; total stays 25
+    assert by_source["droid"].total == 110
     # No double counting: each file only yields its own source, sources differ, ids differ.
-    assert {r.source for r in recs} == {"claude", "codex"}
-    assert len({r.session_id for r in recs}) == 2
+    assert {r.source for r in recs} == {"claude", "codex", "droid"}
+    assert len({r.session_id for r in recs}) == 3
 
 
 def test_archived_merges_claude_and_codex_without_double_counting(monkeypatch, tmp_path, capsys):

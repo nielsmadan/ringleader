@@ -370,7 +370,7 @@ def test_an_unknown_to_agent_reports_the_agents_that_exist(tmp_path, capsys):
     assert _run(["aaa111", "--to", "emacs", "--registry", reg], runner=runner) == 1
     err = capsys.readouterr().err
     assert "emacs" in err
-    for agent in ("claude", "codex", "opencode", "pi"):
+    for agent in ("claude", "codex", "droid", "opencode", "pi"):
         assert agent in err
     assert runner.calls == []
 

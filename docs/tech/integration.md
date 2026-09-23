@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Ringleader wires itself into four agents — installing skills, a session-end hook, and a Claude
+Ringleader wires itself into five agents — installing skills, a session-end hook, and a Claude
 Code status-line capture. Every one of those edits a file the agent owns, so this layer's whole
 concern is **editing someone else's config without breaking it and without becoming
 un-removable**.
@@ -21,12 +21,19 @@ only Claude Code installs only Claude Code's wiring.
 |---|---|---|
 | Claude Code | `~/.claude/skills` | `~/.claude/settings.json` |
 | Codex | `~/.agents/skills` | `~/.codex/hooks.json` |
+| Droid | `~/.factory/skills` | `~/.factory/hooks.json`, or the legacy `~/.factory/hooks/hooks.json` |
 | OpenCode | `~/.agents/skills` | detected via `~/.config/opencode` |
 | Pi | `~/.agents/skills` | `~/.pi/agent/extensions` (a TypeScript extension) |
 
 `paths.exists_or_report()` is used for every probe: it reports a stat failure instead of
 silently treating it as absent, so a permissions problem does not look like "agent not
 installed".
+
+Droid's home is `paths.factory_dir()`, not `home / ".factory"`, because `FACTORY_HOME_OVERRIDE`
+replaces **HOME** rather than the `.factory` name; `paths.factory_label()` is what messages print,
+so an overridden root is named in full instead of as a misleading `~/.factory`. Droid also gets
+its own skills directory rather than the shared `~/.agents/skills`, because `.factory/skills` is
+its documented native personal skills location — the same reason Claude Code gets `~/.claude/skills`.
 
 ### Skills
 
@@ -51,6 +58,29 @@ JSON-configured agents get an entry in their hooks file; Pi gets the bundled
 
 `_is_ours()` is the removal predicate: an entry counts as ours **only if its command path lies
 inside `bundled_dir()`**. A user's own `SessionEnd` hook is never touched.
+
+#### Droid's hooks file
+
+`JsonAgent.flat` exists for droid. A standalone `hooks.json` is keyed by event name
+**directly** — `{"SessionEnd": [...]}` — while the `{"hooks": {"SessionEnd": [...]}}` nesting
+Claude Code and Codex use is only valid inside `settings.json`. `_event_container()` is the one
+place that branch lives; everything downstream patches the same shape. Droid's event vocabulary
+is otherwise exactly Claude Code's, and `timeout` is per command, in seconds, defaulting to 60 —
+`TIMEOUT_SECONDS["droid"]` writes 5.
+
+`_droid_agent()` handles the loader being **either/or**: once `hooks.json` exists, droid never
+reads the legacy `.factory/hooks/hooks.json`. Creating the former would therefore silently
+disable everything in the latter, so ringleader writes into the legacy file when that is the one
+present. The same fact drives `prune_when_empty`: uninstall **deletes** a `hooks.json` it
+emptied, because an empty one shadows the legacy file just as effectively as a full one — but
+only where there is no legacy file beneath it. Where there is, the emptied file stays, whoever
+created it: deleting it would hand `hooks/hooks.json` back to droid and re-arm hooks the user
+shadowed on purpose.
+
+`_warn_if_droid_settings_shadowed()` covers the last edge. Droid merges its hooks file over
+`settings.json` per event with the hooks file winning, so installing ours replaces a `SessionEnd`
+declared in `settings.json` rather than joining it. The installer says so before writing rather
+than letting the user's hook quietly stop firing.
 
 ### Status line
 
@@ -97,10 +127,12 @@ name to the environment variable that agent exports (`codex` → `CODEX_THREAD_I
 backs every `--current` flag plus `rl session whoami`. Codex also checks
 `CODEX_SESSION_ID` as a fallback (THREAD_ID names the child subagent, SESSION_ID
 the parent). `PROBES` is ordered so an inner agent's var wins if a shell
-inherits an outer agent's env (Codex/Pi/OpenCode before Claude Code). All four
-agents have a `Source`. Pi exports its id, so `--current` works end to end;
+inherits an outer agent's env (Codex/Pi/OpenCode before Claude Code). Every probed
+agent has a `Source`. Pi exports its id, so `--current` works end to end;
 OpenCode does not yet export the probed variable, and its database-backed Source
-deliberately declines filesystem lifecycle operations.
+deliberately declines filesystem lifecycle operations. **Droid has no `PROBES` entry** because it
+exports no session-id variable to probe — only `DROID_PARENT_SESSION_ID` — so `--current` and
+`rl session whoami` do not resolve inside a droid session.
 
 ## Key entry points
 
@@ -116,6 +148,11 @@ deliberately declines filesystem lifecycle operations.
 - **OpenCode's `--current` probe is forward-looking.** Its Source supplies registry entries,
   but OpenCode does not yet export `OPENCODE_SESSION_ID`, and lifecycle operations deliberately
   decline its database-backed sessions.
+- **Droid is not probeable and has no status line to capture.** `rl install statusline` is
+  Claude-Code-only, and droid's status-line payload carries no rate-limit data, so there is
+  nothing for it to capture — that is a deliberate omission, not a missing case.
+- **`TIMEOUT_SECONDS` is indexed unguarded.** A new JSON-hook agent without an entry there is a
+  `KeyError`, not a default.
 - **Symlinked skills mean repo edits are live** in every wired agent immediately. Convenient
   while iterating, surprising if you forget.
 - **Uninstall is ownership-scoped**, by symlink target and by command path. A hand-written hook
@@ -128,9 +165,11 @@ deliberately declines filesystem lifecycle operations.
 ## Why
 
 Every installer here follows the same three rules: detect rather than assume, preview and
-confirm before writing, and define ownership narrowly enough that uninstall can never remove
-something the user wrote. The tool edits four other programs' configuration files; being
-removable without residue is a correctness property, not a nicety.
+confirm before writing, and define ownership narrowly enough that uninstall always leaves the
+user's own entries behind. The one file uninstall removes outright is a droid `hooks.json` with
+nothing left in it, and only where no legacy `hooks/hooks.json` sits beneath it to be un-shadowed.
+The tool edits five other programs' configuration files; being removable without residue is a
+correctness property, not a nicety.
 
 ## Related
 

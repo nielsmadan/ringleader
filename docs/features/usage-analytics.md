@@ -5,9 +5,9 @@
 
 ## Overview
 
-`rl usage` reports token spend across **Claude Code, Codex, OpenCode and Pi**, read from the
-transcript files or database rows each already writes locally. No API call, no credential, works
-offline.
+`rl usage` reports token spend across **Claude Code, Codex, Droid, OpenCode and Pi**, read from
+the transcript files, sidecars or database rows each already writes locally. No API call, no
+credential, works offline.
 
 ```sh
 rl usage                          # last 7 days, by project
@@ -28,6 +28,11 @@ price very differently and a session that looks expensive by total is often just
 Cost figures come from a static price table, so they are estimates and go stale when a provider
 reprices; an unrecognized model reports no cost rather than a wrong one.
 
+**Droid records carry no cost at all.** Factory routes requests and bills its own credits, so the
+model vendor's list price says nothing about what a droid session cost — `pricing.estimate()`
+returns `None` for the `factory` provider rather than a confident wrong number. `rl usage
+windows` likewise does not cover droid: those figures exist only behind Factory's API.
+
 ## Subscription windows
 
 `rl usage windows` reports 5-hour and weekly consumption.
@@ -41,7 +46,7 @@ reprices; an unrecognized model reports no cost rather than a wrong one.
 ## Archived sessions and across machines
 
 ```sh
-rl usage --archived                 # include archived Claude + Codex transcripts
+rl usage --archived                 # include archived Claude, Codex + Droid transcripts
 rl usage --archived --source codex  # only archived Codex sessions
 rl usage export --out usage-laptop.json    # on each machine
 rl usage --merge <dir>                     # combined report
@@ -67,6 +72,11 @@ with a machine id and de-duplicated on merge.
 - **Reading is I/O-bound over local agent state**, so all-time reports on a large history are slow.
 - **OpenCode records are per assistant response.** SQLite `message.data` retains the timestamp,
   model, cost and token buckets, while the owning `session` supplies project identity.
+- **Droid records are per session, not per turn**, because droid records no per-turn counts —
+  only sidecar totals. Each record is stamped at the transcript's mtime, so a long session's
+  whole spend lands on the day it was last touched, and `--by day` mixes per-turn sources with
+  per-session lumps. `--by model` has the same shape of approximation: the whole session is
+  attributed to whichever model the router last chose.
 
 ## Related
 

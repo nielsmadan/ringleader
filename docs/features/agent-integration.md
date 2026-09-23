@@ -1,7 +1,7 @@
 # Wire ringleader into the agents you use
 
-> **Problem:** ringleader curates sessions from four different agents, so it has to install
-> itself into four different configuration systems — and be removable from all of them without
+> **Problem:** ringleader curates sessions from five different agents, so it has to install
+> itself into five different configuration systems — and be removable from all of them without
 > leaving residue.
 
 ## Overview
@@ -47,15 +47,27 @@ also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 | `ringleader-usage` | explain where tokens went |
 | `ringleader-publish` | drain pending harvests into repository docs |
 
-`rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi) and
-`~/.claude/skills` (Claude Code). `memory-triage` is separate and still lives in
-`.claude/skills/`.
+`rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi),
+`~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid) — the two agents with a native
+personal skills directory get their own, the rest share. `memory-triage` is separate and still
+lives in `.claude/skills/`.
 
 ## Hooks
 
 `rl install hooks` registers a session-end hook running `rl session sweep --from-hook`, so a
 finished session is archived seconds after the agent exits instead of on the next roundup.
-JSON-configured agents get a hooks-file entry; Pi gets a bundled TypeScript extension.
+JSON-configured agents (Claude Code, Codex, Droid) get a hooks-file entry; Pi gets a bundled
+TypeScript extension; OpenCode has no session-end event and is only ever reported on.
+
+Droid's hooks file is the awkward one. `~/.factory/hooks.json` is keyed by event name
+**directly** rather than under a `hooks` key — that nesting is only valid inside
+`settings.json` — and droid reads `hooks.json` *or* the legacy `.factory/hooks/hooks.json`,
+never both. So ringleader writes into whichever file already exists, and on uninstall
+**removes** a `hooks.json` it emptied instead of leaving `{}` behind, because an empty
+`hooks.json` shadows the legacy file just as effectively as a full one. Droid also merges its
+hooks file over `settings.json` per event with the hooks file winning, so installing ours
+replaces a `SessionEnd` declared there rather than joining it — the installer warns when that
+is about to happen.
 
 ## Status line
 

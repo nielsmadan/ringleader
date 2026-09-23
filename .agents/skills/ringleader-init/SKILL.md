@@ -27,7 +27,9 @@ this file only adds the flow.
    `just install` (or `uv tool install .`) would put `rl` on `PATH` directly.
 
 3. **Wire the skills into this agent.** Run `rl install skills`, which links the bundled
-   `ringleader-*` skills into the agent directories it finds. `rl doctor` reports what is
+   `ringleader-*` skills into the agent directories it finds — `~/.claude/skills` for Claude
+   Code, `~/.factory/skills` for Droid, and the shared `~/.agents/skills` for Codex, OpenCode
+   and Pi. `rl doctor` reports what is
    already wired, so skip this if it says they are. `rl update skills` refreshes them after
    an upgrade and `rl uninstall skills` removes them.
 

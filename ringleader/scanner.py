@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import shutil
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 from . import registry
 from .gitinfo import GitProject, resolve_git_project
 from .sources.base import (
     CachedMetadataSource,
+    CompanionFileSource,
     IndexUpdate,
     NormalizedSession,
     PickerHidingSource,
@@ -17,10 +20,11 @@ from .sources.base import (
 )
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
+from .sources.droid import DroidSource
 from .sources.opencode import OpenCodeSource
 from .sources.pi import PiSource
 
-SOURCE_TYPES = (ClaudeCodeSource, CodexSource, OpenCodeSource, PiSource)
+SOURCE_TYPES = (ClaudeCodeSource, CodexSource, DroidSource, OpenCodeSource, PiSource)
 
 
 def _new_sources():
@@ -93,6 +97,24 @@ def filesystem_path(thread: dict, operation: str) -> Path:
             "the source has no filesystem transcript lifecycle"
         )
     return Path(file_path)
+
+
+def companion_paths(source_name: str | None, file_path: str | Path) -> tuple[Path, ...]:
+    """The per-transcript files that belong with `file_path` — Claude Code's
+    `<sessionId>/` directory, droid's `.settings.json` sidecars. Empty for a source
+    that keeps none, so archive/delete/prune can treat every source the same."""
+    src = source_by_name(source_name or "claude-code")
+    if not supports(src, "companion_files", CompanionFileSource):
+        return ()
+    return tuple(src.companion_paths(str(file_path)))
+
+
+def remove_companions(paths: Iterable[Path]) -> None:
+    for path in paths:
+        if path.is_dir() and not path.is_symlink():
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            path.unlink(missing_ok=True)
 
 
 def hide_from_picker(thread: dict) -> IndexUpdate:

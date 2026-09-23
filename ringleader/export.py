@@ -48,7 +48,7 @@ def _record_chunks(o: dict) -> list[str]:
         msg = o.get("message", {})
         parts = (_turn("assistant", _text_blocks(msg).strip()), _tool_note(msg))
         return [c for c in parts if c]
-    if t == "message":  # pi
+    if t == "message":  # pi and droid
         msg = o.get("message")
         if not isinstance(msg, dict):
             return []

@@ -11,7 +11,8 @@ support renaming natively. `sources/base.py` defines a small required protocol p
 a session came from ([0003](../decisions/0003-scan-behind-a-source-seam.md)).
 
 Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.py`
-(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`), `pi.py`
+(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`),
+`droid.py` (`~/.factory/sessions/<enc-cwd>/*.jsonl` plus `.settings.json` sidecars), `pi.py`
 (`~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl`, names via `session_info`), and read-only
 `opencode.py` (rows in `$XDG_DATA_HOME/opencode/opencode.db`).
 
@@ -53,6 +54,7 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 | Protocol | Capability | Methods |
 |---|---|---|
 | `CachedMetadataSource` | — | `refresh_cached_metadata()` — update display fields even on a cache hit |
+| `CompanionFileSource` | `companion_files` | `companion_paths()` — the per-transcript state that must travel with it |
 | `ConversationRenderingSource` | `renders_conversation` | `render_conversation()` — render a source-owned session without assuming JSONL |
 | `NameApplyingSource` | `applies_names` | `apply_name()` — write a name into the agent's own store |
 | `PickerHidingSource` | `hides_from_picker` | `hide_from_picker()` |
@@ -63,9 +65,18 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
-`Path` or touching disk. Claude Code, Codex, and Pi opt in. OpenCode deliberately does not: its
-database is read-only to ringleader, so it supports scan, overview, triage, detail, export and
-harvest, while lifecycle verbs decline or skip it.
+`Path` or touching disk. Claude Code, Codex, Droid, and Pi opt in. OpenCode deliberately does
+not: its database is read-only to ringleader, so it supports scan, overview, triage, detail,
+export and harvest, while lifecycle verbs decline or skip it.
+
+**Companion files** are the per-transcript state an agent keeps *beside* the transcript: Claude
+Code's `<sessionId>/` directory of subagent and tool-result payloads, droid's
+`<sessionId>.settings.json` and `.settings.json.bak`. Archive, delete, prune, unarchive and
+workspace move all go through `scanner.companion_paths()` rather than deriving a sibling path
+themselves — a session separated from its own sidecars is a session whose token counts or
+tool results are gone. `companion_paths()` returns *candidates* derived from the transcript's
+path, not a listing of what exists: callers check existence, and the same derivation names the
+destination once the transcript has moved.
 
 **Picker hiding** exists because Codex keeps a sqlite index separate from the rollout files.
 Deleting or moving a transcript there leaves the picker offering a session whose file is gone.
@@ -90,7 +101,7 @@ existing session; `launch_argv()` starts a fresh one carrying an opening prompt,
 cross-agent handoff seeds the target. Both return argv whose first element is the binary, and
 neither carries a directory — every agent resolves a session id relative to the directory it is
 launched in, so the caller chdirs first and a path in argv would be a second, conflicting answer.
-All four sources opt in, including OpenCode, whose read-only store does not stop its CLI being
+All five sources opt in, including OpenCode, whose read-only store does not stop its CLI being
 launched.
 
 All three index writers (`hide_from_picker`, `show_in_picker`, `rebind_workspace`) return an
@@ -119,6 +130,20 @@ does, and the session is not in it) need opposite handling from the caller, and
 - **A missing capability is a no-op, not an error.** `hide_from_picker()` returns
   `IndexUpdate.NO_INDEX` for a source without an index. Only a source that *has* one and fails
   raises.
+- **Droid and Claude Code share one directory encoding.** `slug.py` reproduces a private Claude
+  Code function, and `DroidSource.storage_for()` reuses it verbatim — verified against 257 droid
+  sessions, none of them launched from under a symlink. Droid's encoder calls `realpathSync` where
+  `slug.normalize()` deliberately does not, so a symlinked launch dir diverges; the computed slug
+  then simply does not exist, which shows up as a `drifted` badge and a no-op `relocate_storage()`
+  rather than as anything overwritten. An upgrade to *either* CLI can strand both, so re-verify
+  against both.
+- **Droid files transcripts in three places.** A project directory keyed by the launch dir's slug,
+  the global root (`sessions/<uuid>.jsonl`), and `sessions/btw/` for a fork. `discover()` reads the
+  first two and skips forks, which are never re-filed under a slug. A session at the
+  global root has no slug to compare a cwd against, so `resume.drifted()` never badges one.
+- **Droid's title is on line 1, so it declines `applies_names`.** `session_start` carries `title`
+  and there is no later override record; renaming would mean rewriting the first line of a file
+  the agent may still be appending to.
 - **`parser_version` is the cache-invalidation lever.** Change how a source parses and bump it,
   or every existing thread keeps its stale cached parse.
 - **OpenCode fingerprints are per session, not per database file.** They cover the session's

@@ -5,6 +5,7 @@ from ringleader.sources.base import SessionLaunchingSource
 RESUME = {
     "claude-code": ("claude", "--resume", "SID"),
     "codex": ("codex", "resume", "SID"),
+    "droid": ("droid", "resume", "SID"),
     "opencode": ("opencode", "--session", "SID"),
     "pi": ("pi", "--session", "SID"),
 }
@@ -12,6 +13,7 @@ RESUME = {
 LAUNCH = {
     "claude-code": ("claude", "read the file"),
     "codex": ("codex", "read the file"),
+    "droid": ("droid", "read the file"),
     "opencode": ("opencode", "--prompt", "read the file"),
     "pi": ("pi", "--", "read the file"),
 }
@@ -56,7 +58,7 @@ def test_argv_starts_with_the_binary_and_holds_no_directory(name):
     conflicting answer about where the agent starts."""
     src = _sources()[name]
     for argv in (src.resume_argv("SID"), src.launch_argv("p")):
-        assert argv[0] in ("claude", "codex", "opencode", "pi")
+        assert argv[0] in ("claude", "codex", "droid", "opencode", "pi")
         assert all("/" not in part for part in argv[1:])
 
 

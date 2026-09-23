@@ -1,7 +1,8 @@
+import itertools
 import json
 
 from ringleader import presence
-from ringleader.commands import doctor
+from ringleader.commands import doctor, hooks, skills
 
 
 def test_reports_low_retention(tmp_path):
@@ -105,3 +106,28 @@ def test_doctor_reports_absent_claude_settings_as_not_installed(tmp_path, monkey
     assert f"target: none ({settings} does not exist)" in captured.out
     assert "snippet: not installed" in captured.out
     assert "could not read" not in captured.err
+
+
+def test_doctor_reports_droid_skills_and_hooks(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    factory = tmp_path / "_factory" / ".factory"  # conftest points FACTORY_HOME_OVERRIDE here
+    factory.mkdir(parents=True)
+    settings = tmp_path / "settings.json"
+    settings.write_text(json.dumps({"cleanupPeriodDays": 90}))
+    hooks.cmd_install(["--yes"])
+    skills.cmd_install(["--yes"])
+    capsys.readouterr()
+
+    assert doctor.cmd_doctor(["--settings", str(settings)]) == 0
+
+    out = capsys.readouterr().out
+    listed = list(
+        itertools.takewhile(
+            lambda line: line.startswith("  "),
+            out.split(f"{factory / 'skills'}:\n", 1)[1].splitlines(),
+        )
+    )
+    assert "  ringleader-triage: linked" in listed
+    assert all(line.endswith(": linked") for line in listed)
+    assert f"droid: {factory / 'hooks.json'}" in out
+    assert "status: installed" in out

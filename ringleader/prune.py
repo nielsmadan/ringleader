@@ -38,7 +38,7 @@ def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
     for t in candidates:
         try:
             f = scanner.filesystem_path(t, "prune")
-            sidecar = f.with_suffix("")  # <uuid>.jsonl -> <uuid>/ dir
+            companions = scanner.companion_paths(t.get("source"), f)
             scanner.hide_from_picker(t)
         except RuntimeError as e:
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
@@ -46,7 +46,7 @@ def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
             continue
         try:
             f.unlink(missing_ok=True)
-            shutil.rmtree(sidecar, ignore_errors=True)
+            scanner.remove_companions(companions)
         except OSError as e:
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
             skipped += 1
@@ -101,8 +101,9 @@ def purge_archived(
                     file=sys.stderr,
                 )
                 continue
+            companions = scanner.companion_paths(lifecycle_thread.get("source"), rp)
             # Best-effort per artifact so one undeletable file can't strand the tombstone.
-            for target in (rp, rp.with_suffix(""), rp.with_suffix(".md")):
+            for target in (rp, *companions, rp.with_suffix(".md")):
                 with contextlib.suppress(OSError):
                     if target.is_dir() and not target.is_symlink():
                         shutil.rmtree(target, ignore_errors=True)  # <id>/ sidecar dir

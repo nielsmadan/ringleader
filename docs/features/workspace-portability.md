@@ -1,8 +1,8 @@
 # Move a checkout without losing its sessions
 
-> **Problem:** agents bind a session to the directory it was *launched* in — Claude Code by
-> the storage path it files the transcript under, Codex by a cwd column its resume picker
-> filters on. Move a workspace and its whole history becomes unresumable from the new path —
+> **Problem:** agents bind a session to the directory it was *launched* in — Claude Code and
+> Droid by the storage path they file the transcript under, Codex by a cwd column its resume
+> picker filters on. Move a workspace and its whole history becomes unresumable from the new path —
 > and a plain `rl` scan makes it worse by reverting the registry to the stale path baked into
 > the transcript.
 
@@ -11,10 +11,10 @@
 `rl workspace move` changes **three things at once**:
 
 1. the directory on disk;
-2. the agent's session storage, in whichever shape the source keeps it — Claude Code keys
-   it by launch cwd, so the slug directory is renamed; Codex files rollouts by date and
-   records the cwd in its own state db, so nothing moves and that entry is rewritten in
-   place;
+2. the agent's session storage, in whichever shape the source keeps it — Claude Code and Droid
+   key it by launch cwd, so the slug directory is renamed (droid's `.settings.json` sidecars
+   move with their transcripts); Codex files rollouts by date and records the cwd in its own
+   state db, so nothing moves and that entry is rewritten in place;
 3. the registry — which is then **pinned**, or the next scan reverts it.
 
 ```sh
@@ -81,8 +81,9 @@ re-pointing, and the command says it went registry-only.
   never written: `_retarget_registry` re-runs it inside the lock when the run commits, so a dry
   run, a refusal or a declined confirmation leaves the registry untouched, and a write that landed
   while the confirmation prompt was open survives.
-- **`slug.py` reimplements a private function** of Claude Code's. It can break on an upgrade —
-  re-verify against [reference/agent-session-management.md](../reference/agent-session-management.md).
+- **`slug.py` reimplements a private function** of Claude Code's, and Droid reuses the same
+  encoding, so one module now has two agents that break when either upgrades — re-verify against
+  [reference/agent-session-management.md](../reference/agent-session-management.md).
 - **Sources with their own index need the picker cleared first**, or it points at a moved file.
 
 ## Related

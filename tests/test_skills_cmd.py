@@ -320,3 +320,57 @@ def test_update_syncs_once_installed(tmp_path, monkeypatch):
     assert skills.cmd_update(["--yes"]) == 0
     assert not stale.exists()
     assert (home / ".claude" / "skills" / "ringleader-triage").is_symlink()
+
+
+def _droid_skills_dir(tmp_path):
+    """Droid's native personal skills dir, under the suite's `FACTORY_HOME_OVERRIDE`
+    (see conftest)."""
+    return tmp_path / "_factory" / ".factory" / "skills"
+
+
+def test_install_links_the_bundled_skills_for_droid(tmp_path, monkeypatch):
+    """Droid reads its own ~/.factory/skills, just as Claude Code reads ~/.claude/skills."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "_factory" / ".factory").mkdir(parents=True)
+
+    assert skills.cmd_install(["--yes"]) == 0
+
+    for name in ("ringleader-triage", "ringleader-publish"):
+        link = _droid_skills_dir(tmp_path) / name
+        assert link.is_symlink() and (link / "SKILL.md").exists()
+
+
+def test_uninstall_leaves_a_foreign_entry_in_droids_skills_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "_factory" / ".factory").mkdir(parents=True)
+    droid_skills = _droid_skills_dir(tmp_path)
+    droid_skills.mkdir(parents=True)
+    (droid_skills / "someone-elses").mkdir()
+    skills.cmd_install(["--yes"])
+
+    assert skills.cmd_uninstall(["--yes"]) == 0
+
+    assert [p.name for p in droid_skills.iterdir()] == ["someone-elses"]
+
+
+def test_droid_is_offered_only_once_its_home_exists(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_home(tmp_path, ".claude")
+
+    assert [label for label, _ in skills._install_dirs(Path.home())] == ["claude"]
+
+    (tmp_path / "_factory" / ".factory").mkdir(parents=True)
+    assert skills._install_dirs(Path.home()) == [
+        ("claude", tmp_path / ".claude" / "skills"),
+        ("droid", _droid_skills_dir(tmp_path)),
+    ]
+
+
+def test_droids_skills_dir_sits_under_the_real_home_without_an_override(tmp_path, monkeypatch):
+    """Every user runs the un-overridden branch of `paths.factory_home()`; the suite
+    sets FACTORY_HOME_OVERRIDE everywhere else (see conftest)."""
+    monkeypatch.delenv("FACTORY_HOME_OVERRIDE")
+    monkeypatch.setenv("HOME", str(tmp_path))
+    _fake_home(tmp_path, ".factory")
+
+    assert skills._install_dirs(Path.home()) == [("droid", tmp_path / ".factory" / "skills")]

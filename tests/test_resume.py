@@ -8,6 +8,7 @@ NEWER = "2026-08-31T00:00:00+00:00"
 OLDER = "2026-08-01T00:00:00+00:00"
 
 CLAUDE_DIR = "/home/u/.claude/projects"
+DROID_DIR = "/home/u/.factory/sessions"
 
 
 def _thread(sid, **kw):
@@ -416,9 +417,48 @@ def test_a_session_stored_under_its_own_cwd_slug_has_not_drifted():
     assert resume.drifted(_thread("s1", project="/w/api")) is False
 
 
-def test_only_claude_code_sessions_can_drift():
+def test_a_session_whose_agent_files_transcripts_flat_cannot_drift():
     thread = _thread("s1", source="codex", project="/w/api/sub", file="/c/sessions/s1.jsonl")
     assert resume.drifted(thread) is False
+
+
+def test_a_droid_session_drifts_the_same_way_a_claude_one_does():
+    """Droid files a transcript under the launch directory's slug too, so a session
+    that cd'd needs the same badge and the same chdir before `droid resume`."""
+    thread = _thread(
+        "s1", source="droid", project="/w/api/sub", file=f"{DROID_DIR}/-w-api/s1.jsonl"
+    )
+
+    assert resume.drifted(thread) is True
+    assert resume.badges(thread, NOW) == ["drifted"]
+
+
+def test_a_droid_session_at_the_global_sessions_root_has_no_slug_to_drift_from(
+    tmp_path, monkeypatch
+):
+    """Droid also writes `sessions/<id>.jsonl`, with no launch-dir slug above it. There
+    is nothing to compare the recorded cwd against, so the badge would be a guess."""
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(tmp_path))
+    root = tmp_path / ".factory" / "sessions"
+    thread = _thread("s1", source="droid", project="/w/api/sub", file=str(root / "s1.jsonl"))
+
+    assert resume.drifted(thread) is False
+    assert resume.badges(thread, NOW) == []
+
+
+def test_a_droid_session_stored_under_its_own_cwd_slug_has_not_drifted():
+    thread = _thread("s1", source="droid", project="/w/api", file=f"{DROID_DIR}/-w-api/s1.jsonl")
+
+    assert resume.drifted(thread) is False
+
+
+def test_a_drifted_droid_session_recovers_its_launch_directory_from_a_sibling():
+    drifted = _thread(
+        "s1", source="droid", project="/w/api/sub", file=f"{DROID_DIR}/-w-api/s1.jsonl"
+    )
+    sibling = _thread("s2", source="droid", project="/w/api", file=f"{DROID_DIR}/-w-api/s2.jsonl")
+
+    assert resume.launch_cwd(drifted, [drifted, sibling]) == "/w/api"
 
 
 def test_a_claude_session_without_a_transcript_file_has_not_drifted():

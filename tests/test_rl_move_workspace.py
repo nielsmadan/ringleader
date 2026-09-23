@@ -5,6 +5,7 @@ import pytest
 from ringleader import registry as registry_mod
 from ringleader.commands import move_workspace
 from ringleader.slug import is_beneath, remap, slugify
+from ringleader.sources.droid import DroidSource
 
 
 def _world(tmp_path, monkeypatch, *, drifted=False, extra_session=False):
@@ -591,3 +592,24 @@ def test_move_includes_a_session_the_registry_has_not_scanned_yet(tmp_path, monk
     assert "fork" in threads, "the unscanned session never entered the plan"
     assert threads["fork"]["project"] == str(new)
     assert (projects / slugify(str(new)) / "fork.jsonl").exists()
+
+
+def test_collisions_reports_a_droid_sidecar_sitting_at_the_destination(tmp_path):
+    """`relocate_session` refuses when a sidecar is already there, and the contract is
+    that the caller learns that up front — otherwise a multi-session move raises
+    half-way, after earlier threads have already moved."""
+    sessions = tmp_path / "sessions"
+    launched = sessions / slugify("/w/api")
+    launched.mkdir(parents=True)
+    (launched / "s1.jsonl").write_text("{}\n")
+    (launched / "s1.settings.json.bak").write_text("{}")
+    destination = sessions / slugify("/w/renamed")
+    destination.mkdir(parents=True)
+    (destination / "s1.settings.json.bak").write_text("{}")
+    source = DroidSource(sessions_dir=sessions)
+    plan = move_workspace._Plan(old="/w/api", new="/w/renamed")
+    plan.per.append(({"file": str(launched / "s1.jsonl")}, "droid", "/w/renamed"))
+
+    found = move_workspace.collisions(plan, move_workspace._Sources({"droid": source}, {}))
+
+    assert found == [str(destination / "s1.settings.json.bak")]

@@ -156,7 +156,8 @@ def detected_agents(home: Path | None = None) -> tuple[str, ...]:
         "codex": root / ".codex",
         "opencode": _agent_home_override(config_root, "OPENCODE_CONFIG_DIR", "opencode"),
         "pi": _agent_home_override(root, "PI_CODING_AGENT_DIR", ".pi/agent"),
-        "droid": root / ".factory",
+        # FACTORY_HOME_OVERRIDE replaces HOME, not the .factory dir
+        "droid": _agent_home_override(root, "FACTORY_HOME_OVERRIDE", ".") / ".factory",
         "qwen": _agent_home_override(root, "QWEN_HOME", ".qwen"),
         "kimi": _agent_home_override(root, "KIMI_CODE_HOME", ".kimi-code"),
     }

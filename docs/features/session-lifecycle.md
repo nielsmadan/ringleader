@@ -22,9 +22,14 @@ that reaches each:
 `abandoned` and `harvested` are **effective** statuses — derived for filtering, not stored as a
 classification.
 
-These file lifecycle states apply to Claude Code and Codex. OpenCode support is read-only:
-scan, classify, snooze, keep, detail, export and harvest work, while verbs that would archive or
-delete a session decline it without mutating `opencode.db`.
+These file lifecycle states apply to Claude Code, Codex, Droid and Pi — every source whose
+sessions are files. OpenCode support is read-only: scan, classify, snooze, keep, detail, export
+and harvest work, while verbs that would archive or delete a session decline it without mutating
+`opencode.db`.
+
+Archiving and deleting carry a session's **companion files** with the transcript — Claude Code's
+`<sessionId>/` directory, droid's `<sessionId>.settings.json` sidecars — so an archived session
+can be restored whole and a deleted one leaves nothing behind.
 
 ## The main path
 

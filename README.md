@@ -4,9 +4,9 @@ Curates the **dormant** agent sessions sitting on disk — naming them, classify
 they're in, surfacing what's still in-flight vs. abandoned, harvesting what they taught you, and
 pruning the rest before the GC clock silently deletes it.
 
-Reads Claude Code, Codex, OpenCode, and Pi sessions; reports token usage across all four. OpenCode
-session curation is read-only: views, triage, detail, export, and harvest work, while file
-lifecycle verbs decline its database-backed sessions.
+Reads Claude Code, Codex, Factory Droid, OpenCode, and Pi sessions; reports token usage across
+all five. OpenCode session curation is read-only: views, triage, detail, export, and harvest
+work, while file lifecycle verbs decline its database-backed sessions.
 
 ## Install
 
@@ -66,13 +66,13 @@ rl install             # skills, session-end hook, statusline capture
   or hands it to a *different* agent, seeded with a transcript of the old session.
   → [Resuming sessions](docs/features/resuming-sessions.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
-- **Usage** — where your tokens went, across four harnesses, plus 5h/weekly subscription
+- **Usage** — where your tokens went, across five harnesses, plus 5h/weekly subscription
   windows. → [Usage analytics](docs/user/usage-analytics.md)
 
 ## Skills
 
 `.agents/skills/` ships seven agent-neutral skills that drive `rl` instead of raw commands, and
-read natively in Claude Code, Codex, OpenCode and Pi:
+read natively in Claude Code, Codex, Droid, OpenCode and Pi:
 
 | Skill | Does |
 |---|---|
@@ -87,7 +87,7 @@ read natively in Claude Code, Codex, OpenCode and Pi:
 `memory-triage` is separate and lives in `.claude/skills/`.
 
 ```sh
-rl install skills      # symlink into ~/.agents/skills and ~/.claude/skills
+rl install skills      # symlink into ~/.agents/skills, ~/.claude/skills and ~/.factory/skills
 rl update all          # re-sync after a repo change
 rl uninstall skills    # remove only what this tool created
 ```
@@ -104,7 +104,7 @@ rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one 
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
-rl usage [--breakdown] [--by X]     # token usage across claude/codex/opencode/pi
+rl usage [--breakdown] [--by X]     # token usage across claude/codex/droid/opencode/pi
 rl harvests [--json]                # inbox of harvested knowledge
 rl session search <query>           # find a session by name, id prefix or cached blurb
 rl doctor                           # what's linked, registered, and how retention is set

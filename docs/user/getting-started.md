@@ -43,8 +43,8 @@ one machine's worth of sessions.
 rl overview
 ```
 
-This scans the local Claude Code, Codex, OpenCode, and Pi stores that are present, builds the
-registry, and prints a rollup by git project. The first run is the slow one — it parses every
+This scans the local Claude Code, Codex, Droid, OpenCode, and Pi stores that are present, builds
+the registry, and prints a rollup by git project. The first run is the slow one — it parses every
 session. Later runs only parse what changed.
 
 ```sh

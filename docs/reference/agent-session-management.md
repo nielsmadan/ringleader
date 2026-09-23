@@ -9,21 +9,23 @@ Facts below were verified against local state and CLI help unless marked *(unver
 
 OpenCode storage: verified 2026-08-31 against opencode 1.18.25.
 
+Droid storage and CLI: verified 2026-09-23 against droid 0.218.2.
+
 ## Summary
 
-| | Claude Code | Codex | OpenCode | Pi |
-|---|---|---|---|---|
-| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` |
-| Picker index | none — scans the project dir | `~/.codex/state_5.sqlite` `threads` | same DB (`session` table) | none — scans the session dir |
-| Scoped to cwd | yes | yes (`--all` to disable) | yes (by `project_id`) | yes |
-| Fork | `--fork-session`, `forkSession` API | `codex fork` | `--fork` | `--fork`, `/fork`, `/clone`, `/tree` |
-| Rename | `custom-title` record | `threads.name`, `session_index.jsonl` | `session.slug` / `title` | `--name`, `/name` |
-| Archive | — | `codex archive` / `unarchive` | `session.time_archived` | — |
-| Delete | `claude project purge <path>` (whole project) | `codex delete <id\|name>` | `opencode session delete <id>` | Ctrl+D in `/resume` |
-| Index drifts from files | n/a (no index) | **yes — badly** | n/a (DB is the store) | n/a (no index) |
+| | Claude Code | Codex | Droid | OpenCode | Pi |
+|---|---|---|---|---|---|
+| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | `~/.factory/sessions/<enc-cwd>/<uuid>.jsonl` + `.settings.json` sidecars | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` |
+| Picker index | none — scans the project dir | `~/.codex/state_5.sqlite` `threads` | none — scans the session dir | same DB (`session` table) | none — scans the session dir |
+| Scoped to cwd | yes | yes (`--all` to disable) | yes (`--cwd` to point elsewhere) | yes (by `project_id`) | yes |
+| Fork | `--fork-session`, `forkSession` API | `codex fork` | `--fork <id>`, `resume --fork` | `--fork` | `--fork`, `/fork`, `/clone`, `/tree` |
+| Rename | `custom-title` record | `threads.name`, `session_index.jsonl` | — (title is on line 1) | `session.slug` / `title` | `--name`, `/name` |
+| Archive | — | `codex archive` / `unarchive` | — | `session.time_archived` | — |
+| Delete | `claude project purge <path>` (whole project) | `codex delete <id\|name>` | — | `opencode session delete <id>` | Ctrl+D in `/resume` |
+| Index drifts from files | n/a (no index) | **yes — badly** | n/a (no index) | n/a (DB is the store) | n/a (no index) |
 
-The headline for ringleader: **Claude Code and Pi have no index, so deleting a file is a complete
-delete. Codex has one, and deleting the rollout file leaves a live picker entry behind.**
+The headline for ringleader: **Claude Code, Droid and Pi have no index, so deleting a file is a
+complete delete. Codex has one, and deleting the rollout file leaves a live picker entry behind.**
 
 ## Claude Code
 
@@ -184,6 +186,117 @@ the CLI**; only a direct write to `threads` will clear them.
 Codex is the only surveyed agent whose CLI offers a first-class archive/unarchive pair, which is
 worth noting given ringleader's own one-way `rl session archive`.
 
+## Droid
+
+Surveyed 2026-09-23 against droid 0.218.2 and 257 local session files.
+
+### Storage and the cwd encoding
+
+Transcripts live at `<factory-home>/.factory/sessions/<encoded-cwd>/<uuid>.jsonl`, each with two
+sidecars beside it: `<uuid>.settings.json` and `<uuid>.settings.json.bak`. `FACTORY_HOME_OVERRIDE`
+replaces **HOME**, not the `.factory` name, so under an override the tree is
+`$FACTORY_HOME_OVERRIDE/.factory/sessions/`.
+
+**The directory encoding is Claude Code's.** `slug.slugify(normalize(cwd))` — the encoder
+ringleader already reimplements for Claude Code — reproduces the directory name for 257/257 local
+sessions. That makes `slug.py` load-bearing for two agents rather than one: it reimplements a
+private function, and an upgrade to *either* CLI can break both callers at once. It is lossy and
+not invertible in the same way, so the same rule follows — read `cwd` off the transcript, never
+off the directory name.
+
+That match is verified for launch directories containing no symlink, which is all 257 of them.
+Droid's own schema comment says its encoder calls `realpathSync` and is therefore *not* a pure
+function of its argument, while `slug.normalize()` deliberately does not resolve symlinks, so a
+session launched under a symlinked cwd sanitizes differently and the two encoders diverge. The
+failure direction is safe: `storage_for()` then names a directory that does not exist, which
+surfaces as a `drifted` badge and a `relocate_storage()` that returns `{}` rather than as
+anything being overwritten. *(Unverified: whether droid also implements the 200-char
+truncate-and-hash branch. No local droid path was long enough to exercise it, so the 257/257
+match does not speak to it.)*
+
+**There are three layouts, not one.** Droid's `findSessionFilePath` knows the global root
+(`sessions/<uuid>.jsonl`), a btw fork (`sessions/btw/<uuid>.jsonl`) and a project directory
+(`sessions/<encoded-cwd>/<uuid>.jsonl`). The local store holds 257 project-directory sessions and
+none of the other two. Ringleader's Source and usage reader read the global root alongside project
+directories, and skip `btw`: a fork filed there is never re-filed under a launch-directory slug,
+so skipping it excludes it for good rather than deferring it.
+
+### The transcript
+
+The first line is always a `session_start` record carrying `id`, the real `cwd`, `title`,
+`version: 2`, `owner` and `callingSessionId`. The record types that follow are `session_start`,
+`message`, `todo_state`, `compaction_state` and `agent_turn_outcome`.
+
+Messages share **Pi's** shape — `{"type":"message","message":{"role":…,"content":[…]}}` — which is
+why the generic JSONL exporter renders a droid session with no droid-specific code, and why
+`DroidSource` declines `renders_conversation`.
+
+**217 of the 257 local sessions are subagent runs.** A subagent transcript carries a
+`callingSessionId`; a top-level one has it null. Only the 40 top-level ones are sessions a human
+owns and can resume, so discovery excludes the rest — the same exclusion Codex's subagent rows get.
+
+### What the picker shows
+
+`.favorites` is an empty JSON array, there is no sqlite database **beside the sessions**, and
+`droid resume --last` is documented as resuming the most recent session *in the current folder* —
+all consistent with the picker being a directory scan, as Claude Code's and Pi's are.
+
+*(Unverified, and load-bearing. Droid 0.218.2's bundle builds a session-index path,
+`join(<factory>, "cache", "session-index", "index.db")`, and carries its baseline migration: a
+`CREATE TABLE sessions` with `session_id`, `project_key`, `cwd`, `title`,
+`transcript_messages_count` and `settings_mtime_ms`, plus a migrations table keyed by `version`,
+`name`, `checksum` and `applied_at`, and gate strings such as
+`session-index-gate-recheck-failed` and `session-index-write-cap`. Whether that index is
+populated on any given machine could not be checked here: everything under `~/.factory` except
+`sessions/` is unreadable under this machine's sandbox profile, and the index sits one level
+above the directory this survey could read. If it is live, deleting or archiving a droid
+transcript strands a row naming a missing file — the Codex failure mode `hides_from_picker`
+exists to prevent — and `DroidSource` would need to implement `PickerHidingSource`. It
+deliberately does not: the schema is unverified and unreachable, and writing another program's
+private SQLite format on inference is exactly the hazard `slug.py`'s docstring warns about. This
+is a recorded risk, not a settled fact.)*
+
+`droid search` does maintain a cache of its own — `--reindex` drops and rebuilds it. *(Unverified:
+where that cache lives and whether deleting a transcript strands an entry in it were not checked;
+everything under `~/.factory` except `sessions/` is unreadable under this machine's sandbox
+profile.)*
+
+### Renaming
+
+There is nothing to append to. `title` and `isSessionTitleManuallySet` sit on **line 1**, in
+`session_start`, and no later record overrides them — unlike Claude Code's appended `custom-title`
+or Codex's `threads.name`. Renaming a droid session from outside would mean rewriting the first
+line of a file the agent may still be appending to, which is why `DroidSource` declines
+`applies_names`.
+
+### Tokens
+
+Not in the transcript. Each `<uuid>.settings.json` sidecar holds `tokenUsage`,
+`inclusiveTokenUsage`, `childInclusiveTokenUsageBySessionId`, `model`, and
+`effectiveFactoryRouterModel` — an **object**, whose `modelId` is the model string. Every usage
+value is shaped `{inputTokens, outputTokens, cacheCreationTokens, cacheReadTokens, thinkingTokens,
+factoryCredits}`.
+
+There are no per-turn counts anywhere, only per-session totals, and `factoryCredits` is the unit
+droid actually bills in. Both facts constrain what `rl usage` can report — see
+[tech/usage.md](../tech/usage.md).
+
+### Commands
+
+- `droid [prompt]` — start interactive, optionally with an opening prompt.
+- `droid resume [sessionId]` / `droid -r [sessionId]` — picker without an id, direct resume with one.
+- `droid resume --last` — "skip the picker and resume the most recent session **in the current
+  folder**", so the picker is cwd-scoped.
+- `droid resume --fork` / `droid --fork <sessionId>` — fork a session and resume the fork.
+- `droid --cwd <path>` — the working directory the above resolve against.
+- `droid exec [prompt]` — non-interactive, for scripts.
+- `droid search <query> [--json] [--reindex]` — full-text across local sessions.
+- `droid doctor` — configuration, connectivity, auth and daemon diagnostics.
+
+`droid --help` and `droid resume --help` list **no archive, unarchive, delete or rename verb**, so
+curating droid sessions from outside is entirely a filesystem job — which, with no index to drift,
+is also the whole job.
+
 ## OpenCode
 
 There is no per-session file to curate: everything is rows in
@@ -224,7 +337,7 @@ Pi's model is a **tree inside one file**: every entry has `id` / `parentId`, and
 is the active leaf. Session versions: v1 linear (auto-migrated), v2 tree, v3 renamed `hookMessage`
 → `custom`.
 
-Branching has three distinct verbs, which is the richest vocabulary of the four:
+Branching has three distinct verbs, which is the richest vocabulary of the five:
 
 | | `/tree` | `/fork` | `/clone` |
 |---|---|---|---|
@@ -240,26 +353,37 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
 
 ## Implications for ringleader
 
-1. **Never derive a cwd from a directory name.** Claude's encoding is lossy and truncating; Pi's
-   differs; OpenCode has none. Always read the cwd from inside the session (Claude: `relocatedCwd`
-   from the tail, else `cwd` from the head).
+1. **Never derive a cwd from a directory name.** Claude's encoding is lossy and truncating; Droid
+   reuses that same encoding verbatim; Pi's differs; OpenCode has none. Always read the cwd from
+   inside the session (Claude: `relocatedCwd` from the tail, else `cwd` from the head). The
+   corollary of Droid reusing Claude's encoding is that `slug.py` now has two callers to break:
+   re-verify it against *both* CLIs when either ships.
 2. **A Claude transcript's path is mutable.** Relocation moves the file between project directories
    mid-session, so a path-keyed registry entry can dangle without any user action.
 3. **File deletion is not delete-everywhere.** It is for Claude Code and Pi. It is not for Codex —
    `rl prune` on Codex sessions leaves picker-visible `threads` rows pointing at missing files, and
    ~450 such rows already exist locally. Codex pruning should go through `codex delete`/`archive`,
-   and must do so **before** touching the file, or the CLI refuses.
+   and must do so **before** touching the file, or the CLI refuses. **Droid is unresolved**: nothing
+   beside its transcripts points at them, but its binary ships a gated session index at
+   `<factory>/cache/session-index/index.db` that this machine's sandbox cannot read (see "What the
+   picker shows"). Treat droid as Codex-shaped until someone can read that file.
 4. **Ringleader owns archive; only index-clearing is per-source.** `codex archive` would do the
    whole job for Codex — it moves the transcript to `~/.codex/archived_sessions/` and flips the
    index bit reversibly — but delegating to it makes the archive location and semantics diverge per
    agent, adds a CLI dependency, and can't touch rows whose file is already gone. Instead
    `hides_from_picker` on the `Source` seam clears the agent's own index entry (Codex: set
-   `threads.archived = 1`; Claude Code and Pi: no-op), and ringleader's own move stays the
+   `threads.archived = 1`; Claude Code, Droid and Pi: no-op), and ringleader's own move stays the
    implementation everywhere.
 5. **Fork/branch is universal but shaped differently** — Claude and OpenCode fork the whole session
-   under a new id, Codex forks from a picker, Pi distinguishes in-file branching (`/tree`) from new
-   files (`/fork`, `/clone`). A ringleader "branch this session" command would need per-source
-   verbs rather than one shared implementation.
+   under a new id, Codex and Droid fork from a picker or an id, Pi distinguishes in-file branching
+   (`/tree`) from new files (`/fork`, `/clone`). A ringleader "branch this session" command would
+   need per-source verbs rather than one shared implementation.
 6. **Liveness has a source of truth per agent**: Claude `~/.claude/sessions/<pid>.json`
    (`status`, `updatedAt`), Codex `threads.recency_at_ms`, OpenCode `session.time_updated`. Useful
-   for not curating a session someone is currently sitting in.
+   for not curating a session someone is currently sitting in. *(Unverified for Droid and Pi — no
+   liveness signal was surveyed for either; ringleader gets both from hooklinesinker instead.)*
+
+7. **Droid needs no per-agent write path at all.** No index to clear, no append surface to rename
+   through, no archive verb to delegate to — the only droid-specific knowledge ringleader carries
+   is where the files are, that the first line holds the identity, and that two `.settings.json`
+   sidecars travel with each transcript.

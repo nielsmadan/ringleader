@@ -101,13 +101,20 @@ the `usage` skill:
 - `rl usage windows [--json]` — Codex's 5h/weekly subscription consumption. Only current
   snapshots are reported; an expired one is named as having none, never shown as live.
   Claude windows are reported once captured via `rl install statusline`; a stale or
-  expired capture reports "no current snapshot", never a stale percentage.
+  expired capture reports "no current snapshot", never a stale percentage. Droid, OpenCode
+  and Pi have nothing here — never report a window for them.
 - `rl usage export [--out PATH]` — write this machine's records for `--merge` on another.
 - `rl data tokens` is the Claude-only alias of `rl usage`.
 
 Cost is never invented. JSON `total_cost` is `null` when nothing in scope is priced, and
 `cost_partial: true` marks a scope that mixes priced records (Claude, Pi, OpenCode) with
-unpriced ones (Codex); a partial figure is a floor, not the total.
+unpriced ones (Codex, Droid); a partial figure is a floor, not the total. Droid is unpriced
+on purpose — Factory bills its own credits, so no list price applies.
+
+Droid's numbers are per **session**, not per turn: one record, stamped at the transcript's
+last write. So a droid session shows a single turn in `rl usage session`, its whole spend
+lands on one day under `--by day`, and `--by model` credits the model its router last chose.
+Say so when reporting droid numbers rather than reading the grouping as fact.
 
 ## Strategic ordering
 

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from .base import UsageReader, UsageRecord
 from .claude import ClaudeUsageReader
 from .codex import CodexUsageReader
+from .droid import DroidUsageReader
 from .opencode import OpenCodeUsageReader
 from .pi import PiUsageReader
 from .pricing import estimate
@@ -17,6 +18,7 @@ from .pricing import estimate
 READERS: dict[str, Callable[..., UsageReader]] = {
     "claude": ClaudeUsageReader,
     "codex": CodexUsageReader,
+    "droid": DroidUsageReader,
     "opencode": OpenCodeUsageReader,
     "pi": PiUsageReader,
 }

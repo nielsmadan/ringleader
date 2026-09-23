@@ -15,13 +15,14 @@ def _rec(  # noqa: PLR0913, PLR0917 -- test data-builder helper, one arg per fix
     cw=50,
     reasoning=0,
     cost=None,
+    provider=None,
 ):
     return UsageRecord(
         source=source,
         session_id=session,
         project=project,
         timestamp=ts,
-        provider=None,
+        provider=provider,
         model=model,
         input=inp,
         output=out,
@@ -46,6 +47,19 @@ def test_estimate_prefers_on_disk_cost():
 def test_estimate_computes_claude_price():
     got = estimate(_rec(inp=1_000_000, out=0, cr=0, cw=0))
     assert got == 5.0  # opus input list price is $5 / 1M tokens
+
+
+def test_a_routed_provider_is_never_priced_at_the_model_vendors_rates():
+    """droid routes to whatever model it likes and bills Factory credits, so Anthropic's list
+    price for claude-opus-5 says nothing about what the session actually cost."""
+    routed = _rec(source="droid", provider="factory", inp=1_000_000, out=0, cr=0, cw=0)
+    assert estimate(routed) is None
+    assert estimate(_rec(inp=1_000_000, out=0, cr=0, cw=0)) == 5.0
+
+
+def test_a_routed_provider_still_reports_a_cost_it_recorded_itself():
+    priced = _rec(source="droid", provider="factory", cost=0.5)
+    assert estimate(priced) == 0.5
 
 
 def test_estimate_is_none_for_unknown_model():

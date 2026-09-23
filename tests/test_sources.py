@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ringleader.sources.base import NameApplyingSource, Source
+from ringleader.sources.base import CompanionFileSource, NameApplyingSource, Source
 from ringleader.sources.claude_code import ClaudeCodeSource
 
 
@@ -33,7 +33,15 @@ def test_parse_extracts_normalized_fields(tmp_path: Path):
 def test_source_satisfies_protocol():
     src = ClaudeCodeSource(projects_dir=Path("/does-not-exist"))
     assert isinstance(src, Source)
+    assert isinstance(src, CompanionFileSource)
     assert src.name == "claude-code"
+    assert "companion_files" in src.capabilities
+
+
+def test_companion_paths_names_the_session_id_sidecar_directory():
+    src = ClaudeCodeSource(projects_dir=Path("/projects"))
+
+    assert src.companion_paths("/projects/-w-api/abc.jsonl") == (Path("/projects/-w-api/abc"),)
 
 
 def test_read_only_source_does_not_need_name_writeback():

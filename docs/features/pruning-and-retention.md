@@ -29,6 +29,10 @@ without a separate flag.
 OpenCode's SQLite-backed sessions can appear in the preview but are skipped during deletion;
 ringleader never mutates `opencode.db`.
 
+Deleting a session removes its **companion files** with the transcript — Claude Code's
+`<sessionId>/` directory of subagent and tool-result payloads, droid's `<sessionId>.settings.json`
+and `.settings.json.bak` — so a prune leaves no orphaned sidecars behind.
+
 ## Archive retention
 
 Archiving moves files rather than deleting them, so archived sessions accumulate. `archive.

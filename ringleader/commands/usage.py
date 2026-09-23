@@ -34,7 +34,11 @@ def collect(sources, dirs=None) -> list[UsageRecord]:
     return out
 
 
-_ARCHIVE_KWARG: dict[str, str] = {"claude": "projects_dir", "codex": "sessions_dir"}
+_ARCHIVE_KWARG: dict[str, str] = {
+    "claude": "projects_dir",
+    "codex": "sessions_dir",
+    "droid": "sessions_dir",
+}
 
 
 def collect_archived(sources: list[str] | None = None) -> list[UsageRecord]:

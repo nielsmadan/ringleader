@@ -675,6 +675,27 @@ def test_detected_agents_reads_droids_factory_home(tmp_path, monkeypatch):
     home = tmp_path / "home"
     (home / ".factory").mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FACTORY_HOME_OVERRIDE", raising=False)
+    assert presence.detected_agents() == ("droid",)
+
+
+def test_detected_agents_honors_the_factory_home_override(tmp_path, monkeypatch):
+    """FACTORY_HOME_OVERRIDE stands in for HOME, so droid's config still sits under a
+    `.factory` directory beneath it — the same reading `paths.factory_dir()` takes."""
+    home = tmp_path / "home"
+    home.mkdir(parents=True)
+    relocated = tmp_path / "elsewhere"
+    (relocated / ".factory").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(relocated))
+    assert presence.detected_agents() == ("droid",)
+
+
+def test_detected_agents_treats_an_empty_factory_home_override_as_unset(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".factory").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", "")
     assert presence.detected_agents() == ("droid",)
 
 
@@ -733,6 +754,7 @@ def test_detected_agents_orders_new_agents_after_the_original_four(tmp_path, mon
     ):
         (home / probe).mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("FACTORY_HOME_OVERRIDE", raising=False)
     assert presence.detected_agents() == presence.AGENTS
 
 

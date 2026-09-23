@@ -23,9 +23,16 @@ def model_family(model: str | None) -> str | None:
     return "sonnet"
 
 
+# a router bills its own units, so the model vendor's list price says nothing about what
+# the session cost: droid on claude-opus-5 is spent Factory credits, not Anthropic dollars
+ROUTED_PROVIDERS = frozenset({"factory"})
+
+
 def estimate(rec: UsageRecord) -> float | None:
     if rec.cost is not None:
         return rec.cost
+    if rec.provider in ROUTED_PROVIDERS:
+        return None
     fam = model_family(rec.model)
     if fam is None:
         return None

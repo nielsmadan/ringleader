@@ -13,17 +13,17 @@ go deeper, per subsystem.
 - [sources.md](sources.md) — `sources/`: the `Source` protocol and the opt-in capability
   protocols that model each agent's quirks.
 - [scanning-and-refresh.md](scanning-and-refresh.md) — `scanner.py`, `refresh.py`, `gitinfo.py`,
-  `projects.py`, `slug.py`: the scan loop, git-project identity, selectors, and Claude Code's
-  reproduced path slug.
+  `projects.py`, `slug.py`: the scan loop, git-project identity, selectors, and the reproduced
+  path slug Claude Code and Droid share.
 - [cli-and-commands.md](cli-and-commands.md) — `cli.py` + `commands/`: the nested dispatch table
   and the one-module-per-verb convention.
-- [usage.md](usage.md) — `usage/`: four per-harness readers, aggregation, pricing, subscription
+- [usage.md](usage.md) — `usage/`: five per-harness readers, aggregation, pricing, subscription
   windows, and cross-machine merge.
 - [models.md](models.md) — `models/`: the `Model` seam and `active_model()` resolution.
 - [publish.md](publish.md) — `harvests.py`, `publish_state.py`, `publish_git.py`: the harvest
   queue and the guarded write path into a repository.
 - [integration.md](integration.md) — `commands/skills.py`, `hooks.py`, `statusline.py`,
-  `session_env.py`, `safe_write.py`: editing four other programs' configs, removably.
+  `session_env.py`, `safe_write.py`: editing five other programs' configs, removably.
 - [inbox.md](inbox.md) — `inbox/app.py`: the Textual TUI.
 - [resume.md](resume.md) — `resume.py`, `picker/app.py`, `commands/resume.py`: selecting a
   dormant session and handing the process to an agent.

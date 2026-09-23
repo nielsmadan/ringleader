@@ -1,6 +1,6 @@
 ---
 name: ringleader-usage
-description: Explain where an agent session's tokens went and how to spend fewer — reads local transcript usage across Claude Code, Codex, OpenCode, and Pi. Use when the user asks "what used all my tokens", "why was that session so expensive", "token usage", "usage report", or invokes usage.
+description: Explain where an agent session's tokens went and how to spend fewer — reads local usage across Claude Code, Codex, Droid, OpenCode, and Pi. Use when the user asks "what used all my tokens", "why was that session so expensive", "token usage", "usage report", or invokes usage.
 ---
 
 # Usage
@@ -19,7 +19,9 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
    (one-time, wires a capture snippet into their statusLine command) rather than falling
    back to `claude /usage`.
 3. **Drill in.** For each heavy session, run `rl usage session <id> --json`: turns, the
-   full token split, cache hit rate, the top turns, and context growth.
+   full token split, cache hit rate, the top turns, and context growth. A **droid** session
+   reports a single turn holding the whole spend — droid records no per-turn counts — so skip
+   the top-turns analysis there and reason from the transcript instead.
 4. **Explain.** Read the session transcript around the top turns (`rl data export <id>`)
    and name the *specific* cause — a file re-read many times uncached, a huge tool result
    pasted back each turn, a long session whose context grew monotonically.
@@ -33,3 +35,7 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
   `rl` reports none.
 - Per-tool token attribution does not exist on disk. Do not invent it; reason from turn
   totals and the transcript instead.
+- **Droid is never priced** — Factory bills its own credits, so `rl` reports no cost for it and
+  neither should you. Its day and model groupings are approximations (one per-session record,
+  stamped at the last write, credited to the model its router last chose); say so rather than
+  presenting them as measured.

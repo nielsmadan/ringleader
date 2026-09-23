@@ -58,14 +58,15 @@ def archive_thread(
     )
     dest_dir = Path(archive_root_path) / slug
     dest = dest_dir / src.name
-    sidecar = src.with_suffix("")
-    sidecar_dest = dest_dir / sidecar.name
+    companions = [
+        (c, dest_dir / c.name) for c in scanner.companion_paths(thread.get("source"), src)
+    ]
     summary_source = Path(summary_file) if summary_file else None
     summary_dest = dest_dir / (src.stem + ".md") if summary_source else None
     summary_already_copied = False
     if not src.exists() and not dest.exists():
         raise RuntimeError(f"{src.name} is missing from both source and archive destination")
-    if (src.exists() and dest.exists()) or (sidecar.exists() and sidecar_dest.exists()):
+    if (src.exists() and dest.exists()) or any(c.exists() and d.exists() for c, d in companions):
         raise RuntimeError(f"{dest_dir} already has {src.name} or its sidecar, aborting")
     if summary_source and summary_source.exists() and summary_dest and summary_dest.exists():
         summary_already_copied = summary_source.read_bytes() == summary_dest.read_bytes()
@@ -79,8 +80,9 @@ def archive_thread(
         shutil.move(str(src), str(dest))
     else:
         print(f"rl-archive: {src} already gone, recording archive anyway", file=sys.stderr)
-    if sidecar.exists():
-        shutil.move(str(sidecar), str(sidecar_dest))
+    for companion, companion_dest in companions:
+        if companion.exists():
+            shutil.move(str(companion), str(companion_dest))
 
     summary_path = summary_dest if summary_dest and summary_dest.exists() else None
     if summary_source and summary_source.exists() and summary_dest and not summary_already_copied:

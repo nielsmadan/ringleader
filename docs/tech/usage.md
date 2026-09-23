@@ -1,12 +1,12 @@
 # Usage analytics
 
-`ringleader/usage/`: reading token spend out of four agents' local state, plus
+`ringleader/usage/`: reading token spend out of five agents' local state, plus
 subscription-window state.
 
 ## Purpose
 
 Answer "where did my tokens go" without an API call, by parsing what each agent already wrote to
-disk. Four readers normalize into one `UsageRecord` stream that the aggregation and rendering
+disk. Five readers normalize into one `UsageRecord` stream that the aggregation and rendering
 layers treat identically.
 
 ## How it works
@@ -30,6 +30,7 @@ its reader, and is the authority for `--source`'s valid values.
 |---|---|
 | `claude.py` | `~/.claude/projects/*.jsonl` usage records |
 | `codex.py` | `~/.codex/sessions/**/*.jsonl` |
+| `droid.py` | `~/.factory/sessions/*/<uuid>.settings.json` sidecars, not the transcripts |
 | `opencode.py` | `$XDG_DATA_HOME/opencode/opencode.db` in SQLite read-only mode |
 | `pi.py` | `~/.pi/agent/sessions/**` |
 
@@ -43,6 +44,30 @@ session|source` options. `in_window()` applies `--since` / `--until`.
 (`estimate()`). Prices are a hardcoded table — deliberately, so the tool needs no network — and
 therefore go stale when a provider reprices. An unrecognized model yields `None` rather than a
 wrong number.
+
+`ROUTED_PROVIDERS` is the short-circuit before the table is consulted at all: a provider that
+routes requests and bills its own units cannot be priced from the model vendor's list price.
+`factory` is the only member, so every droid record reports no cost.
+
+### Droid, and its two approximations
+
+`droid.py` is the one reader whose numbers are not in the transcript. Each session's
+`<uuid>.settings.json` sidecar holds the totals, so the reader emits **one record per session**,
+stamped at the transcript's mtime. Two consequences are worth stating rather than hiding:
+
+- **`--by day` mixes granularities.** A long droid session's whole spend lands on the day it was
+  last touched, beside per-turn records from every other source.
+- **`--by model` attributes a whole session to one model.** Droid transcripts carry no per-message
+  model, so an auto-routed session is credited to whichever model `effectiveFactoryRouterModel`
+  last recorded.
+
+Every droid thread reports its **own** `tokenUsage`, subagents included. The sidecar also carries
+`inclusiveTokenUsage` and `childInclusiveTokenUsageBySessionId`, which would let one top-level
+session stand for its whole subtree, but that attribution depends on which threads happen to share
+a store. `rl session archive` moves a parent into `archive/` and leaves its subagents in
+`~/.factory/sessions`, so `rl usage --archived` would then count a subagent once on its own and
+again inside its parent's inclusive figure. Own-usage sums to the same total by construction and
+does not shift when a session is archived, deleted or pruned.
 
 ### Subscription windows
 
@@ -66,8 +91,10 @@ through `aggregate.READERS` so every archivable source is included, and respects
 `--source` filtering; each reader only emits records matching its own JSON shape
 (`"token_count"` events vs `"assistant"` messages), so a codex `**/*.jsonl` glob
 matching Claude's `*/*.jsonl` paths still produces no double-counting. `rl usage
---archived` merges that stream with live records and then `dedupe()`s. Only Claude
-and Codex produce archivable transcripts today — OpenCode/Pi use separate stores.
+--archived` merges that stream with live records and then `dedupe()`s. Claude, Codex and Droid
+produce archivable transcripts today — OpenCode and Pi use separate stores. Droid's archived
+figures still come from its `.settings.json` sidecars, which archiving carries along as
+companion files.
 
 ### Cross-machine merge
 
@@ -93,6 +120,12 @@ twice. `rl usage --merge <dir>` is the consumer.
 - **`--days` defaults to 7**, so a bare `rl usage` is a week, not all time. `--all` widens it.
 - **Reading walks local session stores**, so usage over a large history is I/O-bound in the same
   way a scan is.
+- **Droid records are never priced**, and `rl usage windows` does not cover droid. Factory bills
+  credits, and its window state is API-only — deliberately deferred, not overlooked.
+- **The droid reader skips `sessions/btw/`**, droid's fork layout, exactly as the Source does. A
+  fork filed there is never re-filed under a launch-dir slug, so its tokens are left out for good
+  rather than counted later. Droid's third layout, `sessions/<uuid>.jsonl` at the global root, is
+  read like any project directory.
 - **OpenCode usage comes from assistant message rows.** The reader emits one immutable record per
   response so date windows and model grouping reflect when each response happened. It joins the
   owning session's opaque `project_id` to `project.worktree`, and includes child/sub-agent rows

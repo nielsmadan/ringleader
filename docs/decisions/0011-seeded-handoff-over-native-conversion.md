@@ -35,14 +35,15 @@ original exactly where it was.
 
 ## Consequences
 
-- Cross-agent continuation works today, for all four agents, with no new adapters and no new
-  native format knowledge. The only capability required is `SessionLaunchingSource.launch_argv`.
+- Cross-agent continuation works today, for every supported agent, with no new adapters and no
+  new native format knowledge — Droid joined later and needed nothing added here. The only
+  capability required is `SessionLaunchingSource.launch_argv`.
 - It is **lossy, and how lossy depends on the source**. Every handoff carries prose only — no
   tool results, no native turn structure, no compaction boundaries — and the target has to
   re-read the file to know anything, which costs it context on its first turn. A Claude Code
   transcript additionally carries the names of the tools each assistant turn called
-  (`export._tool_note`); codex, pi and opencode transcripts reach the target with no trace that
-  tools ran at all.
+  (`export._tool_note`); codex, droid, pi and opencode transcripts reach the target with no trace
+  that tools ran at all.
 - There is **no lineage**. A handoff cannot record what it produced, because the target's session
   id does not exist until the agent creates it. The portability design's lineage fields therefore
   have nothing to migrate from when they land.

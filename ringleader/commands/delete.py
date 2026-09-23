@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import shutil
 import sys
 from datetime import UTC, datetime
 
@@ -27,13 +26,14 @@ def cmd_delete(argv: list[str]) -> int:
 
     try:
         f = scanner.filesystem_path(t, "delete")
+        companions = scanner.companion_paths(t.get("source"), f)
         scanner.hide_from_picker(t)
     except RuntimeError as e:
         print(f"rl-delete: {e}", file=sys.stderr)
         return 1
 
     f.unlink(missing_ok=True)
-    shutil.rmtree(f.with_suffix(""), ignore_errors=True)
+    scanner.remove_companions(companions)
     registry.prune_session(reg, args.id, _now(), reason="deleted")
     registry.save_registry(args.registry, reg)
     print(f"deleted {args.id}")

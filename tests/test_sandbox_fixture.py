@@ -98,6 +98,7 @@ def test_build_restores_exact_fixture_state(tmp_path, capsys):
         fixture / "session_index.jsonl"
     ).read_bytes()
     assert json.loads((target / "claude-settings.json").read_text()) == {"cleanupPeriodDays": 7}
+    assert (target / "droid" / ".factory" / "sessions").is_dir()
     assert list((target / "data").iterdir()) == []
     assert not (target / "old-data").exists()
     assert (
@@ -144,6 +145,7 @@ def test_shell_environment_isolates_every_ringleader_input(tmp_path):
         "XDG_DATA_HOME": "/real/data",
         "SESSION_TRACKER_PROJECTS_DIR": "/real/claude",
         "CODEX_SESSIONS_DIR": "/real/codex",
+        "FACTORY_HOME_OVERRIDE": "/real/factory",
         "RINGLEADER_CLAUDE_SETTINGS": "/real/settings.json",
     }
 
@@ -156,6 +158,7 @@ def test_shell_environment_isolates_every_ringleader_input(tmp_path):
         "XDG_DATA_HOME": str(target / "data"),
         "SESSION_TRACKER_PROJECTS_DIR": str(target / "claude"),
         "CODEX_SESSIONS_DIR": str(target / "codex"),
+        "FACTORY_HOME_OVERRIDE": str(target / "droid"),
         "RINGLEADER_CLAUDE_SETTINGS": str(target / "claude-settings.json"),
     }
 
@@ -183,6 +186,7 @@ def test_enter_shell_starts_the_user_shell_with_sandbox_environment(tmp_path):
     assert invocation["environment"]["XDG_DATA_HOME"] == str(target / "data")
     assert invocation["environment"]["SESSION_TRACKER_PROJECTS_DIR"] == str(target / "claude")
     assert invocation["environment"]["CODEX_SESSIONS_DIR"] == str(target / "codex")
+    assert invocation["environment"]["FACTORY_HOME_OVERRIDE"] == str(target / "droid")
     assert invocation["environment"]["RINGLEADER_CLAUDE_SETTINGS"] == str(
         target / "claude-settings.json"
     )

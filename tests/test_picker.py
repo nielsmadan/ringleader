@@ -395,7 +395,7 @@ async def test_enter_opens_the_agent_modal_with_the_sessions_own_agent_first(tmp
         await pilot.pause()
         modal = app.screen
         assert isinstance(modal, AgentModal)
-        assert modal._agents == ["codex", "claude-code", "opencode", "pi"]
+        assert modal._agents == ["codex", "claude-code", "droid", "opencode", "pi"]
         agents = modal.query_one("#agents", ListView)
         assert agents.index == 0
         first = _rendered(agents.children[0].query_one(Label))
