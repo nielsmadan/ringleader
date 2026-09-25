@@ -22,10 +22,11 @@ Droid storage and CLI: verified 2026-09-23 against droid 0.218.2.
 | Rename | `custom-title` record | `threads.name`, `session_index.jsonl` | — (title is on line 1) | `session.slug` / `title` | `--name`, `/name` |
 | Archive | — | `codex archive` / `unarchive` | — | `session.time_archived` | — |
 | Delete | `claude project purge <path>` (whole project) | `codex delete <id\|name>` | — | `opencode session delete <id>` | Ctrl+D in `/resume` |
-| Index drifts from files | n/a (no index) | **yes — badly** | n/a (no index) | n/a (DB is the store) | n/a (no index) |
+| Index drifts from files | n/a (no index) | **yes — badly** | unverified (see Droid) | n/a (DB is the store) | n/a (no index) |
 
-The headline for ringleader: **Claude Code, Droid and Pi have no index, so deleting a file is a
-complete delete. Codex has one, and deleting the rollout file leaves a live picker entry behind.**
+The headline for ringleader: **Claude Code and Pi have no index, so deleting a file is a
+complete delete. Codex has one, and deleting the rollout file leaves a live picker entry behind.
+Droid is unverified: its binary ships a session index this machine's sandbox cannot read.**
 
 ## Claude Code
 
@@ -294,8 +295,8 @@ droid actually bills in. Both facts constrain what `rl usage` can report — see
 - `droid doctor` — configuration, connectivity, auth and daemon diagnostics.
 
 `droid --help` and `droid resume --help` list **no archive, unarchive, delete or rename verb**, so
-curating droid sessions from outside is entirely a filesystem job — which, with no index to drift,
-is also the whole job.
+curating droid sessions from outside is entirely a filesystem job — and the whole job only if its
+session index turns out not to be live (see "What the picker shows").
 
 ## OpenCode
 
@@ -383,7 +384,7 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
    for not curating a session someone is currently sitting in. *(Unverified for Droid and Pi — no
    liveness signal was surveyed for either; ringleader gets both from hooklinesinker instead.)*
 
-7. **Droid needs no per-agent write path at all.** No index to clear, no append surface to rename
-   through, no archive verb to delegate to — the only droid-specific knowledge ringleader carries
-   is where the files are, that the first line holds the identity, and that two `.settings.json`
-   sidecars travel with each transcript.
+7. **Droid needs no per-agent write path, unless its session index is live.** No verified index
+   to clear, no append surface to rename through, no archive verb to delegate to — the only
+   droid-specific knowledge ringleader carries is where the files are, that the first line holds
+   the identity, and that two `.settings.json` sidecars travel with each transcript.

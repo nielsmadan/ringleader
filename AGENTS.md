@@ -100,12 +100,14 @@ pruning them before the GC clock deletes them.
   See `docs/tech/sources.md`.
 - **Droid reuses Claude Code's directory encoding, verbatim.** `~/.factory/sessions/` is keyed
   by `slug.slugify(normalize(cwd))` — the same reimplemented-private-function `slug.py` holds
-  for Claude Code — so that module now has two agents that break when either upgrades. Droid
-  keeps **no picker index**, so deleting a transcript is a complete delete; it also has no
-  append-style title record, so `rl session name` does not reach it. `FACTORY_HOME_OVERRIDE`
-  replaces HOME (not the `.factory` name) and is what the tests and sandbox isolate with.
-  Droid's tokens live in the `.settings.json` sidecar, not the transcript, and are never
-  priced — Factory bills credits. See `docs/reference/agent-session-management.md`.
+  for Claude Code — so that module now has two agents that break when either upgrades. Whether
+  droid keeps a picker index is **unverified**: its binary builds
+  `<factory>/cache/session-index/index.db`, which the sandbox cannot read, so do not assume
+  deleting a transcript is a complete delete. It also has no append-style title record, so
+  `rl session name` does not reach it. `FACTORY_HOME_OVERRIDE` replaces HOME (not the
+  `.factory` name) and is what the tests and sandbox isolate with. Droid's tokens live in the
+  `.settings.json` sidecar, not the transcript, and are never priced — Factory bills credits.
+  See `docs/reference/agent-session-management.md`.
 
 ## Commands
 
