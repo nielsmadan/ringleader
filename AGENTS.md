@@ -157,6 +157,12 @@ has no files.
 `uv run mypy` checks the package. The tree is clean under all four gates — keep it that way
 rather than reaching for `--no-verify`.
 
+All four gates are strict. `lint.extend-select` keeps Ruff's own defaults on top of the listed
+families, `mypy` runs `strict`, and pytest runs `--strict-config --strict-markers` with
+`filterwarnings = ["error"]`. A new function without annotations, or a test that emits any
+warning, fails the suite: fix the cause rather than relaxing the config, and do not silence a
+finding with `type: ignore` or a blanket ignore.
+
 ## Reference
 
 `docs/overview.md` maps the docs tree. `docs/features/` is what each feature does,
