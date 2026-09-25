@@ -6,6 +6,7 @@ import shutil
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .. import registry, scanner
 from ..paths import archive_root
@@ -39,10 +40,10 @@ def _summary_from_file(path: str | None) -> str | None:
 
 
 def archive_thread(
-    reg: dict,
-    thread: dict,
+    reg: dict[str, Any],
+    thread: dict[str, Any],
     *,
-    archive_root_path,
+    archive_root_path: str | Path,
     summary_file: str | None = None,
 ) -> str:
     """Move the transcript (+ sidecar/summary) into archive_root and record the tombstone.

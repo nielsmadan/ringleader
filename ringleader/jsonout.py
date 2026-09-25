@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
 from . import overview
 
@@ -12,7 +13,7 @@ if TYPE_CHECKING:
 _MATCH_FIELDS = {"aiTitle": "ai_title", "whatItIs": "what_it_is", "lastPrompt": "last_prompt"}
 
 
-def _session_json(t: dict, now_iso: str) -> dict:
+def _session_json(t: dict[str, Any], now_iso: str) -> dict[str, Any]:
     mtime = t.get("mtime")
     return {
         "session_id": t.get("sessionId"),
@@ -27,11 +28,11 @@ def _session_json(t: dict, now_iso: str) -> dict:
     }
 
 
-def sessions_json(threads, now_iso: str) -> list[dict]:
+def sessions_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
     return [_session_json(t, now_iso) for t in threads]
 
 
-def snoozed_json(threads, now_iso: str) -> list[dict]:
+def snoozed_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
     out = []
     for t in threads:
         if overview.snooze_active(t, now_iso):
@@ -41,7 +42,7 @@ def snoozed_json(threads, now_iso: str) -> list[dict]:
     return out
 
 
-def kept_json(threads, now_iso: str) -> list[dict]:
+def kept_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
     out = []
     for t in threads:
         if overview.is_kept(t):
@@ -51,7 +52,7 @@ def kept_json(threads, now_iso: str) -> list[dict]:
     return out
 
 
-def filtered_json(threads, now_iso: str) -> list[dict]:
+def filtered_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
     out = []
     for t in threads:
         if overview.is_filtered(t):
@@ -61,7 +62,9 @@ def filtered_json(threads, now_iso: str) -> list[dict]:
     return out
 
 
-def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> list[dict]:
+def triage_json(
+    threads: list[dict[str, Any]], now_iso: str, *, unclassified_only: bool = False
+) -> list[dict[str, Any]]:
     """JSON-safe view of the triage inbox — same sessions `render_triage` shows.
 
     `unclassified_only` mirrors `render_triage`'s kwarg of the same name: it filters
@@ -75,11 +78,11 @@ def triage_json(threads, now_iso: str, *, unclassified_only: bool = False) -> li
 
 
 def rollup_json(
-    reg: dict,
+    reg: dict[str, Any],
     now_iso: str,
     *,
     selection: overview.StatusSelection = overview.DEFAULT_STATUS_SELECTION,
-) -> dict:
+) -> dict[str, Any]:
     scoped = dict(reg)
     scoped["threads"] = overview.filter_by_status(reg["threads"], now_iso, selection)
     m = overview.compute_metrics(
@@ -100,7 +103,7 @@ def rollup_json(
     }
 
 
-def search_json(matches: list[Match], now_iso: str, *, limit: int | None = None) -> dict:
+def search_json(matches: list[Match], now_iso: str, *, limit: int | None = None) -> dict[str, Any]:
     """Search hits as `_session_json` rows plus why each one matched. `total` is the
     whole result set, so a caller that passed `--limit` can tell 50-of-900 from 50."""
     shown = matches if limit is None else matches[:limit]

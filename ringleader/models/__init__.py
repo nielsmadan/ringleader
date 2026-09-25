@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from .base import Model, ModelError
 from .claude_cli import ClaudeCliModel
 from .codex_cli import CodexCliModel
 from .llm import LlmModel
+
+if TYPE_CHECKING:
+    from ..config import Config
 
 ModelFactory = Callable[..., Model]
 
@@ -23,7 +27,7 @@ __all__ = [
 ]
 
 
-def active_model(cfg) -> Model | None:
+def active_model(cfg: Config) -> Model | None:
     engine = getattr(cfg, "ai", None)
     model_name = getattr(cfg, "model", None) or None
     if engine == "llm":

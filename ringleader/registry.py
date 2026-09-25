@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 import os
+from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
 
 from . import namefilter, overview
 from .slug import is_beneath
@@ -45,7 +46,7 @@ _GIT_PROJECT_FIELDS = {
 }
 
 
-def empty_registry() -> dict:
+def empty_registry() -> dict[str, Any]:
     return {
         "version": REGISTRY_VERSION,
         "lastScan": None,
@@ -59,11 +60,11 @@ def empty_registry() -> dict:
     }
 
 
-def load_registry(path) -> dict:
+def load_registry(path: str | Path) -> dict[str, Any]:
     p = Path(path)
     if not p.exists():
         return empty_registry()
-    data = json.loads(p.read_text(encoding="utf-8"))
+    data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("lastScan", None)
     data.setdefault("lastRoundupAt", None)
@@ -76,18 +77,18 @@ def load_registry(path) -> dict:
     return data
 
 
-def save_registry(path, reg) -> None:
+def save_registry(path: str | Path, reg: dict[str, Any]) -> None:
     p = Path(path)
     atomic_write_text(p, json.dumps(reg, indent=2, ensure_ascii=False))
 
 
 def reconcile_harvest_paths(
-    reg: dict,
+    reg: dict[str, Any],
     paths_by_session: dict[str, list[str]],
     *,
     pending_root: str | Path | None = None,
     recorded_pending_paths: dict[str, list[str]] | None = None,
-) -> dict:
+) -> dict[str, Any]:
     root = (
         Path(os.path.normpath(Path(pending_root).absolute())) if pending_root is not None else None
     )
@@ -104,7 +105,7 @@ def reconcile_harvest_paths(
         normalized = Path(os.path.normpath(candidate))
         return normalized.is_relative_to(root)
 
-    def update(record: dict) -> None:
+    def update(record: dict[str, Any]) -> None:
         session_id = record.get("sessionId")
         if session_id in paths_by_session:
             if root is None and not recorded_pending_paths:
@@ -129,11 +130,11 @@ def reconcile_harvest_paths(
     return reg
 
 
-def _as_dict(meta: NormalizedSession | dict) -> dict:
+def _as_dict(meta: NormalizedSession | dict[str, Any]) -> dict[str, Any]:
     return asdict(meta) if isinstance(meta, NormalizedSession) else dict(meta)
 
 
-def _new_thread(md: dict) -> dict:
+def _new_thread(md: dict[str, Any]) -> dict[str, Any]:
     thread = {rk: md.get(mk) for rk, mk in _METADATA_FIELDS.items()}
     thread.update({rk: md.get(mk) for rk, mk in _GIT_PROJECT_FIELDS.items()})
     thread.update(
@@ -162,7 +163,7 @@ def _new_thread(md: dict) -> dict:
 
 
 def cached_session(
-    thread: dict | None,
+    thread: dict[str, Any] | None,
     ref: RawRef,
     parser_version: int | None,
 ) -> NormalizedSession | None:
@@ -198,17 +199,17 @@ def cached_session(
     )
 
 
-def _key(rec: dict) -> tuple:
+def _key(rec: dict[str, Any]) -> tuple[str, str]:
     return (rec.get("source") or "claude-code", rec["sessionId"])
 
 
 def reconcile(
-    reg: dict,
-    scanned,
+    reg: dict[str, Any],
+    scanned: Iterable[NormalizedSession],
     now_iso: str,
     *,
     unavailable_sources: set[str] | frozenset[str] = frozenset(),
-) -> dict:
+) -> dict[str, Any]:
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
     # an agent that writes after we archived its transcript recreates the file;
@@ -275,17 +276,17 @@ def reconcile(
     }
 
 
-def needs_classification(thread: dict) -> bool:
+def needs_classification(thread: dict[str, Any]) -> bool:
     return thread.get("status") == "unclassified" or thread.get("classifiedAtMtime") != thread.get(
         "mtime"
     )
 
 
-def sessions_needing_classification(reg: dict) -> list[dict]:
+def sessions_needing_classification(reg: dict[str, Any]) -> list[dict[str, Any]]:
     return [t for t in reg["threads"] if not t.get("filteredBy") and needs_classification(t)]
 
 
-def apply_name_filters(reg: dict, patterns) -> dict:
+def apply_name_filters(reg: dict[str, Any], patterns: Iterable[str] | None) -> dict[str, Any]:
     """Stamp every live thread with the config pattern that matches its name, or None.
     Recomputed on each scan, so editing the filters takes effect without a re-parse."""
     patterns = list(patterns or ())
@@ -295,14 +296,14 @@ def apply_name_filters(reg: dict, patterns) -> dict:
 
 
 def apply_classification(
-    reg: dict,
+    reg: dict[str, Any],
     session_id: str,
     *,
     status: str,
     what_it_is: str,
     suggested_name: str,
     confidence: float | None = None,
-) -> dict:
+) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["status"] = status
@@ -315,7 +316,9 @@ def apply_classification(
     raise KeyError(session_id)
 
 
-def apply_name(reg: dict, session_id: str, name: str, *, source: str | None = None) -> dict:
+def apply_name(
+    reg: dict[str, Any], session_id: str, name: str, *, source: str | None = None
+) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id and (source is None or _key(t)[0] == source):
             t["title"] = name
@@ -325,7 +328,9 @@ def apply_name(reg: dict, session_id: str, name: str, *, source: str | None = No
     raise KeyError(session_id)
 
 
-def mark_harvested(reg: dict, session_id: str, harvest_paths) -> dict:
+def mark_harvested(
+    reg: dict[str, Any], session_id: str, harvest_paths: list[str]
+) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["decision"] = "harvested"
@@ -334,7 +339,7 @@ def mark_harvested(reg: dict, session_id: str, harvest_paths) -> dict:
     raise KeyError(session_id)
 
 
-def append_harvest_path(reg: dict, session_id: str, harvest_path: str) -> dict:
+def append_harvest_path(reg: dict[str, Any], session_id: str, harvest_path: str) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             existing = t.get("harvestPath")
@@ -345,7 +350,7 @@ def append_harvest_path(reg: dict, session_id: str, harvest_path: str) -> dict:
     raise KeyError(session_id)
 
 
-def mark_reviewed(reg: dict, session_id: str, mtime: str | None = None) -> dict:
+def mark_reviewed(reg: dict[str, Any], session_id: str, mtime: str | None = None) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             # mtime override lets the caller record the live file mtime — e.g. after
@@ -356,7 +361,7 @@ def mark_reviewed(reg: dict, session_id: str, mtime: str | None = None) -> dict:
     raise KeyError(session_id)
 
 
-def select_for_day(reg: dict, session_id: str, day: str) -> dict:
+def select_for_day(reg: dict[str, Any], session_id: str, day: str) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["selectedForDay"] = day
@@ -364,7 +369,7 @@ def select_for_day(reg: dict, session_id: str, day: str) -> dict:
     raise KeyError(session_id)
 
 
-def clear_selected(reg: dict, session_id: str) -> dict:
+def clear_selected(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["selectedForDay"] = None
@@ -372,19 +377,19 @@ def clear_selected(reg: dict, session_id: str) -> dict:
     raise KeyError(session_id)
 
 
-def selected_today(reg: dict, today: str) -> list[dict]:
+def selected_today(reg: dict[str, Any], today: str) -> list[dict[str, Any]]:
     return [t for t in reg["threads"] if t.get("selectedForDay") == today]
 
 
 def archive_session(
-    reg: dict,
+    reg: dict[str, Any],
     session_id: str,
     archive_path: str,
     archived_at: str,
     *,
     summary: str | None = None,
     project: str | None = None,
-) -> dict:
+) -> dict[str, Any]:
     threads = reg["threads"]
     idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
     thread = threads.pop(idx) if idx is not None else None
@@ -412,12 +417,14 @@ def archive_session(
     return reg
 
 
-def mark_project_cleaned(reg: dict, key: str, when: str) -> dict:
+def mark_project_cleaned(reg: dict[str, Any], key: str, when: str) -> dict[str, Any]:
     reg.setdefault("projectsCleanedAt", {})[key] = when
     return reg
 
 
-def snooze_thread(reg: dict, session_id: str, when: str, until: str | None = None) -> dict:
+def snooze_thread(
+    reg: dict[str, Any], session_id: str, when: str, until: str | None = None
+) -> dict[str, Any]:
     """Set a session aside: still open/resumable, but hidden from the default
     rl overview until woken. `when` records when it was snoozed; `until`, if
     given, is an ISO timestamp after which the snooze auto-wakes."""
@@ -429,7 +436,7 @@ def snooze_thread(reg: dict, session_id: str, when: str, until: str | None = Non
     raise KeyError(session_id)
 
 
-def wake_thread(reg: dict, session_id: str) -> dict:
+def wake_thread(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
             t["snoozedAt"] = None
@@ -437,20 +444,20 @@ def wake_thread(reg: dict, session_id: str) -> dict:
     raise KeyError(session_id)
 
 
-def keep_thread(reg: dict, session_id: str, when: str) -> str | None:
+def keep_thread(reg: dict[str, Any], session_id: str, when: str) -> str | None:
     """Mark a session as kept long-term: it stays live and resumable but leaves the
     triage inbox permanently, regardless of later activity. Returns the decision it
     replaced (None if there wasn't one) so the caller can report it."""
     for t in reg["threads"]:
         if t["sessionId"] == session_id:
-            previous = t.get("decision")
+            previous: str | None = t.get("decision")
             t["decision"] = "keep"
             t["keptAt"] = when
             return previous if previous != "keep" else None
     raise KeyError(session_id)
 
 
-def mark_finish_on_exit(reg: dict, session_id: str, when: str) -> dict:
+def mark_finish_on_exit(reg: dict[str, Any], session_id: str, when: str) -> dict[str, Any]:
     """Mark a session to be archived once its transcript goes quiet. The transcript
     cannot be moved while the agent is still writing to it, so `rl session sweep`
     does the archiving later; this only records the intent."""
@@ -458,11 +465,11 @@ def mark_finish_on_exit(reg: dict, session_id: str, when: str) -> dict:
         if t["sessionId"] == session_id:
             t["finishOnExit"] = True
             t["finishedAt"] = when
-            return t
+            return cast(dict[str, Any], t)
     raise KeyError(session_id)
 
 
-def without_finish_mark(thread: dict) -> dict:
+def without_finish_mark(thread: dict[str, Any]) -> dict[str, Any]:
     """A copy of `thread` with the finish mark dropped. The mark means "archive this
     once it goes quiet", so it must not survive the archive that consumed it — a
     restored thread carrying it is swept straight back out, live agent or not."""
@@ -472,7 +479,7 @@ def without_finish_mark(thread: dict) -> dict:
     return out
 
 
-def unkeep_thread(reg: dict, session_id: str) -> bool:
+def unkeep_thread(reg: dict[str, Any], session_id: str) -> bool:
     """Undo `keep_thread`, returning the session to the triage inbox. Returns False if
     the session wasn't kept — a non-"keep" decision (e.g. "harvested") is left alone."""
     for t in reg["threads"]:
@@ -485,20 +492,22 @@ def unkeep_thread(reg: dict, session_id: str) -> bool:
     raise KeyError(session_id)
 
 
-def restore_session(reg: dict, session_id: str, file_path: str) -> dict:
+def restore_session(reg: dict[str, Any], session_id: str, file_path: str) -> dict[str, Any]:
     """Reverse an archive at the registry level: drop the archived record so the next scan
     re-discovers the transcript at `file_path`. Returns the archived record that was removed.
 
     The record holds only a summary of the thread, so the thread row is not rebuilt
     here — reconcile re-creates it in full from the restored transcript."""
-    archived = reg.setdefault("archived", [])
+    archived: list[dict[str, Any]] = reg.setdefault("archived", [])
     idx = next((i for i, a in enumerate(archived) if a["sessionId"] == session_id), None)
     if idx is None:
         raise KeyError(session_id)
     return archived.pop(idx)
 
 
-def pin_thread_location(t: dict, new_project: str, git: dict | None = None) -> None:
+def pin_thread_location(
+    t: dict[str, Any], new_project: str, git: dict[str, Any] | None = None
+) -> None:
     """Pin one thread dict to a new cwd/git identity. `locationPinned` is what tells
     reconcile to keep these instead of re-deriving them from the transcript's stale
     baked-in cwd — and it is permanent, since reconcile never refreshes a pinned
@@ -516,7 +525,7 @@ def pin_thread_location(t: dict, new_project: str, git: dict | None = None) -> N
     t["gitCloneUrl"] = git.get("clone_url")
 
 
-def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
+def remap_cached_git_root(thread: dict[str, Any], old: str, new: str) -> None:
     """Carry a cached `gitRoot` across with the tree.
 
     `pin_thread_location` keeps the cached git fields when the destination has no
@@ -530,7 +539,9 @@ def remap_cached_git_root(thread: dict, old: str, new: str) -> None:
         thread["gitRoot"] = new + root[len(old) :]
 
 
-def prune_session(reg: dict, session_id: str, deleted_at: str, *, reason: str = "prune") -> dict:
+def prune_session(
+    reg: dict[str, Any], session_id: str, deleted_at: str, *, reason: str = "prune"
+) -> dict[str, Any]:
     threads = reg["threads"]
     idx = next((i for i, t in enumerate(threads) if t["sessionId"] == session_id), None)
     harvest = threads[idx].get("harvestPath") if idx is not None else None
@@ -549,7 +560,7 @@ def prune_session(reg: dict, session_id: str, deleted_at: str, *, reason: str = 
     return reg
 
 
-def purge_archived_session(reg: dict, session_id: str, purged_at: str) -> dict:
+def purge_archived_session(reg: dict[str, Any], session_id: str, purged_at: str) -> dict[str, Any]:
     """Archive retention removed the archived copy: the transcript is now really gone,
     so the record moves out of `archived` and into `deleted`."""
     archived = reg.setdefault("archived", [])
@@ -564,7 +575,7 @@ def purge_archived_session(reg: dict, session_id: str, purged_at: str) -> dict:
     return reg
 
 
-def _mem_entry_dict(m: MemoryEntry) -> dict:
+def _mem_entry_dict(m: MemoryEntry) -> dict[str, Any]:
     d = asdict(m)
     return {
         "path": d["path"],
@@ -584,7 +595,9 @@ def _mem_entry_dict(m: MemoryEntry) -> dict:
     }
 
 
-def reconcile_memory(reg: dict, scanned, now_iso: str) -> dict:
+def reconcile_memory(
+    reg: dict[str, Any], scanned: Iterable[MemoryEntry], now_iso: str
+) -> dict[str, Any]:
     by_path = {e["path"]: e for e in reg.get("memoryEntries", [])}
     entries = []
     for m in scanned:
@@ -601,7 +614,7 @@ def reconcile_memory(reg: dict, scanned, now_iso: str) -> dict:
     return reg
 
 
-def memory_needing_review(reg: dict) -> list[dict]:
+def memory_needing_review(reg: dict[str, Any]) -> list[dict[str, Any]]:
     out = []
     for e in reg.get("memoryEntries", []):
         rev = e.get("reviewedAtMtime")
@@ -610,7 +623,9 @@ def memory_needing_review(reg: dict) -> list[dict]:
     return out
 
 
-def mark_memory_reviewed(reg: dict, path: str, mtime: str | None = None) -> dict:
+def mark_memory_reviewed(
+    reg: dict[str, Any], path: str, mtime: str | None = None
+) -> dict[str, Any]:
     for e in reg.get("memoryEntries", []):
         if e["path"] == path:
             e["reviewedAtMtime"] = mtime if mtime is not None else e["mtime"]
@@ -618,6 +633,6 @@ def mark_memory_reviewed(reg: dict, path: str, mtime: str | None = None) -> dict
     raise KeyError(path)
 
 
-def mark_memory_project_cleaned(reg: dict, key: str, when: str) -> dict:
+def mark_memory_project_cleaned(reg: dict[str, Any], key: str, when: str) -> dict[str, Any]:
     reg.setdefault("memoryProjectsCleanedAt", {})[key] = when
     return reg

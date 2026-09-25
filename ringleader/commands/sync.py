@@ -15,7 +15,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def cmd_scan(args):
+def cmd_scan(args: argparse.Namespace) -> None:
     reg = registry.load_registry(args.registry)
     unavailable_sources: set[str] = set()
     scanned = scanner.scan(
@@ -58,7 +58,7 @@ def cmd_scan(args):
     sys.stdout.write("\n")
 
 
-def cmd_apply(args):
+def cmd_apply(args: argparse.Namespace) -> None:
     reg = registry.load_registry(args.registry)
     registry.apply_classification(
         reg,
@@ -72,7 +72,7 @@ def cmd_apply(args):
     print(f"applied {args.session}: {args.status}")
 
 
-def _add_scan_opts(p) -> None:
+def _add_scan_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--tail", type=int, default=30)
     p.add_argument(
         "--project",
@@ -82,7 +82,7 @@ def _add_scan_opts(p) -> None:
     )
 
 
-def _add_apply_opts(p) -> None:
+def _add_apply_opts(p: argparse.ArgumentParser) -> None:
     p.add_argument("--session", required=True)
     p.add_argument(
         "--status", required=True, choices=["active", "unfinished", "blocked", "finished"]

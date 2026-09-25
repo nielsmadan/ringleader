@@ -4,6 +4,7 @@ import argparse
 import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .. import jsonout, overview, projects, refresh, registry
 from . import default_registry
@@ -18,7 +19,7 @@ def _key_label(key: str) -> str:
     return key if key.startswith("/") else key.rsplit("/", 1)[-1]
 
 
-def _memory_rollup(reg: dict, now: str, selectors: list[str]) -> int:
+def _memory_rollup(reg: dict[str, Any], now: str, selectors: list[str]) -> int:
     entries = reg.get("memoryEntries", [])
     if selectors:
         entries = projects.filter_by_projects(entries, selectors)
@@ -29,7 +30,7 @@ def _memory_rollup(reg: dict, now: str, selectors: list[str]) -> int:
             signals = ", ".join(e.get("obsoleteSignals") or []) or "none"
             print(f"{e.get('name') or '(unnamed)'}  obsolete={signals}  project={e.get('project')}")
         return 0
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for e in entries:
         groups.setdefault(overview.group_key(e), []).append(e)
     cleaned = reg.get("memoryProjectsCleanedAt", {})
@@ -79,14 +80,16 @@ def cmd_mem_overview(argv: list[str]) -> int:
     return _memory_rollup(reg, now, selectors)
 
 
-def _filter_source_recent(threads, now: str, args) -> list[dict]:
+def _filter_source_recent(
+    threads: list[dict[str, Any]], now: str, args: argparse.Namespace
+) -> list[dict[str, Any]]:
     if args.source:
         wanted = set(args.source)
         threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
     return overview.filter_recent(threads, now, args.recent)
 
 
-def _scope_to_cwd(reg: dict, now: str, args) -> dict:
+def _scope_to_cwd(reg: dict[str, Any], now: str, args: argparse.Namespace) -> dict[str, Any]:
     selector = str(Path.cwd().resolve())
     scoped = dict(reg)
     for key in ("threads", "archived"):
@@ -95,7 +98,7 @@ def _scope_to_cwd(reg: dict, now: str, args) -> dict:
     return scoped
 
 
-def _status_selection(args) -> overview.StatusSelection:
+def _status_selection(args: argparse.Namespace) -> overview.StatusSelection:
     statuses = tuple(args.status or ())
     if args.all or "all" in statuses:
         return overview.StatusSelection.all()
@@ -104,7 +107,12 @@ def _status_selection(args) -> overview.StatusSelection:
     return overview.StatusSelection.default()
 
 
-def _json_view(reg: dict, now: str, args, selection: overview.StatusSelection) -> int:
+def _json_view(
+    reg: dict[str, Any],
+    now: str,
+    args: argparse.Namespace,
+    selection: overview.StatusSelection,
+) -> int:
     if args.snoozed:
         print(json.dumps(jsonout.snoozed_json(reg["threads"], now), indent=2))
         return 0
@@ -125,7 +133,9 @@ def _json_view(reg: dict, now: str, args, selection: overview.StatusSelection) -
     return 0
 
 
-def _alt_view(reg: dict, now: str, args, selectors) -> str | None:
+def _alt_view(
+    reg: dict[str, Any], now: str, args: argparse.Namespace, selectors: list[str]
+) -> str | None:
     """The alternate list views that replace the default rollup, in precedence order.
     Returns the rendered text, or None to fall through to the normal views.
     --archived honours a selector; --snoozed/--kept span all threads."""
@@ -140,7 +150,7 @@ def _alt_view(reg: dict, now: str, args, selectors) -> str | None:
     return None
 
 
-def _scope_filtered(reg: dict, args) -> dict:
+def _scope_filtered(reg: dict[str, Any], args: argparse.Namespace) -> dict[str, Any]:
     """Hide name-filtered sessions from every view built below this point. They stay in
     the registry (and on disk) — --filtered inspects them, --include-filtered unhides."""
     if args.include_filtered:
@@ -151,7 +161,12 @@ def _scope_filtered(reg: dict, args) -> dict:
     return scoped
 
 
-def _print_sessions_view(reg: dict, now: str, args, selection: overview.StatusSelection) -> None:
+def _print_sessions_view(
+    reg: dict[str, Any],
+    now: str,
+    args: argparse.Namespace,
+    selection: overview.StatusSelection,
+) -> None:
     threads = _filter_source_recent(reg["threads"], now, args)
     snoozed_total = sum(1 for t in threads if overview.snooze_active(t, now))
     scoped = dict(reg)

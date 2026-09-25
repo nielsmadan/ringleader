@@ -2,19 +2,21 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
-from .gitinfo import resolve_git_project
+from .gitinfo import GitProject, resolve_git_project
 
 # Claude Code only: per-project memory/*.md files have no Codex equivalent (Codex's
 # memories_1.sqlite is out of scope).
-from .sources.claude_code import (
-    default_projects_dir as projects_dir,  # noqa: F401 -- re-exported; callers use memory.projects_dir()
-)
+from .sources.claude_code import default_projects_dir
 from .transcript import parse_transcript
+
+# Explicit re-export: callers use memory.projects_dir().
+projects_dir = default_projects_dir
 
 INDEX_NAME = "MEMORY.md"
 _NONTRIVIAL_LINE_LEN = 25
@@ -45,7 +47,7 @@ class MemoryEntry:
     obsolete_signals: list[str] = field(default_factory=list)
 
 
-def parse_frontmatter(text: str) -> tuple[dict, str]:
+def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     if not text.startswith("---\n"):
         return {}, text
     end = text.find("\n---\n", 4)
@@ -53,7 +55,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
         return {}, text
     raw = text[4:end]
     body = text[end + 5 :]
-    meta: dict = {}
+    meta: dict[str, Any] = {}
     stack = [(-1, meta)]  # (indent, dict) for one level of nesting
     for line in raw.splitlines():
         if not line.strip() or line.lstrip().startswith("#"):
@@ -65,7 +67,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
             stack.pop()
         parent = stack[-1][1]
         if val == "":
-            child: dict = {}
+            child: dict[str, Any] = {}
             parent[key] = child
             stack.append((indent, child))
         else:
@@ -119,7 +121,7 @@ def rewrite_index_without(text: str, targets: set[str]) -> str:
     return "\n".join(keep).rstrip() + "\n"
 
 
-def iter_memory_dirs(root) -> Iterator[Path]:
+def iter_memory_dirs(root: str | Path) -> Iterator[Path]:
     root = Path(root)
     if not root.exists():
         return
@@ -143,7 +145,9 @@ def _resolve_cwd(project_dir: Path) -> str | None:
     return None
 
 
-def scan_memory(root, git_resolver=None) -> list[MemoryEntry]:
+def scan_memory(
+    root: str | Path, git_resolver: Callable[[str | None], GitProject | None] | None = None
+) -> list[MemoryEntry]:
     if git_resolver is None:
         git_resolver = resolve_git_project
     root = Path(root)

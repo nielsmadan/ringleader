@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import chain
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ..slug import normalize, slugify
 from .base import NormalizedSession, RawRef, stat_fingerprint
@@ -27,7 +27,7 @@ def _iso_mtime(p: Path) -> str:
     return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
-def _session_start(path: Path) -> dict:
+def _session_start(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             if not raw.strip():
@@ -39,7 +39,7 @@ def _session_start(path: Path) -> dict:
     return {}
 
 
-def _is_own_session(start: dict) -> bool:
+def _is_own_session(start: dict[str, Any]) -> bool:
     """Droid writes a transcript per thread: the interactive session and every
     subagent it spawns alike. Only a thread with no caller is one a human owns and
     can resume, which is also what `droid resume` lists."""
@@ -61,8 +61,8 @@ def _text_from_content(content: object) -> str:
     return " ".join(parts).strip()
 
 
-def _session_fields(path: Path, tail_turns: int) -> dict:
-    start: dict = {}
+def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
+    start: dict[str, Any] = {}
     turns: list[tuple[str, str]] = []
     last_prompt: str | None = None
     message_count = 0

@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from .base import (
     IndexUpdate,
@@ -102,19 +102,19 @@ def _message_stats(path: Path) -> tuple[str | None, str | None, int]:
     return first, last, len(prompts) + assistant_count
 
 
-def _meta(path: Path) -> dict:
+def _meta(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8") as fh:
         for line in fh:
             if not line.strip():
                 continue
             o = json.loads(line)
             if o.get("type") == "session_meta":
-                return o.get("payload", {})
+                return cast(dict[str, Any], o.get("payload", {}))
             return {}
     return {}
 
 
-def _thread_id(meta: dict, path: Path) -> str:
+def _thread_id(meta: dict[str, Any], path: Path) -> str:
     """The rollout's own thread id. `session_id` is the id of the *root* thread,
     so for a subagent rollout it names the parent, not this file — keying on it
     collapses a whole spawn tree onto one id. `id` is always this file's own, and
@@ -122,7 +122,7 @@ def _thread_id(meta: dict, path: Path) -> str:
     return meta.get("id") or meta.get("session_id") or path.stem
 
 
-def _is_interactive(meta: dict) -> bool:
+def _is_interactive(meta: dict[str, Any]) -> bool:
     """Codex writes a rollout per thread: interactive sessions, the subagents they
     spawn, and non-interactive `codex exec` runs alike. Only the first are sessions
     a human owns and can resume, which is also what `codex resume` lists by default.
@@ -259,7 +259,7 @@ class CodexSource:
     def _update_thread(
         self,
         sql: str,
-        params: tuple,
+        params: tuple[Any, ...],
         *,
         key: tuple[str, str],
         required: frozenset[str],

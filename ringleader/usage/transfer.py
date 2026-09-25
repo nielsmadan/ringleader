@@ -2,8 +2,10 @@ from __future__ import annotations
 
 import json
 import socket
+from collections.abc import Iterable
 from dataclasses import asdict
 from pathlib import Path
+from typing import Any
 
 from .base import UsageRecord
 
@@ -14,7 +16,7 @@ def machine_id() -> str:
     return socket.gethostname() or "unknown"
 
 
-def dump(records, machine: str) -> dict:
+def dump(records: Iterable[UsageRecord], machine: str) -> dict[str, Any]:
     return {
         "version": EXPORT_VERSION,
         "machine": machine,
@@ -22,14 +24,16 @@ def dump(records, machine: str) -> dict:
     }
 
 
-def write_export(records, path, machine: str | None = None) -> Path:
+def write_export(
+    records: Iterable[UsageRecord], path: str | Path, machine: str | None = None
+) -> Path:
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(dump(records, machine or machine_id())), encoding="utf-8")
     return p
 
 
-def load_exports(dir_) -> list[UsageRecord]:
+def load_exports(dir_: str | Path) -> list[UsageRecord]:
     out: list[UsageRecord] = []
     for f in sorted(Path(dir_).glob("*.json")):
         try:
@@ -49,9 +53,9 @@ def load_exports(dir_) -> list[UsageRecord]:
     return out
 
 
-def dedupe(records) -> list[UsageRecord]:
+def dedupe(records: Iterable[UsageRecord]) -> list[UsageRecord]:
     me = machine_id()
-    seen: set[tuple] = set()
+    seen: set[tuple[Any, ...]] = set()
     out: list[UsageRecord] = []
     for r in records:
         # record_id is unique per read; the composite is the fallback for older exports

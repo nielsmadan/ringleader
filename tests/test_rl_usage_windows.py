@@ -30,7 +30,7 @@ def _win(
 def fake_windows(monkeypatch):
     wins = []
     monkeypatch.setattr(usage_cmd, "collect_windows", lambda: list(wins))
-    monkeypatch.setattr(usage_cmd, "collect_claude_windows", lambda: [])
+    monkeypatch.setattr(usage_cmd, "collect_claude_windows", list)
     monkeypatch.setattr(usage_cmd, "_now", lambda: NOW)
     return wins
 
@@ -117,7 +117,7 @@ def test_empty_state_when_no_codex_data(fake_windows, capsys):
 
 
 def test_claude_windows_render_beside_codex(monkeypatch, capsys):
-    monkeypatch.setattr(usage_cmd, "collect_windows", lambda: [])
+    monkeypatch.setattr(usage_cmd, "collect_windows", list)
     monkeypatch.setattr(usage_cmd, "_now", lambda: NOW)
     monkeypatch.setattr(
         usage_cmd,
@@ -144,8 +144,8 @@ def test_claude_windows_render_beside_codex(monkeypatch, capsys):
 
 
 def test_claude_absent_points_at_the_installer(monkeypatch, capsys):
-    monkeypatch.setattr(usage_cmd, "collect_windows", lambda: [])
-    monkeypatch.setattr(usage_cmd, "collect_claude_windows", lambda: [])
+    monkeypatch.setattr(usage_cmd, "collect_windows", list)
+    monkeypatch.setattr(usage_cmd, "collect_claude_windows", list)
 
     usage_cmd.cmd_usage(["windows"])
 
@@ -153,7 +153,7 @@ def test_claude_absent_points_at_the_installer(monkeypatch, capsys):
 
 
 def test_expired_claude_window_is_not_shown_as_current(monkeypatch, capsys):
-    monkeypatch.setattr(usage_cmd, "collect_windows", lambda: [])
+    monkeypatch.setattr(usage_cmd, "collect_windows", list)
     monkeypatch.setattr(
         usage_cmd,
         "collect_claude_windows",

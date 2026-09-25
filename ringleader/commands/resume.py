@@ -9,7 +9,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .. import export, paths, refresh, registry, resume, scanner
 from ..presence import PresenceClient
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 Runner = Callable[[Sequence[str], str], int]
 Picker = Callable[[str, str, Scope, str, "str | None"], "Choice | None"]
-Refresher = Callable[[str, str], tuple[dict, str | None]]
+Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
 Which = Callable[[str], str | None]
 Presence = Callable[[], frozenset[tuple[str, str]]]
 
@@ -42,15 +42,15 @@ class _Abort(Exception):
 
 @dataclass(frozen=True)
 class _Pick:
-    thread: dict
-    threads: Sequence[dict]
+    thread: dict[str, Any]
+    threads: Sequence[dict[str, Any]]
     target: str | None
     confirmed: bool = False
 
 
 @dataclass(frozen=True)
 class _Plan:
-    thread: dict
+    thread: dict[str, Any]
     argv: tuple[str, ...]
     cwd: str
     transcript: Path | None
@@ -137,15 +137,15 @@ def _requested_target(value: str | None) -> str | None:
     return resume.source_name(value)
 
 
-def _eligible_threads(threads: Iterable[dict]) -> list[dict]:
+def _eligible_threads(threads: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return [t for t in threads if resume.eligible(t)]
 
 
-def _eligible(reg: dict) -> list[dict]:
+def _eligible(reg: dict[str, Any]) -> list[dict[str, Any]]:
     return _eligible_threads(reg.get("threads") or [])
 
 
-def _by_id(records: Sequence[dict], query: str) -> dict | None:
+def _by_id(records: Sequence[dict[str, Any]], query: str) -> dict[str, Any] | None:
     exact = [r for r in records if r.get("sessionId") == query]
     if exact:
         return exact[0] if len(exact) == 1 else None
@@ -161,11 +161,11 @@ def _where(scope: Scope, cwd: str) -> str:
     return f"under {cwd}" if scope is Scope.RECURSIVE else f"in {cwd}"
 
 
-def _matches(reg: dict, query: str, scope: Scope, cwd: str) -> bool:
+def _matches(reg: dict[str, Any], query: str, scope: Scope, cwd: str) -> bool:
     return bool(resume.rank(resume.candidates(reg, scope=scope, cwd=cwd), query))
 
 
-def _check_archived(reg: dict, query: str) -> None:
+def _check_archived(reg: dict[str, Any], query: str) -> None:
     record = _by_id(reg.get("archived") or [], query)
     if record is None:
         return
@@ -173,7 +173,7 @@ def _check_archived(reg: dict, query: str) -> None:
     raise _Abort(f"{sid} is archived — `rl session unarchive {sid}` to bring it back")
 
 
-def _hit(reg: dict, query: str) -> dict | None:
+def _hit(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
     direct = _by_id(_eligible(reg), query)
     if direct is None:
         _check_archived(reg, query)
@@ -181,8 +181,12 @@ def _hit(reg: dict, query: str) -> dict | None:
 
 
 def _for_query(
-    args: argparse.Namespace, reg: dict, scope: Scope, cwd: str, refresher: Refresher
-) -> tuple[dict | None, dict]:
+    args: argparse.Namespace,
+    reg: dict[str, Any],
+    scope: Scope,
+    cwd: str,
+    refresher: Refresher,
+) -> tuple[dict[str, Any] | None, dict[str, Any]]:
     """The thread a query names outright, and the registry that answer came from. A query
     nothing in the registry answers at all earns one scan before it is refused."""
     direct = _hit(reg, args.query)
@@ -199,8 +203,12 @@ def _for_query(
 
 
 def _for_last(
-    args: argparse.Namespace, reg: dict, scope: Scope, cwd: str, refresher: Refresher
-) -> tuple[dict, dict]:
+    args: argparse.Namespace,
+    reg: dict[str, Any],
+    scope: Scope,
+    cwd: str,
+    refresher: Refresher,
+) -> tuple[dict[str, Any], dict[str, Any]]:
     """The most recent session in scope, and the registry it came from. Like a query, an
     empty scope earns one scan before it is refused — never a picker, since --last asked
     not to be asked."""
@@ -218,7 +226,7 @@ def _for_last(
 
 def _choose(
     args: argparse.Namespace,
-    reg: dict,
+    reg: dict[str, Any],
     cwd: str,
     picker: Picker,
     refresher: Refresher,
@@ -244,7 +252,7 @@ def _choose(
     )
 
 
-def _launch_dir(thread: dict, threads: Sequence[dict]) -> str:
+def _launch_dir(thread: dict[str, Any], threads: Sequence[dict[str, Any]]) -> str:
     cwd = resume.launch_cwd(thread, threads)
     if not cwd:
         raise _Abort(f"{thread['sessionId']} has no recorded directory to start in")
@@ -253,7 +261,7 @@ def _launch_dir(thread: dict, threads: Sequence[dict]) -> str:
     return cwd
 
 
-def _render(thread: dict) -> str:
+def _render(thread: dict[str, Any]) -> str:
     try:
         text = export.render_conversation(thread)
     except (OSError, RuntimeError) as error:
@@ -268,7 +276,7 @@ def _handoff_path(session_id: str) -> Path:
     return paths.handoffs_dir() / f"{Path(session_id).name}-{stamp}.md"
 
 
-def _prompt(thread: dict, path: Path) -> str:
+def _prompt(thread: dict[str, Any], path: Path) -> str:
     origin = resume.agent_name(resume.source_of(thread))
     return (
         f"Read {path} — a Markdown transcript of a {origin} session "
@@ -294,13 +302,13 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
     return _Plan(thread, argv, cwd, path, pick.confirmed)
 
 
-def _running(thread: dict, probe: Presence) -> bool:
+def _running(thread: dict[str, Any], probe: Presence) -> bool:
     session_id = thread.get("sessionId")
     if not session_id:
         return False
     try:
         live = probe()
-    except Exception:
+    except Exception:  # noqa: BLE001 -- a probe that fails any way means "not running"
         return False
     return (resume.agent_name(resume.source_of(thread)), session_id) in live
 

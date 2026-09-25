@@ -36,9 +36,10 @@ artifacts = ["ringleader/_vendor/**"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
-addopts = "-q"
+addopts = "-q --strict-config --strict-markers"
 pythonpath = ["."]
 asyncio_mode = "auto"
+filterwarnings = ["error"]
 
 [tool.coverage.run]
 source = ["ringleader"]
@@ -50,6 +51,7 @@ show_missing = true
 [tool.mypy]
 python_version = "3.13"
 files = ["ringleader"]
+strict = true
 
 # `llm` is an optional engine (see docs/tech/models.md); it is deliberately not a
 # dependency, so its absence must not fail the type check.
@@ -64,7 +66,9 @@ src = ["ringleader", "tests"]
 extend-exclude = ["docs", "*.md"]
 
 [tool.ruff.lint]
-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
+# Explicit rule families on top of ruff's defaults (extend-select). Honors the
+# in-tree `# noqa` codes (PLC0415, BLE001, SLF001, ...).
+extend-select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "PL", "RUF"]
 ignore = ["E501"]
 
 [tool.ruff.lint.pylint]
@@ -76,3 +80,5 @@ max-returns = 8
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401", "E402"]
 "tests/*" = ["S101", "SLF001", "PLR2004", "E402", "PLC0415"]
+# JSON shape violations stay ValueError: the caller skips the file on that type.
+"ringleader/commands/hooks.py" = ["TRY004"]

@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from typing import Any
 
 from . import overview
 
 
-def matches(thread: dict, selector: str) -> bool:
+def matches(thread: dict[str, Any], selector: str) -> bool:
     sel = selector.strip().lower()
     # equality against label / key / root / cwd
     for key in ("gitProjectLabel", "gitProjectKey", "gitRoot", "project"):
@@ -21,7 +22,9 @@ def matches(thread: dict, selector: str) -> bool:
     return False
 
 
-def filter_by_projects(threads, selectors) -> list[dict]:
+def filter_by_projects(
+    threads: list[dict[str, Any]], selectors: list[str] | None
+) -> list[dict[str, Any]]:
     if not selectors:
         return list(threads)
     return [t for t in threads if any(matches(t, s) for s in selectors)]
@@ -44,7 +47,7 @@ class ProjectStat:
 
 
 def project_summary(
-    reg: dict,
+    reg: dict[str, Any],
     now_iso: str | None = None,
     include_snoozed: bool = False,
     triage_counts: bool = False,
@@ -57,7 +60,7 @@ def project_summary(
     for e in reg.get("memoryEntries", []):
         k = overview.group_key(e)
         mem_counts[k] = mem_counts.get(k, 0) + 1
-    groups: dict[str, dict] = {}
+    groups: dict[str, dict[str, Any]] = {}
     for t in reg["threads"]:
         snoozed = overview.snooze_active(t, now_iso)
         if snoozed and not include_snoozed:

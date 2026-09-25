@@ -5,6 +5,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ..sources.codex import _meta, default_codex_dir
 from .base import UsageRecord, WindowSnapshot, as_dict, as_float_or_none, as_int, total_of
@@ -19,7 +20,7 @@ def _session_id(path: Path) -> str:
     return "-".join(parts[-_UUID_DASH_PARTS:]) if len(parts) >= _UUID_DASH_PARTS else stem
 
 
-def _iso(epoch) -> str:
+def _iso(epoch: float) -> str:
     return datetime.fromtimestamp(int(epoch), UTC).isoformat()
 
 
@@ -36,7 +37,7 @@ class CodexUsageReader:
     def available(self) -> bool:
         return self.sessions_dir.exists()
 
-    def _payloads(self) -> Iterator[tuple[Path, int, dict, dict]]:
+    def _payloads(self) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
         if not self.available():
             return
         for f in sorted(self.sessions_dir.glob("**/*.jsonl")):
@@ -67,7 +68,7 @@ class CodexUsageReader:
         return self._meta_cwd
 
     def records(self) -> Iterator[UsageRecord]:
-        prev: tuple | None = None
+        prev: tuple[Any, ...] | None = None
         prev_file: Path | None = None
         for f, ordinal, o, payload in self._payloads():
             info = as_dict(payload.get("info"))

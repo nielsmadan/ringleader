@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import json
 from dataclasses import dataclass
+from types import ModuleType
+from typing import Any, cast
 
 from .base import ModelError
 
@@ -13,7 +15,7 @@ class LlmModel:
     provider: str = "anthropic"
     model: str | None = None
 
-    def _llm(self):
+    def _llm(self) -> ModuleType:
         try:
             return importlib.import_module("llm")
         except ImportError as e:
@@ -27,14 +29,14 @@ class LlmModel:
         try:
             llm.get_model(self.model or self.provider)  # resolves the model id
             return True
-        except Exception:
+        except Exception:  # noqa: BLE001 -- any engine failure means unavailable
             return False
 
-    def complete_json(self, prompt: str, schema: dict) -> dict:
+    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         llm = self._llm()
         try:
             model = llm.get_model(self.model or self.provider)
             resp = model.prompt(prompt, schema=schema)
-            return json.loads(resp.text())
+            return cast(dict[str, Any], json.loads(resp.text()))
         except Exception as e:
             raise ModelError(f"the llm engine failed: {e}") from e

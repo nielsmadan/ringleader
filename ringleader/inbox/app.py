@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from textual import work
 from textual.app import App, ComposeResult
@@ -38,7 +38,7 @@ def _parse_iso(ts: str) -> datetime:
     return dt
 
 
-def _row_label(t: dict) -> str:
+def _row_label(t: dict[str, Any]) -> str:
     project = overview.group_label(t)
     desc = t.get("whatItIs") or t.get("title") or t.get("aiTitle") or (t.get("sessionId") or "")[:8]
     return f"{project}: {desc}"
@@ -129,7 +129,7 @@ class RoundupConfirmModal(ModalScreen[bool]):
         self.dismiss(False)
 
 
-class RoundupProgressModal(ModalScreen):
+class RoundupProgressModal(ModalScreen[None]):
     """Shown while the pre-flight roundup worker runs; no key bindings — it
     dismisses itself once the worker finishes."""
 
@@ -155,7 +155,7 @@ class RoundupProgressModal(ModalScreen):
         )
 
 
-class DetailModal(ModalScreen):
+class DetailModal(ModalScreen[None]):
     """A read-only detail view of one session; `h` (or escape) pops back."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
@@ -163,7 +163,7 @@ class DetailModal(ModalScreen):
         Binding("escape", "pop", "back", show=False),
     ]
 
-    def __init__(self, thread: dict) -> None:
+    def __init__(self, thread: dict[str, Any]) -> None:
         super().__init__()
         self._thread = thread
 
@@ -191,7 +191,7 @@ class DetailModal(ModalScreen):
         self.app.pop_screen()
 
 
-class InboxApp(App):
+class InboxApp(App[None]):
     """The inbox-zero TUI: blitz through dormant sessions with j/k + actions."""
 
     TITLE = "rl inbox"
@@ -234,14 +234,14 @@ class InboxApp(App):
         self.registry_path = (
             str(registry_path) if registry_path is not None else str(default_registry())
         )
-        self._reg: dict = registry.empty_registry()
+        self._reg: dict[str, Any] = registry.empty_registry()
         self._active_tab: str = "inbox"
-        self._inbox: list[dict] = []
-        self._selected: list[dict] = []
-        self._harvesting: list[dict] = []
+        self._inbox: list[dict[str, Any]] = []
+        self._selected: list[dict[str, Any]] = []
+        self._harvesting: list[dict[str, Any]] = []
         self._harvest_by_session: dict[str, harvests.Harvest] = {}
         self._staged_deletes: set[str] = set()
-        self._undo_stack: list[tuple[int, dict]] = []
+        self._undo_stack: list[tuple[int, dict[str, Any]]] = []
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -258,7 +258,7 @@ class InboxApp(App):
         self._refresh_tab_data(self._active_tab)
         await self._render_active_tab()
 
-    def _roundup_is_stale(self, cfg) -> bool:
+    def _roundup_is_stale(self, cfg: config.Config) -> bool:
         last = self._reg.get("lastRoundupAt")
         if not last:
             return True
@@ -276,7 +276,7 @@ class InboxApp(App):
             self.push_screen(RoundupProgressModal())
             try:
                 roundup.cmd_roundup(["--registry", self.registry_path, "--yes"])
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001 -- report in the UI, do not crash it
                 self.notify(f"roundup failed: {e}", title="rl inbox", severity="error")
             else:
                 notify.notify("ringleader", "roundup complete")
@@ -286,7 +286,7 @@ class InboxApp(App):
         self._refresh_tab_data(self._active_tab)
         await self._render_active_tab()
 
-    def _compute_inbox(self) -> list[dict]:
+    def _compute_inbox(self) -> list[dict[str, Any]]:
         now = _now_iso()
         today = _today_str()
         inbox = overview.triage_inbox(self._reg["threads"], now)
@@ -300,13 +300,14 @@ class InboxApp(App):
             and not overview.is_filtered(t)
         ]
 
-    def _compute_selected(self) -> list[dict]:
+    def _compute_selected(self) -> list[dict[str, Any]]:
         return registry.selected_today(self._reg, _today_str())
 
-    def _compute_harvesting(self) -> list[dict]:
+    def _compute_harvesting(self) -> list[dict[str, Any]]:
         # archiving pops a thread out of reg["threads"] entirely, so anything still
         # here with decision=="harvested" is by definition still live.
-        return [t for t in self._reg["threads"] if t.get("decision") == "harvested"]
+        threads: list[dict[str, Any]] = self._reg["threads"]
+        return [t for t in threads if t.get("decision") == "harvested"]
 
     def _refresh_tab_data(self, tab: str) -> None:
         if tab == "inbox":
@@ -317,10 +318,10 @@ class InboxApp(App):
             self._harvesting = self._compute_harvesting()
             self._harvest_by_session = {h.session_id: h for h in harvests.load_harvests()}
 
-    def _active_rows(self) -> list[dict]:
-        return getattr(self, f"_{self._active_tab}")
+    def _active_rows(self) -> list[dict[str, Any]]:
+        return cast(list[dict[str, Any]], getattr(self, f"_{self._active_tab}"))
 
-    def _row_label_for(self, t: dict) -> str:
+    def _row_label_for(self, t: dict[str, Any]) -> str:
         label = _row_label(t)
         if self._active_tab == "harvesting":
             h = self._harvest_by_session.get(t["sessionId"])
@@ -350,7 +351,7 @@ class InboxApp(App):
             list_view.index = 0
         self._render_empty_state(rows)
 
-    def _render_empty_state(self, rows: list[dict]) -> None:
+    def _render_empty_state(self, rows: list[dict[str, Any]]) -> None:
         empty_label = self.query_one("#empty-state", Label)
         list_view = self._list_view()
         if rows:
@@ -367,7 +368,7 @@ class InboxApp(App):
     def _list_view(self) -> ListView:
         return self.query_one("#inbox-list", ListView)
 
-    def _current(self) -> tuple[int, dict] | None:
+    def _current(self) -> tuple[int, dict[str, Any]] | None:
         list_view = self._list_view()
         idx = list_view.index
         rows = self._active_rows()
@@ -380,7 +381,7 @@ class InboxApp(App):
         await self._list_view().pop(idx)
         self._render_empty_state(self._active_rows())
 
-    async def _insert_row(self, idx: int, t: dict) -> None:
+    async def _insert_row(self, idx: int, t: dict[str, Any]) -> None:
         rows = self._active_rows()
         idx = max(0, min(idx, len(rows)))
         rows.insert(idx, t)
@@ -480,7 +481,7 @@ class InboxApp(App):
                     )
                     registry.append_harvest_path(self._reg, t["sessionId"], str(path))
                     registry.save_registry(self.registry_path, self._reg)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 -- report in the UI, do not crash it
             self.notify(f"harvest failed: {e}", title="rl inbox", severity="error")
             return
         await self._remove_row(idx)

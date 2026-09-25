@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Any, TextIO
 
 from . import commands
 
@@ -25,13 +26,13 @@ _GROUPS = ("session", "mem", "data", "workspace")
 _RESERVED: set[str] = set()
 
 
-def _leaf_names(node, group: str = "") -> str:
+def _leaf_names(node: object, group: str = "") -> str:
     if not isinstance(node, dict):
         return ""
     return "  ".join(f"{k} (coming soon)" if f"{group} {k}" in _RESERVED else k for k in node)
 
 
-def _usage(stream=None) -> None:
+def _usage(stream: TextIO | None = None) -> None:
     stream = sys.stdout if stream is None else stream
     print("ringleader — usage: rl <command> [args]\n", file=stream)
     print("commands: " + "  ".join(_FLAT), file=stream)
@@ -41,7 +42,7 @@ def _usage(stream=None) -> None:
         print(f"  {g}: {subs}", file=stream)
 
 
-def _group_usage(crumbs: list[str], node: dict, stream) -> None:
+def _group_usage(crumbs: list[str], node: dict[str, Any], stream: TextIO) -> None:
     group = " ".join(crumbs)
     print(f"rl {group} — subcommands: " + _leaf_names(node, group), file=stream)
 
@@ -51,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
-    node: dict = TABLE
+    node: dict[str, Any] = TABLE
     crumbs: list[str] = []
     rest = argv
     while rest:
@@ -67,7 +68,7 @@ def main(argv: list[str] | None = None) -> int:
             node = entry
             continue
         if not callable(entry):
-            raise RuntimeError("invalid command table")
+            raise TypeError("invalid command table")
         return entry(rest) or 0
     _group_usage(crumbs, node, sys.stdout)
     return 0

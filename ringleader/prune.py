@@ -4,6 +4,7 @@ import contextlib
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import overview, registry, scanner
 
@@ -12,13 +13,13 @@ DEFAULT_MAX_TURNS = 12
 
 
 def prune_candidates(
-    reg: dict,
+    reg: dict[str, Any],
     now_iso: str,
     *,
     older_than_days: int = DEFAULT_OLDER_THAN_DAYS,
     max_turns: int = DEFAULT_MAX_TURNS,
-) -> list[dict]:
-    out = []
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for t in reg["threads"]:
         if t.get("decision") in ("keep", "harvested"):
             continue
@@ -33,7 +34,7 @@ def prune_candidates(
     return out
 
 
-def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
+def delete_sessions(reg: dict[str, Any], candidates: list[dict[str, Any]], now_iso: str) -> int:
     deleted = skipped = 0
     for t in candidates:
         try:
@@ -56,10 +57,12 @@ def delete_sessions(reg: dict, candidates: list[dict], now_iso: str) -> int:
     return deleted
 
 
-def archive_purge_candidates(reg: dict, now_iso: str, *, retention_days: int) -> list[dict]:
+def archive_purge_candidates(
+    reg: dict[str, Any], now_iso: str, *, retention_days: int
+) -> list[dict[str, Any]]:
     if retention_days <= 0:
         return []
-    out = []
+    out: list[dict[str, Any]] = []
     for ts in reg.get("archived", []):
         archived = ts.get("archivedAt")
         if not archived:
@@ -74,7 +77,7 @@ def archive_purge_candidates(reg: dict, now_iso: str, *, retention_days: int) ->
 
 
 def purge_archived(
-    reg: dict, candidates: list[dict], now_iso: str, *, archive_root_path: str
+    reg: dict[str, Any], candidates: list[dict[str, Any]], now_iso: str, *, archive_root_path: str
 ) -> int:
     root = Path(archive_root_path).resolve()
     purged = 0

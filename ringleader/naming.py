@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 from . import overview
 
@@ -18,7 +19,7 @@ def _short_suffix(session_id: str) -> str:
     return session_id.replace("-", "")[:6]
 
 
-def unique_name(suggested: str, session_id: str, taken) -> str:
+def unique_name(suggested: str, session_id: str, taken: set[str]) -> str:
     if suggested not in taken:
         return suggested
     stripped = session_id.replace("-", "")
@@ -35,13 +36,13 @@ def unique_name(suggested: str, session_id: str, taken) -> str:
         n += 1
 
 
-def _age_minutes(thread: dict, now_iso: str) -> float:
+def _age_minutes(thread: dict[str, Any], now_iso: str) -> float:
     return overview.age_days(thread["mtime"], now_iso) * 1440.0
 
 
 def candidate_kind(
-    thread: dict, now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES
-):
+    thread: dict[str, Any], now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES
+) -> str | None:
     suggested = thread.get("suggestedName")
     if not suggested:
         return None
@@ -57,12 +58,14 @@ def candidate_kind(
     return None  # user-owned or converged
 
 
-def select_eligible(reg: dict, now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES):
+def select_eligible(
+    reg: dict[str, Any], now_iso: str, active_window_minutes: float = ACTIVE_WINDOW_MINUTES
+) -> list[tuple[dict[str, Any], str, str]]:
     # Seeded from ALL current titles (including ones about to be renamed away), so a
     # new candidate may get a suffix even though a soon-to-be-renamed title will free
     # up — intentional: global uniqueness, no ordering dependence (spec-compliant).
     taken = {t["title"] for t in reg["threads"] if t.get("title")}
-    out = []
+    out: list[tuple[dict[str, Any], str, str]] = []
     for t in sorted(reg["threads"], key=lambda t: t["mtime"]):
         kind = candidate_kind(t, now_iso, active_window_minutes)
         if kind is None:

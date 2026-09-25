@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import subprocess
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,8 +17,7 @@ class GitProject:
 
 def normalize_remote(url: str) -> str:
     u = url.strip()
-    if u.endswith(".git"):
-        u = u[:-4]
+    u = u.removesuffix(".git")
     if u.startswith("git@"):  # git@host:org/repo
         u = u[4:].replace(":", "/", 1)
     else:
@@ -37,22 +37,24 @@ def normalize_remote(url: str) -> str:
 def _default_runner(cmd: list[str]) -> str | None:
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=3, check=False)
-    except Exception:
+    except Exception:  # noqa: BLE001 -- git absent or failing: no git project
         return None
     if out.returncode != 0:
         return None
     return out.stdout
 
 
-def _git(cwd: str, args: list[str], runner) -> str | None:
+def _git(cwd: str, args: list[str], runner: Callable[[list[str]], str | None]) -> str | None:
     try:
         out = runner(["git", "-C", cwd, *args])
-    except Exception:
+    except Exception:  # noqa: BLE001 -- git absent or failing: no git project
         return None
     return out.strip() if out else None
 
 
-def resolve_git_project(cwd: str | None, runner=None) -> GitProject | None:
+def resolve_git_project(
+    cwd: str | None, runner: Callable[[list[str]], str | None] | None = None
+) -> GitProject | None:
     if not cwd:
         return None
     try:

@@ -14,7 +14,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from .. import safe_write
 from ..paths import exists_or_report, factory_dir, factory_label
@@ -90,7 +90,7 @@ def _is_ours(command: object) -> bool:
         return False
 
 
-def _load_json_raw(path: Path) -> tuple[str, dict] | None:
+def _load_json_raw(path: Path) -> tuple[str, dict[str, Any]] | None:
     """The file's own text plus the JSON object it holds — `("", {})` if the file
     doesn't exist yet, or `None` if it exists but can't be read or parsed as a JSON
     object, the signal to leave it untouched rather than risk clobbering something we
@@ -123,12 +123,12 @@ def _load_json_raw(path: Path) -> tuple[str, dict] | None:
     return raw, data
 
 
-def _load_json_or_none(path: Path) -> dict | None:
+def _load_json_or_none(path: Path) -> dict[str, Any] | None:
     loaded = _load_json_raw(path)
     return None if loaded is None else loaded[1]
 
 
-def _event_container(data: dict, *, flat: bool) -> dict | None:
+def _event_container(data: dict[str, Any], *, flat: bool) -> dict[str, Any] | None:
     """The object that holds the event lists: the file's root when it is keyed by event
     name, else its `hooks` value."""
     if flat:
@@ -137,7 +137,7 @@ def _event_container(data: dict, *, flat: bool) -> dict | None:
     return hooks if isinstance(hooks, dict) else None
 
 
-def _has_our_entry(data: dict, *, flat: bool) -> bool:
+def _has_our_entry(data: dict[str, Any], *, flat: bool) -> bool:
     container = _event_container(data, flat=flat)
     if container is None:
         return False
@@ -153,7 +153,7 @@ def _has_our_entry(data: dict, *, flat: bool) -> bool:
     return False
 
 
-def _with_our_entry(data: dict, timeout_seconds: int, *, flat: bool) -> dict:
+def _with_our_entry(data: dict[str, Any], timeout_seconds: int, *, flat: bool) -> dict[str, Any]:
     """`data`, with our SessionEnd group appended if not already present. Mutates and
     returns `data` in place; raises `ValueError` (caller skips the file) if the event
     key or its container already exist with the wrong shape."""
@@ -191,7 +191,7 @@ def _with_our_entry(data: dict, timeout_seconds: int, *, flat: bool) -> dict:
     return data
 
 
-def _without_our_entries(data: dict, *, flat: bool) -> tuple[dict, int]:
+def _without_our_entries(data: dict[str, Any], *, flat: bool) -> tuple[dict[str, Any], int]:
     """A copy of `data` with only our SessionEnd entries removed; a foreign entry in
     the same or another group survives untouched. Returns (new_data, removed_count)."""
     container = _event_container(data, flat=flat)
@@ -227,7 +227,7 @@ def _without_our_entries(data: dict, *, flat: bool) -> tuple[dict, int]:
     return new_data, removed
 
 
-def _planned_text(data: dict, timeout_seconds: int, *, flat: bool) -> str | None:
+def _planned_text(data: dict[str, Any], timeout_seconds: int, *, flat: bool) -> str | None:
     """The full text to write once our entry is in `data`, or None if it is already
     there. Raises `ValueError` (caller skips the file) on a wrong-shaped event key."""
     before = json.dumps(data, indent=2)

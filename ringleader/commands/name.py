@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 from .. import naming, overview, projects, registry, scanner
 from ..sources.base import NameApplyingSource
@@ -13,7 +14,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _can_name(t: dict) -> bool:
+def _can_name(t: dict[str, Any]) -> bool:
     src = scanner.source_by_name(t.get("source") or "claude-code")
     return bool(src and "applies_names" in src.capabilities and isinstance(src, NameApplyingSource))
 

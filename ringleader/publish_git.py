@@ -281,10 +281,7 @@ def validate_prepared_changes(
         raise PublishGitError("checkout root does not match the recorded checkout")
     if state.branch != receipt.branch or state.head != receipt.base_commit:
         raise PublishGitError("integrator changed branch or HEAD")
-    try:
-        contained = _report_paths_are_contained(state.root, report_paths)
-    except PublishGitError:
-        raise
+    contained = _report_paths_are_contained(state.root, report_paths)
     if not contained:
         raise PublishGitError("integrator report has an unsafe checkout path")
     if _has_staged_gitlink(receipt.checkout):

@@ -9,6 +9,7 @@ import sys
 from datetime import UTC, datetime
 from json.decoder import JSONDecoder
 from pathlib import Path
+from typing import Any
 
 from .. import safe_write
 from ..paths import ensure_state_dir
@@ -36,12 +37,12 @@ def _add_settings_arg(ap: argparse.ArgumentParser) -> None:
     ap.add_argument("--settings", default=_default_settings_path())
 
 
-def _read(path: Path) -> tuple[str, dict]:
+def _read(path: Path) -> tuple[str, dict[str, Any]]:
     raw = path.read_text(encoding="utf-8")
     return raw, json.loads(raw)
 
 
-def _command_of(data: dict) -> object:
+def _command_of(data: dict[str, Any]) -> object:
     status_line = data.get("statusLine")
     if not isinstance(status_line, dict):
         return None
@@ -64,7 +65,7 @@ def _script_target(command: str) -> Path | None:
     return candidate if candidate.is_file() else None
 
 
-def _validated_command(path: Path, raw: str, data: dict) -> tuple[str | None, int | None]:
+def _validated_command(path: Path, raw: str, data: dict[str, Any]) -> tuple[str | None, int | None]:
     """The top-level ``statusLine.command``, refusing rather than guessing when the file
     is ambiguous (a duplicate top-level ``statusLine`` key) or malformed (a non-string
     ``command``). Returns ``(command, None)`` on success — ``command`` may be falsy when

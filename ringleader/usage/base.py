@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @dataclass
@@ -59,7 +59,7 @@ def total_of(*, input: int, cache_read: int, cache_write: int, output: int) -> i
     return input + cache_read + cache_write + output
 
 
-def as_dict(value: object) -> dict:
+def as_dict(value: object) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 

@@ -31,10 +31,12 @@ from __future__ import annotations
 import argparse
 import shutil
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
+from typing import Any
 
 from .. import gitinfo, refresh, registry, scanner
 from ..slug import is_beneath, normalize, remap, slugify, stored_under
@@ -47,17 +49,17 @@ from . import default_registry
 class _Plan:
     old: str
     new: str
-    threads: list = field(default_factory=list)  # (thread, new_project)
-    arch: list = field(default_factory=list)  # (archived record, new_project)
-    whole: list = field(default_factory=list)  # (source, old_cwd, new_cwd)
-    per: list = field(default_factory=list)  # (thread, source, new_project)
-    rebind: list = field(default_factory=list)  # (thread, source, new_project)
-    unsupported: list = field(default_factory=list)  # threads whose storage can't be followed
+    threads: list[tuple[dict[str, Any], str]] = field(default_factory=list)
+    arch: list[tuple[dict[str, Any], str]] = field(default_factory=list)
+    whole: list[tuple[str, str, str]] = field(default_factory=list)
+    per: list[tuple[dict[str, Any], str, str]] = field(default_factory=list)
+    rebind: list[tuple[dict[str, Any], str, str]] = field(default_factory=list)
+    unsupported: list[dict[str, Any]] = field(default_factory=list)  # storage can't be followed
     already_done: bool = False  # nothing beneath OLD, but NEW already has sessions
 
 
 @cache
-def _git_for(new_project: str) -> dict | None:
+def _git_for(new_project: str) -> dict[str, str | None] | None:
     gp = gitinfo.resolve_git_project(new_project)
     if gp is None:
         return None
@@ -76,8 +78,8 @@ class _Sources:
     are always needed as a pair: a plan built with only one silently misclassifies
     every session belonging to the other."""
 
-    relocating: dict
-    rebinding: dict
+    relocating: dict[str, WorkspaceRelocatingSource]
+    rebinding: dict[str, WorkspaceRebindingSource]
 
 
 def _resolve_sources() -> _Sources:
@@ -87,7 +89,7 @@ def _resolve_sources() -> _Sources:
     )
 
 
-def _drifted(thread: dict) -> bool:
+def _drifted(thread: dict[str, Any]) -> bool:
     """True when the session's recorded cwd is not the directory it was launched in
     — a worktree, or any session that cd'd. Its storage lives under the launch dir's
     slug, so it can never ride along with a rename keyed on the recorded cwd."""
@@ -108,7 +110,7 @@ def _listing(slug_dir: Path) -> list[Path]:
 _LISTINGS: dict[str, list[Path]] = {}
 
 
-def build_plan(reg: dict, old: str, new: str, srcs: _Sources) -> _Plan:
+def build_plan(reg: dict[str, Any], old: str, new: str, srcs: _Sources) -> _Plan:
     _LISTINGS.clear()
     plan = _Plan(old=old, new=new)
     plan.threads = [
@@ -251,7 +253,7 @@ DERIVED_STATE = (
 _NO_DESCENT = {".git", ".venv", "node_modules", "target", ".build"}
 
 
-def _search_roots(root: Path, max_depth: int):
+def _search_roots(root: Path, max_depth: int) -> Iterator[Path]:
     """`root` and its subdirectories down to `max_depth`, skipping the artifact
     directories themselves — a monorepo keeps its package builds one or two levels
     down, and walking the whole tree to find them is not worth the stat calls."""
@@ -347,7 +349,7 @@ def _describe(plan: _Plan, *, move_files: bool) -> None:
         print(f"  derived   {rel} keeps the old path — regenerate it with `{command}`")
 
 
-def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict, set[str]]:
+def _relocate_storage(plan: _Plan, srcs: _Sources, verb: str) -> tuple[dict[str, str], set[str]]:
     """Returns the old->new transcript paths, and the session ids whose storage did
     NOT move. A failed session must not be pinned: pinning rewrites its `project`, and
     `retarget` finds threads by the old path — so pinning a stranded session puts it
@@ -417,7 +419,7 @@ def _retarget_registry(  # noqa: PLR0913
     registry_path: str,
     old: str,
     new: str,
-    moved: dict,
+    moved: dict[str, str],
     srcs: _Sources,
     stranded: set[str],
     *,
@@ -456,7 +458,7 @@ def _retarget_registry(  # noqa: PLR0913
         return plan
 
 
-def _planning_registry(registry_path: str, *, no_scan: bool) -> dict:
+def _planning_registry(registry_path: str, *, no_scan: bool) -> dict[str, Any]:
     """The registry the plan is built from, scanned but never written.
 
     A session started or forked since the last scan is on disk but absent from the
@@ -467,8 +469,8 @@ def _planning_registry(registry_path: str, *, no_scan: bool) -> dict:
     """
     if no_scan:
         return registry.load_registry(registry_path)
-    reg, _ = refresh.auto_refresh(registry_path, datetime.now(UTC).isoformat(), persist=False)
-    return reg
+    refreshed = refresh.auto_refresh(registry_path, datetime.now(UTC).isoformat(), persist=False)
+    return refreshed[0]
 
 
 def _repoint_editables(old: str, new: str) -> None:

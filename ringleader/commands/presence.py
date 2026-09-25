@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import Any
 
 from ..presence import (
     AGENTS,
@@ -22,7 +23,7 @@ def _confirm(yes: bool) -> bool:
     return True if yes else input("Proceed? [y/N] ").strip().lower() in ("y", "yes")
 
 
-def _unattended(args) -> bool:
+def _unattended(args: argparse.Namespace) -> bool:
     if args.json and not args.yes:
         print(
             json.dumps(
@@ -90,7 +91,7 @@ def cmd_install(argv: list[str]) -> int:
     return 0 if outcome.ok else 1
 
 
-def _status(client: PresenceClient) -> dict:
+def _status(client: PresenceClient) -> dict[str, Any]:
     artifact: str | None = None
     artifact_error: str | None = None
     candidate: str | None = None
@@ -128,7 +129,7 @@ def _status(client: PresenceClient) -> dict:
     }
 
 
-def _print_status(state: dict) -> None:
+def _print_status(state: dict[str, Any]) -> None:
     print(f"platform: {state['platform']} -> {state['artifact'] or state['artifact_error']}")
     print(f"bundled artifact: {state['candidate'] or state['candidate_error'] or 'none'}")
     if state["installed"]:

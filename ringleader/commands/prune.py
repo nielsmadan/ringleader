@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from .. import overview, projects, prune, registry, scanner
 from ..config import load_config
 from ..paths import archive_root
+from ..sources.base import NormalizedSession
 from . import default_registry
 
 
@@ -14,18 +16,20 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _label(t: dict) -> str:
-    return t.get("title") or t.get("suggestedName") or t["sessionId"][:8]
+def _label(t: dict[str, Any]) -> str:
+    return cast(str, t.get("title") or t.get("suggestedName") or t["sessionId"][:8])
 
 
-def stub_candidates(reg: dict, sessions) -> list:
+def stub_candidates(
+    reg: dict[str, Any], sessions: list[NormalizedSession]
+) -> list[NormalizedSession]:
     """Transcripts on disk whose session was already archived — recreated by an agent
     that wrote after the archive moved the file."""
     archived = {x["sessionId"] for x in reg.get("archived", [])}
     return [s for s in sessions if s.session_id in archived]
 
 
-def _project_shim(s) -> dict:
+def _project_shim(s: NormalizedSession) -> dict[str, Any]:
     """`projects.filter_by_projects` matches against registry-shaped dicts; a stub
     candidate is a `NormalizedSession` from a live scan, so translate its identity
     fields into the same shape rather than duplicating `matches()`'s logic."""
@@ -37,7 +41,9 @@ def _project_shim(s) -> dict:
     }
 
 
-def _scope_stubs(stubs: list, selectors) -> list:
+def _scope_stubs(
+    stubs: list[NormalizedSession], selectors: list[str] | None
+) -> list[NormalizedSession]:
     pairs = [(s, _project_shim(s)) for s in stubs]
     kept = {
         id(shim) for shim in projects.filter_by_projects([shim for _, shim in pairs], selectors)
@@ -45,7 +51,7 @@ def _scope_stubs(stubs: list, selectors) -> list:
     return [s for s, shim in pairs if id(shim) in kept]
 
 
-def _find_stubs(reg: dict, selectors=None) -> list:
+def _find_stubs(reg: dict[str, Any], selectors: list[str] | None = None) -> list[NormalizedSession]:
     if not reg.get("archived"):
         return []
     scanned = scanner.scan(sources=scanner.active_sources(), cached_threads=reg["threads"])
@@ -55,13 +61,13 @@ def _find_stubs(reg: dict, selectors=None) -> list:
     return stubs
 
 
-def _report_stubs(stubs: list) -> None:
+def _report_stubs(stubs: list[NormalizedSession]) -> None:
     for s in stubs:
         print(f"  resurrected {s.session_id[:8]}  {s.file}  (transcript recreated after archive)")
     print(f"\n{len(stubs)} resurrected archived transcript(s)")
 
 
-def _delete_stubs(stubs: list) -> int:
+def _delete_stubs(stubs: list[NormalizedSession]) -> int:
     removed = 0
     for s in stubs:
         thread = {"source": s.source, "sessionId": s.session_id, "file": s.file}

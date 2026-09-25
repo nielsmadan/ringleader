@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass
@@ -18,7 +19,7 @@ class TranscriptInfo:
     tail_text: str = ""
 
 
-def _text_blocks(message: dict) -> str:
+def _text_blocks(message: dict[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str):
         return content
@@ -30,7 +31,7 @@ def _text_blocks(message: dict) -> str:
     return ""
 
 
-def parse_transcript(path, tail_turns: int = 30) -> TranscriptInfo:  # noqa: PLR0912 -- faithfully-ported, tested parser; branch-per-message-type isn't worth splitting up
+def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo:  # noqa: PLR0912 -- faithfully-ported, tested parser; branch-per-message-type isn't worth splitting up
     path = Path(path)
     info = TranscriptInfo(session_id=path.stem)
     turns: list[tuple[str, str]] = []

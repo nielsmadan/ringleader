@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, timedelta
+from typing import Any
 
 from ..paths import archive_root
 from ..usage import aggregate
@@ -21,7 +22,9 @@ _KEYS = {
 }
 
 
-def collect(sources, dirs=None) -> list[UsageRecord]:
+def collect(
+    sources: Iterable[str], dirs: dict[str, dict[str, Any]] | None = None
+) -> list[UsageRecord]:
     out: list[UsageRecord] = []
     for name in sources:
         cls = aggregate.READERS.get(name)
@@ -58,7 +61,9 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _resolve_window(records, args):
+def _resolve_window(
+    records: Iterable[UsageRecord], args: argparse.Namespace
+) -> tuple[str | None, str | None]:
     if args.all:
         return None, None
     if args.since or args.until:
@@ -70,7 +75,7 @@ def _resolve_window(records, args):
     return start.isoformat(), None
 
 
-def _row(key, b, breakdown):
+def _row(key: str, b: aggregate.Bucket, breakdown: bool) -> dict[str, Any]:
     row = {"key": key, "tokens": b.total, "records": b.records}
     if b.priced_records:
         row["cost"] = round(b.cost, 2)
@@ -164,7 +169,7 @@ def collect_claude_windows() -> list[WindowSnapshot]:
     return claude_limits.read_windows(claude_limits.default_capture_path(), _now())
 
 
-def _window_json(w: WindowSnapshot) -> dict:
+def _window_json(w: WindowSnapshot) -> dict[str, Any]:
     return {
         "used_percent": w.used_percent,
         "window_minutes": w.window_minutes,

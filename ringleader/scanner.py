@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import shutil
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
+from typing import Any, cast
 
 from . import registry
 from .gitinfo import GitProject, resolve_git_project
@@ -15,6 +16,7 @@ from .sources.base import (
     PickerHidingSource,
     PickerShowingSource,
     RawRef,
+    Source,
     SourceUnavailableError,
     WorkspaceRebindingSource,
 )
@@ -27,62 +29,67 @@ from .sources.pi import PiSource
 SOURCE_TYPES = (ClaudeCodeSource, CodexSource, DroidSource, OpenCodeSource, PiSource)
 
 
-def _new_sources():
+def _new_sources() -> list[Source]:
     return [source_type() for source_type in SOURCE_TYPES]
 
 
 SOURCES = _new_sources()
 
 
-def active_sources(*, unavailable_sources: set[str] | None = None) -> list:
+def active_sources(*, unavailable_sources: set[str] | None = None) -> list[Source]:
     # Fresh instances (not SOURCES) so each call re-reads the env-based default
     # roots — SOURCES is constructed once at import time and would otherwise
     # keep whatever root was current then, which breaks under monkeypatched env.
     active = []
     for source in _new_sources():
         available = getattr(source, "available", None)
+        # `root` is not part of the Source protocol: a source that only parses
+        # transcripts has no session storage of its own to report.
+        root = cast(Path, getattr(source, "root", None))
         try:
-            source.root.stat()
+            root.stat()
         except FileNotFoundError:
             continue
         except OSError as error:
             if unavailable_sources is not None:
                 unavailable_sources.add(source.name)
-            print(f"skipped {source.name} source at {source.root}: {error}", file=sys.stderr)
+            print(f"skipped {source.name} source at {root}: {error}", file=sys.stderr)
             continue
         try:
             present = available() if callable(available) else True
         except OSError as error:
             if unavailable_sources is not None:
                 unavailable_sources.add(source.name)
-            print(f"skipped {source.name} source at {source.root}: {error}", file=sys.stderr)
+            print(f"skipped {source.name} source at {root}: {error}", file=sys.stderr)
             continue
         if present:
             active.append(source)
             continue
         if unavailable_sources is not None:
             unavailable_sources.add(source.name)
-        print(f"skipped {source.name} source at {source.root}: unavailable", file=sys.stderr)
+        print(f"skipped {source.name} source at {root}: unavailable", file=sys.stderr)
     return active
 
 
-def source_by_name(name: str):
+def source_by_name(name: str) -> Any:
     return next((source for source in _new_sources() if source.name == name), None)
 
 
-def supports(source, capability: str, protocol: type) -> bool:
+def supports(source: Source | None, capability: str, protocol: type) -> bool:
     """Both halves of an opt-in capability: the string says the source means to offer
     it, the protocol says it actually can. They are declared separately, so checking
     only one lets a source with a typo'd capability be dropped in silence."""
-    return bool(source) and capability in source.capabilities and isinstance(source, protocol)
+    if not source:
+        return False
+    return capability in source.capabilities and isinstance(source, protocol)
 
 
-def sources_with(capability: str, protocol: type) -> dict:
+def sources_with(capability: str, protocol: type) -> dict[str, Any]:
     """Every active source offering `capability`, keyed by name."""
     return {s.name: s for s in active_sources() if supports(s, capability, protocol)}
 
 
-def filesystem_path(thread: dict, operation: str) -> Path:
+def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
     source_name = thread.get("source") or "claude-code"
     source = source_by_name(source_name)
     file_path = thread.get("file")
@@ -106,7 +113,7 @@ def companion_paths(source_name: str | None, file_path: str | Path) -> tuple[Pat
     src = source_by_name(source_name or "claude-code")
     if not supports(src, "companion_files", CompanionFileSource):
         return ()
-    return tuple(src.companion_paths(str(file_path)))
+    return tuple(cast(CompanionFileSource, src).companion_paths(str(file_path)))
 
 
 def remove_companions(paths: Iterable[Path]) -> None:
@@ -117,7 +124,7 @@ def remove_companions(paths: Iterable[Path]) -> None:
             path.unlink(missing_ok=True)
 
 
-def hide_from_picker(thread: dict) -> IndexUpdate:
+def hide_from_picker(thread: dict[str, Any]) -> IndexUpdate:
     """Clear the agent's own resume-picker entry for a thread, for sources that
     keep an index alongside the transcripts. Raises if the source has such an
     index but cannot be updated — callers must not then move or delete the
@@ -125,30 +132,34 @@ def hide_from_picker(thread: dict) -> IndexUpdate:
     src = source_by_name(thread.get("source") or "claude-code")
     if not supports(src, "hides_from_picker", PickerHidingSource):
         return IndexUpdate.NO_INDEX
-    return src.hide_from_picker(thread["sessionId"], thread["file"])
+    return cast(PickerHidingSource, src).hide_from_picker(thread["sessionId"], thread["file"])
 
 
-def show_in_picker(thread: dict, original_path: str) -> IndexUpdate:
+def show_in_picker(thread: dict[str, Any], original_path: str) -> IndexUpdate:
     """Restore a picker entry hidden by `hide_from_picker`. `original_path` is where
     the transcript lived when it was hidden — the index still points there — so the
     file must be back at that path before calling this."""
     src = source_by_name(thread.get("source") or "claude-code")
     if not supports(src, "shows_in_picker", PickerShowingSource):
         return IndexUpdate.NO_INDEX
-    return src.show_in_picker(thread["sessionId"], original_path)
+    return cast(PickerShowingSource, src).show_in_picker(thread["sessionId"], original_path)
 
 
-def rebind_workspace(thread: dict, file_path: str, new_cwd: str) -> IndexUpdate:
+def rebind_workspace(thread: dict[str, Any], file_path: str, new_cwd: str) -> IndexUpdate:
     """Point the agent's own index at a session's new workspace, for sources that
     record it separately from the transcript. `file_path` is where the index believes
     the transcript lives, which after an archive is not where it is now."""
     src = source_by_name(thread.get("source") or "claude-code")
     if not supports(src, "rebinds_workspace", WorkspaceRebindingSource):
         return IndexUpdate.NO_INDEX
-    return src.rebind_workspace(thread["sessionId"], file_path, new_cwd)
+    return cast(WorkspaceRebindingSource, src).rebind_workspace(
+        thread["sessionId"], file_path, new_cwd
+    )
 
 
-def _load_session(src, ref: RawRef, threads_by_ref: dict) -> NormalizedSession | None:
+def _load_session(
+    src: Source, ref: RawRef, threads_by_ref: dict[tuple[str, str], dict[str, Any]]
+) -> NormalizedSession | None:
     source_ref = ref.identity
     if not source_ref:
         print(f"skipped {ref.source} ref with no identity", file=sys.stderr)
@@ -177,7 +188,11 @@ def _load_session(src, ref: RawRef, threads_by_ref: dict) -> NormalizedSession |
     return session
 
 
-def _attach_git(session: NormalizedSession, cache: dict, git_resolver) -> None:
+def _attach_git(
+    session: NormalizedSession,
+    cache: dict[str, GitProject | None],
+    git_resolver: Callable[[str], GitProject | None],
+) -> None:
     if session.cwd is None:
         return
     if session.cwd not in cache:
@@ -194,9 +209,9 @@ def _attach_git(session: NormalizedSession, cache: dict, git_resolver) -> None:
 
 
 def scan(
-    sources=None,
-    git_resolver=None,
-    cached_threads=None,
+    sources: Iterable[Source] | None = None,
+    git_resolver: Callable[[str], GitProject | None] | None = None,
+    cached_threads: Iterable[dict[str, Any]] | None = None,
     *,
     unavailable_sources: set[str] | None = None,
 ) -> list[NormalizedSession]:
@@ -204,7 +219,7 @@ def scan(
         sources = SOURCES
     if git_resolver is None:
         git_resolver = resolve_git_project
-    threads_by_ref: dict[tuple[str, str], dict] = {}
+    threads_by_ref: dict[tuple[str, str], dict[str, Any]] = {}
     for thread in cached_threads or []:
         source_name = thread.get("source") or "claude-code"
         for source_ref in (thread.get("sourceRef"), thread.get("file")):

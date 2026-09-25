@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from enum import Enum
+from typing import Any
 
 from . import namefilter
 
@@ -23,7 +24,7 @@ class Scope(Enum):
 
 @dataclass(frozen=True)
 class Match:
-    thread: dict
+    thread: dict[str, Any]
     matched_on: str
     value: str
     span: tuple[int, int]
@@ -57,7 +58,9 @@ def _find_id(value: str, query: str, glob: bool) -> tuple[int, int] | None:
     return None if found is None else found.span()
 
 
-def _match_thread(thread: dict, query: str, glob: bool, *, archived: bool) -> Match | None:
+def _match_thread(
+    thread: dict[str, Any], query: str, glob: bool, *, archived: bool
+) -> Match | None:
     fields: list[tuple[str, str | None]] = [
         ("name", clean(namefilter.display_name(thread))),
         ("id", clean(thread.get("sessionId"))),
@@ -80,7 +83,7 @@ def _match_thread(thread: dict, query: str, glob: bool, *, archived: bool) -> Ma
     return None
 
 
-def _archived_thread(rec: dict) -> dict:
+def _archived_thread(rec: dict[str, Any]) -> dict[str, Any]:
     """The tombstone's own fields fill the gaps in the thread it embeds rather than
     losing to it: `rl session archive` derives a summary from a sidecar when the thread
     has no `whatItIs`, and stores that only on the tombstone. A session archived without
@@ -101,7 +104,7 @@ def _archived_thread(rec: dict) -> dict:
     return thread
 
 
-def search(reg: dict, query: str, *, scope: Scope = Scope.ALL) -> list[Match]:
+def search(reg: dict[str, Any], query: str, *, scope: Scope = Scope.ALL) -> list[Match]:
     q = (query or "").strip().lower()
     if not q:
         return []

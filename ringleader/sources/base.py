@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from enum import Enum
@@ -97,7 +98,7 @@ class Source(Protocol):
     def parse(self, ref: RawRef) -> NormalizedSession: ...
 
 
-def stat_fingerprint(st) -> str:
+def stat_fingerprint(st: os.stat_result) -> str:
     return ":".join(
         str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
     )

@@ -12,6 +12,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from typing import Any
 
 from .. import registry, scanner
 from ..paths import archive_root
@@ -54,8 +55,10 @@ def _mtime(path: str) -> float | None:
         return None
 
 
-def due(reg: dict, now: float, *, grace_seconds: int = GRACE_SECONDS) -> list[dict]:
-    out = []
+def due(
+    reg: dict[str, Any], now: float, *, grace_seconds: int = GRACE_SECONDS
+) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for t in reg.get("threads", []):
         if not t.get("finishOnExit"):
             continue
@@ -83,7 +86,7 @@ def wait_until_quiet(path: str, *, timeout: float = QUIET_TIMEOUT) -> None:
         last = now
 
 
-def _archive(reg: dict, threads: list[dict], registry_path: str) -> int:
+def _archive(reg: dict[str, Any], threads: list[dict[str, Any]], registry_path: str) -> int:
     failed = 0
     for t in threads:
         try:

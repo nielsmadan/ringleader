@@ -6,11 +6,12 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from .base import ModelError
 
 
-def _inject_additional_properties_false(schema):
+def _inject_additional_properties_false(schema: Any) -> Any:
     # OpenAI's structured-output backend rejects object schemas that omit
     # additionalProperties; codex forwards the schema verbatim, so set it here on
     # every nested object node ($defs/definitions, properties, items included) --
@@ -49,7 +50,7 @@ class CodexCliModel:
         path = shutil.which("codex")
         return path is not None and Path(path).name == "codex"
 
-    def complete_json(self, prompt: str, schema: dict) -> dict:
+    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         schema = _inject_additional_properties_false(schema)
         with tempfile.TemporaryDirectory() as td:
             sf = Path(td) / "schema.json"

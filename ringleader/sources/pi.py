@@ -8,7 +8,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
 
@@ -40,7 +40,7 @@ def _text_from_content(content: object) -> str:
     return ""
 
 
-def _session_fields(path: Path, tail_turns: int) -> dict:
+def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     cwd: str | None = None
     session_id: str | None = None
     custom_title: str | None = None
@@ -170,23 +170,20 @@ class PiSource:
         path = Path(file_path)
         header_id: str | None = None
         last_id: str | None = None
-        try:
-            with path.open(encoding="utf-8", errors="replace") as fh:
-                for raw in fh:
-                    line = raw.strip()
-                    if not line:
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    if o.get("type") == "session" and o.get("id"):
-                        header_id = o.get("id") if header_id is None else header_id
-                    entry_id = o.get("id")
-                    if isinstance(entry_id, str) and entry_id:
-                        last_id = entry_id
-        except OSError:
-            raise
+        with path.open(encoding="utf-8", errors="replace") as fh:
+            for raw in fh:
+                line = raw.strip()
+                if not line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if o.get("type") == "session" and o.get("id"):
+                    header_id = o.get("id") if header_id is None else header_id
+                entry_id = o.get("id")
+                if isinstance(entry_id, str) and entry_id:
+                    last_id = entry_id
         expected = header_id or _session_id(path)
         if expected != session_id:
             raise ValueError(f"session id mismatch in {file_path}")

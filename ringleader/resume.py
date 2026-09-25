@@ -5,6 +5,7 @@ from enum import Enum
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
+from typing import Any, cast
 
 from . import namefilter, overview, scanner, search
 from .search import _BLURB_FIELDS
@@ -36,27 +37,27 @@ class Scope(Enum):
     ALL = "all"
 
 
-def in_scope(thread: dict, scope: Scope, cwd: str) -> bool:
+def in_scope(thread: dict[str, Any], scope: Scope, cwd: str) -> bool:
     if scope is Scope.ALL:
         return True
     raw = thread.get("project")
     if not raw:
         return False
-    project, root = raw.rstrip("/"), cwd.rstrip("/")
+    project, root = cast(str, raw.rstrip("/")), cwd.rstrip("/")
     if scope is Scope.CWD:
         return project == root
     return project == root or project.startswith(root + "/")
 
 
-def eligible(thread: dict) -> bool:
+def eligible(thread: dict[str, Any]) -> bool:
     return bool(thread.get("sessionId"))
 
 
-def _by_recency(threads: Iterable[dict]) -> list[dict]:
+def _by_recency(threads: Iterable[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(threads, key=lambda t: t.get("mtime") or "", reverse=True)
 
 
-def candidates(reg: dict, *, scope: Scope, cwd: str) -> list[dict]:
+def candidates(reg: dict[str, Any], *, scope: Scope, cwd: str) -> list[dict[str, Any]]:
     threads = reg.get("threads") or []
     return _by_recency(t for t in threads if eligible(t) and in_scope(t, scope, cwd))
 
@@ -105,7 +106,7 @@ def score(query: str, text: str) -> int | None:
     return max(rated) if rated else None
 
 
-def _fields(thread: dict) -> Iterator[tuple[str, str, int]]:
+def _fields(thread: dict[str, Any]) -> Iterator[tuple[str, str, int]]:
     name = label(thread)
     if name != _UNKNOWN:
         yield "name", name, _NAME_TIER
@@ -118,7 +119,7 @@ def _fields(thread: dict) -> Iterator[tuple[str, str, int]]:
             yield field, value, _BLURB_TIER
 
 
-def match(thread: dict, query: str) -> tuple[int, str] | None:
+def match(thread: dict[str, Any], query: str) -> tuple[int, str] | None:
     best: tuple[int, str] | None = None
     for field, value, tier in _fields(thread):
         raw = score(query, value)
@@ -130,7 +131,7 @@ def match(thread: dict, query: str) -> tuple[int, str] | None:
     return best
 
 
-def rank(threads: list[dict], query: str) -> list[dict]:
+def rank(threads: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if not q:
         return _by_recency(threads)
@@ -140,7 +141,7 @@ def rank(threads: list[dict], query: str) -> list[dict]:
     return [t for _, t in scored]
 
 
-def label(thread: dict) -> str:
+def label(thread: dict[str, Any]) -> str:
     for value in (namefilter.display_name(thread), thread.get("aiTitle")):
         cleaned = search.clean(value)
         if cleaned:
@@ -148,7 +149,7 @@ def label(thread: dict) -> str:
     return (search.clean(thread.get("sessionId")) or "")[:8] or _UNKNOWN
 
 
-def _status(thread: dict, now_iso: str) -> str | None:
+def _status(thread: dict[str, Any], now_iso: str) -> str | None:
     # effective_status subscripts mtime, but only once a decision has failed to settle it
     mtime = thread.get("mtime")
     settled = thread.get("decision") in ("harvested", "abandon")
@@ -157,7 +158,7 @@ def _status(thread: dict, now_iso: str) -> str | None:
     return overview.effective_status(thread, now_iso)
 
 
-def badges(thread: dict, now_iso: str) -> list[str]:
+def badges(thread: dict[str, Any], now_iso: str) -> list[str]:
     out = []
     if overview.is_filtered(thread):
         out.append("filtered")
@@ -175,7 +176,7 @@ def badges(thread: dict, now_iso: str) -> list[str]:
     return out
 
 
-def source_of(thread: dict) -> str:
+def source_of(thread: dict[str, Any]) -> str:
     return thread.get("source") or "claude-code"
 
 
@@ -209,10 +210,12 @@ def _slug_keyed_sources() -> frozenset[str]:
 
 def _in_source_root(name: str, file: str) -> bool:
     source = scanner.source_by_name(name)
-    return source is not None and Path(file).parent == Path(source.root)
+    # `root` is not part of the Source protocol, so read it off the concrete source
+    root: Path | None = getattr(source, "root", None)
+    return source is not None and root is not None and Path(file).parent == root
 
 
-def drifted(thread: dict) -> bool:
+def drifted(thread: dict[str, Any]) -> bool:
     # the transcript is filed under the *launch* dir's slug; a different slug means it cd'd
     name = source_of(thread)
     if name not in _slug_keyed_sources():
@@ -225,7 +228,7 @@ def drifted(thread: dict) -> bool:
     return not stored_under(file, project)
 
 
-def launch_cwd(thread: dict, threads: Sequence[dict] = ()) -> str | None:
+def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -> str | None:
     project = thread.get("project")
     if not project:
         return None

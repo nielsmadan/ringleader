@@ -3,9 +3,11 @@ from __future__ import annotations
 import os
 import textwrap
 from collections import Counter, defaultdict
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from typing import Any, cast
 
 LIVE_STATUSES = ("active", "unfinished", "blocked")
 FILTERABLE_STATUSES = (*LIVE_STATUSES, "finished", "abandoned", "harvested", "unclassified")
@@ -33,7 +35,7 @@ class StatusSelection:
         return cls(StatusMode.DEFAULT)
 
     @classmethod
-    def filtered(cls, statuses) -> StatusSelection:
+    def filtered(cls, statuses: Iterable[str]) -> StatusSelection:
         return cls(StatusMode.FILTERED, tuple(dict.fromkeys(statuses)))
 
     @classmethod
@@ -68,19 +70,19 @@ def age_days(mtime_iso: str, now_iso: str) -> float:
     return (_parse(now_iso) - _parse(mtime_iso)).total_seconds() / 86400.0
 
 
-def is_filtered(thread: dict) -> bool:
+def is_filtered(thread: dict[str, Any]) -> bool:
     """Matched a `rl config filter` pattern: hidden from every browsing view, still on
     disk. `rl session search` is the exception — an explicit query returns filtered
     sessions, labelled, because silently withholding a named hit is worse than noise."""
     return bool(thread.get("filteredBy"))
 
 
-def is_kept(thread: dict) -> bool:
+def is_kept(thread: dict[str, Any]) -> bool:
     """Kept long-term: out of the triage inbox for good, but still live and resumable."""
     return thread.get("decision") == "keep"
 
 
-def effective_status(thread: dict, now_iso: str) -> str:
+def effective_status(thread: dict[str, Any], now_iso: str) -> str:
     dec = thread.get("decision")
     if dec == "harvested":
         return "harvested"
@@ -88,34 +90,38 @@ def effective_status(thread: dict, now_iso: str) -> str:
         return "abandoned"
     st = thread.get("status", "unclassified")
     if dec == "keep":
-        return st  # never auto-derive abandoned for kept sessions
+        return cast(str, st)  # never auto-derive abandoned for kept sessions
     if st == "unfinished" and age_days(thread["mtime"], now_iso) > ABANDON_AGE_DAYS:
         return "abandoned"
-    return st
+    return cast(str, st)
 
 
 def filter_by_status(
-    threads, now_iso: str, selection: StatusSelection = DEFAULT_STATUS_SELECTION
-) -> list[dict]:
+    threads: list[dict[str, Any]],
+    now_iso: str,
+    selection: StatusSelection = DEFAULT_STATUS_SELECTION,
+) -> list[dict[str, Any]]:
     if selection.mode is not StatusMode.FILTERED:
         return list(threads)
     wanted = set(selection.statuses)
     return [t for t in threads if effective_status(t, now_iso) in wanted]
 
 
-def filter_recent(threads, now_iso: str, days: int | None):
+def filter_recent(
+    threads: list[dict[str, Any]], now_iso: str, days: int | None
+) -> list[dict[str, Any]]:
     if days is None:
         return threads
     return [t for t in threads if t.get("mtime") and age_days(t["mtime"], now_iso) <= days]
 
 
-def group_key(thread: dict) -> str:
+def group_key(thread: dict[str, Any]) -> str:
     # git identity groups worktrees/clones/monorepo-subdirs together; cwd is the fallback
-    return thread.get("gitProjectKey") or thread.get("project") or "(unknown)"
+    return cast(str, thread.get("gitProjectKey") or thread.get("project") or "(unknown)")
 
 
-def group_label(thread: dict) -> str:
-    return thread.get("gitProjectLabel") or thread.get("project") or "(unknown)"
+def group_label(thread: dict[str, Any]) -> str:
+    return cast(str, thread.get("gitProjectLabel") or thread.get("project") or "(unknown)")
 
 
 def tilde(path: str | None, home: str | None = None) -> str:
@@ -130,7 +136,9 @@ def tilde(path: str | None, home: str | None = None) -> str:
     return path
 
 
-def compute_metrics(reg: dict, now_iso: str, *, include_snoozed: bool = True) -> dict:
+def compute_metrics(
+    reg: dict[str, Any], now_iso: str, *, include_snoozed: bool = True
+) -> dict[str, Any]:
     threads = reg["threads"]
     if not include_snoozed:
         threads = [t for t in threads if not snooze_active(t, now_iso)]
@@ -157,19 +165,19 @@ def compute_metrics(reg: dict, now_iso: str, *, include_snoozed: bool = True) ->
     }
 
 
-def _label(thread: dict) -> str:
-    return thread.get("title") or thread.get("suggestedName") or thread["sessionId"][:8]
+def _label(thread: dict[str, Any]) -> str:
+    return cast(str, thread.get("title") or thread.get("suggestedName") or thread["sessionId"][:8])
 
 
-def source_badge(thread: dict) -> str:
+def source_badge(thread: dict[str, Any]) -> str:
     s = thread.get("source") or "claude-code"
-    return "claude" if s == "claude-code" else s
+    return "claude" if s == "claude-code" else cast(str, s)
 
 
 _BYTES_PER_UNIT = 1024
 
 
-def _human_size(num_bytes) -> str:
+def _human_size(num_bytes: float | None) -> str:
     n = float(num_bytes or 0)
     for unit in ("B", "KB", "MB"):
         if n < _BYTES_PER_UNIT:
@@ -178,16 +186,16 @@ def _human_size(num_bytes) -> str:
     return f"{n:.1f}GB"
 
 
-def _size_suffix(thread: dict) -> str:
+def _size_suffix(thread: dict[str, Any]) -> str:
     b = thread.get("sizeBytes")
     return f", {_human_size(b)}" if b else ""
 
 
 def render(
-    reg: dict,
+    reg: dict[str, Any],
     now_iso: str,
     selection: StatusSelection = DEFAULT_STATUS_SELECTION,
-    cleaned: dict | None = None,
+    cleaned: dict[str, str] | None = None,
 ) -> str:
     scoped = dict(reg)
     scoped["threads"] = filter_by_status(reg["threads"], now_iso, selection)
@@ -206,7 +214,7 @@ def render(
         lines.append(f"(! {m['unclassified']} unclassified — run session-sync)")
     lines.append("")
 
-    groups: dict[str, list[tuple[dict, str]]] = defaultdict(list)
+    groups: dict[str, list[tuple[dict[str, Any], str]]] = defaultdict(list)
     labels: dict[str, str] = {}
     for t in scoped["threads"]:
         es = effective_status(t, now_iso)
@@ -236,14 +244,14 @@ def render(
     return "\n".join(lines)
 
 
-def snooze_active(thread: dict, now_iso: str) -> bool:
+def snooze_active(thread: dict[str, Any], now_iso: str) -> bool:
     if not thread.get("snoozedAt"):
         return False
     until = thread.get("snoozedUntil")
     return until is None or now_iso < until
 
 
-def in_triage_inbox(thread: dict, now_iso: str) -> bool:
+def in_triage_inbox(thread: dict[str, Any], now_iso: str) -> bool:
     if snooze_active(thread, now_iso):
         return False
     if thread.get("decision") in ("harvested", "keep"):
@@ -252,7 +260,7 @@ def in_triage_inbox(thread: dict, now_iso: str) -> bool:
     return reviewed is None or reviewed != thread.get("mtime")
 
 
-def triage_inbox(threads, now_iso: str) -> list[dict]:
+def triage_inbox(threads: list[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
     """Sessions awaiting a decision: not parked, not harvested, not kept, and not
     reviewed at their current state.
 
@@ -263,11 +271,13 @@ def triage_inbox(threads, now_iso: str) -> list[dict]:
     return [t for t in threads if in_triage_inbox(t, now_iso)]
 
 
-def triage_count(threads, now_iso: str) -> int:
+def triage_count(threads: list[dict[str, Any]], now_iso: str) -> int:
     return len(triage_inbox(threads, now_iso))
 
 
-def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> str:
+def render_triage(
+    threads: list[dict[str, Any]], now_iso: str, *, unclassified_only: bool = False
+) -> str:
     inbox = triage_inbox(threads, now_iso)
     if unclassified_only:
         inbox = [t for t in inbox if t.get("status", "unclassified") == "unclassified"]
@@ -284,7 +294,7 @@ def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> 
         else f"=== triage inbox ({len(inbox)}) — awaiting your decision ==="
     )
     lines = [header]
-    groups: dict[str, list[dict]] = defaultdict(list)
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     labels: dict[str, str] = {}
     for t in inbox:
         k = group_key(t)
@@ -303,14 +313,14 @@ def render_triage(threads, now_iso: str, *, unclassified_only: bool = False) -> 
     return "\n".join(lines).rstrip()
 
 
-def registry_age_minutes(reg: dict, now_iso: str) -> float | None:
+def registry_age_minutes(reg: dict[str, Any], now_iso: str) -> float | None:
     ls = reg.get("lastScan")
     if not ls:
         return None
     return (_parse(now_iso) - _parse(ls)).total_seconds() / 60.0
 
 
-def is_stale(reg: dict, now_iso: str, max_age_minutes: float = 60) -> bool:
+def is_stale(reg: dict[str, Any], now_iso: str, max_age_minutes: float = 60) -> bool:
     age = registry_age_minutes(reg, now_iso)
     return age is None or age > max_age_minutes
 
@@ -337,11 +347,11 @@ def age_human(iso: str | None, now_iso: str) -> str:
     return f"{int(mins // 1440)}d ago"
 
 
-def registry_age_human(reg: dict, now_iso: str) -> str:
+def registry_age_human(reg: dict[str, Any], now_iso: str) -> str:
     return age_human(reg.get("lastScan"), now_iso)
 
 
-def staleness_banner(reg: dict, now_iso: str, max_age_minutes: float = 60) -> str | None:
+def staleness_banner(reg: dict[str, Any], now_iso: str, max_age_minutes: float = 60) -> str | None:
     """A one-line warning when the registry hasn't been scanned recently, or None
     when it's fresh. Read commands report from the registry, which only
     `rl session refresh` refreshes — so a stale registry silently under-reports counts."""
@@ -356,7 +366,7 @@ def staleness_banner(reg: dict, now_iso: str, max_age_minutes: float = 60) -> st
 
 
 def project_detail(
-    reg: dict,
+    reg: dict[str, Any],
     now_iso: str,
     selection: StatusSelection = DEFAULT_STATUS_SELECTION,
 ) -> str:
@@ -428,11 +438,11 @@ def project_detail(
 
 
 def render_rollup(
-    reg,
+    reg: dict[str, Any],
     now_iso: str,
     *,
     selection: StatusSelection = DEFAULT_STATUS_SELECTION,
-    checkouts=False,
+    checkouts: bool = False,
 ) -> str:
     from . import projects  # noqa: PLC0415 -- projects imports overview at module level; circular
 
@@ -446,8 +456,10 @@ def render_rollup(
         triage_counts=selection.mode is StatusMode.DEFAULT,
     )
     lines = [
-        f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
-        f"{'chk':>4} {'cleaned':>9} {'mem':>9}"
+        (
+            f"{'PROJECT':{PROJECT_W}} {'total':>5} {'class':>5} {'unnamed':>7} "
+            f"{'chk':>4} {'cleaned':>9} {'mem':>9}"
+        )
     ]
     for s in stats:
         flags = (" ⚠" if s.needs_attention else "") + ("" if s.is_git else "  (no git)")
@@ -486,7 +498,7 @@ def render_rollup(
     return "\n".join(lines)
 
 
-def render_archived(reg, selector: str | None = None) -> str:
+def render_archived(reg: dict[str, Any], selector: str | None = None) -> str:
     rows = list(reg.get("archived", []))
     if selector:
         sel = selector.lower()
@@ -513,7 +525,7 @@ def render_archived(reg, selector: str | None = None) -> str:
     return "\n".join(lines)
 
 
-def render_snoozed(threads, now_iso: str) -> str:
+def render_snoozed(threads: list[dict[str, Any]], now_iso: str) -> str:
     rows = [t for t in threads if snooze_active(t, now_iso)]
     if not rows:
         return "no snoozed sessions"
@@ -528,12 +540,12 @@ def render_snoozed(threads, now_iso: str) -> str:
     return "\n".join(lines)
 
 
-def render_kept(threads, now_iso: str) -> str:
+def render_kept(threads: list[dict[str, Any]], now_iso: str) -> str:
     rows = [t for t in threads if is_kept(t)]
     if not rows:
         return "no kept sessions"
     rows.sort(key=lambda t: t.get("keptAt") or "")
-    groups: dict[str, list[dict]] = defaultdict(list)
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     labels: dict[str, str] = {}
     for t in rows:
         k = group_key(t)
@@ -562,7 +574,7 @@ def render_kept(threads, now_iso: str) -> str:
     return "\n".join(lines)
 
 
-def render_filtered(threads, now_iso: str) -> str:
+def render_filtered(threads: list[dict[str, Any]], now_iso: str) -> str:
     rows = [t for t in threads if is_filtered(t)]
     if not rows:
         return "no filtered sessions"

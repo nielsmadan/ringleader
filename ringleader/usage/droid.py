@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from itertools import chain
 from pathlib import Path
+from typing import Any
 
 from ..sources.droid import _iso_mtime, _session_start, default_sessions_dir
 from .base import UsageRecord, as_dict, as_int, total_of
@@ -13,7 +14,7 @@ from .base import UsageRecord, as_dict, as_int, total_of
 _SIDECAR_SUFFIX = ".settings.json"
 
 
-def _sidecar(transcript: Path) -> dict:
+def _sidecar(transcript: Path) -> dict[str, Any]:
     path = transcript.with_name(transcript.stem + _SIDECAR_SUFFIX)
     try:
         raw = path.read_text(encoding="utf-8", errors="replace")
@@ -29,7 +30,7 @@ def _sidecar(transcript: Path) -> dict:
         return {}
 
 
-def _model(settings: dict) -> str | None:
+def _model(settings: dict[str, Any]) -> str | None:
     router = settings.get("effectiveFactoryRouterModel")
     if isinstance(router, dict):
         router = router.get("modelId")
@@ -43,8 +44,8 @@ def _model(settings: dict) -> str | None:
 class _Thread:
     path: Path
     timestamp: str
-    start: dict
-    settings: dict
+    start: dict[str, Any]
+    settings: dict[str, Any]
 
     @property
     def session_id(self) -> str:
@@ -52,7 +53,7 @@ class _Thread:
         return session_id if isinstance(session_id, str) else ""
 
 
-def _record(thread: _Thread, usage: dict) -> UsageRecord:
+def _record(thread: _Thread, usage: dict[str, Any]) -> UsageRecord:
     inp = as_int(usage.get("inputTokens"))
     out = as_int(usage.get("outputTokens"))
     cache_read = as_int(usage.get("cacheReadTokens"))

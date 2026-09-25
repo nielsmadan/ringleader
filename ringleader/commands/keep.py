@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from typing import Any, cast
 
 from .. import registry
 from . import default_registry, unarchive
@@ -12,10 +13,10 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _archived_tombstone(reg: dict, session_id: str) -> dict | None:
+def _archived_tombstone(reg: dict[str, Any], session_id: str) -> dict[str, Any] | None:
     for ts in reg.get("archived", []):
         if ts["sessionId"] == session_id:
-            return ts
+            return cast(dict[str, Any], ts)
     return None
 
 

@@ -46,7 +46,7 @@ def _epoch_iso(value: object) -> str | None:
 
 
 def read_windows(
-    path, now: datetime, *, ttl_seconds: int = DEFAULT_TTL_SECONDS
+    path: str | Path, now: datetime, *, ttl_seconds: int = DEFAULT_TTL_SECONDS
 ) -> list[WindowSnapshot]:
     try:
         body = json.loads(Path(path).read_text(encoding="utf-8", errors="replace"))

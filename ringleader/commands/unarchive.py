@@ -4,20 +4,21 @@ import argparse
 import shutil
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from .. import registry, scanner
 from ..sources.base import IndexUpdate
 from . import default_registry
 
 
-def _archived(reg: dict, session_id: str) -> dict | None:
+def _archived(reg: dict[str, Any], session_id: str) -> dict[str, Any] | None:
     for ts in reg.get("archived", []):
         if ts["sessionId"] == session_id:
-            return ts
+            return cast(dict[str, Any], ts)
     return None
 
 
-def restore(reg: dict, ts: dict) -> tuple[str, IndexUpdate]:
+def restore(reg: dict[str, Any], ts: dict[str, Any]) -> tuple[str, IndexUpdate]:
     """Put an archived transcript back and clear its archived record.
 
     Ordering is deliberately the reverse of archiving: the agent's picker index still

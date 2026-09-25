@@ -4,6 +4,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from .. import export, harvests, registry
 from ..config import load_config
@@ -29,7 +30,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _prompt(thread: dict, condensed: str) -> str:
+def _prompt(thread: dict[str, Any], condensed: str) -> str:
     return (
         "Extract the DURABLE, reusable knowledge from this finished coding session for the "
         "repo's docs. Keep only what's worth remembering later; discard routine steps.\n"
@@ -41,7 +42,7 @@ def _prompt(thread: dict, condensed: str) -> str:
     )
 
 
-def _render_md(thread: dict, data: dict) -> str:
+def _render_md(thread: dict[str, Any], data: dict[str, Any]) -> str:
     title = thread.get("title") or thread.get("suggestedName") or thread["sessionId"]
     parts = [f"# {title}\n", f"## Summary\n\n{data.get('summary', '').strip()}\n"]
     for key, heading in (
@@ -85,7 +86,9 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
     return 0, _render_md(thread, data)
 
 
-def _save_harvest_unlocked(session_id: str, registry_path: str, markdown: str) -> tuple[dict, Path]:
+def _save_harvest_unlocked(
+    session_id: str, registry_path: str, markdown: str
+) -> tuple[dict[str, Any], Path]:
     reg = registry.load_registry(registry_path)
     thread = next((item for item in reg["threads"] if item["sessionId"] == session_id), None)
     if thread is None:

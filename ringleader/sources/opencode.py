@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from ..opencode_db import connect_read_only, default_opencode_db
 from .base import NormalizedSession, RawRef, SourceUnavailableError
@@ -103,7 +103,7 @@ class OpenCodeSourceError(SourceUnavailableError):
     pass
 
 
-def _json_object(value: object) -> dict:
+def _json_object(value: object) -> dict[str, Any]:
     if not isinstance(value, str):
         return {}
     try:
@@ -127,11 +127,11 @@ def _content_text(value: object) -> str:
     return "\n".join(chunk.strip() for chunk in chunks if chunk.strip())
 
 
-def _message_text(data: dict) -> str:
+def _message_text(data: dict[str, Any]) -> str:
     return _content_text(data.get("content") or data.get("text"))
 
 
-def _part_text(data: dict) -> str:
+def _part_text(data: dict[str, Any]) -> str:
     if data.get("type") not in (None, "text"):
         return ""
     return _content_text(data.get("text") or data.get("content"))
@@ -151,7 +151,7 @@ def _iso_millis(value: object) -> str:
         return datetime.fromtimestamp(0, UTC).isoformat()
 
 
-def _feed(digest, *values: object) -> None:
+def _feed(digest: hashlib._Hash, *values: object) -> None:
     for value in values:
         raw = str(value if value is not None else "").encode()
         digest.update(len(raw).to_bytes(8, "big"))

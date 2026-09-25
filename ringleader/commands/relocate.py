@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Any
 
 from .. import gitinfo, registry, scanner
 from ..slug import normalize
@@ -11,7 +12,7 @@ from ..stateio import publish_lock
 from . import default_registry
 
 
-def _follow_storage(thread: dict, new_path: str) -> tuple[str | None, bool]:
+def _follow_storage(thread: dict[str, Any], new_path: str) -> tuple[str | None, bool]:
     """Take the agent's own session storage to `new_path`, the way `rl workspace
     retarget` does for a whole directory. Returns the session's new transcript path
     (None when the transcript did not move) and whether the registry may follow.

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime
+from typing import Any
 
 from .. import jsonout, overview, projects, refresh, registry
 from .. import memory as memmod
@@ -13,14 +14,14 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _memory_inbox(registry_path: str, projects_sel, no_scan: bool) -> int:
+def _memory_inbox(registry_path: str, projects_sel: list[str] | None, no_scan: bool) -> int:
     reg = registry.load_registry(registry_path)
     reg = registry.reconcile_memory(reg, memmod.scan_memory(memmod.projects_dir()), _now())
     registry.save_registry(registry_path, reg)
     rows = registry.memory_needing_review(reg)
     if projects_sel:
         rows = projects.filter_by_projects(rows, projects_sel)
-    groups: dict[str, list[dict]] = {}
+    groups: dict[str, list[dict[str, Any]]] = {}
     for e in rows:
         groups.setdefault(overview.group_key(e), []).append(e)
     if not groups:

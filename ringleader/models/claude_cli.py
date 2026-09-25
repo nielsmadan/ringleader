@@ -5,6 +5,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 
 from .base import ModelError
 
@@ -35,7 +36,7 @@ class ClaudeCliModel:
         path = shutil.which("claude")
         return path is not None and Path(path).name == "claude"
 
-    def complete_json(self, prompt: str, schema: dict) -> dict:
+    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
         # --json-schema takes the schema inline (a JSON string), not a file path.
         # --tools "" disables tool use so -p returns a pure answer.
         cmd = [
@@ -63,12 +64,12 @@ class ClaudeCliModel:
             envelope = json.loads(proc.stdout)
             # newer claude also returns the parsed object directly under structured_output
             if isinstance(envelope, dict) and isinstance(envelope.get("structured_output"), dict):
-                return envelope["structured_output"]
+                return cast(dict[str, Any], envelope["structured_output"])
             result = (
                 envelope["result"]
                 if isinstance(envelope, dict) and "result" in envelope
                 else envelope
             )
-            return result if isinstance(result, dict) else json.loads(result)
+            return cast(dict[str, Any], result if isinstance(result, dict) else json.loads(result))
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             raise ModelError(f"claude returned unparseable output: {e}") from e

@@ -15,6 +15,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 PROTOCOL = 1
 TIMEOUT_SECONDS = 2
@@ -198,7 +199,7 @@ def _semver(value: str) -> tuple[int, ...]:
         return ()
 
 
-def _load_json(text: str) -> dict | None:
+def _load_json(text: str) -> dict[str, Any] | None:
     try:
         payload = json.loads(text)
     except (json.JSONDecodeError, TypeError):
@@ -206,7 +207,7 @@ def _load_json(text: str) -> dict | None:
     return payload if isinstance(payload, dict) else None
 
 
-def _record(raw) -> PresenceSession | None:
+def _record(raw: object) -> PresenceSession | None:
     if not isinstance(raw, dict) or raw.get("protocol", PROTOCOL) != PROTOCOL:
         return None
     agent = raw.get("agent")
@@ -225,7 +226,7 @@ def _record(raw) -> PresenceSession | None:
     )
 
 
-def _envelope_problems(raw) -> tuple[str, ...]:
+def _envelope_problems(raw: object) -> tuple[str, ...]:
     out = []
     for problem in raw if isinstance(raw, list) else []:
         if isinstance(problem, dict):
@@ -245,8 +246,10 @@ def _parse_sessions(text: str) -> PresenceResult:
     if payload.get("protocol") != PROTOCOL:
         return PresenceResult(
             problems=(
-                f"hooklinesinker speaks protocol {payload.get('protocol')}, "
-                f"ringleader speaks protocol {PROTOCOL}",
+                (
+                    f"hooklinesinker speaks protocol {payload.get('protocol')}, "
+                    f"ringleader speaks protocol {PROTOCOL}"
+                ),
             ),
             available=False,
         )
@@ -374,8 +377,10 @@ class PresenceClient:
             return DoctorReport(
                 exit_code=result.returncode or 1,
                 problems=(
-                    f"hooklinesinker speaks protocol {payload.get('protocol')}, "
-                    f"ringleader speaks protocol {PROTOCOL}",
+                    (
+                        f"hooklinesinker speaks protocol {payload.get('protocol')}, "
+                        f"ringleader speaks protocol {PROTOCOL}"
+                    ),
                 ),
                 available=False,
             )
@@ -516,11 +521,11 @@ def _running_ids(result: PresenceResult) -> frozenset[tuple[str, str]]:
     return frozenset((s.agent, s.session_id) for s in result.sessions if s.running)
 
 
-def _row(label: str, state: str, detail: str) -> dict:
+def _row(label: str, state: str, detail: str) -> dict[str, Any]:
     return {"label": label, "state": state, "detail": detail}
 
 
-def presence_rows(client: PresenceClient) -> list[dict]:
+def presence_rows(client: PresenceClient) -> list[dict[str, Any]]:
     """`rl doctor`'s presence section: binary, consumer, hooks, status ledger.
 
     A missing hooklinesinker is a warning — nothing in ringleader needs it until a

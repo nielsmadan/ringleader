@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
+from typing import Any
 
 from .. import projects, registry, scanner
 from ..config import load_config
@@ -25,7 +26,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _prompt(thread: dict, tail: str) -> str:
+def _prompt(thread: dict[str, Any], tail: str) -> str:
     return (
         "You are classifying a DORMANT coding-agent session for a curation tool.\n"
         f"project: {thread.get('project')}\n"

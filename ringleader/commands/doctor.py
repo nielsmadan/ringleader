@@ -4,6 +4,7 @@ import argparse
 import json
 import os
 from pathlib import Path
+from typing import Any
 
 from ..presence import PresenceClient, presence_rows
 from . import hooks, skills, statusline
@@ -12,7 +13,7 @@ MIN_RETENTION_DAYS = 30
 GLYPHS = {"ok": "✓", "warn": "⚠", "error": "✖"}
 
 
-def check_claude_retention(settings_path) -> dict:
+def check_claude_retention(settings_path: str | Path) -> dict[str, Any]:
     p = Path(settings_path)
     value = None
     try:

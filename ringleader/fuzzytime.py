@@ -39,7 +39,7 @@ def parse_duration(text: str, now: dt.datetime) -> str:
     if normalized == "next week":
         return (now + dt.timedelta(weeks=1)).isoformat()
 
-    weekday_name = normalized[len("next ") :] if normalized.startswith("next ") else normalized
+    weekday_name = normalized.removeprefix("next ")
     if weekday_name in _WEEKDAYS:
         return _next_weekday(now, _WEEKDAYS[weekday_name]).isoformat()
 

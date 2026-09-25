@@ -20,10 +20,10 @@ def test_every_skill_directory_carries_a_skill_file(skill_dirs):
 def test_frontmatter_only_spec_fields(skill_dirs):
     for d in skill_dirs:
         fm, _ = _frontmatter(d)
-        keys = set(re.findall(r"^([a-z-]+):", fm, re.M))
+        keys = set(re.findall(r"^([a-z-]+):", fm, re.MULTILINE))
         assert keys <= {"name", "description"}, f"{d.name}: non-spec frontmatter {keys}"
         assert {"name", "description"} <= keys, f"{d.name}: missing required frontmatter"
-        assert re.search(rf"^name: {re.escape(d.name)}$", fm, re.M), (
+        assert re.search(rf"^name: {re.escape(d.name)}$", fm, re.MULTILINE), (
             f"{d.name}: frontmatter name does not match the directory"
         )
 

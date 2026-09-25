@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from ..sources.claude_code import default_projects_dir
 from .base import UsageRecord, as_dict, as_int, total_of
@@ -27,7 +28,7 @@ class ClaudeUsageReader:
     def records(self) -> Iterator[UsageRecord]:
         if not self.available():
             return
-        seen: set[tuple] = set()
+        seen: set[tuple[Any, ...]] = set()
         for f in sorted(self.projects_dir.glob("*/*.jsonl")):
             try:
                 fh = f.open(encoding="utf-8", errors="replace")
@@ -51,7 +52,7 @@ class ClaudeUsageReader:
                     rec.record_id = f"{key[0]}|{key[1]}"
                     yield rec
 
-    def _record(self, o: dict, f: Path) -> UsageRecord | None:
+    def _record(self, o: dict[str, Any], f: Path) -> UsageRecord | None:
         if o.get("type") != "assistant":
             return None
         msg = as_dict(o.get("message"))

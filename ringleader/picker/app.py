@@ -4,7 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar, cast
 
 from rich.text import Text
 from textual import work
@@ -19,7 +19,7 @@ from ..presence import PresenceClient
 from ..resume import Scope, agent_name, launchable_agents
 from ..tui.keys import nav_bindings
 
-Refresher = Callable[[str, str], tuple[dict, str | None]]
+Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
 Presence = Callable[[], frozenset[tuple[str, str]]]
 
 _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
@@ -31,9 +31,9 @@ _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
 
 @dataclass(frozen=True)
 class Choice:
-    thread: dict
+    thread: dict[str, Any]
     target: str
-    threads: tuple[dict, ...] = ()
+    threads: tuple[dict[str, Any], ...] = ()
     confirmed: bool = False
 
 
@@ -52,7 +52,7 @@ def empty_hint(scope: Scope, query: str) -> str:
     return "nothing here — " + ", ".join(options)
 
 
-def _preview(thread: dict) -> str:
+def _preview(thread: dict[str, Any]) -> str:
     for field in ("lastPrompt", "summary"):
         value = thread.get(field)
         if isinstance(value, str):
@@ -71,7 +71,7 @@ def _age(mtime: object, now_iso: str) -> str:
         return "?"
 
 
-def row_text(thread: dict, now_iso: str, *, running: bool = False) -> Text:
+def row_text(thread: dict[str, Any], now_iso: str, *, running: bool = False) -> Text:
     marks = resume.badges(thread, now_iso)
     if running:
         marks = [*marks, "running"]
@@ -115,7 +115,7 @@ class AgentModal(ModalScreen[str | None]):
     }
     """
 
-    def __init__(self, thread: dict) -> None:
+    def __init__(self, thread: dict[str, Any]) -> None:
         super().__init__()
         self._source = resume.source_of(thread)
         agents = launchable_agents()
@@ -253,8 +253,8 @@ class PickerApp(App[Choice | None]):
         self._target = target
         self._refresher: Refresher = refresher or refresh.auto_refresh
         self._presence: Presence = presence or live_session_ids
-        self._reg: dict = registry.empty_registry()
-        self._rows: list[dict] = []
+        self._reg: dict[str, Any] = registry.empty_registry()
+        self._rows: list[dict[str, Any]] = []
         self._live_ids: frozenset[tuple[str, str]] = frozenset()
         self._scanned = False
 
@@ -280,11 +280,11 @@ class PickerApp(App[Choice | None]):
 
     @work(thread=True)
     def _converge(self) -> None:
-        reg: dict | None = None
+        reg: dict[str, Any] | None = None
         note: str | None = None
         try:
             reg, note = self._refresher(self.registry_path, _now_iso())
-        except Exception as error:
+        except Exception as error:  # noqa: BLE001 -- report in the UI, do not crash it
             if not self._alive():
                 return
             self.call_from_thread(
@@ -293,7 +293,7 @@ class PickerApp(App[Choice | None]):
         running: frozenset[tuple[str, str]] | None = None
         try:
             running = self._presence()
-        except Exception:
+        except Exception:  # noqa: BLE001 -- no presence means no live sessions
             running = None
         if not self._alive():
             return
@@ -301,7 +301,7 @@ class PickerApp(App[Choice | None]):
 
     def _adopt(
         self,
-        reg: dict | None,
+        reg: dict[str, Any] | None,
         running: frozenset[tuple[str, str]] | None,
         note: str | None,
     ) -> None:
@@ -327,7 +327,7 @@ class PickerApp(App[Choice | None]):
             return None
         return self._rows[index].get("sessionId")
 
-    def _is_running(self, thread: dict) -> bool:
+    def _is_running(self, thread: dict[str, Any]) -> bool:
         session_id = thread.get("sessionId")
         if not session_id:
             return False
@@ -394,7 +394,7 @@ class PickerApp(App[Choice | None]):
 
     # -- choosing ----------------------------------------------------------
 
-    def _current(self) -> dict | None:
+    def _current(self) -> dict[str, Any] | None:
         index = self._list_view().index
         if index is None or not (0 <= index < len(self._rows)):
             return None
@@ -420,7 +420,11 @@ class PickerApp(App[Choice | None]):
             Choice(
                 thread=thread,
                 target=target,
-                threads=tuple(self._reg.get("threads") or []) if self._scanned else (),
+                threads=(
+                    tuple(cast(list[dict[str, Any]], self._reg.get("threads") or []))
+                    if self._scanned
+                    else ()
+                ),
                 confirmed=confirmed,
             )
         )

@@ -1,7 +1,13 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Iterable
+from pathlib import Path
+from typing import Any
+
 from . import registry, scanner
 from .config import load_config
+from .gitinfo import GitProject
+from .sources.base import Source
 from .sources.claude_code import ClaudeCodeSource
 
 
@@ -18,17 +24,17 @@ def delta_note(added: int, removed: int) -> str | None:
 
 
 def auto_refresh(  # noqa: PLR0913
-    registry_path,
-    now_iso,
+    registry_path: str | Path,
+    now_iso: str,
     *,
-    tail=30,
-    claude_projects_dir=None,
-    projects_root=None,
-    git_resolver=None,
-    sources=None,
-    name_filters=None,
-    persist=True,
-):
+    tail: int = 30,
+    claude_projects_dir: Path | None = None,
+    projects_root: Path | None = None,
+    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    sources: Iterable[Source] | None = None,
+    name_filters: Iterable[str] | None = None,
+    persist: bool = True,
+) -> tuple[dict[str, Any], str | None]:
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. Read commands run this before rendering; an unavailable source
     retains its cached sessions. Classification and naming remain separate agentic steps.

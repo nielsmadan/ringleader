@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 from . import scanner
-from .sources.base import ConversationRenderingSource
+from .sources.base import ConversationRenderingSource, Source
 from .transcript import _text_blocks
 
 
@@ -18,7 +19,7 @@ def _turn(role: object, txt: str) -> str | None:
     return None
 
 
-def _tool_note(msg: dict) -> str | None:
+def _tool_note(msg: dict[str, Any]) -> str | None:
     content = msg.get("content")
     if not isinstance(content, list):
         return None
@@ -33,14 +34,14 @@ def _tool_note(msg: dict) -> str | None:
     return f"_(tools: {', '.join(names)})_\n" if names else None
 
 
-def _codex_text(payload: dict) -> str:
+def _codex_text(payload: dict[str, Any]) -> str:
     content = payload.get("content")
     if not isinstance(content, list):
         return ""
     return " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
 
 
-def _record_chunks(o: dict) -> list[str]:
+def _record_chunks(o: dict[str, Any]) -> list[str]:
     t = o.get("type")
     if t == "user":
         return [c for c in (_turn("user", _text_blocks(o.get("message", {})).strip()),) if c]
@@ -61,7 +62,7 @@ def _record_chunks(o: dict) -> list[str]:
     return []
 
 
-def _render_jsonl(path) -> str:
+def _render_jsonl(path: str | Path) -> str:
     out: list[str] = []
     with Path(path).open(encoding="utf-8", errors="replace") as fh:
         for raw_line in fh:
@@ -76,7 +77,9 @@ def _render_jsonl(path) -> str:
     return "\n".join(out)
 
 
-def render_conversation(subject, *, source=None) -> str:
+def render_conversation(
+    subject: dict[str, Any] | str | Path, *, source: Source | None = None
+) -> str:
     if not isinstance(subject, dict):
         return _render_jsonl(subject)
 

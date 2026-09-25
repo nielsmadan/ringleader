@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from ..opencode_db import connect_read_only, default_opencode_db
 from .base import UsageRecord, as_dict, as_float_or_none, as_int, total_of
@@ -24,7 +25,7 @@ LEFT JOIN project AS p ON p.id = s.project_id
 """
 
 
-def _json_object(value: object) -> dict:
+def _json_object(value: object) -> dict[str, Any]:
     if not isinstance(value, str):
         return {}
     try:

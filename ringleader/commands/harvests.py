@@ -15,6 +15,7 @@ from ..publish_git import (
     validate_prepared_changes,
 )
 from ..publish_state import (
+    PublishReceipt,
     PublishStateError,
     abandon_receipt,
     begin_publish,
@@ -31,7 +32,7 @@ def _write_json(data: object) -> int:
     return 0
 
 
-def _receipt_json(receipt) -> dict[str, object]:
+def _receipt_json(receipt: PublishReceipt) -> dict[str, object]:
     return {
         "receiptId": receipt.receipt_id,
         "repoKey": receipt.repo_key,

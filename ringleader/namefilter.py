@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
+from typing import Any, cast
+
 
 def matches(name: str, pattern: str, *, ignore_case: bool = False) -> bool:
     """Glob with `*` and `?` only: `[` and `]` stay literal, so a pattern like
@@ -32,11 +35,11 @@ def matches(name: str, pattern: str, *, ignore_case: bool = False) -> bool:
     return p == len(pattern)
 
 
-def display_name(thread: dict) -> str | None:
-    return thread.get("title") or thread.get("suggestedName")
+def display_name(thread: dict[str, Any]) -> str | None:
+    return cast(str | None, thread.get("title") or thread.get("suggestedName"))
 
 
-def first_match(name: str | None, patterns) -> str | None:
+def first_match(name: str | None, patterns: Iterable[str]) -> str | None:
     if not name:
         return None
     for pattern in patterns:
@@ -45,5 +48,5 @@ def first_match(name: str | None, patterns) -> str | None:
     return None
 
 
-def thread_match(thread: dict, patterns) -> str | None:
+def thread_match(thread: dict[str, Any], patterns: Iterable[str]) -> str | None:
     return first_match(display_name(thread), patterns)

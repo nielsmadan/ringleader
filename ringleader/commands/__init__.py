@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys as _sys
 from collections.abc import Callable
+from typing import Any
 
 from ..paths import default_registry as default_registry
 from . import (
@@ -50,8 +51,8 @@ from . import harvests as harvests_cmd
 CommandFn = Callable[[list[str]], int]
 
 
-def _reserved(label):
-    def _stub(argv):
+def _reserved(label: str) -> CommandFn:
+    def _stub(argv: list[str]) -> int:
         print(f"rl {label}: not yet implemented — see Spec 2", file=_sys.stderr)
         return 2
 
@@ -108,7 +109,7 @@ _WORKSPACE = {
     "retarget": move_workspace.cmd_retarget,
 }
 
-TABLE: dict[str, CommandFn | dict] = {
+TABLE: dict[str, CommandFn | dict[str, Any]] = {
     # flat daily verbs
     "overview": overview.cmd_overview,
     "triage": triage.cmd_triage,
@@ -148,7 +149,7 @@ def command_paths() -> set[str]:
     six of its leaves parse a further sub-verb themselves."""
     out: set[str] = set()
 
-    def walk(node: dict, prefix: str = "") -> None:
+    def walk(node: dict[str, Any], prefix: str = "") -> None:
         for key, value in node.items():
             path = f"{prefix}{key}"
             if isinstance(value, dict):
