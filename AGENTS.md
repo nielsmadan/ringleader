@@ -43,10 +43,9 @@ pruning them before the GC clock deletes them.
   `docs/decisions/0013-native-conversion-behind-resume.md`.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
-- **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
-  grouped under `rl session`, `rl mem`, `rl data`, and `rl config`, and is
-  meant to be called by the skills in `.agents/skills/` (session track) or
-  `.claude/skills/` (`memory-triage`), not by hand.
+- **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing,** meant to be
+  called by the skills in `.agents/skills/` (session track) or `.claude/skills/`
+  (`memory-triage`), not by hand.
 - **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Seven skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
   `ringleader-usage`, `ringleader-finish`, `ringleader-publish` — each ship an
