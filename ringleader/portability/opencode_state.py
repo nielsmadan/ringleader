@@ -16,7 +16,23 @@ from .capabilities import NativeRoots, NativeStage
 from .model import PreservationError, unique_object
 from .snapshot import snapshot_files
 
-SCHEMA_ID = "opencode-1.18.30:" + "4e1c29893bede253e37904f6e62e09cd5c82bc37da02c7c147f665c6bd1dbbf9"
+SCHEMA_PREFIX = "opencode-structure-1:"
+SCHEMA_ID = SCHEMA_PREFIX + "252913917eb4927f5835d43964b7fef730c3c4ae6f5ff9b45a32a2a46ffd8047"
+ACCEPTED = frozenset({SCHEMA_ID})
+# Pre-fingerprint whole-schema hash; live databases never produce it, so a legacy
+# stage is checked against ACCEPTED instead.
+LEGACY = frozenset(
+    {"opencode-1.18.30:4e1c29893bede253e37904f6e62e09cd5c82bc37da02c7c147f665c6bd1dbbf9"}
+)
+TABLES = (
+    "project",
+    "session",
+    "message",
+    "part",
+    "session_message",
+    "session_input",
+    "session_context_epoch",
+)
 
 
 def encode(value: Any) -> bytes:
@@ -36,22 +52,43 @@ def database_path(roots: NativeRoots) -> Path:
     return roots.store / "opencode.db"
 
 
-def schema_identity(connection: sqlite3.Connection) -> str:
+def _table_structure(connection: sqlite3.Connection, table: str) -> dict[str, Any]:
+    columns = sorted(list(row[1:6]) for row in connection.execute(f'PRAGMA table_info("{table}")'))
+    if not columns:
+        raise PreservationError(f"OpenCode SQLite schema lacks table {table}")
+    foreign_keys = sorted(
+        (list(row[2:8]) for row in connection.execute(f'PRAGMA foreign_key_list("{table}")')),
+        key=json.dumps,
+    )
+    indexes = sorted(
+        [
+            *row[1:5],
+            [list(item[::2]) for item in connection.execute(f'PRAGMA index_info("{row[1]}")')],
+        ]
+        for row in connection.execute(f'PRAGMA index_list("{table}")')
+    )
+    return {"columns": columns, "foreign_keys": foreign_keys, "indexes": indexes}
+
+
+def schema_fingerprint(connection: sqlite3.Connection) -> str:
+    structure = {table: _table_structure(connection, table) for table in TABLES}
+    migrations = [row[0] for row in connection.execute("SELECT id FROM migration ORDER BY id")]
+    payload = json.dumps(
+        {"tables": structure, "migrations": migrations}, separators=(",", ":"), sort_keys=True
+    ).encode()
+    return SCHEMA_PREFIX + hashlib.sha256(payload).hexdigest()
+
+
+def schema_identity(
+    connection: sqlite3.Connection, accepted: frozenset[str] | None = ACCEPTED
+) -> str:
     try:
-        rows = connection.execute(
-            "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
-        ).fetchall()
-        schema = [[*row[:3], re.sub(r"\s+", " ", row[3]).strip()] for row in rows]
-        migrations = [row[0] for row in connection.execute("SELECT id FROM migration ORDER BY id")]
-        payload = json.dumps(
-            {"schema": schema, "migrations": migrations}, separators=(",", ":")
-        ).encode()
-        identity = "opencode-1.18.30:" + hashlib.sha256(payload).hexdigest()
-        if identity != SCHEMA_ID:
-            raise PreservationError(f"Unsupported OpenCode SQLite schema/migrations: {identity}")
-        return identity
+        identity = schema_fingerprint(connection)
     except sqlite3.Error as exc:
         raise PreservationError(f"Unsupported OpenCode SQLite schema: {exc}") from exc
+    if accepted is not None and identity not in accepted:
+        raise PreservationError(f"Unsupported OpenCode SQLite schema/migrations: {identity}")
+    return identity
 
 
 @contextmanager
@@ -74,11 +111,11 @@ def database_copy(path: Path) -> Iterator[Path]:
         yield directory / "state.db"
 
 
-def inspect_database(roots: NativeRoots) -> str:
+def inspect_database(roots: NativeRoots, accepted: frozenset[str] | None = ACCEPTED) -> str:
     with database_copy(database_path(roots)) as isolated:
         connection = sqlite3.connect(isolated)
         try:
-            return schema_identity(connection)
+            return schema_identity(connection, accepted)
         finally:
             connection.close()
 
@@ -116,11 +153,11 @@ def _git(cwd: Path, *args: str) -> str | None:
 
 def resolve_project(cwd: Path) -> tuple[str, str, str | None]:
     cwd = cwd.resolve()
-    if not cwd.is_dir():
-        raise PreservationError("OpenCode destination cwd must exist")
     ancestor = next((p for p in (cwd, *cwd.parents) if (p / ".git").exists()), None)
     if ancestor is None:
         return "global", cwd.anchor, None
+    if not cwd.is_dir():
+        raise PreservationError("OpenCode destination cwd must exist")
     common = _git(ancestor, "rev-parse", "--git-common-dir")
     git_dir = _git(ancestor, "rev-parse", "--git-dir")
     if common is None or git_dir is None:
@@ -172,9 +209,16 @@ def _owned(current: dict[str, Any], expected: dict[str, Any]) -> bool:
     )
 
 
-def registration(stage: NativeStage, *, recover: bool = False) -> bool:
-    if stage.database_payload is None or stage.schema_identity != SCHEMA_ID:
+def registration(
+    stage: NativeStage, *, recover: bool = False, accepted: frozenset[str] = ACCEPTED
+) -> bool:
+    if (
+        stage.database_payload is None
+        or stage.schema_identity is None
+        or stage.schema_identity not in accepted | LEGACY
+    ):
         raise PreservationError("Missing verified OpenCode registration payload")
+    expected = accepted if stage.schema_identity in LEGACY else frozenset({stage.schema_identity})
     payload = decode(stage.database_payload)
     session = payload["session"]
     if session["id"] != stage.identity.native_id:
@@ -196,7 +240,7 @@ def registration(stage: NativeStage, *, recover: bool = False) -> bool:
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA foreign_keys=ON")
         connection.execute("BEGIN IMMEDIATE")
-        schema_identity(connection)
+        schema_identity(connection, expected)
         row = connection.execute("SELECT * FROM session WHERE id=?", (session["id"],)).fetchone()
         if row is not None:
             if recover and _owned(dict(row), session):
@@ -226,11 +270,15 @@ def registration(stage: NativeStage, *, recover: bool = False) -> bool:
             connection.close()
 
 
-def registration_status(stage: NativeStage) -> Literal["absent", "owned", "archived", "conflict"]:
+def registration_status(
+    stage: NativeStage, accepted: frozenset[str] = ACCEPTED
+) -> Literal["absent", "owned", "archived", "conflict"]:
     payload = decode(stage.database_payload or b"null")
     if (
         not isinstance(payload, dict)
         or payload.get("session", {}).get("id") != stage.identity.native_id
+        or stage.schema_identity is None
+        or stage.schema_identity not in accepted | LEGACY
     ):
         raise PreservationError("Missing OpenCode registration evidence")
     connection = sqlite3.connect(
@@ -238,7 +286,10 @@ def registration_status(stage: NativeStage) -> Literal["absent", "owned", "archi
     )
     try:
         connection.row_factory = sqlite3.Row
-        schema_identity(connection)
+        expected = (
+            accepted if stage.schema_identity in LEGACY else frozenset({stage.schema_identity})
+        )
+        schema_identity(connection, expected)
         row = connection.execute(
             "SELECT * FROM session WHERE id=?", (stage.identity.native_id,)
         ).fetchone()

@@ -2,10 +2,37 @@
 
 `portability/` is independent of cheap `sources/` discovery and metadata parsing.
 `adapters.py` binds deep readers, native writers, launchers, roots, optional identity
-allocation, native name-index operations, and DB registration. Command handlers
-resolve capabilities; they do not branch on native transcript formats.
+allocation, native name-index operations, and DB registration, for Claude Code,
+Codex, OpenCode, Pi, and Droid. Command handlers resolve capabilities; they do not
+branch on native transcript formats.
 See [the preservation decision](../decisions/0012-preserve-native-session-semantics.md)
-for the model, publication and concurrency tradeoffs.
+and [its native-conversion amendments](../decisions/0013-native-conversion-behind-resume.md)
+for the model, publication, concurrency, and self-verification tradeoffs.
+
+## Self-verification
+
+`verification.py` accepts a target version against each adapter's small upstream-pinned
+list (`PINNED` in `claude.py`/`codex.py`/`pi.py`; empty for `droid.py`, which pins
+nothing) or a version recorded in a local `verified-targets.json` after an offline
+harness pass. Harnesses live in `portability/verify/` — a loopback-HTTP model-request
+capture for Claude Code/Codex/Pi/Droid (tier `model-request-capture`), a CLI-acceptance
+and schema check for OpenCode (tier `cli-acceptance`) — and run via
+`rl doctor --verify-conversion [AGENT]` or automatically, interactively only, from
+`native_resume.native_resume()` the first time `rl resume --to` needs an unverified
+target. A per-agent `HARNESS_VERSION` invalidates stored records when the harness logic
+itself changes, and each record carries a digest of every `portability/*.py` file, so a
+changed check or changed writer code always re-verifies rather than trusting a stale pass.
+
+The layering runs one way. `verification.py` is a leaf: the record type, the state file,
+`HARNESS_VERSION`/`TIERS` and the code digest, which the adapters import to gate versions.
+Each `verify/<agent>.py` harness imports its adapter (and those records), and
+`adapters.py` registers it as that adapter's `Verifier` (executable plus harness), so
+nothing looks a harness up by agent name. `verify/workflow.py` holds the single
+`verify_and_record()` both entry points call: it resolves the `Verifier` through the
+registry, runs the harness in a scratch directory, keeps failure evidence (the newest
+three runs per agent, links copied as links) in `verify-failures/` beside the state file,
+records the pass, and reports every line through a callback. Doctor prints those lines on
+stdout and `rl resume` on stderr, so the two never word a result differently.
 
 ## Preservation and snapshots
 
@@ -17,9 +44,19 @@ model suffix. `compare.py` checks both streams, their order/provenance/content,
 checkpoint semantics and attachment digests; message IDs may be regenerated.
 Claude/Pi's equivalent-stream gate ignores message IDs/parents but retains all
 other fields, so genuinely different native visibility/provenance still fails.
+`compare.py` is also a write-side library: `CheckpointShape`, `flattened()`,
+`model_view()` and `joined_tool_output()` are imported by every writer to flatten a
+checkpoint it cannot express (R29), and the gate builds its expected view with the same
+`flattened()`. The gate therefore cannot catch a defect in those transforms; the
+per-agent harness is what exercises them against the real CLI.
 
-`compact.py` uses no model. It keeps the checkpoint and retained context contract,
-retains instructions/prose, and replaces complete contiguous tool exchanges with
+`compact.py` holds two transforms and uses no model in either. `portable()` runs on
+every conversion: it swaps `Opaque` content the target agent cannot replay for its
+fallback, collapses a checkpoint's opaque summary into its replaced context (deduping
+Codex's retained copies of user messages against it), and trims the oldest collapsed
+history behind one omission marker when the result exceeds `MAX_PORTABLE_TOKENS`.
+`compact()` runs only for `--compact`: it keeps the checkpoint and retained context
+contract, retains instructions/prose, and replaces complete contiguous tool exchanges with
 verified omission markers. Historical metadata may outlive an omitted tool; for
 example OpenCode tool-time provenance remains historical when an explicit omission
 marker replaces the native tool parts.
@@ -41,6 +78,14 @@ artifacts and intents under `conversion/`; full execution roots are stored for
 recovery. Semantic reuse identity includes target store/cwd/profile/schema/resolved
 configuration and source snapshot/options/title, but not incidental TMP/cache paths.
 The requested reuse key is computed once before taking the operation lock.
+`prepare()` reads the staged output back and probes the target once; `publish()` of
+that prepared conversion reuses the read-back and replays the recorded version probe,
+re-reading only the target's configuration and schema to catch drift since `prepare()`.
+Journals recovered from disk get the full checks again. `index.json` in the operations
+directory maps each operation to its reuse key and source/target identities, so reuse
+and recovery lookups decode only matching journals. It is rewritten under the operation
+lock on every create and reconciled against the directory listing on each read, so a
+missing, corrupt or stale index costs a rescan, never a wrong answer.
 
 Journal/artifact version 2 binds each operation to its resolved registry path.
 Resume, rollback and reuse reject a different registry before changing state, with

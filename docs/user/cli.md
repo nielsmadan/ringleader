@@ -31,7 +31,7 @@ rl
 
 | Command | Does | Key flags |
 |---|---|---|
-| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then choose the session's own agent (default) or hand it to another. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--dry-run`, `--all`, `--recursive`, `--registry` |
+| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then choose the session's own agent (default) or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
 | `rl inbox` | Textual TUI over the dormant-session queue, in three tabs. `j`/`k` move, `h` harvest, `d` delete, `u` undo, `s` snooze, `K` keep, `a` archive, `enter` select, `;` detail, `q` quit. Offers a `roundup` when state is stale. | `--registry` |
 | `rl roundup` | Refresh, prune (**deletes**), and enrich in one pass. | `--yes` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
@@ -42,7 +42,7 @@ rl
 | `rl usage windows` | 5h/weekly windows. Codex from disk; Claude needs `rl install statusline`. | |
 | `rl usage export` | Write usage records out, to `--merge` elsewhere. | `--out` |
 | `rl harvests` | The pending harvest queue. | `--json` |
-| `rl doctor` | Per-agent report: skills, hooks, statusline, retention. | `--settings` |
+| `rl doctor` | Per-agent report: skills, hooks, statusline, retention. `--verify-conversion [AGENT]` runs the offline self-verification harness for installed conversion targets (or one named agent) and records a pass. | `--settings`, `--verify-conversion [AGENT]`, `--verified` |
 
 `--status` accepts `active`, `unfinished`, `blocked`, `finished`, `abandoned`, `harvested`,
 `unclassified`, or `all`; it is repeatable (OR). `-a`/`--all` is a legacy alias for
@@ -224,13 +224,13 @@ rl data transaction resume <transaction-id> [--json]
 rl data transaction rollback <transaction-id> [--json]
 ```
 
-Supported agent names are `claude-code`, `codex`, `opencode`, and `pi`. Conversion
-preserves the source and creates a destination session in its effective recorded
-workspace. Repeating a conversion reuses the same result; an archived or deleted
-result is reported with its lifecycle and is not recreated. Fork always creates a
-fresh identity and defaults to the source agent. Handoff forks and then resumes.
-`--compact` deterministically replaces complete tool exchanges with omission
-markers and reports approximate sizes/counts; it makes no model call.
+Supported agent names are `claude-code`, `codex`, `opencode`, `pi`, and `droid`.
+Conversion preserves the source and creates a destination session in its effective
+recorded workspace. Repeating a conversion reuses the same result; an archived or
+deleted result is reported with its lifecycle and is not recreated. Fork always
+creates a fresh identity and defaults to the source agent. Handoff forks and then
+resumes. `--compact` deterministically replaces complete tool exchanges with
+omission markers and reports approximate sizes/counts; it makes no model call.
 
 Explicit IDs, `--open`, and `--running` are mutually exclusive. `--open` selects
 sessions whose effective status is active, unfinished, or blocked. It excludes
@@ -245,7 +245,8 @@ any source fails. JSON conversion output has `results` and `errors` arrays.
 
 Resume replaces `rl` with the native CLI, preserving terminal input/output and the
 inherited environment. It uses the recorded effective workspace and, for converted
-sessions, recorded native roots. Fork with `--resume` and handoff validate the
+sessions, recorded native roots, setting a root variable only where the recorded root differs
+from what the agent resolves from that environment. Fork with `--resume` and handoff validate the
 executable and workspace before publication. A later launch failure retains the
 target and prints its qualified ID and exact `rl session resume` command. Archived
 and deleted sessions cannot be resumed.
@@ -255,9 +256,15 @@ do not write registry, journals, or native stores. Version probes use disposable
 roots. Doctor reports writer compatibility for its current cwd/native roots and unfinished
 conversion journals; success there does not establish compatibility in another
 workspace. Batch preflight resolves each source workspace separately.
-OpenCode's initial profile is schema-backed, with native runtime smoke explicitly
-unverified; it requires an initialized compatible database and supported explicit
-model configuration. Other adapters require their verified native versions.
+
+Every target version is either pinned from upstream source research or
+self-verified on this machine; `rl doctor --verify-conversion [AGENT]` runs the
+offline harness and records the result in `--verified` (default
+`verified-targets.json` under the ringleader state directory). An unverified,
+unpinned target version refuses with the command to run. OpenCode's profile is
+additionally schema-backed and requires an initialized compatible database and
+supported explicit model configuration; its native runtime request construction
+remains unverified even once self-verified (CLI-acceptance tier only).
 
 Transaction resume performs forward recovery. Rollback removes only provably
 private staging and refuses after external publication may have occurred. Use the
@@ -268,8 +275,9 @@ publication or cleanup.
 
 All these commands accept `--json`, `--registry PATH` (default
 `$XDG_DATA_HOME/ringleader/registry.json`, or `~/.local/share/ringleader/registry.json`),
-and `--operations PATH` (default `conversion/` under the ringleader data directory,
-independent of a `--registry` override). JSON controls rl's
+`--operations PATH` (default `conversion/` under the ringleader data directory,
+independent of a `--registry` override), and `--verified PATH` (default
+`verified-targets.json` under the ringleader state directory). JSON controls rl's
 output; a successful resume then hands output to the native CLI. `--compact` defaults
 off; `--dry-run` exists only on convert and defaults off. Convert requires `--to`;
 fork defaults `--to` to the source agent and defaults `--resume` off; handoff requires

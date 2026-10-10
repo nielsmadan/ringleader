@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 from contextlib import closing
 from dataclasses import replace
+from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,7 +16,13 @@ from ringleader.portability.adapters import builtin_adapters
 from ringleader.portability.capabilities import Adapter, RunResult, SourceRequest, TargetRequest
 from ringleader.portability.compare import compare
 from ringleader.portability.model import Identity, PreservationError, ToolResult
-from ringleader.portability.operations import OperationStore
+from ringleader.portability.operations import (
+    OPERATION_VERSION,
+    Operation,
+    OperationStore,
+    digest,
+    encode,
+)
 from ringleader.portability.pi import PROFILE, PiAdapter
 from ringleader.portability.service import ConversionRequest, ConversionService
 from tests.portability.test_codex import initialized
@@ -124,6 +131,9 @@ def test_actual_adapter_publication_and_repeat(tmp_path, agent, compact):
         result.target,
         True,
     )
+    writer = builtin_adapters().writer(agent)
+    declared = writer.normalizations(writer.profile)
+    assert result.normalizations == tuple(item.kind for item in declared)
     operation = worker.transactions()[0]
     artifacts = worker.store.artifacts(operation)
     staged = artifacts.stage.native()
@@ -360,6 +370,30 @@ def test_file_intent_recovery_checks_inode_and_preserves_changes(tmp_path, mutat
     assert (path.read_bytes() if path.exists() else None) == before
 
 
+def test_a_dry_run_tolerates_a_publish_caught_between_journal_and_artifacts(tmp_path):
+    conversion = request(tmp_path)
+    worker = service(tmp_path)
+    prepared = worker.prepare(conversion)
+    key = prepared.artifacts.key()
+    operation = Operation(
+        OPERATION_VERSION,
+        uuid4().hex,
+        key,
+        digest(encode(prepared.artifacts)),
+        prepared.source,
+        prepared.target,
+        datetime.now(UTC).isoformat(),
+        "prepared",
+        prepared.artifacts.registry_path,
+    )
+    worker.store.save(operation)
+    assert not worker.store._path(operation.id, "artifacts.json").exists()
+
+    preview = worker.preview(prepared)
+
+    assert (preview.operation_id, preview.reused) == (None, False)
+
+
 @pytest.mark.parametrize(
     "lifecycle", ["archived", "deleted", "purged", "removed", "native_deleted", "native_changed"]
 )
@@ -405,6 +439,19 @@ def test_completed_retry_keeps_lifecycle(tmp_path, lifecycle):
     assert (repeated.operation_id, repeated.lifecycle) == (result.operation_id, expected)
     assert tree(conversion.target_roots.store) == before
     assert worker.lineage(result.target)[0]["operationId"] == result.operation_id
+
+
+def test_a_changed_native_target_is_reported_without_a_fault_sounding_diagnostic(tmp_path):
+    conversion = request(tmp_path)
+    worker = service(tmp_path)
+    result = worker.convert(conversion)
+    path = conversion.target_roots.store / result.source_ref
+    path.write_bytes(b"edited target")
+
+    repeated = service(tmp_path).convert(conversion)
+
+    assert repeated.lifecycle == "changed"
+    assert not any("missing or changed" in d for d in repeated.diagnostics)
 
 
 @pytest.mark.parametrize("agent", ["codex", "opencode"])

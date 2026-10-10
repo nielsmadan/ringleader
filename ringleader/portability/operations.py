@@ -7,7 +7,7 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 from ..stateio import atomic_write_bytes
 from .capabilities import (
@@ -19,11 +19,14 @@ from .capabilities import (
     NativeStage,
 )
 from .compact import CompactReport
+from .compare import Normalization
 from .model import Conversation, Identity, PreservationError, unique_object, validate
 from .serialization import _decode, _encode
 from .snapshot import SourceSnapshot, TransformOptions
 
 OPERATION_VERSION = 2
+INDEX_VERSION = 1
+OPERATION_ID = re.compile(r"[0-9a-f]{32}")
 
 
 @dataclass(frozen=True)
@@ -84,6 +87,7 @@ class StoredStage:
     source_ref: str
     database_payload: bytes | None
     schema_identity: str | None
+    normalizations: tuple[Normalization, ...] | None = None
 
     @classmethod
     def capture(cls, stage: NativeStage) -> StoredStage:
@@ -95,6 +99,7 @@ class StoredStage:
             stage.source_ref,
             stage.database_payload,
             stage.schema_identity,
+            stage.normalizations,
         )
 
     def native(self) -> NativeStage:
@@ -107,6 +112,7 @@ class StoredStage:
             self.source_ref,
             self.database_payload,
             self.schema_identity,
+            self.normalizations,
         )
 
 
@@ -197,6 +203,27 @@ def durable_directory(path: Path) -> None:
     fsync_directory(path.parent)
 
 
+def _index_entry(operation: Operation) -> dict[str, Any]:
+    return {
+        "key": operation.key,
+        "source": [operation.source.agent, operation.source.native_id],
+        "target": [operation.target.agent, operation.target.native_id],
+    }
+
+
+def _valid_entry(entry: Any) -> bool:
+    return (
+        isinstance(entry, dict)
+        and isinstance(entry.get("key"), str)
+        and all(
+            isinstance(entry.get(name), list)
+            and len(entry[name]) == 2  # noqa: PLR2004 -- agent and native id
+            and all(isinstance(part, str) for part in entry[name])
+            for name in ("source", "target")
+        )
+    )
+
+
 def decode[T](data: bytes, expected: type[T]) -> T:
     try:
         return cast(T, _decode(json.loads(data, object_pairs_hook=unique_object), expected))
@@ -209,7 +236,7 @@ class OperationStore:
         self.root = root.resolve()
 
     def directory(self, operation_id: str) -> Path:
-        if re.fullmatch(r"[0-9a-f]{32}", operation_id) is None:
+        if OPERATION_ID.fullmatch(operation_id) is None:
             raise PreservationError("Invalid conversion operation ID")
         path = self.root / operation_id
         if path.is_symlink() or path.resolve() != path:
@@ -229,9 +256,63 @@ class OperationStore:
             sorted(
                 path.name
                 for path in self.root.iterdir()
-                if re.fullmatch(r"[0-9a-f]{32}", path.name) and (path / "journal.json").exists()
+                if OPERATION_ID.fullmatch(path.name) and (path / "journal.json").exists()
             )
         )
+
+    def _stored_index(self) -> dict[str, dict[str, Any]] | None:
+        path = self.root / "index.json"
+        try:
+            if path.is_symlink():
+                return None
+            data = json.loads(path.read_bytes())
+        except (OSError, ValueError):
+            return None
+        entries = data.get("operations") if isinstance(data, dict) else None
+        if (
+            not isinstance(entries, dict)
+            or data.get("version") != INDEX_VERSION
+            or not all(_valid_entry(entry) for entry in entries.values())
+        ):
+            return None
+        return entries
+
+    def index(self) -> dict[str, dict[str, Any]]:
+        listed = self.ids()
+        stored = self._stored_index() or {}
+        entries: dict[str, dict[str, Any]] = {}
+        for operation_id in listed:
+            if operation_id in stored:
+                entries[operation_id] = stored[operation_id]
+                continue
+            # a journal that cannot be decoded (foreign version, damage) is left
+            # out of the index rather than failing every lookup or write
+            with suppress(PreservationError, OSError):
+                entries[operation_id] = _index_entry(self.load(operation_id))
+        return entries
+
+    def matching(
+        self,
+        *,
+        key: str | None = None,
+        source: Identity | None = None,
+        target_agent: str | None = None,
+    ) -> tuple[str, ...]:
+        return tuple(
+            operation_id
+            for operation_id, entry in self.index().items()
+            if (key is None or entry["key"] == key)
+            and (source is None or entry["source"] == [source.agent, source.native_id])
+            and (target_agent is None or entry["target"][0] == target_agent)
+        )
+
+    def _write_index(self) -> None:
+        # the index is derivable from the journals, so a failed write only costs a rescan
+        with suppress(PreservationError, OSError):
+            payload = {"version": INDEX_VERSION, "operations": self.index()}
+            atomic_write_bytes(
+                self.root / "index.json", json.dumps(payload, sort_keys=True).encode() + b"\n"
+            )
 
     def load(self, operation_id: str) -> Operation:
         operation = decode(self._path(operation_id, "journal.json").read_bytes(), Operation)
@@ -311,13 +392,14 @@ class OperationStore:
             ) and (step.device < 0 or step.inode <= 0):
                 raise PreservationError("Missing durable publisher inode evidence")
 
-    def create(self, operation: Operation, artifacts: Artifacts) -> None:
+    def create(self, operation: Operation, artifacts: bytes) -> None:
         durable_directory(self.root)
         directory = self.directory(operation.id)
         directory.mkdir(mode=0o700)
         fsync_directory(self.root)
         self.save(operation)
-        atomic_write_bytes(self._path(operation.id, "artifacts.json"), encode(artifacts))
+        atomic_write_bytes(self._path(operation.id, "artifacts.json"), artifacts)
+        self._write_index()
 
     def save(self, operation: Operation) -> None:
         atomic_write_bytes(self._path(operation.id, "journal.json"), encode(operation))

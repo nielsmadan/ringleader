@@ -2,7 +2,7 @@ import json
 from pathlib import Path
 
 import pytest
-from ringleader.slug import normalize, slugify
+from ringleader.slug import droid_slug
 from ringleader.sources.base import (
     CompanionFileSource,
     RawRef,
@@ -52,7 +52,7 @@ def _session(
     session_id: str = SESSION_ID,
     sidecars: bool = False,
 ) -> Path:
-    project = sessions_dir / slugify(normalize(cwd))
+    project = sessions_dir / droid_slug(cwd)
     project.mkdir(parents=True, exist_ok=True)
     path = project / f"{session_id}.jsonl"
     path.write_text(
@@ -142,7 +142,7 @@ def test_parse_extracts_the_session_start_and_conversation(tmp_path):
     assert parsed.message_count == 3
     assert parsed.last_prompt == "last prompt"
     assert parsed.tail_text == "ASSISTANT: the answer\nUSER: last prompt"
-    assert parsed.file == str(tmp_path / slugify(normalize(CWD)) / f"{SESSION_ID}.jsonl")
+    assert parsed.file == str(tmp_path / droid_slug(CWD) / f"{SESSION_ID}.jsonl")
 
 
 def test_parse_reports_a_hand_set_title_as_the_custom_title(tmp_path):
@@ -193,10 +193,12 @@ def test_the_factory_home_override_replaces_home_not_the_factory_dir(tmp_path, m
     assert DroidSource().root == expected
 
 
-def test_storage_for_uses_the_shared_launch_directory_slug(tmp_path):
+def test_storage_for_keeps_underscores_dots_and_spaces_as_droid_does(tmp_path):
     source = DroidSource(sessions_dir=tmp_path)
 
-    assert source.storage_for(CWD) == tmp_path / slugify(normalize(CWD))
+    storage = source.storage_for("/Users/me/my_proj/v1.2/with space")
+
+    assert storage == tmp_path / "-Users-me-my_proj-v1.2-with space"
 
 
 def test_relocate_storage_renames_the_slug_directory_and_maps_transcripts(tmp_path):
@@ -206,7 +208,7 @@ def test_relocate_storage_renames_the_slug_directory_and_maps_transcripts(tmp_pa
 
     moved = source.relocate_storage(CWD, new_cwd)
 
-    destination = tmp_path / slugify(normalize(new_cwd))
+    destination = tmp_path / droid_slug(new_cwd)
     assert moved == {str(transcript): str(destination / transcript.name)}
     assert (destination / f"{SESSION_ID}.jsonl").is_file()
     assert (destination / f"{SESSION_ID}.settings.json").is_file()
@@ -223,7 +225,7 @@ def test_relocate_storage_raises_rather_than_merging_onto_an_occupied_destinatio
     with pytest.raises(RuntimeError, match="already exists"):
         source.relocate_storage(CWD, new_cwd)
 
-    assert (tmp_path / slugify(normalize(CWD)) / f"{SESSION_ID}.jsonl").is_file()
+    assert (tmp_path / droid_slug(CWD) / f"{SESSION_ID}.jsonl").is_file()
 
 
 def test_relocate_session_carries_the_settings_sidecars_along(tmp_path):
@@ -233,17 +235,17 @@ def test_relocate_session_carries_the_settings_sidecars_along(tmp_path):
 
     destination = source.relocate_session(str(transcript), new_cwd)
 
-    expected = tmp_path / slugify(normalize(new_cwd))
+    expected = tmp_path / droid_slug(new_cwd)
     assert destination == str(expected / transcript.name)
     assert (expected / f"{SESSION_ID}.settings.json").read_text() == '{"model":"opus"}'
     assert (expected / f"{SESSION_ID}.settings.json.bak").read_text() == "{}"
-    assert sorted(p.name for p in (tmp_path / slugify(normalize(CWD))).iterdir()) == []
+    assert sorted(p.name for p in (tmp_path / droid_slug(CWD)).iterdir()) == []
 
 
 def test_relocate_session_raises_when_a_sidecar_already_sits_at_the_destination(tmp_path):
     transcript = _session(tmp_path, [_start()], sidecars=True)
     new_cwd = "/Users/me/wrksp/moved"
-    occupied = tmp_path / slugify(normalize(new_cwd))
+    occupied = tmp_path / droid_slug(new_cwd)
     occupied.mkdir(parents=True)
     (occupied / f"{SESSION_ID}.settings.json").write_text("{}", encoding="utf-8")
     source = DroidSource(sessions_dir=tmp_path)
@@ -327,7 +329,7 @@ def test_companion_paths_names_both_settings_sidecars(tmp_path):
 def test_relocate_session_raises_when_only_the_backup_sidecar_sits_at_the_destination(tmp_path):
     transcript = _session(tmp_path, [_start()], sidecars=True)
     new_cwd = "/Users/me/wrksp/moved"
-    occupied = tmp_path / slugify(normalize(new_cwd))
+    occupied = tmp_path / droid_slug(new_cwd)
     occupied.mkdir(parents=True)
     (occupied / f"{SESSION_ID}.settings.json.bak").write_text("{}", encoding="utf-8")
     source = DroidSource(sessions_dir=tmp_path)
@@ -373,7 +375,7 @@ def test_discover_skips_a_first_line_that_is_json_but_not_a_record(tmp_path):
 
 def test_discover_skips_an_empty_transcript(tmp_path):
     good = _session(tmp_path, [_start()])
-    project = tmp_path / slugify(normalize(CWD))
+    project = tmp_path / droid_slug(CWD)
     (project / "88888888-0000-4000-8000-000000000008.jsonl").write_text("", encoding="utf-8")
     (project / "99999999-0000-4000-8000-000000000009.jsonl").write_text("\n\n", encoding="utf-8")
 
@@ -383,7 +385,7 @@ def test_discover_skips_an_empty_transcript(tmp_path):
 
 
 def test_discover_yields_nothing_for_a_directory_holding_only_sidecars(tmp_path):
-    project = tmp_path / slugify(normalize(CWD))
+    project = tmp_path / droid_slug(CWD)
     project.mkdir(parents=True)
     (project / f"{SESSION_ID}.settings.json").write_text("{}", encoding="utf-8")
     (project / f"{SESSION_ID}.settings.json.bak").write_text("{}", encoding="utf-8")

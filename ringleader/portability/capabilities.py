@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal, Protocol
 
+from ..agents import canonical_agent
 from .compare import Normalization
 from .model import Conversation, Identity, PreservationError
 from .snapshot import SourceSnapshot
@@ -38,6 +39,10 @@ class RunResult:
     stderr: bytes
 
 
+class NeedsVerification(PreservationError):
+    pass
+
+
 class Runner(Protocol):
     def run(self, request: RunRequest) -> RunResult: ...
 
@@ -58,13 +63,16 @@ class Compatibility:
     runtime_version: str | None = None
     schema_identity: str | None = None
     target_configuration: tuple[tuple[str, str], ...] = ()
+    warnings: tuple[str, ...] = ()
+    needs_verification: bool = False
 
     def __post_init__(self) -> None:
         _validate_configuration(self.target_configuration)
 
     def require(self) -> FormatProfile:
         if not self.supported or self.profile is None:
-            raise PreservationError("Native compatibility: " + "; ".join(self.diagnostics))
+            error = NeedsVerification if self.needs_verification else PreservationError
+            raise error("Native compatibility: " + "; ".join(self.diagnostics))
         return self.profile
 
 
@@ -106,6 +114,7 @@ class NativeStage:
     source_ref: str
     database_payload: bytes | None = None
     schema_identity: str | None = None
+    normalizations: tuple[Normalization, ...] | None = None
 
     def __post_init__(self) -> None:
         if len({item.relative_path for item in self.files}) != len(self.files):
@@ -121,6 +130,7 @@ class TargetRequest:
     profile: FormatProfile
     title: str
     target_configuration: tuple[tuple[str, str], ...] = ()
+    runtime_version: str | None = None
 
     def __post_init__(self) -> None:
         _validate_configuration(self.target_configuration)
@@ -151,6 +161,8 @@ class NativeMetadata:
 
 
 class NativeWriter(Protocol):
+    profile: FormatProfile
+
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility: ...
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage: ...
     def read_stage(self, stage: NativeStage) -> Conversation: ...
@@ -187,6 +199,23 @@ class NativeIdentityAllocator(Protocol):
     def allocate_identity(self) -> Identity: ...
 
 
+class HarnessOutcome(Protocol):
+    @property
+    def version(self) -> str: ...
+    @property
+    def schema_identity(self) -> str | None: ...
+
+
+class Harness(Protocol):
+    def __call__(self, executable: str, workdir: Path) -> HarnessOutcome: ...
+
+
+@dataclass(frozen=True)
+class Verifier:
+    executable: str
+    harness: Harness
+
+
 class NativeRootResolver(Protocol):
     def resolve_source(self, cwd: Path, recorded: str | None) -> tuple[NativeRoots, str]: ...
 
@@ -205,6 +234,7 @@ class Adapter:
     index: NativeIndex | None = None
     identity_allocator: NativeIdentityAllocator | None = None
     roots: NativeRootResolver | None = None
+    verifier: Verifier | None = None
 
 
 class AdapterRegistry:
@@ -212,12 +242,16 @@ class AdapterRegistry:
         self._adapters: dict[str, Adapter] = {}
 
     def register(self, adapter: Adapter) -> None:
-        if not adapter.agent or adapter.agent == "claude" or adapter.agent in self._adapters:
+        if (
+            not adapter.agent
+            or adapter.agent != canonical_agent(adapter.agent)
+            or adapter.agent in self._adapters
+        ):
             raise PreservationError(f"Invalid or duplicate adapter: {adapter.agent}")
         self._adapters[adapter.agent] = adapter
 
     def get(self, agent: str) -> Adapter:
-        canonical = "claude-code" if agent == "claude" else agent
+        canonical = canonical_agent(agent)
         try:
             return self._adapters[canonical]
         except KeyError as exc:
@@ -243,6 +277,12 @@ class AdapterRegistry:
         if writer is None:
             raise PreservationError(f"Native writing is unavailable for {agent}")
         return writer
+
+    def verifier(self, agent: str) -> Verifier:
+        verifier = self.get(agent).verifier
+        if verifier is None:
+            raise PreservationError(f"No self-verification harness for {agent}")
+        return verifier
 
     def launcher(self, agent: str) -> NativeLauncher:
         launcher = self.get(agent).launcher

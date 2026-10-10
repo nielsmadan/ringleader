@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any, cast
 
+from .agents import display_agent
+
 LIVE_STATUSES = ("active", "unfinished", "blocked")
 FILTERABLE_STATUSES = (*LIVE_STATUSES, "finished", "abandoned", "harvested", "unclassified")
 ABANDON_AGE_DAYS = 21
@@ -170,8 +172,7 @@ def _label(thread: dict[str, Any]) -> str:
 
 
 def source_badge(thread: dict[str, Any]) -> str:
-    s = thread.get("source") or "claude-code"
-    return "claude" if s == "claude-code" else cast(str, s)
+    return display_agent(cast(str, thread.get("source") or "claude-code"))
 
 
 _BYTES_PER_UNIT = 1024

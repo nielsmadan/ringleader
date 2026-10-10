@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -17,12 +18,26 @@ def compatibility_rows(worker: ConversionService, cwd: Path) -> list[dict[str, A
                     "agent": agent,
                     "supported": result.supported,
                     "profile": result.profile.name if result.profile else None,
-                    "diagnostics": list(result.diagnostics),
+                    "diagnostics": [*result.diagnostics, *result.warnings],
+                    "needs_verification": result.needs_verification,
                 }
             )
-        except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
+        except (
+            OSError,
+            ValueError,
+            RuntimeError,
+            TypeError,
+            LookupError,
+            subprocess.SubprocessError,
+        ) as exc:
             rows.append(
-                {"agent": agent, "supported": False, "profile": None, "diagnostics": [str(exc)]}
+                {
+                    "agent": agent,
+                    "supported": False,
+                    "profile": None,
+                    "diagnostics": [str(exc)],
+                    "needs_verification": False,
+                }
             )
     return rows
 

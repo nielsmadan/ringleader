@@ -130,13 +130,18 @@ does, and the session is not in it) need opposite handling from the caller, and
 - **A missing capability is a no-op, not an error.** `hide_from_picker()` returns
   `IndexUpdate.NO_INDEX` for a source without an index. Only a source that *has* one and fails
   raises.
-- **Droid and Claude Code share one directory encoding.** `slug.py` reproduces a private Claude
-  Code function, and `DroidSource.storage_for()` reuses it verbatim — verified against 257 droid
-  sessions, none of them launched from under a symlink. Droid's encoder calls `realpathSync` where
-  `slug.normalize()` deliberately does not, so a symlinked launch dir diverges; the computed slug
-  then simply does not exist, which shows up as a `drifted` badge and a no-op `relocate_storage()`
-  rather than as anything overwritten. An upgrade to *either* CLI can strand both, so re-verify
-  against both.
+- **Droid has its own directory encoding.** `slug.py` reproduces Claude Code's private slug
+  function for Claude Code itself, and a separate `droid_slug()` for droid: `realpath`, then every
+  `/` becomes `-`, keeping `_`, `.`, and spaces that Claude Code's encoder would also replace.
+  `DroidSource.storage_for()` calls it rather than `slugify()`, and `scanner.storage_slug()`
+  (drift detection, workspace-move previews) asks the source's `storage_for()` instead of
+  dispatching on its name — verified against 438/438 real droid sessions. Claude Code's
+  path goes through `slug.normalize()` (`os.path.abspath(os.path.expanduser(...))`), which
+  deliberately does not resolve symlinks — a resolved path would not match the cwd the agent
+  recorded. Only `droid_slug()` calls `os.path.realpath`. A symlinked launch dir therefore still
+  makes the two encoders diverge; the computed slug simply not existing shows up as a `drifted`
+  badge and a no-op `relocate_storage()` rather than as anything overwritten. An upgrade to
+  *either* CLI can change its own encoding, so re-verify against both.
 - **Droid files transcripts in three places.** A project directory keyed by the launch dir's slug,
   the global root (`sessions/<uuid>.jsonl`), and `sessions/btw/` for a fork. `discover()` reads the
   first two and skips forks, which are never re-filed under a slug. A session at the

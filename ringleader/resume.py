@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Any, cast
 
 from . import namefilter, overview, scanner, search
+from .agents import canonical_agent, display_agent
 from .search import _BLURB_FIELDS
-from .slug import stored_under
 from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource
 
 _UNKNOWN = "(unknown)"
@@ -180,12 +180,8 @@ def source_of(thread: dict[str, Any]) -> str:
     return thread.get("source") or "claude-code"
 
 
-def agent_name(source: str) -> str:
-    return "claude" if source == "claude-code" else source
-
-
-def source_name(agent: str) -> str:
-    return "claude-code" if agent == "claude" else agent
+agent_name = display_agent
+source_name = canonical_agent
 
 
 def launchable_agents() -> tuple[str, ...]:
@@ -225,7 +221,7 @@ def drifted(thread: dict[str, Any]) -> bool:
         return False
     if _in_source_root(name, file):
         return False  # droid's global-root layout: no slug dir to compare against
-    return not stored_under(file, project)
+    return not scanner.stored_under(file, project, name)
 
 
 def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -> str | None:

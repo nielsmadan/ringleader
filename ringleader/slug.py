@@ -51,15 +51,15 @@ def slugify(path: str | Path) -> str:
     return slug[:SLUG_MAX_LEN] + "-" + _base36(abs(_rolling_hash(raw)))
 
 
+def droid_slug(path: str | Path) -> str:
+    resolved = os.path.realpath(os.path.expanduser(str(path))).rstrip("/\\").lstrip("/")
+    return "-" + re.sub(r"/+", "-", resolved)
+
+
 def normalize(path: str | Path) -> str:
     """Absolute and lexically normalized, without resolving symlinks — a resolved
     path would not match the cwd the agent recorded."""
     return os.path.abspath(os.path.expanduser(str(path)))
-
-
-def stored_under(file: str | Path, path: str | Path) -> bool:
-    """True when `file` sits in the directory Claude Code slugs `path` to."""
-    return Path(file).parent.name == slugify(normalize(path))
 
 
 def is_beneath(path: str | None, root: str) -> bool:

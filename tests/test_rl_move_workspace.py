@@ -1,5 +1,6 @@
 import json
 import sqlite3
+from pathlib import Path
 
 import pytest
 from ringleader import registry as registry_mod
@@ -613,3 +614,14 @@ def test_collisions_reports_a_droid_sidecar_sitting_at_the_destination(tmp_path)
     found = move_workspace.collisions(plan, move_workspace._Sources({"droid": source}, {}))
 
     assert found == [str(destination / "s1.settings.json.bak")]
+
+
+def test_a_droid_session_under_its_own_underscore_dot_space_slug_has_not_drifted():
+    thread = {
+        "source": "droid",
+        "project": "/w/my_api.v2 x",
+        "file": "/f/sessions/-w-my_api.v2 x/s1.jsonl",
+    }
+    srcs = move_workspace._Sources({"droid": DroidSource(sessions_dir=Path("/f/sessions"))}, {})
+
+    assert move_workspace._drifted(thread, srcs) is False

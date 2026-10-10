@@ -4,8 +4,9 @@ import pytest
 from ringleader.portability import native
 from ringleader.portability.capabilities import SourceRequest
 from ringleader.portability.compact import compact as transform
-from ringleader.portability.compare import compare
-from ringleader.portability.model import Identity, PreservationError
+from ringleader.portability.compact import portable
+from ringleader.portability.compare import compare, preservation_projection
+from ringleader.portability.model import Identity
 from ringleader.portability.service import ConversionRequest
 from tests.portability.fixtures import SESSION_ID, claude_records, codex_tool_records, pi_records
 from tests.portability.test_codex import initialized
@@ -140,7 +141,7 @@ def independent_source(base, agent):
 @pytest.mark.parametrize("source_agent", AGENTS)
 @pytest.mark.parametrize("target_agent", AGENTS)
 @pytest.mark.parametrize("compact", [False, True])
-def test_independent_native_sources_and_exact_visibility_limits(
+def test_independent_native_sources_convert_in_the_target_model_view(
     tmp_path, source_agent, target_agent, compact
 ):
     worker = service(tmp_path)
@@ -150,31 +151,27 @@ def test_independent_native_sources_and_exact_visibility_limits(
         target_roots(tmp_path / "target", target_agent),
         compact=compact,
     )
+    result = worker.convert(request)
+    assert result.lifecycle == "active"
+    original = worker.adapters.reader(source_agent).snapshot(request.source).conversation
+    operation = worker.transactions()[0]
+    stage = worker.store.artifacts(operation).stage.native()
+    readback = (
+        worker.adapters.reader(target_agent)
+        .snapshot(SourceRequest(result.target, stage.roots, stage.source_ref))
+        .conversation
+    )
+    carried = portable(original, target_agent)
+    expected = replace(
+        transform(carried).conversation if compact else carried,
+        title=original.title or "Imported session",
+    )
+    normalizations = worker.adapters.writer(target_agent).normalizations(stage.profile)
+    compare(expected, readback, normalizations)
     if source_agent == "codex" and target_agent != "codex":
-        diagnostic = (
-            ("Preservation mismatch: context" if compact else "requires one text output")
-            if target_agent == "opencode"
-            else "distinct history/context"
-        )
-        with pytest.raises(PreservationError, match=diagnostic):
-            worker.convert(request)
-        assert worker.transactions() == ()
-    else:
-        result = worker.convert(request)
-        assert result.lifecycle == "active"
-        original = worker.adapters.reader(source_agent).snapshot(request.source).conversation
-        operation = worker.transactions()[0]
-        stage = worker.store.artifacts(operation).stage.native()
-        readback = (
-            worker.adapters.reader(target_agent)
-            .snapshot(SourceRequest(result.target, stage.roots, stage.source_ref))
-            .conversation
-        )
-        compare(
-            replace(
-                transform(original).conversation if compact else original,
-                title=original.title or "Imported session",
-            ),
-            readback,
-            worker.adapters.writer(target_agent).normalizations(stage.profile),
+        streams = tuple(item for item in normalizations if item.kind != "model-view-history")
+        assert len(original.history) != len(original.context)
+        assert (
+            preservation_projection(readback, streams)["history"]
+            == preservation_projection(expected, streams)["context"]
         )

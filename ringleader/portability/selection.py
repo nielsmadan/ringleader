@@ -1,12 +1,15 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 from .. import overview, registry
+from ..agents import canonical_agent
 from ..presence import SETUP_COMMAND, PresenceClient
+from .capabilities import AdapterRegistry, NativeRoots, SourceRequest
 from .model import Identity, PreservationError
+from .operations import StoredRoots
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,7 @@ def sessions(reg: dict[str, Any]) -> tuple[SelectedSession, ...]:
 def resolve(candidates: tuple[SelectedSession, ...], selector: str) -> SelectedSession:
     agent, separator, native_id = selector.partition(":")
     if separator:
-        agent = "claude-code" if agent == "claude" else agent
+        agent = canonical_agent(agent)
         candidates = tuple(item for item in candidates if item.identity.agent == agent)
     else:
         native_id = selector
@@ -100,9 +103,43 @@ def running_selectors(client: PresenceClient) -> tuple[str, ...]:
     return tuple(
         sorted(
             {
-                f"{'claude-code' if item.agent == 'claude' else item.agent}:{item.session_id}"
+                f"{canonical_agent(item.agent)}:{item.session_id}"
                 for item in result.sessions
                 if item.running
             }
         )
     )
+
+
+def native_roots(
+    adapters: AdapterRegistry, selected: SelectedSession, *, launch: bool = False
+) -> NativeRoots:
+    stored = selected.thread.get("nativeRoots")
+    if stored:
+        roots = replace(StoredRoots(**stored).native(), cwd=selected.cwd)
+    elif launch:
+        roots = adapters.roots(selected.identity.agent, selected.cwd)
+    else:
+        resolver = adapters.get(selected.identity.agent).roots
+        if resolver is None:
+            raise PreservationError("Native source location is unavailable")
+        roots, _ = resolver.resolve_source(selected.cwd, selected.source_ref)
+    if launch and not Path(source_ref(adapters, selected, roots)).is_relative_to(roots.store):
+        raise PreservationError(
+            "Recorded session file is outside the native launch store; check native root overrides"
+        )
+    return roots
+
+
+def source_ref(adapters: AdapterRegistry, selected: SelectedSession, roots: NativeRoots) -> str:
+    resolver = adapters.get(selected.identity.agent).roots
+    if resolver is None:
+        raise PreservationError("Native source location is unavailable")
+    if not selected.thread.get("nativeRoots"):
+        return resolver.resolve_source(selected.cwd, selected.source_ref)[1]
+    return resolver.source_ref(roots, selected.source_ref)
+
+
+def source_request(adapters: AdapterRegistry, selected: SelectedSession) -> SourceRequest:
+    roots = native_roots(adapters, selected)
+    return SourceRequest(selected.identity, roots, source_ref(adapters, selected, roots))

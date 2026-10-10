@@ -39,7 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import gitinfo, refresh, registry, scanner
-from ..slug import is_beneath, normalize, remap, slugify, stored_under
+from ..slug import is_beneath, normalize, remap
 from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
 from . import default_registry
@@ -89,11 +89,18 @@ def _resolve_sources() -> _Sources:
     )
 
 
-def _drifted(thread: dict[str, Any]) -> bool:
+def _drifted(thread: dict[str, Any], srcs: _Sources) -> bool:
     """True when the session's recorded cwd is not the directory it was launched in
     — a worktree, or any session that cd'd. Its storage lives under the launch dir's
-    slug, so it can never ride along with a rename keyed on the recorded cwd."""
-    return not stored_under(thread["file"], thread["project"])
+    slug, so it can never ride along with a rename keyed on the recorded cwd.
+
+    Takes the sources already resolved for this plan rather than re-resolving one
+    per thread, which is what made planning many sessions expensive."""
+    name = thread.get("source") or "claude-code"
+    relocating = srcs.relocating.get(name)
+    if relocating is None:
+        raise ValueError(f"{name} does not file sessions under a workspace directory")
+    return Path(thread["file"]).parent.name != relocating.storage_for(thread["project"]).name
 
 
 def _listing(slug_dir: Path) -> list[Path]:
@@ -147,7 +154,9 @@ def build_plan(reg: dict[str, Any], old: str, new: str, srcs: _Sources) -> _Plan
         # scheduled for a second, per-session move out of a directory already gone.
         owned = bool(siblings) and all(str(p) in matched for p in siblings)
         movable = owned and not any(
-            _drifted(t) for t, _ in plan.threads if t.get("file") in {str(x) for x in siblings}
+            _drifted(t, srcs)
+            for t, _ in plan.threads
+            if t.get("file") in {str(x) for x in siblings}
         )
         if movable:
             if str(slug_dir) not in seen:
@@ -327,13 +336,17 @@ def _preflight(old: str, new: str, *, move_files: bool) -> str | None:
     return None
 
 
-def _describe(plan: _Plan, *, move_files: bool) -> None:
+def _describe(plan: _Plan, srcs: _Sources, *, move_files: bool) -> None:
     if move_files:
         print(f"move {plan.old} -> {plan.new}")
     for _source, old_cwd, new_cwd in plan.whole:
-        print(f"  storage  {slugify(normalize(old_cwd))} -> {slugify(normalize(new_cwd))}")
+        relocating = srcs.relocating[_source]
+        print(
+            f"  storage  {relocating.storage_for(old_cwd).name} -> "
+            f"{relocating.storage_for(new_cwd).name}"
+        )
     for thread, _source, _new_project in plan.per:
-        why = "cwd drifted from its launch dir" if _drifted(thread) else "shared directory"
+        why = "cwd drifted from its launch dir" if _drifted(thread, srcs) else "shared directory"
         print(f"  session  {thread['sessionId'][:8]}  moved on its own ({why})")
     for thread, _source, _new_project in plan.rebind:
         print(f"  session  {thread['sessionId'][:8]}  rebound in place ({thread.get('source')})")
@@ -530,7 +543,7 @@ def _run(argv: list[str], *, move_files: bool) -> int:
         print("refusing to merge — resolve it by hand, then re-run", file=sys.stderr)
         return 1
 
-    _describe(plan, move_files=move_files)
+    _describe(plan, srcs, move_files=move_files)
     if args.dry_run:
         return 0
     if not args.yes and not _confirmed():

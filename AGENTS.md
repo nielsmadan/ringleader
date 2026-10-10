@@ -29,11 +29,18 @@ pruning them before the GC clock deletes them.
   state there once.
 - **`rl resume` replaces the `rl` process.** It `chdir`s to the session's directory and
   `execvpe`s the agent, so anything after it in a shell script never runs. `--dry-run` prints the
-  directory and the argv and launches nothing. Resuming in a *different* agent (`--to`) is a
-  **seeded handoff**, not a conversion: the target starts a NEW session that has read a Markdown
-  export of the old one, written under `~/.local/share/ringleader/handoffs/` — nothing prunes that
-  directory. The source session is never modified. See
-  `docs/decisions/0011-seeded-handoff-over-native-conversion.md`.
+  directory and the argv and launches nothing. Resuming in a *different* agent (`--to`) tries a
+  **native conversion** first — a fresh session in the target agent that genuinely continues the
+  source, via `rl session convert`/`fork` under the hood — and only on refusal asks before
+  falling back to the old **seeded handoff** (a Markdown export of the old session, written under
+  `~/.local/share/ringleader/handoffs/` — nothing prunes that directory, and the target starts a
+  NEW session that has only read it). `--markdown` skips the native attempt and goes straight to
+  the seeded handoff. Either way the source session is never modified. A target agent whose
+  installed version was never self-verified on this machine triggers a one-time
+  `rl doctor --verify-conversion <agent>` pass first (interactive sessions only; `--dry-run` just
+  reports it would happen). See
+  `docs/decisions/0011-seeded-handoff-over-native-conversion.md` and
+  `docs/decisions/0013-native-conversion-behind-resume.md`.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **Most subcommands are plumbing.** Everything outside `overview` / `triage` / `prune` is
@@ -98,16 +105,26 @@ pruning them before the GC clock deletes them.
   sidecars) and every archive/delete/prune/unarchive path goes through
   `scanner.companion_paths()` rather than deriving a sibling path itself.
   See `docs/tech/sources.md`.
-- **Droid reuses Claude Code's directory encoding, verbatim.** `~/.factory/sessions/` is keyed
-  by `slug.slugify(normalize(cwd))` — the same reimplemented-private-function `slug.py` holds
-  for Claude Code — so that module now has two agents that break when either upgrades. Whether
-  droid keeps a picker index is **unverified**: its binary builds
-  `<factory>/cache/session-index/index.db`, which the sandbox cannot read, so do not assume
-  deleting a transcript is a complete delete. It also has no append-style title record, so
-  `rl session name` does not reach it. `FACTORY_HOME_OVERRIDE` replaces HOME (not the
-  `.factory` name) and is what the tests and sandbox isolate with. Droid's tokens live in the
-  `.settings.json` sidecar, not the transcript, and are never priced — Factory bills credits.
-  See `docs/reference/agent-session-management.md`.
+- **Droid has its own directory encoding, not Claude Code's.** `~/.factory/sessions/` is keyed
+  by `slug.droid_slug(cwd)`: `realpath`, then every `/` becomes `-` — unlike Claude Code's
+  `slugify`, it keeps `_`, `.`, and spaces. `scanner.storage_slug()` asks each source's
+  `storage_for()` for the slug, so `slug.py` stays a plain encoder library; both
+  `sources/droid.py` and the portability adapter call `droid_slug()`. Whether droid keeps a
+  picker index is **unverified**: its binary builds `<factory>/cache/session-index/index.db`,
+  which the sandbox cannot read, so do not assume deleting a transcript is a complete delete. It
+  also has no append-style title record, so `rl session name` does not reach it.
+  `FACTORY_HOME_OVERRIDE` replaces HOME (not the `.factory` name) and is what the tests and
+  sandbox isolate with. Droid's tokens live in the `.settings.json` sidecar, not the transcript,
+  and are never priced — Factory bills credits. See `docs/reference/agent-session-management.md`.
+- **Self-verifying a conversion target records its state outside the registry.**
+  `rl doctor --verify-conversion [AGENT]` runs an offline harness per agent (a fake-provider
+  capture for claude-code/codex/pi/droid, a CLI-acceptance check for opencode) against whatever
+  version is actually installed, and records a pass in `verified-targets.json` under
+  ringleader's state dir (`--verified PATH` overrides it, same pattern as `--registry`). A
+  version already known good from upstream research needs no self-verify; one that is neither
+  known nor yet verified on this machine refuses conversion until it is. The harnesses are
+  genuinely offline (loopback HTTP, no real inference) and safe to run unattended — droid's uses
+  `droid exec --fork`, never interactive `droid`.
 
 ## Commands
 

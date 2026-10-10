@@ -9,21 +9,27 @@ from uuid import uuid4
 import pytest
 from ringleader.portability import native
 from ringleader.portability.capabilities import RunResult, SourceRequest, TargetRequest
+from ringleader.portability.claude import PROFILE as CLAUDE_PROFILE
+from ringleader.portability.claude import ClaudeAdapter
 from ringleader.portability.codex import PROFILE, CodexAdapter, read_rollout
 from ringleader.portability.codex_state import SCHEMA_ID, inspect_database
-from ringleader.portability.compact import compact
+from ringleader.portability.compact import compact, portable
 from ringleader.portability.compare import compare
 from ringleader.portability.model import (
-    Checkpoint,
     HistoricalTimestamp,
     Identity,
+    Opaque,
     PreservationError,
     Text,
+    ToolCall,
+    canonical_json,
     validate,
 )
 from ringleader.portability.serialization import dumps, loads
+from ringleader.portability.verify.fixtures import split_checkpoint
 from tests.portability.fixtures import (
     SESSION_ID,
+    TIMESTAMP,
     checkpoint_conversation,
     codex_records,
     conversation,
@@ -251,21 +257,6 @@ def test_historical_times_and_fresh_recency(tmp_path):
     assert json.loads(staged.database_payload)["recency_at"] > 1700000000
 
 
-def split_checkpoint():
-    base = conversation()
-    summary = replace(base.history[0], id="summary", content=(Text("Summary"),), parent_id=None)
-    model_suffix = native.linked(
-        [
-            replace(
-                m, id="model-" + m.id, provenance=replace(m.provenance, locator="model-" + m.id)
-            )
-            for m in base.history[1:]
-        ]
-    )
-    checkpoint = Checkpoint("cp", base.history[0].id, (summary,), following_context=model_suffix)
-    return replace(base, context=native.linked((summary, *model_suffix)), checkpoints=(checkpoint,))
-
-
 def test_split_checkpoint_serialization_and_compaction_keep_visible_prose(tmp_path):
     original = split_checkpoint()
     validate(original)
@@ -284,7 +275,7 @@ def test_split_checkpoint_serialization_and_compaction_keep_visible_prose(tmp_pa
     validate(compacted)
 
 
-def test_split_checkpoint_mismatch_and_other_writers_reject(tmp_path):
+def test_split_checkpoint_mismatch_and_other_writers_reach_its_model_view(tmp_path):
     from ringleader.portability.claude import PROFILE as CLAUDE_PROFILE
     from ringleader.portability.claude import ClaudeAdapter
     from ringleader.portability.pi import PROFILE as PI_PROFILE
@@ -293,8 +284,11 @@ def test_split_checkpoint_mismatch_and_other_writers_reject(tmp_path):
     original = split_checkpoint()
     with pytest.raises(PreservationError, match="Active context"):
         validate(replace(original, context=original.history))
-    for adapter, profile in [(ClaudeAdapter(), CLAUDE_PROFILE), (PiAdapter(), PI_PROFILE)]:
-        with pytest.raises(PreservationError, match="independent post-checkpoint"):
+    for adapter, profile, reason in [
+        (ClaudeAdapter(), CLAUDE_PROFILE, "strips failed tool-result images"),
+        (PiAdapter(), PI_PROFILE, "historical system policy"),
+    ]:
+        with pytest.raises(PreservationError, match=reason):
             adapter.stage(
                 original,
                 TargetRequest(
@@ -315,7 +309,7 @@ def test_snapshot_owns_embedded_assets_after_source_deleted(tmp_path):
     assert snapshot.files[0].data == staged.files[0].data
 
 
-def test_native_base_instructions_remain_historical_context(tmp_path):
+def _base_rollout(tmp_path):
     rows = codex_records(
         tmp_path,
         [
@@ -328,17 +322,49 @@ def test_native_base_instructions_remain_historical_context(tmp_path):
     )
     rows[0]["payload"]["base_instructions"] = {"text": "Custom or default source policy"}
     rows.append({"type": "event_msg", "payload": {"type": "user_message", "message": "Question"}})
-    original = read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
-    assert original.context[0].content[0].text == "Custom or default source policy"
-    assert original.context[0].provenance.origin == "native"
-    assert len(original.history) == 1
+    return read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+
+
+def test_native_base_instructions_are_codex_opaque_and_return_to_session_meta(tmp_path):
+    original = _base_rollout(tmp_path)
+    base = original.context[0]
+    assert base.content == (
+        Opaque(
+            "codex",
+            "codex.base_instructions",
+            canonical_json({"text": "Custom or default source policy"}),
+        ),
+    )
+    assert (base.provenance.origin, base.hidden) == ("harness", True)
+    assert base.timestamp is not None and base.timestamp.value == TIMESTAMP
     staged = stage(tmp_path, original)
     compare(original, CodexAdapter().read_stage(staged), CodexAdapter().normalizations(PROFILE))
     target_rows = native.records(staged.files[0].data)
-    assert target_rows[0]["payload"]["base_instructions"] is None
-    model = next(row["payload"] for row in target_rows if row["type"] == "response_item")
-    assert model["role"] == "user"
-    assert "Historical system instruction" in model["content"][0]["text"]
+    assert target_rows[0]["payload"]["base_instructions"] == {
+        "text": "Custom or default source policy"
+    }
+    model = [row["payload"] for row in target_rows if row["type"] == "response_item"]
+    assert [(item["role"], item["content"][0]["text"]) for item in model] == [("user", "Question")]
+
+
+def test_native_base_instructions_are_dropped_for_other_agents(tmp_path):
+    carried = portable(_base_rollout(tmp_path), "claude-code")
+    assert [part.text for message in carried.context for part in message.content] == ["Question"]
+    assert carried.context[0].parent_id is None
+
+    claude_stage = ClaudeAdapter().stage(
+        carried,
+        TargetRequest(
+            Identity("claude-code", str(uuid4())),
+            roots(tmp_path / "claude"),
+            CLAUDE_PROFILE,
+            carried.title,
+        ),
+    )
+    claude_rows = [row for row in native.records(claude_stage.files[0].data) if "message" in row]
+    assert [row["message"]["content"][0]["text"] for row in claude_rows] == ["Question"]
+    readback = ClaudeAdapter().read_stage(claude_stage)
+    assert [part.text for message in readback.context for part in message.content] == ["Question"]
 
 
 def test_native_split_checkpoint_keeps_distinct_suffix(tmp_path):
@@ -498,6 +524,72 @@ def test_pending_native_task_fails(tmp_path):
         read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
 
 
+def test_legacy_thread_rolled_back_drops_the_newest_user_turns(tmp_path):
+    def turn(turn_id, text):
+        return [
+            {"type": "event_msg", "payload": {"type": "task_started", "turn_id": turn_id}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            },
+            {"type": "event_msg", "payload": {"type": "user_message", "message": text}},
+            {
+                "type": "response_item",
+                "payload": {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": f"re: {text}"}],
+                },
+            },
+            {"type": "event_msg", "payload": {"type": "agent_message", "message": f"re: {text}"}},
+            {"type": "event_msg", "payload": {"type": "task_complete", "turn_id": turn_id}},
+        ]
+
+    rows = codex_records(tmp_path, [])
+    rows.extend(turn("turn-1", "first"))
+    rows.extend(turn("turn-2", "second"))
+    rows.append({"type": "event_msg", "payload": {"type": "thread_rolled_back", "num_turns": 1}})
+    rows.extend(turn("turn-3", "third"))
+    result = read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+    history_texts = [
+        part.text for item in result.history for part in item.content if isinstance(part, Text)
+    ]
+    context_texts = [
+        part.text for item in result.context for part in item.content if isinstance(part, Text)
+    ]
+    assert history_texts == ["first", "re: first", "third", "re: third"]
+    assert context_texts == ["first", "re: first", "third", "re: third"]
+
+
+def test_legacy_thread_goal_updated_is_tolerated(tmp_path):
+    rows = codex_records(tmp_path, [])
+    rows.append({"type": "event_msg", "payload": {"type": "task_started", "turn_id": "turn-1"}})
+    rows.append(
+        {
+            "type": "event_msg",
+            "payload": {"type": "thread_goal_updated", "goal": "ship the feature"},
+        }
+    )
+    rows.append({"type": "event_msg", "payload": {"type": "user_message", "message": "Go"}})
+    rows.append(
+        {
+            "type": "response_item",
+            "payload": {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Go"}],
+            },
+        }
+    )
+    rows.append({"type": "event_msg", "payload": {"type": "task_complete", "turn_id": "turn-1"}})
+    result = read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+    assert [part.text for part in result.history[0].content if isinstance(part, Text)] == ["Go"]
+
+
 def test_name_append_requires_previsibility_and_preserves_other_names(tmp_path):
     staged = stage(tmp_path)
     adapter = CodexAdapter()
@@ -511,16 +603,16 @@ def test_name_append_requires_previsibility_and_preserves_other_names(tmp_path):
     assert adapter.index_intent(staged).relative_path == "session_index.jsonl"
 
 
-def test_paginated_and_root_inheritance_are_explicitly_unsupported(tmp_path):
-    for field, value in [
-        ("history_mode", "paginated"),
-        ("history_base", {"ordinal": 2}),
-        ("session_id", str(uuid4())),
-    ]:
-        rows = codex_records(tmp_path, [])
-        rows[0]["payload"][field] = value
-        with pytest.raises(PreservationError, match=r"paginated|inherited"):
-            read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+@pytest.mark.parametrize("mode", ["legacy", "paginated"])
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("history_base", {"ordinal": 2}), ("session_id", "019f9b5d-0000-7000-8000-000000000001")],
+)
+def test_inherited_history_and_subagent_threads_are_refused(tmp_path, mode, field, value):
+    rows = codex_records(tmp_path, [])
+    rows[0]["payload"].update({"history_mode": mode, field: value})
+    with pytest.raises(PreservationError, match="inherited"):
+        read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
 
 
 @pytest.mark.parametrize("kind", ["exec", "patch", "completion"])
@@ -676,24 +768,38 @@ def test_source_mcp_keeps_different_visible_and_model_tool_identity(tmp_path):
     assert model["name"] == "mcp__files__read"
 
 
-@pytest.mark.parametrize("stream", ["event_msg", "response_item"])
 @pytest.mark.parametrize("phase", ["commentary", "final_answer"])
-def test_assistant_phases_are_rejected_before_canonicalization(tmp_path, stream, phase):
+def test_assistant_phases_carry_for_codex_and_drop_elsewhere(tmp_path, phase):
     from tests.portability.fixtures import codex_mcp_records
 
     rows = codex_mcp_records(tmp_path)
-    message = next(
+    for row in rows:
+        payload = row["payload"]
+        if payload.get("type") == "agent_message" or payload.get("role") == "assistant":
+            payload["phase"] = phase
+    original = read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+    marker = Opaque("codex", "codex.phase", canonical_json({"phase": phase}))
+    answers = [item for item in original.context if item.role == "assistant" and item.content]
+    assert [item.content[0] for item in answers if not isinstance(item.content[0], ToolCall)] == [
+        marker
+    ]
+    assert all(not isinstance(part, Opaque) for item in original.history for part in item.content)
+    staged = stage(tmp_path, original)
+    compare(original, CodexAdapter().read_stage(staged), CodexAdapter().normalizations(PROFILE))
+    written = [
         row["payload"]
-        for row in rows
-        if row["type"] == stream
-        and (
-            row["payload"].get("type") == "agent_message"
-            or row["payload"].get("role") == "assistant"
-        )
-    )
-    message["phase"] = phase
-    with pytest.raises(PreservationError, match="message phases are unsupported"):
-        read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+        for row in native.records(staged.files[0].data)
+        if row["type"] == "response_item" and row["payload"].get("role") == "assistant"
+    ]
+    assert [item["phase"] for item in written] == [phase]
+    carried = portable(original, "pi")
+    assert [
+        part
+        for item in carried.context
+        if item.role == "assistant"
+        for part in item.content
+        if isinstance(part, Text)
+    ] == [part for item in answers for part in item.content if isinstance(part, Text)]
 
 
 def test_visible_local_audio_is_rejected_with_text_only_model_stream(tmp_path):
@@ -704,3 +810,17 @@ def test_visible_local_audio_is_rejected_with_text_only_model_stream(tmp_path):
     user["local_audio"] = [str(tmp_path / "voice.wav")]
     with pytest.raises(PreservationError, match="audio"):
         read_rollout(native.jsonl(rows), Identity("codex", SESSION_ID))
+
+
+def test_picker_metadata_reads_only_the_rollout_header(tmp_path):
+    staged = stage(tmp_path)
+    files = tuple(
+        replace(item, data=item.data + b"{not json\n")
+        if item.relative_path == staged.source_ref
+        else item
+        for item in staged.files
+    )
+
+    assert CodexAdapter().stage_metadata(replace(staged, files=files)) == (
+        CodexAdapter().stage_metadata(staged)
+    )

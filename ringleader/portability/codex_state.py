@@ -17,6 +17,11 @@ from .model import PreservationError
 from .snapshot import snapshot_files
 
 SCHEMA_ID = "codex-state-5:8d92c37c04831d6053b51b591acf93fe65934081f226ff56c179222dcd3a8feb"
+SCHEMAS = {
+    "0.155.1": SCHEMA_ID,
+    "0.157.0": "codex-state-5:0ce4960d0fdb0f4d7a72369249be354959797e8aa7532badf011f39e61ce85af",
+}
+ACCEPTED = frozenset(SCHEMAS.values())
 
 
 def database_path(roots: NativeRoots) -> Path:
@@ -49,7 +54,9 @@ def _has_override(value: Any) -> bool:
     )
 
 
-def schema_identity(connection: sqlite3.Connection) -> str:
+def schema_identity(
+    connection: sqlite3.Connection, accepted: frozenset[str] | None = ACCEPTED
+) -> str:
     try:
         schema = connection.execute(
             "SELECT type,name,tbl_name,sql FROM sqlite_schema WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"
@@ -61,7 +68,7 @@ def schema_identity(connection: sqlite3.Connection) -> str:
             {"schema": schema, "migrations": migrations}, separators=(",", ":")
         ).encode()
         identity = "codex-state-5:" + hashlib.sha256(payload).hexdigest()
-        if identity != SCHEMA_ID:
+        if accepted is not None and identity not in accepted:
             raise PreservationError(f"Unsupported Codex SQLite schema/migrations: {identity}")
         if connection.execute("SELECT status FROM backfill_state WHERE id=1").fetchone() != (
             "complete",
@@ -74,7 +81,7 @@ def schema_identity(connection: sqlite3.Connection) -> str:
         raise PreservationError(f"Unsupported Codex SQLite schema: {exc}") from exc
 
 
-def inspect_database(roots: NativeRoots) -> str:
+def inspect_database(roots: NativeRoots, accepted: frozenset[str] | None = ACCEPTED) -> str:
     path = database_path(roots)
     if not path.is_file():
         raise PreservationError("Codex state_5.sqlite is missing; initialize the native CLI first")
@@ -92,12 +99,21 @@ def inspect_database(roots: NativeRoots) -> str:
         for item in files:
             (directory / item.name).write_bytes(item.data)
         with closing(sqlite3.connect(directory / "state.sqlite")) as connection:
-            return schema_identity(connection)
+            return schema_identity(connection, accepted)
 
 
-def registration(stage: NativeStage, *, recover: bool = False) -> bool:
-    if stage.database_payload is None or stage.schema_identity != SCHEMA_ID:
+def _staged_schema(stage: NativeStage, accepted: frozenset[str]) -> frozenset[str]:
+    if stage.schema_identity is None or stage.schema_identity not in accepted:
         raise PreservationError("Missing verified Codex registration payload")
+    return frozenset({stage.schema_identity})
+
+
+def registration(
+    stage: NativeStage, *, recover: bool = False, accepted: frozenset[str] = ACCEPTED
+) -> bool:
+    if stage.database_payload is None:
+        raise PreservationError("Missing verified Codex registration payload")
+    expected = _staged_schema(stage, accepted)
     payload = json.loads(stage.database_payload)
     if not isinstance(payload, dict) or payload.get("id") != stage.identity.native_id:
         raise PreservationError("Codex registration identity disagrees with staged session")
@@ -112,7 +128,7 @@ def registration(stage: NativeStage, *, recover: bool = False) -> bool:
     connection = sqlite3.connect(path.resolve().as_uri() + "?mode=rw", uri=True)
     try:
         connection.execute("BEGIN IMMEDIATE")
-        schema_identity(connection)
+        schema_identity(connection, expected)
         current = connection.execute(
             "SELECT rollout_path,cwd,source,created_at FROM threads WHERE id=?",
             (stage.identity.native_id,),
@@ -197,13 +213,14 @@ def _check_name_collision(
                 )
 
 
-def append_name(stage: NativeStage) -> bool:
+def append_name(stage: NativeStage, accepted: frozenset[str] = ACCEPTED) -> bool:
+    expected = _staged_schema(stage, accepted)
     connection = sqlite3.connect(
         database_path(stage.roots).resolve().as_uri() + "?mode=rw", uri=True
     )
     try:
         connection.execute("BEGIN IMMEDIATE")
-        schema_identity(connection)
+        schema_identity(connection, expected)
         return _append_name(stage, connection)
     finally:
         connection.rollback()
@@ -248,15 +265,18 @@ def _append_name(stage: NativeStage, connection: sqlite3.Connection) -> bool:
         os.close(descriptor)
 
 
-def registration_status(stage: NativeStage) -> Literal["absent", "owned", "archived", "conflict"]:
+def registration_status(
+    stage: NativeStage, accepted: frozenset[str] = ACCEPTED
+) -> Literal["absent", "owned", "archived", "conflict"]:
     payload = json.loads(stage.database_payload or "null")
     if not isinstance(payload, dict) or payload.get("id") != stage.identity.native_id:
         raise PreservationError("Missing Codex registration evidence")
+    staged = _staged_schema(stage, accepted)
     connection = sqlite3.connect(
         database_path(stage.roots).resolve().as_uri() + "?mode=ro", uri=True
     )
     try:
-        schema_identity(connection)
+        schema_identity(connection, staged)
         row = connection.execute(
             "SELECT rollout_path,cwd,source,created_at,archived FROM threads WHERE id=?",
             (stage.identity.native_id,),

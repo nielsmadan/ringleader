@@ -43,7 +43,7 @@ length. Tiers mirror `search.py`: name, then id, then blurb fields.
 `abandoned`, `drifted`, in that order.
 
 `launch_cwd(thread, threads)` answers "which directory must the agent start in". Usually the
-recorded `project`. For a `claude-code` session where `slug.stored_under(file, project)` is false
+recorded `project`. For a `claude-code` session where `scanner.stored_under(file, project, source)` is false
 — the transcript is filed under a different directory's slug — it scans `threads` for an undrifted
 sibling filed in the same place and uses that sibling's cwd. **Pass the full thread list**, or
 recovery silently falls through to the drifted directory.
@@ -83,13 +83,59 @@ because after `execvpe` there is no recovering:
    picker
 3. resolve and verify the launch directory
 4. check the binary is on `PATH` — before the render, so a missing binary costs nothing
-5. render the handoff transcript, if any
-6. ask, if presence reports the session already running and the target is its own agent
-7. write the transcript; `os.chdir(dir)`; `os.execvpe(argv[0], argv, environ)`
+5. **same agent**: render the handoff transcript if any (there isn't one), ask if presence
+   reports it already running, then `os.chdir(dir)` + `os.execvpe`.
+   **`--to` a different agent**: try `_native()` first (below); only on refusal does it fall
+   back to steps 6–7 below, after asking
+6. render the Markdown handoff transcript
+7. ask, if presence reports the session already running and the target is its own agent (never
+   reached for a cross-agent handoff, which starts a new session)
+8. write the transcript; `os.chdir(dir)`; `os.execvpe(argv[0], argv, environ)`
 
 The running-session guard lives here rather than only in the picker, because `rl resume <id>` and
 `rl resume <id> --to <its own agent>` never construct one. A probe that cannot answer
 (`PresenceUnavailable`) degrades to not asking, never to "nothing is running".
+
+### Native conversion (`_native()` in `commands/resume.py`)
+
+`--to <agent>` without `--markdown` calls `portability.native_resume.native_resume()` — the same
+`ConversionService` that backs `rl session convert`/`fork` — before ever considering the
+Markdown fallback:
+
+1. an already-converted, still-**active** target for this source+target pair is reopened
+   directly, skipping the version gate below (reopening writes nothing, and requiring
+   verification to reopen a session the agent already owns would block every resume after an
+   agent update); an archived/deleted/missing one is forked fresh instead, and later resumes
+   reopen that fork. Reopening needs the prior conversion to match the current source snapshot
+   (so a source that gained turns converts anew), `PORTABLE_TRANSFORM_VERSION`, target store and
+   workspace, writer profile and title, and to belong to the same `--registry`
+2. otherwise, `inspect_target()` checks whether the installed target version is pinned or
+2. otherwise, `inspect_target()` checks whether the installed target version is pinned or
+   already self-verified on this machine. If not, and the session is interactive, it runs the
+   agent's offline self-verification harness (`verify.workflow.verify_and_record`, the same
+   workflow as `rl doctor --verify-conversion`) and records the result
+   in `verified-targets.json` before retrying; non-interactively (scripted, `--dry-run`) it
+   either reports `would-verify` or refuses
+3. the conversion publishes through the normal journal (`operations/`), and the launch
+   constructed from the fresh (or reopened) target replaces steps 6–7 above
+
+Only `PreservationError` (including `NeedsVerification`) and I/O errors before publication are
+refusals that offer the Markdown fallback; any other exception is a conversion failure. The
+launch request sets a native root variable (`HOME`, `XDG_*`, `TMPDIR`, `CLAUDE_CONFIG_DIR`,
+`CODEX_HOME`, `PI_CODING_AGENT_DIR`, `FACTORY_HOME_OVERRIDE`, `OPENCODE_DB`) only when the
+recorded root differs from what the agent resolves from the inherited environment — Claude
+names its keychain item after `CLAUDE_CONFIG_DIR` whenever it is set, so exporting an unset one
+would log the user out.
+
+`--dry-run --to <agent>` prints which of these branches would fire (`would-verify`,
+`would-convert`, `reused`, `forked`, or `refused` with what the fallback would do) and launches
+nothing, the same contract as the same-agent dry run.
+
+Cross-agent continuation therefore has two layers: `_native()`'s native conversion, with the
+`_fallback()` seeded Markdown handoff only reached on refusal or explicit `--markdown`.
+[ADR 0013](../decisions/0013-native-conversion-behind-resume.md) records why conversion comes
+first; [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md) still governs the
+fallback itself.
 
 `runner`, `picker`, `which`, `refresher` and `presence` are all injectable, so no test execs,
 chdirs or prompts the test process.
@@ -124,15 +170,21 @@ chdirs or prompts the test process.
 - **Nothing prunes `handoffs/`.** Unlike `archive_root()`, it has no retention clock. Files are
   written `0o600` and the directory is created `0o700`, because they are full conversations and
   its listing alone names which sessions were handed off and when.
+- **Self-verification only runs interactively.** `--to <agent>` on an unverified target version
+  calls out to `rl doctor`'s harness machinery (`allow_verify=_interactive()`); a non-interactive
+  or `--dry-run` invocation reports `would-verify` instead of running it, so a script never blocks
+  for a minute on a terminal it cannot write to.
 
 ## Why
 
 The fuzzy filter is hand-rolled rather than a dependency because `textual` is the package's only
 runtime dependency and `namefilter.py` already set that precedent deliberately.
 
-Cross-agent continuation is a *seeded handoff* rather than a native conversion — the target reads
-a Markdown export and starts fresh. [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md)
-records why, and what replaces it later.
+Cross-agent continuation tries a native conversion first and only falls back to a *seeded
+handoff* — the target reads a Markdown export and starts fresh — when conversion refuses or
+`--markdown` asked for it directly. [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md)
+records why the seeded handoff exists at all; [ADR 0013](../decisions/0013-native-conversion-behind-resume.md)
+records why native conversion now comes first.
 
 ## Related
 

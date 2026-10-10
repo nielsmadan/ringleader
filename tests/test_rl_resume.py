@@ -10,6 +10,9 @@ import pytest
 from ringleader import export, paths, slug
 from ringleader.commands import resume as resume_cmd
 from ringleader.picker.app import Choice
+from ringleader.portability.capabilities import RunRequest
+from ringleader.portability.model import Identity
+from ringleader.portability.native_resume import ConversionFailure, NativeResume
 from ringleader.presence import PresenceUnavailable
 from ringleader.resume import Scope
 
@@ -251,7 +254,7 @@ def test_a_handoff_launches_the_target_agent_with_a_prompt_naming_the_transcript
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", target, "--registry", reg], runner=runner) == 0
+    assert _run(["aaa111", "--to", target, "--markdown", "--registry", reg], runner=runner) == 0
     prefix = HANDOFF_PREFIX[target]
     assert runner.argv[: len(prefix)] == prefix
     assert len(runner.argv) == len(prefix) + 1
@@ -264,7 +267,7 @@ def test_a_handoff_writes_the_rendered_conversation_under_the_handoffs_directory
     thread = _session(tmp_path, "aaa111")
     reg = _registry(tmp_path, thread)
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg]) == 0
     written = _handoffs()
     assert len(written) == 1
     assert written[0].parent == paths.handoffs_dir()
@@ -278,7 +281,7 @@ def test_a_handoff_leaves_the_source_sessions_registry_record_as_it_was(tmp_path
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
     before = Path(reg).read_text(encoding="utf-8")
 
-    assert _run(["aaa111", "--to", "pi", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "pi", "--markdown", "--registry", reg]) == 0
     assert Path(reg).read_text(encoding="utf-8") == before
 
 
@@ -303,7 +306,12 @@ def test_a_dry_run_handoff_names_the_transcript_it_would_write_but_writes_none(t
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "codex", "--dry-run", "--registry", reg], runner=runner) == 0
+    assert (
+        _run(
+            ["aaa111", "--to", "codex", "--markdown", "--dry-run", "--registry", reg], runner=runner
+        )
+        == 0
+    )
     out = capsys.readouterr().out
     assert "would write:" in out
     assert str(paths.handoffs_dir()) in out
@@ -317,7 +325,7 @@ def test_a_dry_run_reports_a_missing_binary_as_a_note_and_still_prints_the_argv(
 
     assert (
         _run(
-            ["aaa111", "--to", "codex", "--dry-run", "--registry", reg],
+            ["aaa111", "--to", "codex", "--markdown", "--dry-run", "--registry", reg],
             runner=runner,
             which=missing,
         )
@@ -338,7 +346,10 @@ def test_to_is_handed_to_the_picker_so_it_never_asks_which_agent(tmp_path):
     picker = Picker(Choice(thread=thread, target="pi"))
     runner = Runner()
 
-    assert _run(["--all", "--to", "pi", "--registry", reg], runner=runner, picker=picker) == 0
+    assert (
+        _run(["--all", "--to", "pi", "--markdown", "--registry", reg], runner=runner, picker=picker)
+        == 0
+    )
     assert picker.calls[0]["target"] == "pi"
     assert runner.argv[0] == "pi"
 
@@ -349,7 +360,7 @@ def test_the_picker_decides_the_agent_when_no_to_flag_names_one(tmp_path):
     picker = Picker(Choice(thread=thread, target="codex"))
     runner = Runner()
 
-    assert _run(["--all", "--registry", reg], runner=runner, picker=picker) == 0
+    assert _run(["--all", "--markdown", "--registry", reg], runner=runner, picker=picker) == 0
     assert picker.calls[0]["target"] is None
     assert runner.argv[0] == "codex"
 
@@ -435,6 +446,28 @@ def test_a_query_no_scan_can_explain_is_refused_as_stale(tmp_path, capsys):
     assert rescan.calls == [reg]
     assert runner.calls == []
     assert picker.calls == []
+
+
+def test_a_dry_run_with_no_match_does_not_persist_its_scan(tmp_path, monkeypatch):
+    reg = _registry(tmp_path)
+    persisted = []
+
+    def fake_auto_refresh(registry_path, now_iso, *, persist=True, **_kwargs):
+        persisted.append(persist)
+        return resume_cmd.registry.load_registry(registry_path), None
+
+    monkeypatch.setattr(resume_cmd.refresh, "auto_refresh", fake_auto_refresh)
+
+    rc = resume_cmd.cmd_resume(
+        ["zzz", "--registry", reg, "--dry-run"],
+        runner=Runner(),
+        picker=Picker(),
+        which=installed,
+        presence=frozenset,
+    )
+
+    assert rc == 1
+    assert persisted == [False]
 
 
 def test_a_query_the_registry_already_answers_opens_the_picker_without_scanning(tmp_path):
@@ -526,7 +559,7 @@ def test_a_session_from_an_unrelaunchable_source_can_still_be_handed_off(tmp_pat
     reg = _registry(tmp_path, _session(tmp_path, "aaa111", source="mystery"))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg], runner=runner) == 0
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg], runner=runner) == 0
     assert runner.argv[0] == "codex"
 
 
@@ -555,7 +588,7 @@ def test_a_handoff_of_an_unreadable_conversation_is_reported(tmp_path, capsys):
     reg = _registry(tmp_path, thread)
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg], runner=runner) == 1
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg], runner=runner) == 1
     assert "aaa111" in capsys.readouterr().err
     assert runner.calls == []
     assert _handoffs() == []
@@ -566,7 +599,7 @@ def test_a_handoff_of_an_empty_conversation_is_reported(tmp_path, capsys):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111", records=records))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg], runner=runner) == 1
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg], runner=runner) == 1
     assert "empty" in capsys.readouterr().err
     assert runner.calls == []
     assert _handoffs() == []
@@ -578,15 +611,15 @@ def test_a_handoff_of_an_empty_conversation_is_reported(tmp_path, capsys):
 def test_a_handoff_transcript_is_written_readable_only_by_its_owner(tmp_path):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg]) == 0
     assert _handoffs()[0].stat().st_mode & 0o777 == 0o600
 
 
 def test_two_handoffs_of_one_session_in_the_same_second_are_two_files(tmp_path):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg]) == 0
-    assert _run(["aaa111", "--to", "pi", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "pi", "--markdown", "--registry", reg]) == 0
     assert len(_handoffs()) == 2
 
 
@@ -594,7 +627,7 @@ def test_a_handoff_prompt_names_the_agent_the_session_came_from(tmp_path):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111", source="codex"))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "pi", "--registry", reg], runner=runner) == 0
+    assert _run(["aaa111", "--to", "pi", "--markdown", "--registry", reg], runner=runner) == 0
     assert "a codex session" in runner.argv[-1]
 
 
@@ -602,7 +635,7 @@ def test_a_handoff_to_claude_launches_claude_with_the_prompt_as_its_only_argumen
     reg = _registry(tmp_path, _session(tmp_path, "aaa111", source="codex"))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "claude", "--registry", reg], runner=runner) == 0
+    assert _run(["aaa111", "--to", "claude", "--markdown", "--registry", reg], runner=runner) == 0
     assert runner.argv[0] == "claude"
     assert len(runner.argv) == 2
     assert str(_handoffs()[0]) in runner.argv[-1]
@@ -613,7 +646,7 @@ def test_a_handoff_prompt_carries_a_hostile_session_name_through_verbatim(tmp_pa
     reg = _registry(tmp_path, _session(tmp_path, "aaa111", title=title))
     runner = Runner()
 
-    assert _run(["aaa111", "--to", "pi", "--registry", reg], runner=runner) == 0
+    assert _run(["aaa111", "--to", "pi", "--markdown", "--registry", reg], runner=runner) == 0
     assert runner.argv[:2] == ("pi", "--")
     assert len(runner.argv) == 3
     assert 'we"re; rm -rf $HOME `id`' in runner.argv[-1]
@@ -731,7 +764,7 @@ def test_handing_a_running_session_to_another_agent_needs_no_prompt(tmp_path, mo
     runner = Runner()
 
     rc = _run(
-        ["aaa111", "--to", "codex", "--registry", reg],
+        ["aaa111", "--to", "codex", "--markdown", "--registry", reg],
         runner=runner,
         presence=_live("claude", "aaa111"),
     )
@@ -861,7 +894,7 @@ def test_a_session_id_shaped_like_a_path_still_writes_inside_the_handoffs_direct
 def test_the_handoffs_directory_is_created_owner_only(tmp_path):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
 
-    assert _run(["aaa111", "--to", "codex", "--registry", reg]) == 0
+    assert _run(["aaa111", "--to", "codex", "--markdown", "--registry", reg]) == 0
     assert paths.handoffs_dir().stat().st_mode & 0o777 == 0o700
 
 
@@ -929,7 +962,7 @@ def test_last_hands_the_most_recent_session_to_another_agent(tmp_path, monkeypat
     runner = Runner()
     monkeypatch.chdir(tmp_path / "work" / "api")
 
-    assert _run(["--last", "--to", "codex", "--registry", reg], runner=runner) == 0
+    assert _run(["--last", "--to", "codex", "--markdown", "--registry", reg], runner=runner) == 0
     assert runner.argv[0] == "codex"
     assert len(_handoffs()) == 1
 
@@ -961,3 +994,361 @@ def test_last_refuses_to_also_take_a_query(tmp_path, capsys):
     assert rc == 1
     assert "cannot also take 'auth'" in capsys.readouterr().err
     assert runner.calls == []
+
+
+# --- native conversion behind --to ------------------------------------------------
+
+
+class Native:
+    """Stands in for `native_resume`, so a test chooses the outcome the command sees."""
+
+    def __init__(self, outcome=None, *, error: Exception | None = None) -> None:
+        self.outcome = outcome
+        self.error = error
+        self.calls: list[dict] = []
+
+    def __call__(self, source, target, **options):
+        self.calls.append({"source": source, "target": target, **options})
+        if self.error is not None:
+            raise self.error
+        return self.outcome
+
+
+class Launches:
+    def __init__(self) -> None:
+        self.requests: list[RunRequest] = []
+
+    def __call__(self, request: RunRequest) -> None:
+        self.requests.append(request)
+
+
+def _request(tmp_path: Path) -> RunRequest:
+    return RunRequest(
+        ("codex", "resume", "t-1"),
+        tmp_path / "work" / "api",
+        (("CODEX_HOME", str(tmp_path / "codex-home")), ("HOME", str(tmp_path))),
+    )
+
+
+def _outcome(tmp_path: Path, outcome: str, **fields) -> NativeResume:
+    launches = outcome in ("converted", "reused", "forked", "would-convert")
+    defaults = {
+        "target": Identity("codex", "t-1"),
+        "launch": _request(tmp_path) if launches else None,
+        "reason": None,
+    }
+    return NativeResume(outcome, **(defaults | fields))
+
+
+def _convert(argv, native, *, runner=None, launch=None, presence=None, which=installed) -> int:
+    return resume_cmd.cmd_resume(
+        argv,
+        runner=runner or Runner(),
+        picker=Picker(),
+        which=which,
+        refresher=Rescanner(),
+        presence=presence or frozenset,
+        native=native,
+        launch=launch or Launches(),
+    )
+
+
+@pytest.fixture
+def tty(monkeypatch):
+    monkeypatch.setattr(resume_cmd, "_interactive", lambda: True)
+
+
+@pytest.fixture
+def no_tty(monkeypatch):
+    monkeypatch.setattr(resume_cmd, "_interactive", lambda: False)
+
+
+@pytest.mark.parametrize("outcome", ["converted", "reused", "forked"])
+def test_a_native_conversion_execs_the_whole_run_request_environment_included(
+    tmp_path, outcome, no_tty
+):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native, launches, runner = Native(_outcome(tmp_path, outcome)), Launches(), Runner()
+
+    assert (
+        _convert(
+            ["aaa111", "--to", "codex", "--registry", reg], native, runner=runner, launch=launches
+        )
+        == 0
+    )
+    assert launches.requests == [_request(tmp_path)]
+    assert runner.calls == []
+    assert _handoffs() == []
+
+
+def test_an_exec_failure_after_conversion_names_the_retained_target_to_resume(
+    tmp_path, capsys, no_tty
+):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native = Native(_outcome(tmp_path, "converted", target=Identity("codex", "t-1")))
+
+    def failing_launch(request) -> None:
+        raise OSError("no such file or directory")
+
+    rc = _convert(["aaa111", "--to", "codex", "--registry", reg], native, launch=failing_launch)
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "codex:t-1" in err
+    assert "rl resume codex:t-1" in err
+
+
+def test_the_native_attempt_is_given_the_source_target_and_state_paths(tmp_path, tty):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native = Native(_outcome(tmp_path, "converted"))
+    argv = ["aaa111", "--to", "codex", "--registry", reg]
+    argv += ["--operations", str(tmp_path / "ops"), "--verified", str(tmp_path / "v.json")]
+
+    assert _convert(argv, native) == 0
+    call = native.calls[0]
+    assert (call["source"].identity, call["target"]) == (Identity("claude-code", "aaa111"), "codex")
+    assert call["registry_path"] == Path(reg)
+    assert call["operations_path"] == tmp_path / "ops"
+    assert call["verified_path"] == tmp_path / "v.json"
+    assert (call["dry_run"], call["allow_verify"]) == (False, True)
+
+
+def test_a_native_attempt_off_a_terminal_is_not_allowed_to_self_verify(tmp_path, no_tty):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native = Native(_outcome(tmp_path, "converted"))
+
+    assert _convert(["aaa111", "--to", "codex", "--registry", reg], native) == 0
+    assert native.calls[0]["allow_verify"] is False
+
+
+def test_reopening_a_reused_target_that_is_running_asks_first(tmp_path, monkeypatch, no_tty):
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "y")
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    launches = Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(_outcome(tmp_path, "reused")),
+        launch=launches,
+        presence=_live("codex", "t-1"),
+    )
+    assert rc == 0
+    assert asked == ["codex:t-1 is running right now — resume it anyway? [y/N] "]
+    assert launches.requests == [_request(tmp_path)]
+
+
+def test_declining_a_running_reused_target_launches_nothing(tmp_path, monkeypatch, no_tty):
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    launches = Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(_outcome(tmp_path, "reused")),
+        launch=launches,
+        presence=_live("codex", "t-1"),
+    )
+    assert rc == 0
+    assert launches.requests == []
+
+
+def test_converting_a_running_source_asks_before_the_attempt(tmp_path, monkeypatch, no_tty):
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "n")
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111", title="the login work"))
+    native, launches = Native(_outcome(tmp_path, "converted")), Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        native,
+        launch=launches,
+        presence=_live("claude", "aaa111"),
+    )
+    assert rc == 0
+    assert asked == [
+        "the login work is running right now — convert its current state anyway? [y/N] "
+    ]
+    assert native.calls == []
+    assert launches.requests == []
+
+
+def test_a_refusal_hands_off_markdown_when_the_user_says_yes(tmp_path, monkeypatch, tty, capsys):
+    asked = []
+    monkeypatch.setattr("builtins.input", lambda prompt: asked.append(prompt) or "y")
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    runner, launches = Runner(), Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(_outcome(tmp_path, "refused", target=None, reason="Unsupported thing")),
+        runner=runner,
+        launch=launches,
+    )
+    assert rc == 0
+    assert "native conversion to codex refused: Unsupported thing" in capsys.readouterr().err
+    assert asked == ["Hand off a Markdown transcript instead? [y/N] "]
+    assert runner.argv[0] == "codex"
+    assert str(_handoffs()[0]) in runner.argv[-1]
+    assert launches.requests == []
+
+
+def test_a_refusal_the_user_declines_exits_one_with_nothing_launched(
+    tmp_path, monkeypatch, tty, capsys
+):
+    monkeypatch.setattr("builtins.input", lambda prompt: "n")
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    runner, launches = Runner(), Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(_outcome(tmp_path, "refused", target=None, reason="Unsupported thing")),
+        runner=runner,
+        launch=launches,
+    )
+    assert rc == 1
+    assert capsys.readouterr().err.endswith("not resumed\n")
+    assert (runner.calls, launches.requests, _handoffs()) == ([], [], [])
+
+
+def test_a_refusal_off_a_terminal_exits_one_without_asking(tmp_path, monkeypatch, no_tty, capsys):
+    monkeypatch.setattr("builtins.input", _refuse_to_be_asked)
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    runner = Runner()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(_outcome(tmp_path, "refused", target=None, reason="Unsupported thing")),
+        runner=runner,
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == (
+        "native conversion to codex refused: Unsupported thing\nnot resumed\n"
+    )
+    assert (runner.calls, _handoffs()) == ([], [])
+
+
+def test_a_conversion_failure_exits_one_without_offering_markdown(
+    tmp_path, monkeypatch, tty, capsys
+):
+    monkeypatch.setattr("builtins.input", _refuse_to_be_asked)
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    runner, launches = Runner(), Launches()
+    failure = ConversionFailure("native conversion to codex failed: boom; transaction abc")
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--registry", reg],
+        Native(error=failure),
+        runner=runner,
+        launch=launches,
+    )
+    assert rc == 1
+    assert capsys.readouterr().err == (
+        "rl-resume: native conversion to codex failed: boom; transaction abc\n"
+    )
+    assert (runner.calls, launches.requests, _handoffs()) == ([], [], [])
+
+
+def test_markdown_hands_off_without_a_native_attempt_or_a_question(tmp_path, monkeypatch, tty):
+    monkeypatch.setattr("builtins.input", _refuse_to_be_asked)
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native, runner = Native(_outcome(tmp_path, "converted")), Runner()
+
+    assert (
+        _convert(
+            ["aaa111", "--to", "codex", "--markdown", "--registry", reg], native, runner=runner
+        )
+        == 0
+    )
+    assert native.calls == []
+    assert runner.argv[0] == "codex"
+    assert len(_handoffs()) == 1
+
+
+def test_the_same_agent_path_never_attempts_a_conversion(tmp_path):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    native, runner = Native(_outcome(tmp_path, "converted")), Runner()
+
+    assert _convert(["aaa111", "--to", "claude", "--registry", reg], native, runner=runner) == 0
+    assert native.calls == []
+    assert runner.argv == ("claude", "--resume", "aaa111")
+
+
+def test_the_picker_agent_modal_takes_the_native_path(tmp_path, no_tty):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    native, launches = Native(_outcome(tmp_path, "converted")), Launches()
+
+    rc = resume_cmd.cmd_resume(
+        ["--all", "--registry", reg],
+        runner=Runner(),
+        picker=Picker(Choice(thread=thread, target="codex")),
+        which=installed,
+        refresher=Rescanner(),
+        presence=frozenset,
+        native=native,
+        launch=launches,
+    )
+    assert rc == 0
+    assert native.calls[0]["target"] == "codex"
+    assert launches.requests == [_request(tmp_path)]
+
+
+@pytest.mark.parametrize(
+    ("outcome", "fields", "line"),
+    [
+        ("would-convert", {}, "native: would convert to codex (new)"),
+        ("reused", {}, "native: would reopen codex:t-1 (reused)"),
+        (
+            "forked",
+            {"target": None, "previous": "archived"},
+            "native: would fork codex (previous conversion archived)",
+        ),
+        (
+            "would-verify",
+            {"target": None, "version": "9.9.9"},
+            "native: would self-verify codex 9.9.9, then convert",
+        ),
+        (
+            "refused",
+            {"target": None, "reason": "Unsupported thing"},
+            "native: refused — Unsupported thing; fallback would ask",
+        ),
+    ],
+)
+def test_a_dry_run_prints_the_one_native_line_and_writes_nothing(
+    tmp_path, monkeypatch, capsys, outcome, fields, line
+):
+    monkeypatch.setattr("builtins.input", _refuse_to_be_asked)
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    before = Path(reg).read_text(encoding="utf-8")
+    native, runner, launches = Native(_outcome(tmp_path, outcome, **fields)), Runner(), Launches()
+
+    rc = _convert(
+        ["aaa111", "--to", "codex", "--dry-run", "--registry", reg],
+        native,
+        runner=runner,
+        launch=launches,
+        presence=_live("claude", "aaa111"),
+    )
+    assert rc == 0
+    native_lines = [row.strip() for row in capsys.readouterr().out.splitlines() if "native:" in row]
+    assert native_lines == [line]
+    assert native.calls[0]["dry_run"] is True
+    assert (runner.calls, launches.requests, _handoffs()) == ([], [], [])
+    assert Path(reg).read_text(encoding="utf-8") == before
+
+
+def test_a_dry_run_reused_native_line_names_the_targets_own_launch_directory(tmp_path, capsys):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    target_cwd = tmp_path / "other" / "workspace"
+    target_cwd.mkdir(parents=True)
+    launch = RunRequest(("codex", "resume", "t-1"), target_cwd, ())
+    native = Native(_outcome(tmp_path, "reused", target=Identity("codex", "t-1"), launch=launch))
+
+    rc = _convert(["aaa111", "--to", "codex", "--dry-run", "--registry", reg], native)
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert f"directory: {target_cwd}" in out
+    assert str(tmp_path / "work" / "api") not in out

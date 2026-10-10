@@ -86,6 +86,10 @@ def conversion_operations_dir() -> Path:
     return state_dir() / "conversion"
 
 
+def verified_targets_path() -> Path:
+    return state_dir() / "verified-targets.json"
+
+
 def archive_root() -> Path:
     return state_dir() / "archive"
 

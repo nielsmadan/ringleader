@@ -19,11 +19,12 @@ from .capabilities import (
     SourceRequest,
     TargetRequest,
 )
-from .compare import Normalization
+from .compare import CheckpointShape, Normalization, flattened, flattened_checkpoint, model_view
 from .model import (
     Attachment,
     AttachmentRef,
     Checkpoint,
+    Content,
     Conversation,
     Identity,
     Message,
@@ -35,8 +36,11 @@ from .model import (
     validate,
 )
 from .snapshot import SourceSnapshot, snapshot_files
+from .verification import VerificationRecord, local_versions
+from .versions import check_version
 
 SESSION_VERSION = 3
+PINNED = ("0.85.1", "0.87.1")
 
 PROFILE = FormatProfile(
     "pi",
@@ -52,7 +56,8 @@ SUMMARY_SUFFIX = "\n</summary>"
 BRANCH_PREFIX = (
     "The following is a summary of a branch that this conversation came back from:\n\n<summary>\n"
 )
-IGNORED = {"custom", "model_change", "thinking_level_change", "label", "session_info"}
+IGNORED = {"custom", "model_change", "thinking_level_change", "label", "session_info", "usage"}
+NO_RESULT = "No result provided"
 ZERO_USAGE = {
     "input": 0,
     "output": 0,
@@ -73,21 +78,134 @@ def _validate_stop_reason(reason: Any) -> None:
 
 
 def _validate_replay(messages: tuple[Message, ...]) -> None:
-    pending: set[str] = set()
     for message in messages:
         native.reject_assistant_images(message, "Pi")
-        results_only = bool(message.content) and all(
-            isinstance(item, ToolResult) for item in message.content
-        )
-        if pending and not results_only:
-            raise PreservationError(
-                "Pi tool results must follow their assistant calls contiguously; an intervening user/assistant message changes native replay"
-            )
-        for item in message.content:
-            if isinstance(item, ToolCall):
-                pending.add(item.call_id)
-            elif isinstance(item, ToolResult):
-                pending.discard(item.call_id)
+    native.validate_replay(messages, "Pi")
+
+
+def _tool_call_ids(content: Any) -> set[str]:
+    if not isinstance(content, list):
+        return set()
+    return {
+        block["id"]
+        for block in content
+        if isinstance(block, dict)
+        and block.get("type") == "toolCall"
+        and isinstance(block.get("id"), str)
+    }
+
+
+def _later_tool_result_ids(path: list[dict[str, Any]], start: int) -> set[str]:
+    ids: set[str] = set()
+    for row in path[start:]:
+        if row.get("type") != "message":
+            continue
+        data = row.get("message")
+        if isinstance(data, dict) and data.get("role") == "toolResult":
+            call_id = data.get("toolCallId")
+            if isinstance(call_id, str):
+                ids.add(call_id)
+    return ids
+
+
+ANSWERED_LATER = (
+    "Pi tool call was interrupted and answered later in the session; cannot import safely"
+)
+
+
+def _no_result(call_id: str, identity: Identity, row: dict[str, Any]) -> Message:
+    provenance = Provenance(
+        "harness",
+        identity,
+        native.string(row.get("id"), "entry ID"),
+        "pi transformMessages: tool call orphaned by an interrupted or dropped turn",
+    )
+    return Message(
+        f"no-result-{call_id}",
+        "tool",
+        (ToolResult(call_id, (Text(NO_RESULT),), True),),
+        provenance,
+        timestamp=native.timestamp(row.get("timestamp"), provenance),
+    )
+
+
+def _append_synthetic(
+    synthetics: tuple[Message, ...],
+    history: list[Message],
+    context_by_id: dict[str, Message],
+    context_order: list[str],
+) -> tuple[list[Message], dict[str, Message], list[str]]:
+    history = [*history, *synthetics]
+    context_by_id = {**context_by_id, **{synthetic.id: synthetic for synthetic in synthetics}}
+    context_order = [*context_order, *(synthetic.id for synthetic in synthetics)]
+    return history, context_by_id, context_order
+
+
+def _close_pending(
+    path: list[dict[str, Any]],
+    start: int,
+    row: dict[str, Any],
+    unresolved: set[str],
+    identity: Identity,
+) -> tuple[Message, ...]:
+    if not unresolved:
+        return ()
+    if unresolved & _later_tool_result_ids(path, start):
+        raise PreservationError(ANSWERED_LATER)
+    return tuple(_no_result(call_id, identity, row) for call_id in sorted(unresolved))
+
+
+def _context_entry(
+    kind: str, row: dict[str, Any], identity: Identity, assets: list[Attachment]
+) -> tuple[Message, bool]:
+    message = _message(row, identity, assets)
+    payload = row if kind == "custom_message" else row.get("message", {})
+    hidden = (kind == "custom_message" or payload.get("role") == "custom") and payload.get(
+        "display"
+    ) is False
+    return (replace(message, hidden=True), True) if hidden else (message, False)
+
+
+def _pending_after(
+    role: str | None,
+    message: Message,
+    message_data: dict[str, Any] | None,
+    pending_calls: set[str],
+    pending_resolved: set[str],
+) -> tuple[set[str], set[str]]:
+    if role == "assistant":
+        return {item.call_id for item in message.content if isinstance(item, ToolCall)}, set()
+    if role == "toolResult" and isinstance(message_data, dict):
+        call_id = message_data.get("toolCallId")
+        if isinstance(call_id, str):
+            return pending_calls, pending_resolved | {call_id}
+    return pending_calls, pending_resolved
+
+
+def _context_edit_update(
+    row: dict[str, Any], context_by_id: dict[str, Message], assets: list[Attachment]
+) -> tuple[str, Message | None]:
+    target = row.get("targetId")
+    if not isinstance(target, str) or target not in context_by_id:
+        raise PreservationError("Pi context_edit targets an unknown entry")
+    if "replacement" not in row:
+        raise PreservationError("Invalid Pi context_edit")
+    replacement = row["replacement"]
+    if replacement is None:
+        return target, None
+    if not isinstance(replacement, dict) or "content" not in replacement:
+        raise PreservationError("Invalid Pi context_edit replacement")
+    original = context_by_id[target]
+    parsed = native.blocks(replacement["content"], assets, "pi")
+    new_content: tuple[Content, ...]
+    if original.role == "tool":
+        if any(not isinstance(item, Text | AttachmentRef) for item in parsed):
+            raise PreservationError("Unsupported Pi context_edit tool result content")
+        existing = cast(ToolResult, original.content[0])
+        new_content = (replace(existing, output=cast(tuple[Text | AttachmentRef, ...], parsed)),)
+    else:
+        new_content = parsed
+    return target, replace(original, content=new_content)
 
 
 def _message(row: dict[str, Any], identity: Identity, assets: list[Attachment]) -> Message:
@@ -219,6 +337,96 @@ def _checkpoint(
     return Checkpoint(row["id"], after, (summary,), retained_ids, retained_context)
 
 
+def _entries(
+    path: list[dict[str, Any]], identity: Identity, assets: list[Attachment]
+) -> tuple[list[Message], list[Message], list[Checkpoint], bool, dict[str, Message], set[str]]:
+    history: list[Message] = []
+    context_by_id: dict[str, Message] = {}
+    context_order: list[str] = []
+    removed_from_context: set[str] = set()
+    hidden_context = False
+    checkpoints: list[Checkpoint] = []
+    entry_messages: dict[str, str] = {}
+    pending_calls: set[str] = set()
+    pending_resolved: set[str] = set()
+    for index, row in enumerate(path):
+        kind = row.get("type")
+        if kind in IGNORED:
+            continue
+        message_data = row.get("message") if kind == "message" else None
+        role = message_data.get("role") if isinstance(message_data, dict) else None
+        if kind == "message" and role == "system":
+            continue
+        if (kind == "message" and role in ("user", "assistant")) or kind in (
+            "custom_message",
+            "branch_summary",
+            "compaction",
+        ):
+            history, context_by_id, context_order = _append_synthetic(
+                _close_pending(path, index, row, pending_calls - pending_resolved, identity),
+                history,
+                context_by_id,
+                context_order,
+            )
+            pending_calls = set()
+            pending_resolved = set()
+        if (
+            kind == "message"
+            and role == "assistant"
+            and isinstance(message_data, dict)
+            and message_data.get("stopReason") in ("aborted", "error")
+        ):
+            if _tool_call_ids(message_data.get("content")) & _later_tool_result_ids(
+                path, index + 1
+            ):
+                raise PreservationError(ANSWERED_LATER)
+            continue
+        if kind in ("message", "custom_message", "branch_summary"):
+            message, hidden = _context_entry(kind, row, identity, assets)
+            context_by_id[row["id"]] = message
+            context_order.append(row["id"])
+            hidden_context = hidden_context or hidden
+            if not hidden:
+                history.append(message)
+                entry_messages[row["id"]] = message.id
+            pending_calls, pending_resolved = _pending_after(
+                role, message, message_data, pending_calls, pending_resolved
+            )
+        elif kind == "context_edit":
+            target, edited = _context_edit_update(row, context_by_id, assets)
+            if edited is None:
+                removed_from_context.add(target)
+            else:
+                context_by_id[target] = edited
+                removed_from_context.discard(target)
+        elif kind == "compaction":
+            if not history:
+                raise PreservationError("Pi compaction has no historical boundary")
+            checkpoints.append(
+                _checkpoint(row, identity, assets, path[:index], entry_messages, history[-1].id)
+            )
+        else:
+            raise PreservationError(f"Unsupported Pi conversational entry: {kind}")
+    if path:
+        history, context_by_id, context_order = _append_synthetic(
+            _close_pending(path, len(path), path[-1], pending_calls - pending_resolved, identity),
+            history,
+            context_by_id,
+            context_order,
+        )
+    uncompacted_context = [
+        context_by_id[row_id] for row_id in context_order if row_id not in removed_from_context
+    ]
+    return (
+        history,
+        uncompacted_context,
+        checkpoints,
+        hidden_context,
+        context_by_id,
+        removed_from_context,
+    )
+
+
 def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conversation:
     if identity.agent != "pi":
         raise PreservationError("Source identity does not belong to pi")
@@ -232,34 +440,14 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
         raise PreservationError("Pi requires a matching v3 session header")
     path = native.chain(rows[1:], "id", "parentId", branch_id)
     assets: list[Attachment] = []
-    history: list[Message] = []
-    uncompacted_context: list[Message] = []
-    hidden_context = False
-    checkpoints: list[Checkpoint] = []
-    entry_messages: dict[str, str] = {}
-    for index, row in enumerate(path):
-        kind = row.get("type")
-        if kind in IGNORED:
-            continue
-        if kind in ("message", "custom_message", "branch_summary"):
-            message = _message(row, identity, assets)
-            uncompacted_context.append(message)
-            payload = row if kind == "custom_message" else row.get("message", {})
-            hidden = (kind == "custom_message" or payload.get("role") == "custom") and payload.get(
-                "display"
-            ) is False
-            hidden_context = hidden_context or hidden
-            if not hidden:
-                history.append(message)
-                entry_messages[row["id"]] = message.id
-        elif kind == "compaction":
-            if not history:
-                raise PreservationError("Pi compaction has no historical boundary")
-            checkpoints.append(
-                _checkpoint(row, identity, assets, path[:index], entry_messages, history[-1].id)
-            )
-        else:
-            raise PreservationError(f"Unsupported Pi conversational entry: {kind}")
+    (
+        history,
+        uncompacted_context,
+        checkpoints,
+        hidden_context,
+        context_by_id,
+        removed_from_context,
+    ) = _entries(path, identity, assets)
     history_tuple = native.linked(history)
     context = native.linked(uncompacted_context)
     if checkpoints and hidden_context:
@@ -269,14 +457,31 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
     if checkpoints:
         latest = checkpoints[-1]
         positions = {item.id: i for i, item in enumerate(history_tuple)}
-        retained = (
-            latest.retained_context
-            if latest.retained_context is not None
-            else tuple(history_tuple[positions[key]] for key in latest.retained_message_ids)
-        )
-        context = native.linked(
-            (*latest.summary, *retained, *history_tuple[positions[latest.after_message_id] + 1 :])
-        )
+
+        if latest.retained_context is not None:
+            retained = latest.retained_context
+        else:
+            plain_retained = tuple(
+                history_tuple[positions[key]] for key in latest.retained_message_ids
+            )
+            retained = tuple(
+                context_by_id[key]
+                for key in latest.retained_message_ids
+                if key not in removed_from_context
+            )
+            if native.unparented(retained) != native.unparented(plain_retained):
+                latest = replace(latest, retained_message_ids=(), retained_context=retained)
+        if latest.following_context is not None:
+            tail = latest.following_context
+        else:
+            plain_tail = history_tuple[positions[latest.after_message_id] + 1 :]
+            tail = tuple(
+                context_by_id[item.id] for item in plain_tail if item.id not in removed_from_context
+            )
+            if native.unparented(tail) != native.unparented(plain_tail):
+                latest = replace(latest, following_context=tail)
+        checkpoints[-1] = latest
+        context = native.linked((*latest.summary, *retained, *tail))
     names = [
         row.get("name")
         for row in rows
@@ -304,8 +509,13 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
 
 
 class PiAdapter:
-    def __init__(self, executable: str = "pi") -> None:
+    profile = PROFILE
+
+    def __init__(
+        self, executable: str = "pi", verified: tuple[VerificationRecord, ...] = ()
+    ) -> None:
         self.executable = executable
+        self.verified = local_versions(verified, "pi")
 
     def inspect_source(self, request: SourceRequest) -> Compatibility:
         try:
@@ -325,13 +535,12 @@ class PiAdapter:
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         result = native.probe_version(self.executable, "pi", runner)
-        version = result.stdout.decode(errors="replace").strip()
-        supported = result.returncode == 0 and version == "0.85.1"
-        return Compatibility(
-            supported,
-            PROFILE if supported else None,
-            () if supported else (f"Pi writer requires verified 0.85.1; found {version!r}",),
-            version,
+        output = result.stdout.decode(errors="replace").strip()
+        return native.version_compatibility(
+            "Pi writer",
+            PROFILE,
+            check_version(output if result.returncode == 0 else "", PINNED, self.verified),
+            output,
         )
 
     def normalizations(self, profile: FormatProfile) -> tuple[Normalization, ...]:
@@ -339,12 +548,28 @@ class PiAdapter:
             Normalization(
                 "json-argument-whitespace", profile.name, "Native tools store JSON objects"
             ),
+            Normalization(
+                "model-view-history",
+                profile.name,
+                "Pi keeps one stream: the model context, with hidden messages as ordinary entries",
+            ),
         )
 
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         validate(conversation)
+        native.reject_opaque(conversation)
+        applied = self.normalizations(PROFILE)
+        try:
+            stage = self._stage(conversation, request)
+        except CheckpointShape:
+            stage = self._stage(flattened(conversation), request)
+            applied = (*applied, flattened_checkpoint(PROFILE.name))
+        return replace(stage, normalizations=applied)
+
+    def _stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
+        conversation = model_view(conversation, hides=False)
         if any(checkpoint.following_context is not None for checkpoint in conversation.checkpoints):
-            raise PreservationError(
+            raise CheckpointShape(
                 "This native profile cannot preserve an independent post-checkpoint model stream"
             )
         _validate_replay(conversation.history)
@@ -354,12 +579,6 @@ class PiAdapter:
             raise PreservationError("Unverified Pi writer profile")
         if not conversation.history:
             raise PreservationError("Pi requires a nonempty conversation")
-        if not conversation.checkpoints and not native.same_messages(
-            conversation.context, conversation.history
-        ):
-            raise PreservationError(
-                "Pi cannot represent distinct history/context without a checkpoint"
-            )
         now = datetime.now(UTC)
         iso = now.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         rows: list[dict[str, Any]] = [
@@ -427,7 +646,7 @@ class PiAdapter:
                 "parentId": parent,
                 "timestamp": historical.isoformat().replace("+00:00", "Z"),
                 "message": result,
-                "ringleader": native.message_annotations(message),
+                "ringleader": native.message_annotations(message, freeform_calls=True),
             }
             rows.append(row)
             parent = row["id"]
@@ -435,7 +654,7 @@ class PiAdapter:
                 if checkpoint.after_message_id != message.id:
                     continue
                 if checkpoint.retained_context is not None:
-                    raise PreservationError(
+                    raise CheckpointShape(
                         "Pi 0.85.1 runtime does not honor embedded retainedTail; cannot preserve this checkpoint"
                     )
                 if (
@@ -444,11 +663,11 @@ class PiAdapter:
                     or len(checkpoint.summary[0].content) != 1
                     or not isinstance(checkpoint.summary[0].content[0], Text)
                 ):
-                    raise PreservationError("Pi requires one user text compaction summary")
+                    raise CheckpointShape("Pi requires one user text compaction summary")
                 summary_message = checkpoint.summary[0]
                 summary = cast(Text, summary_message.content[0]).text
                 if not summary.startswith(SUMMARY_PREFIX) or not summary.endswith(SUMMARY_SUFFIX):
-                    raise PreservationError(
+                    raise CheckpointShape(
                         "Pi checkpoint summary must preserve its native context wrapper"
                     )
                 retained = checkpoint.retained_message_ids
@@ -456,7 +675,7 @@ class PiAdapter:
                     item.id
                     for item in conversation.history[position - len(retained) + 1 : position + 1]
                 ):
-                    raise PreservationError("Pi requires a contiguous retained history suffix")
+                    raise CheckpointShape("Pi requires a contiguous retained history suffix")
                 key = uuid4().hex[:8]
                 rows.append(
                     {
@@ -469,7 +688,9 @@ class PiAdapter:
                         "summary": summary[len(SUMMARY_PREFIX) : -len(SUMMARY_SUFFIX)],
                         "firstKeptEntryId": ids[retained[0]] if retained else key,
                         "tokensBefore": 0,
-                        "ringleader": native.message_annotations(summary_message),
+                        "ringleader": native.message_annotations(
+                            summary_message, freeform_calls=True
+                        ),
                     }
                 )
                 parent = key
@@ -511,4 +732,6 @@ class PiAdapter:
 
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         native.safe_id(identity, "pi")
-        return native.run_request(self.executable, ("--session", identity.native_id), roots, "pi")
+        return native.launch_request(
+            self.executable, ("--session", identity.native_id), roots, "pi"
+        )

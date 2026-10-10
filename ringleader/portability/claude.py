@@ -4,13 +4,13 @@ import base64
 import re
 import unicodedata
 from copy import deepcopy
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
 from typing import Any
 from uuid import UUID, uuid4
 
-from . import native
+from . import claude_attachments, claude_chain, native
 from .capabilities import (
     Compatibility,
     FormatProfile,
@@ -23,7 +23,7 @@ from .capabilities import (
     SourceRequest,
     TargetRequest,
 )
-from .compare import Normalization
+from .compare import CheckpointShape, Normalization, flattened, flattened_checkpoint, model_view
 from .model import (
     Attachment,
     AttachmentRef,
@@ -33,13 +33,17 @@ from .model import (
     Message,
     PreservationError,
     Provenance,
+    Text,
     ToolCall,
     ToolResult,
     validate,
 )
 from .snapshot import SourceSnapshot, snapshot_files
+from .verification import VerificationRecord, local_versions
+from .versions import check_version
 
 MAX_SLUG_LENGTH = 200
+PINNED = ("2.1.278", "2.1.283")
 
 PROFILE = FormatProfile(
     "claude-code",
@@ -51,19 +55,99 @@ PROFILE = FormatProfile(
         "anthropics/claude-agent-sdk-python@v0.2.156/src/claude_agent_sdk/_internal/session_mutations.py",
     ),
 )
-IGNORED = {
-    "file-history-snapshot",
-    "queue-operation",
-    "last-prompt",
-    "custom-title",
-    "summary",
-    "agent-name",
-    "agent-color",
-    "pr-link",
-    "tag",
-    "mode",
-}
-SYSTEM_TELEMETRY = {"turn_duration", "api_error", "stop_hook_summary", "local_command"}
+IGNORED = frozenset(
+    {
+        "permission-mode",
+        "atis-latch",
+        "cost-state",
+        "file-history-snapshot",
+        "file-history-delta",
+        "last-prompt",
+        "queue-operation",
+        "custom-title",
+        "ai-title",
+        "summary",
+        "agent-name",
+        "agent-color",
+        "agent-setting",
+        "pr-link",
+        "tag",
+        "mode",
+        "frame-link",
+        "artifact-comment-monitor",
+        "artifact-autoreact-ledger",
+        "ended-by-model",
+        "relocated",
+        "bridge-session",
+        "attribution-snapshot",
+        "isolation-latch",
+        "dev-mods",
+        "memory-mode",
+        "worktree-state",
+        "observer-ref",
+        "api-request-shape",
+        "api-request-blob",
+        "api-request",
+    }
+)
+SYSTEM_DROPPED = frozenset(
+    {
+        "informational",
+        "away_summary",
+        "agents_killed",
+        "api_error",
+        "turn_duration",
+        "stop_hook_summary",
+        "model_refusal_fallback",
+    }
+)
+RETRACTION_PREFIX = 24
+COMPACT_METADATA = frozenset(
+    {
+        "trigger",
+        "preTokens",
+        "postTokens",
+        "cumulativeDroppedTokens",
+        "durationMs",
+        "preCompactDiscoveredTools",
+        "preservedSegment",
+        "preservedMessages",
+    }
+)
+INTERRUPTIONS = (
+    "[Request interrupted by user]",
+    "[Request interrupted by user for tool use]",
+    (
+        "[Tool call did not complete: the turn was ended to deliver the message that follows. "
+        "Nothing refused it; re-run it if still needed.]"
+    ),
+    (
+        "[Tool call interrupted: the session ended before this call's result was recorded, so its "
+        "outcome is unknown. Check whether it took effect before relying on it or running it again.]"
+    ),
+    (
+        "[Tool call result not in this copy: this session was copied from another session before "
+        "that session recorded this call's result. The call may have finished there, may still be "
+        "running there, or may never have run. Check whether it took effect before relying on it or "
+        "running it again.]"
+    ),
+    (
+        "The user doesn't want to take this action right now. STOP what you are doing and wait for "
+        "the user to tell you how to proceed."
+    ),
+    (
+        "[Tool call skipped: the turn was stopped before this call ran, by the check whose denial is "
+        "on another call in this batch. Nothing refused this call and it had no effects; re-run it "
+        "if still needed.]"
+    ),
+    (
+        "[Tool call skipped: the turn ended to deliver the message that follows before this call "
+        "ran. Nothing refused it; re-run it if still needed.]"
+    ),
+)
+IMAGE_PLACEHOLDERS = ("[Image: ", "[Image source: ")
+INTERRUPTED_RESULT = INTERRUPTIONS[3]
+TOOL_REFERENCE = "claude.tool_reference"
 
 
 def _images(blocks: Any) -> list[dict[str, Any]]:
@@ -156,10 +240,21 @@ def _message(row: dict[str, Any], identity: Identity, assets: list[Attachment]) 
         native.blocks(_content(row, message), assets, "claude"),
         provenance,
         timestamp=native.timestamp(row.get("timestamp"), provenance),
+        hidden=bool(row.get("isMeta")),
     )
     _reject_failed_images(result)
     native.reject_assistant_images(result, "Claude")
     return native.restore(result, row)
+
+
+def _boundary(row: dict[str, Any]) -> dict[str, Any]:
+    if row.get("parentUuid") is not None:
+        raise PreservationError("Unsupported Claude compact boundary parent graph")
+    metadata = row.get("compactMetadata", {})
+    if not isinstance(metadata, dict) or set(metadata) - COMPACT_METADATA:
+        raise PreservationError("Unsupported Claude retained-segment compaction metadata")
+    claude_chain.validate_metadata(metadata)
+    return row
 
 
 def _graph(rows: list[dict[str, Any]], identity: Identity) -> list[dict[str, Any]]:
@@ -170,7 +265,7 @@ def _graph(rows: list[dict[str, Any]], identity: Identity) -> list[dict[str, Any
             raise PreservationError("Claude transcript session identity mismatch")
         if row.get("isSidechain") or row.get("teamName"):
             continue
-        if row.get("isVisibleInTranscriptOnly"):
+        if row.get("isVisibleInTranscriptOnly") and not row.get("isCompactSummary"):
             raise PreservationError(
                 "Claude transcript-only messages require unsupported visibility semantics"
             )
@@ -184,170 +279,480 @@ def _graph(rows: list[dict[str, Any]], identity: Identity) -> list[dict[str, Any
             )
         if kind not in ("user", "assistant", "system", "progress", "attachment"):
             raise PreservationError(f"Unsupported Claude transcript entry: {kind}")
-        if kind == "system" and row.get("subtype") == "compact_boundary":
-            if row.get("parentUuid") is not None or not row.get("logicalParentUuid"):
-                raise PreservationError("Unsupported Claude compact boundary parent graph")
-            metadata = row.get("compactMetadata", {})
-            if not isinstance(metadata, dict) or set(metadata) - {"trigger", "preTokens"}:
-                raise PreservationError("Unsupported Claude retained-segment compaction metadata")
-            graph.append({**row, "parentUuid": row["logicalParentUuid"]})
-        else:
-            graph.append(row)
+        graph.append(_boundary(row) if claude_chain.is_boundary(row) else row)
     return graph
 
 
-def _irrelevant(row: dict[str, Any]) -> bool:
+def _attachment(row: dict[str, Any], identity: Identity, human_turn: bool) -> Message | None:
+    disposition = claude_attachments.disposition(row)
+    if disposition == "drop":
+        return None
+    texts = claude_attachments.texts(row, human_turn)
+    if not texts:
+        return None
+    evidence = f"attachment:{claude_attachments.kind_of(row)}"
+    provenance = Provenance(
+        "authored" if disposition == "visible" else "harness", identity, row["uuid"], evidence
+    )
+    return Message(
+        row["uuid"],
+        "user",
+        tuple(Text(text) for text in texts),
+        provenance,
+        timestamp=native.timestamp(row.get("timestamp"), provenance),
+        hidden=disposition != "visible",
+    )
+
+
+def _local_command(row: dict[str, Any], identity: Identity) -> Message:
+    content = row.get("content")
+    if not isinstance(content, str):
+        raise PreservationError("Invalid Claude local command content")
+    provenance = Provenance("native", identity, row["uuid"], "system:local_command")
+    return Message(
+        row["uuid"],
+        "user",
+        (Text(content),),
+        provenance,
+        timestamp=native.timestamp(row.get("timestamp"), provenance),
+    )
+
+
+def _row_message(
+    row: dict[str, Any], identity: Identity, assets: list[Attachment], human_turn: bool
+) -> Message | None:
     if row["type"] == "progress":
-        return True
+        return None
     if row["type"] == "system":
-        if row.get("subtype") in SYSTEM_TELEMETRY - {"api_error", "local_command"}:
-            return True
-        raise PreservationError(f"Unsupported Claude system content: {row.get('subtype')}")
+        subtype = row.get("subtype")
+        if subtype == "local_command":
+            return _local_command(row, identity)
+        if subtype in SYSTEM_DROPPED:
+            return None
+        raise PreservationError(f"Unsupported Claude system content: {subtype}")
     if row["type"] == "attachment":
-        raise PreservationError(
-            "Claude attachment records are unsupported; embedded images are supported"
+        return _attachment(row, identity, human_turn)
+    if row.get("isVirtual") or claude_chain.synthetic_error(row):
+        return None
+    message = _message(row, identity, assets)
+    return message if message.content else None
+
+
+def _retract(path: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    retracted: set[str] = set()
+    for row in path:
+        if row["type"] == "system" and row.get("subtype") == "model_refusal_fallback":
+            uuids = row.get("retractedMessageUuids", [])
+            if not isinstance(uuids, list) or any(not isinstance(item, str) for item in uuids):
+                raise PreservationError("Invalid Claude refusal retraction")
+            retracted.update(item[:RETRACTION_PREFIX] for item in uuids)
+    return [
+        row
+        for row in path
+        if row["type"] == "system" or row["uuid"][:RETRACTION_PREFIX] not in retracted
+    ]
+
+
+def _interruption_text(block: Any) -> Any:
+    if not isinstance(block, dict):
+        return None
+    if block.get("type") == "text":
+        return block.get("text")
+    if block.get("type") == "tool_result" and block.get("is_error") is True:
+        return block.get("content")
+    return None
+
+
+def _interrupted(row: dict[str, Any]) -> bool:
+    message = row.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str):
+        return content.startswith(INTERRUPTIONS)
+    return (
+        isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(text := _interruption_text(block), str) and text.startswith(INTERRUPTIONS)
+            for block in content
+        )
+    )
+
+
+def _image_placeholder(row: dict[str, Any]) -> bool:
+    message = row.get("message")
+    content = message.get("content") if isinstance(message, dict) else None
+    return (
+        row.get("origin") is None
+        and row.get("promptSource") is None
+        and isinstance(content, list)
+        and bool(content)
+        and all(
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(text := block.get("text"), str)
+            and text.startswith(IMAGE_PLACEHOLDERS)
+            and text.endswith("]")
+            and "\n" not in text
+            for block in content
+        )
+    )
+
+
+def _after_human_prompt(path: list[dict[str, Any]], index: int) -> bool:
+    for row in reversed(path[:index]):
+        if row["type"] == "assistant":
+            return False
+        if row["type"] != "user":
+            continue
+        if (
+            row.get("toolUseResult") is not None
+            or row.get("isCompactSummary") is True
+            or _interrupted(row)
+        ):
+            return False
+        if row.get("isVisibleInTranscriptOnly") is True:
+            continue
+        if row.get("isMeta") is True:
+            if _image_placeholder(row):
+                continue
+            return False
+        origin = row.get("origin")
+        return (
+            isinstance(origin, dict)
+            and origin.get("kind") == "human"
+            and row.get("verifiedSlackHumanTurn") is not True
         )
     return False
 
 
-def _history(
-    path: list[dict[str, Any]], identity: Identity
-) -> tuple[list[Message], list[Checkpoint], list[Attachment], list[Message]]:
-    assets: list[Attachment] = []
-    history: list[Message] = []
-    uncompacted_context: list[Message] = []
-    checkpoints: list[Checkpoint] = []
-    boundary: dict[str, Any] | None = None
-    summaries: list[Message] = []
-    retained_ids: list[str] = []
-    retained_context: list[Message] = []
+def _human_turn(path: list[dict[str, Any]]) -> set[str]:
+    return {
+        row["uuid"]
+        for index, row in enumerate(path)
+        if row["type"] == "attachment"
+        and claude_attachments.kind_of(row) == "queued_command"
+        and claude_attachments.task_notification(row["attachment"])
+        and _after_human_prompt(path, index)
+    }
 
-    def finish_checkpoint() -> None:
-        nonlocal boundary, summaries, retained_ids, retained_context
-        if boundary is not None:
-            if not summaries:
-                raise PreservationError("Claude compact boundary is missing its summary")
-            checkpoints.append(
-                Checkpoint(
-                    boundary["uuid"],
-                    boundary["after"],
-                    native.linked(summaries),
-                    tuple(retained_ids),
-                    native.linked(retained_context)
-                    if boundary.get("ringleaderRetainedContext")
-                    else None,
-                )
+
+def _anchor(row: dict[str, Any], compaction_stops: bool) -> bool:
+    if row["type"] == "assistant":
+        return True
+    if compaction_stops and (row.get("isCompactSummary") or claude_chain.is_boundary(row)):
+        return True
+    message = row.get("message") if row["type"] == "user" else None
+    content = message.get("content") if isinstance(message, dict) else None
+    return row["type"] == "user" and (
+        row.get("taskDelivery") is not None
+        or (
+            isinstance(content, list)
+            and bool(content)
+            and isinstance(content[0], dict)
+            and content[0].get("type") == "tool_result"
+        )
+    )
+
+
+def _hoist(path: list[dict[str, Any]], compaction_stops: bool) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    pending: list[dict[str, Any]] = []
+    for row in reversed(path):
+        if row["type"] == "attachment":
+            pending.append(row)
+            continue
+        if _anchor(row, compaction_stops):
+            result.extend(pending)
+            pending = []
+        result.append(row)
+    result.extend(pending)
+    return list(reversed(result))
+
+
+Converted = list[tuple[dict[str, Any], Message | None]]
+
+
+def _converted(
+    rows: list[dict[str, Any]],
+    identity: Identity,
+    assets: list[Attachment],
+    compaction_stops: bool,
+) -> Converted:
+    rows, interrupted = claude_chain.resolved(_retract(rows))
+    human_turn = _human_turn(rows)
+    converted = _responses(
+        [
+            (
+                row,
+                None
+                if claude_chain.is_boundary(row)
+                else _row_message(row, identity, assets, row["uuid"] in human_turn),
             )
-            boundary, summaries, retained_ids, retained_context = None, [], [], []
+            for row in _hoist(rows, compaction_stops)
+        ]
+    )
+    return converted + [
+        (row, _interrupted_result(row, call, identity)) for row, call in interrupted
+    ]
 
-    for row in path:
-        kind = row["type"]
-        if kind == "system" and row.get("subtype") == "compact_boundary":
-            finish_checkpoint()
+
+def _interrupted_result(row: dict[str, Any], call: str, identity: Identity) -> Message:
+    provenance = Provenance("harness", identity, row["uuid"], "resume:interrupted-tool-result")
+    return Message(
+        f"interrupted-{call}",
+        "user",
+        (ToolResult(call, (Text(INTERRUPTED_RESULT),), True),),
+        provenance,
+        timestamp=native.timestamp(row.get("timestamp"), provenance),
+    )
+
+
+def _delivery(row: dict[str, Any]) -> bool:
+    if row["type"] == "attachment":
+        return True
+    if row["type"] == "system":
+        return not claude_chain.is_boundary(row)
+    return row["type"] == "user" and (
+        row.get("turnCompanion") is True or isinstance(row.get("sourceToolUseID"), str)
+    )
+
+
+def _responses(converted: Converted) -> Converted:
+    result: Converted = []
+    head: tuple[int, str, Message] | None = None
+    pending_results: Converted = []
+    pending_delivery: Converted = []
+    for row, message in converted:
+        response = claude_chain.message_id(row) if "ringleader" not in row else None
+        if message is None:
+            result.append((row, None))
+        elif head is not None and message.role == "assistant" and response == head[1]:
+            merged = replace(head[2], content=head[2].content + message.content)
+            result[head[0]] = (result[head[0]][0], merged)
+            head = (head[0], head[1], merged)
+            result.append((row, None))
+        elif (
+            head is not None
+            and message.role != "assistant"
+            and all(isinstance(item, ToolResult) for item in message.content)
+        ):
+            pending_results.append((row, message))
+        elif head is not None and _delivery(row):
+            pending_delivery.append((row, message))
+        else:
+            result.extend(pending_results)
+            result.extend(pending_delivery)
+            pending_results = []
+            pending_delivery = []
+            head = (
+                (len(result), response, message)
+                if response and message.role == "assistant"
+                else None
+            )
+            result.append((row, message))
+    result.extend(pending_results)
+    result.extend(pending_delivery)
+    return result
+
+
+@dataclass
+class _Compaction:
+    boundary: dict[str, Any]
+    after: str
+    summary: list[Message] = field(default_factory=list)
+    retained_ids: list[str] = field(default_factory=list)
+    retained_context: list[Message] = field(default_factory=list)
+
+    def checkpoint(self, preserved: tuple[str, ...], history: list[Message]) -> Checkpoint:
+        if not self.summary:
+            raise PreservationError("Claude compact boundary is missing its summary")
+        ids = self.retained_ids
+        if "ringleaderRetainedContext" not in self.boundary:
+            positions = {message.id: index for index, message in enumerate(history)}
+            ids = sorted((key for key in preserved if key in positions), key=positions.__getitem__)
+        return Checkpoint(
+            self.boundary["uuid"],
+            self.after,
+            native.linked(self.summary),
+            tuple(ids),
+            native.linked(self.retained_context)
+            if self.boundary.get("ringleaderRetainedContext")
+            else None,
+        )
+
+    def retained_copy(self, row: dict[str, Any], message: Message, history: list[Message]) -> None:
+        if not self.summary:
+            raise PreservationError("Invalid Claude retained-history annotation")
+        original = next((item for item in history if item.id == row["ringleaderRetained"]), None)
+        if original is None or replace(message, id=original.id, parent_id=None) != replace(
+            original, parent_id=None
+        ):
+            raise PreservationError(
+                "Claude retained-history copy disagrees with native historical content"
+            )
+        self.retained_ids.append(original.id)
+
+    def owned(self, message: Message) -> None:
+        if not self.summary or not self.boundary.get("ringleaderRetainedContext"):
+            raise PreservationError("Invalid Claude retained-context annotation")
+        self.retained_context.append(message)
+
+
+def _history(
+    converted: Converted, preserved: dict[str, tuple[str, ...]]
+) -> tuple[list[Message], list[Checkpoint], list[Message]]:
+    history: list[Message] = []
+    every: list[Message] = []
+    checkpoints: list[Checkpoint] = []
+    current: _Compaction | None = None
+    for row, message in converted:
+        if claude_chain.is_boundary(row):
+            if current is not None:
+                checkpoints.append(current.checkpoint(preserved[current.boundary["uuid"]], history))
             if not history:
                 raise PreservationError("Claude compaction has no historical boundary")
-            boundary = {**row, "after": history[-1].id}
+            current = _Compaction(row, history[-1].id)
             continue
-        if _irrelevant(row):
+        if message is None:
             continue
-        message = _message(row, identity, assets)
         if row.get("isCompactSummary"):
-            if boundary is None:
+            if current is None:
                 raise PreservationError("Claude summary lacks a compact boundary")
-            summaries.append(message)
+            current.summary.append(message)
         elif "ringleaderRetained" in row:
-            if boundary is None or not summaries:
+            if current is None:
                 raise PreservationError("Invalid Claude retained-history annotation")
-            original = next(
-                (item for item in history if item.id == row["ringleaderRetained"]), None
-            )
-            if original is None or replace(message, id=original.id, parent_id=None) != replace(
-                original, parent_id=None
-            ):
-                raise PreservationError(
-                    "Claude retained-history copy disagrees with native historical content"
-                )
-            retained_ids.append(original.id)
+            current.retained_copy(row, message, history)
         elif row.get("ringleaderRetainedContext"):
-            if boundary is None or not summaries or not boundary.get("ringleaderRetainedContext"):
+            if current is None:
                 raise PreservationError("Invalid Claude retained-context annotation")
-            retained_context.append(message)
-        else:
-            finish_checkpoint()
-            uncompacted_context.append(message)
-            if not row.get("isMeta"):
+            current.owned(message)
+        elif current is None or current.summary or not message.hidden:
+            if current is not None:
+                checkpoints.append(current.checkpoint(preserved[current.boundary["uuid"]], history))
+                current = None
+            every.append(message)
+            if not message.hidden:
                 history.append(message)
-    finish_checkpoint()
-    if checkpoints and any(row.get("isMeta") for row in path):
-        raise PreservationError(
-            "Claude hidden context combined with compaction requires unsupported visibility semantics"
-        )
-    return history, checkpoints, assets, uncompacted_context
+    if current is not None:
+        checkpoints.append(current.checkpoint(preserved[current.boundary["uuid"]], history))
+    return history, checkpoints, every
 
 
-def _default_leaf(graph: list[dict[str, Any]]) -> str:
-    by_id = {row["uuid"]: row for row in graph}
-    parents = {row.get("parentUuid") for row in graph}
-    candidates = []
-    for terminal in graph:
-        if terminal["uuid"] in parents:
-            continue
-        row = terminal
-        while row["type"] not in ("user", "assistant") and row.get("parentUuid"):
-            row = by_id[row["parentUuid"]]
-        if row["type"] in ("user", "assistant"):
-            candidates.append((row, terminal))
-    preferred = [pair for pair in candidates if not pair[0].get("isMeta")] or candidates
-    if not preferred:
-        raise PreservationError("Claude transcript has no conversational leaf")
-    positions = {row["uuid"]: i for i, row in enumerate(graph)}
-    leaf: str = max(
-        preferred, key=lambda pair: (positions[pair[0]["uuid"]], positions[pair[1]["uuid"]])
-    )[1]["uuid"]
-    return leaf
+def _native_retained(
+    retained: list[Message], history: list[Message], after: str
+) -> tuple[tuple[str, ...], tuple[Message, ...] | None]:
+    positions = {message.id: index for index, message in enumerate(history)}
+    places = [positions.get(message.id, -1) for message in retained]
+    if places == sorted(places) and all(
+        0 <= place <= positions[after]
+        and native.unparented([history[place]]) == native.unparented([message])
+        for place, message in zip(places, retained, strict=True)
+    ):
+        return tuple(message.id for message in retained), None
+    return (), native.linked(retained)
+
+
+def _retained_row(row: dict[str, Any], preserved: set[str]) -> bool:
+    return (
+        row["uuid"] in preserved
+        or "ringleaderRetained" in row
+        or bool(row.get("ringleaderRetainedContext"))
+    )
+
+
+def _latest(
+    converted: Converted,
+    history: list[Message],
+    previous: Checkpoint,
+    preserved: tuple[str, ...],
+) -> tuple[Checkpoint, tuple[Message, ...]]:
+    boundary = next(row for row, _ in converted if claude_chain.is_boundary(row))
+    items = [(row, message) for row, message in converted if message is not None]
+    marks = [index for index, (row, _) in enumerate(items) if row.get("isCompactSummary")]
+    if not marks:
+        raise PreservationError("Claude compact boundary is missing its summary")
+    kept = set(preserved)
+    split = max(
+        [
+            marks[-1],
+            *(index for index, (row, _) in enumerate(items) if _retained_row(row, kept)),
+        ]
+    )
+    messages = [message for _, message in items]
+    summary, retained, following = (
+        messages[: marks[-1] + 1],
+        messages[marks[-1] + 1 : split + 1],
+        messages[split + 1 :],
+    )
+    if "ringleaderRetainedContext" in boundary:
+        ids, owned = previous.retained_message_ids, previous.retained_context
+    else:
+        ids, owned = _native_retained(retained, history, previous.after_message_id)
+    by_id = {message.id: message for message in history}
+    cut = [message.id for message in history].index(previous.after_message_id) + 1
+    explicit = boundary.get("ringleaderFollowingContext") is True or native.unparented(
+        following
+    ) != native.unparented(history[cut:])
+    checkpoint = replace(
+        previous,
+        summary=native.linked(summary),
+        retained_message_ids=ids,
+        retained_context=owned,
+        following_context=native.linked(following) if explicit else None,
+    )
+    context = native.linked(
+        [*summary, *(owned if owned is not None else (by_id[key] for key in ids)), *following]
+    )
+    return checkpoint, context
 
 
 def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conversation:
     if identity.agent != "claude-code":
         raise PreservationError("Source identity does not belong to claude-code")
     rows = native.records(data)
-    graph = _graph(rows, identity)
-    native.chain(graph, "uuid", "parentUuid", branch_id)
-    if branch_id is None:
-        branch_id = _default_leaf(graph)
-    path = native.chain(graph, "uuid", "parentUuid", branch_id)
-    history, checkpoints, assets, uncompacted_context = _history(path, identity)
-    history_tuple = native.linked(history)
-    context = native.linked(uncompacted_context)
-    if checkpoints:
-        latest = checkpoints[-1]
-        positions = {item.id: i for i, item in enumerate(history_tuple)}
-        retained = (
-            latest.retained_context
-            if latest.retained_context is not None
-            else tuple(history_tuple[positions[key]] for key in latest.retained_message_ids)
-        )
-        context = native.linked(
-            (*latest.summary, *retained, *history_tuple[positions[latest.after_message_id] + 1 :])
+    entries = claude_chain.index(_graph(rows, identity))
+    leaf = claude_chain.leaf(entries, branch_id)
+    chain = claude_chain.recover(entries, claude_chain.walk(entries, leaf))
+    boundaries = [row for row in chain if claude_chain.is_boundary(row)]
+    preserved = {
+        row["uuid"]: (claude_chain.preserved(row, entries.rows) or ("", ()))[1]
+        for row in boundaries
+    }
+    assets: list[Attachment] = []
+    history, checkpoints, every = _history(_converted(chain, identity, assets, True), preserved)
+    context = native.linked(every)
+    if boundaries:
+        latest = boundaries[-1]
+        checkpoints[-1], context = _latest(
+            _converted(claude_chain.context(entries, leaf, latest, chain), identity, assets, False),
+            history,
+            checkpoints[-1],
+            preserved[latest["uuid"]],
         )
     titles = [
         row["customTitle"]
         for row in rows
         if row.get("type") == "custom-title" and isinstance(row.get("customTitle"), str)
+    ] or [
+        row["aiTitle"]
+        for row in rows
+        if row.get("type") == "ai-title" and isinstance(row.get("aiTitle"), str)
     ]
+    last = entries.rows[leaf]
     result = Conversation(
         identity,
-        path[-1]["uuid"],
-        history_tuple,
+        leaf,
+        native.linked(history),
         context,
         tuple(checkpoints),
         tuple(assets),
         titles[-1] if titles else None,
         source_created_at=native.timestamp(
-            path[0].get("timestamp"), Provenance("native", identity, path[0]["uuid"])
+            chain[0].get("timestamp"), Provenance("native", identity, chain[0]["uuid"])
         ),
         source_updated_at=native.timestamp(
-            path[-1].get("timestamp"), Provenance("native", identity, path[-1]["uuid"])
+            last.get("timestamp"), Provenance("native", identity, leaf)
         ),
     )
     metadata = [row["ringleaderSession"] for row in rows if "ringleaderSession" in row]
@@ -358,9 +763,42 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
     return result
 
 
+def _checkpoint_stream(conversation: Conversation) -> tuple[Message, ...]:
+    *earlier, latest = conversation.checkpoints
+    if any(checkpoint.following_context is not None for checkpoint in earlier):
+        raise CheckpointShape(
+            "This native profile cannot preserve an independent post-checkpoint model stream"
+        )
+    if any(
+        item.role != "user"
+        for checkpoint in conversation.checkpoints
+        for item in checkpoint.summary
+    ):
+        raise CheckpointShape("Claude compact summaries require user messages")
+    if latest.following_context is None:
+        return conversation.history
+    cut = [message.id for message in conversation.history].index(latest.after_message_id) + 1
+    visible = [message for message in latest.following_context if not message.hidden]
+    if native.unparented(visible) != native.unparented(conversation.history[cut:]):
+        raise CheckpointShape(
+            "Claude cannot preserve an independent post-checkpoint model stream that hides visible history"
+        )
+    return (*conversation.history[:cut], *latest.following_context)
+
+
+def cli_version(output: str) -> str:
+    match = re.fullmatch(r"(\S+) \(Claude Code\)", output.strip())
+    return match.group(1) if match else output.strip()
+
+
 class ClaudeAdapter:
-    def __init__(self, executable: str = "claude") -> None:
+    profile = PROFILE
+
+    def __init__(
+        self, executable: str = "claude", verified: tuple[VerificationRecord, ...] = ()
+    ) -> None:
         self.executable = executable
+        self.verified = local_versions(verified, "claude-code")
 
     def inspect_source(self, request: SourceRequest) -> Compatibility:
         try:
@@ -380,13 +818,14 @@ class ClaudeAdapter:
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         result = native.probe_version(self.executable, "claude-code", runner)
-        version = result.stdout.decode(errors="replace").strip()
-        supported = result.returncode == 0 and version == "2.1.278 (Claude Code)"
-        return Compatibility(
-            supported,
-            PROFILE if supported else None,
-            () if supported else (f"Claude writer requires verified 2.1.278; found {version!r}",),
-            version,
+        output = result.stdout.decode(errors="replace").strip()
+        return native.version_compatibility(
+            "Claude writer",
+            PROFILE,
+            check_version(
+                cli_version(output) if result.returncode == 0 else "", PINNED, self.verified
+            ),
+            output,
         )
 
     def normalizations(self, profile: FormatProfile) -> tuple[Normalization, ...]:
@@ -394,14 +833,17 @@ class ClaudeAdapter:
             Normalization(
                 "json-argument-whitespace", profile.name, "Native tools store JSON objects"
             ),
+            Normalization(
+                "model-view-history",
+                profile.name,
+                "Claude keeps one stream: the model context, with isMeta rows for hidden messages",
+                hides=True,
+            ),
         )
 
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         validate(conversation)
-        if any(checkpoint.following_context is not None for checkpoint in conversation.checkpoints):
-            raise PreservationError(
-                "This native profile cannot preserve an independent post-checkpoint model stream"
-            )
+        native.reject_opaque(conversation, frozenset({("claude-code", TOOL_REFERENCE)}))
         native.safe_id(request.identity, "claude-code")
         try:
             UUID(request.identity.native_id)
@@ -409,14 +851,16 @@ class ClaudeAdapter:
             raise PreservationError("Claude session ID must be a UUID") from exc
         if request.profile != PROFILE:
             raise PreservationError("Unverified Claude writer profile")
-        if not conversation.history:
+        applied = self.normalizations(PROFILE)
+        try:
+            stream = _checkpoint_stream(conversation) if conversation.checkpoints else None
+        except CheckpointShape:
+            conversation = flattened(conversation)
+            stream = None
+            applied = (*applied, flattened_checkpoint(PROFILE.name))
+        written = model_view(conversation, hides=True)
+        if not written.history:
             raise PreservationError("Claude requires a nonempty conversation")
-        if not conversation.checkpoints and not native.same_messages(
-            conversation.context, conversation.history
-        ):
-            raise PreservationError(
-                "Claude cannot represent distinct history/context without a checkpoint"
-            )
         slug = re.sub(
             r"[^a-zA-Z0-9]", "-", unicodedata.normalize("NFC", str(request.roots.cwd.resolve()))
         )
@@ -425,7 +869,8 @@ class ClaudeAdapter:
         now_time = datetime.now(UTC)
         now = now_time.isoformat(timespec="milliseconds").replace("+00:00", "Z")
         assets = {item.id: item for item in conversation.attachments}
-        ids = {item.id: str(uuid4()) for item in conversation.history}
+        stream = stream if stream is not None else written.context
+        ids = {item.id: str(uuid4()) for item in stream}
         rows: list[dict[str, Any]] = [
             {
                 "type": "custom-title",
@@ -477,14 +922,15 @@ class ClaudeAdapter:
                     "userType": "external",
                     "version": "2.1.278",
                     "message": message_data,
-                    "ringleader": native.message_annotations(message),
+                    "ringleader": native.message_annotations(message, freeform_calls=True),
                     "ringleaderAttachments": _attachment_annotations(message, assets),
+                    **({"isMeta": True} if message.hidden else {}),
                     **extra,
                 }
             )
             parent = key
 
-        for message in conversation.history:
+        for message in stream:
             emit(message, ids[message.id])
             for checkpoint in conversation.checkpoints:
                 if checkpoint.after_message_id != message.id:
@@ -504,6 +950,11 @@ class ClaudeAdapter:
                         "content": "Conversation compacted",
                         "compactMetadata": {"trigger": "manual", "preTokens": 0},
                         "ringleaderRetainedContext": checkpoint.retained_context is not None,
+                        **(
+                            {"ringleaderFollowingContext": True}
+                            if checkpoint.following_context is not None
+                            else {}
+                        ),
                     }
                 )
                 parent = key
@@ -533,6 +984,7 @@ class ClaudeAdapter:
             request.roots,
             (NativeFile(ref, native.jsonl(rows), True),),
             ref,
+            normalizations=applied,
         )
 
     def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
@@ -559,6 +1011,6 @@ class ClaudeAdapter:
 
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         native.safe_id(identity, "claude-code")
-        return native.run_request(
+        return native.launch_request(
             self.executable, ("--resume", identity.native_id), roots, "claude-code"
         )

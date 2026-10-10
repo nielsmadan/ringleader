@@ -54,6 +54,8 @@ original exactly where it was.
   `rl resume --to` keeps its spelling; what happens behind it changes from "seed a new session"
   to "convert and resume". The seam that makes that swap cheap is `launch_argv` living on the
   `Source` protocol rather than in the command.
+- Superseded by [0013](0013-native-conversion-behind-resume.md), which puts native conversion
+  behind `rl resume --to` and keeps this seeded handoff only as a consented fallback.
 
 ## Alternatives considered
 

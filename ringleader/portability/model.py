@@ -58,9 +58,17 @@ class ToolCall:
 
 
 @dataclass(frozen=True)
+class Opaque:
+    agent: str
+    kind: str
+    payload: str
+    fallback: tuple[Text, ...] = ()
+
+
+@dataclass(frozen=True)
 class ToolResult:
     call_id: str
-    output: tuple[Text | AttachmentRef, ...]
+    output: tuple[Text | AttachmentRef | Opaque, ...]
     is_error: bool = False
 
 
@@ -71,7 +79,7 @@ class ToolOmission:
     results: int
 
 
-Content = Text | Instruction | AttachmentRef | ToolCall | ToolResult | ToolOmission
+Content = Text | Instruction | AttachmentRef | ToolCall | ToolResult | ToolOmission | Opaque
 
 
 @dataclass(frozen=True)
@@ -82,6 +90,7 @@ class Message:
     provenance: Provenance
     parent_id: str | None = None
     timestamp: HistoricalTimestamp | None = None
+    hidden: bool = False
 
 
 @dataclass(frozen=True)
@@ -104,6 +113,7 @@ class Checkpoint:
     retained_message_ids: tuple[str, ...] = ()
     retained_context: tuple[Message, ...] | None = None
     following_context: tuple[Message, ...] | None = None
+    replaced_context: tuple[Message, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -160,6 +170,25 @@ def _validate_call(content: ToolCall) -> None:
         raise PreservationError("Unknown tool argument format")
 
 
+def canonical_json(value: object) -> str:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def _validate_opaque(content: Opaque) -> None:
+    if not content.agent or not content.kind:
+        raise PreservationError("Opaque content requires an owning agent and kind")
+    try:
+        value = json.loads(
+            content.payload, parse_constant=_invalid_constant, object_pairs_hook=unique_object
+        )
+    except (ValueError, TypeError) as exc:
+        raise PreservationError(f"Invalid opaque payload: {content.kind}") from exc
+    if canonical_json(value) != content.payload:
+        raise PreservationError(f"Opaque payload is not canonical JSON: {content.kind}")
+    for item in content.fallback:
+        _validate_content(item)
+
+
 def _validate_content(content: Content) -> None:
     if isinstance(content, Text | Instruction) and not isinstance(content.text, str):
         raise PreservationError("Conversational text must be a string")
@@ -173,15 +202,17 @@ def _validate_content(content: Content) -> None:
         if type(content.is_error) is not bool:
             raise PreservationError("Tool result error state must be boolean")
         for item in content.output:
-            if isinstance(item, Text | AttachmentRef):
+            if isinstance(item, Text | AttachmentRef | Opaque):
                 _validate_content(item)
-        if any(not isinstance(item, Text | AttachmentRef) for item in content.output):
+        if any(not isinstance(item, Text | AttachmentRef | Opaque) for item in content.output):
             raise PreservationError("Unknown tool result content")
     elif isinstance(content, ToolOmission):
         if content.calls < 1 or content.results != content.calls:
             raise PreservationError("Omission must represent complete tool pairs")
         if len(content.names) != content.calls or any(not name for name in content.names):
             raise PreservationError("Omission must name each original call in order")
+    elif isinstance(content, Opaque):
+        _validate_opaque(content)
     elif not isinstance(content, Text | AttachmentRef):
         raise PreservationError(f"Unknown conversational content: {type(content).__name__}")
 
@@ -261,6 +292,8 @@ def validate(conversation: Conversation) -> None:
         validate_messages(checkpoint.summary, attachment_ids)
         if checkpoint.following_context is not None:
             validate_messages(checkpoint.following_context, attachment_ids)
+        if checkpoint.replaced_context is not None:
+            validate_messages(checkpoint.replaced_context, attachment_ids)
         if checkpoint.retained_context is not None:
             if checkpoint.retained_message_ids:
                 raise PreservationError(

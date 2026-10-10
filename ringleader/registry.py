@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import namefilter, overview
+from .agents import canonical_agent
 from .slug import is_beneath
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text, registry_lock
@@ -306,7 +307,7 @@ def find_session(
 ) -> dict[str, Any] | None:
     if ":" in selector:
         selected_source, selector = selector.split(":", 1)
-        selected_source = "claude-code" if selected_source == "claude" else selected_source
+        selected_source = canonical_agent(selected_source)
         if source is not None and source != selected_source:
             raise ValueError("conflicting session sources")
         source = selected_source
@@ -333,7 +334,7 @@ def session_identity(reg: dict[str, Any], selector: str) -> tuple[str, str]:
             return identity(record)
     if ":" in selector:
         source, native_id = selector.split(":", 1)
-        return ("claude-code" if source == "claude" else source, native_id)
+        return (canonical_agent(source), native_id)
     return ("claude-code", selector)
 
 

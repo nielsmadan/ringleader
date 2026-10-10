@@ -4,31 +4,45 @@ import argparse
 import json
 import shlex
 import sys
-from dataclasses import asdict, replace
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 from .. import registry
-from ..paths import conversion_operations_dir, default_registry
+from ..agents import display_agent
+from ..paths import conversion_operations_dir, default_registry, verified_targets_path
 from ..portability.adapters import builtin_adapters
-from ..portability.capabilities import NativeRoots, SourceRequest
+from ..portability.capabilities import NeedsVerification
 from ..portability.launch import ExecLauncher, Launcher, ProbeRunner
 from ..portability.model import Identity, PreservationError
-from ..portability.operations import StoredRoots
 from ..portability.selection import (
     SelectedSession,
+    native_roots,
     open_sessions,
     resolve,
     running_selectors,
     sessions,
+    source_ref,
+    source_request,
 )
 from ..portability.service import ConversionRequest, ConversionResult, ConversionService
+from ..portability.verification import load_verified
 from ..presence import PresenceClient
 
 
 def service(args: argparse.Namespace) -> ConversionService:
+    return ConversionService(
+        builtin_adapters(load_verified(Path(args.verified))),
+        ProbeRunner(),
+        registry_path=Path(args.registry),
+        operations_path=Path(args.operations),
+    )
+
+
+def lineage_service(args: argparse.Namespace) -> ConversionService:
+    # lineage only reads the registry; it needs no self-verification state.
     return ConversionService(
         builtin_adapters(),
         ProbeRunner(),
@@ -37,7 +51,7 @@ def service(args: argparse.Namespace) -> ConversionService:
     )
 
 
-def parser(command: str, description: str) -> argparse.ArgumentParser:
+def parser(command: str, description: str, *, verified: bool = True) -> argparse.ArgumentParser:
     result = argparse.ArgumentParser(prog=f"rl {command}", description=description)
     result.add_argument("--registry", default=str(default_registry()))
     result.add_argument(
@@ -45,6 +59,12 @@ def parser(command: str, description: str) -> argparse.ArgumentParser:
         default=str(conversion_operations_dir()),
         help="conversion journal directory",
     )
+    if verified:
+        result.add_argument(
+            "--verified",
+            default=str(verified_targets_path()),
+            help="self-verification state file",
+        )
     result.add_argument("--json", action="store_true")
     return result
 
@@ -57,46 +77,11 @@ def _error(error: Exception, *, json_output: bool = False) -> int:
     return 1
 
 
-def _roots(
-    worker: ConversionService, selected: SelectedSession, *, launch: bool = False
-) -> NativeRoots:
-    stored = selected.thread.get("nativeRoots")
-    if stored:
-        roots = replace(StoredRoots(**stored).native(), cwd=selected.cwd)
-    elif launch:
-        roots = worker.adapters.roots(selected.identity.agent, selected.cwd)
-    else:
-        resolver = worker.adapters.get(selected.identity.agent).roots
-        if resolver is None:
-            raise PreservationError("Native source location is unavailable")
-        roots, _ = resolver.resolve_source(selected.cwd, selected.source_ref)
-    if launch and not Path(_source_ref(worker, selected, roots)).is_relative_to(roots.store):
-        raise PreservationError(
-            "Recorded session file is outside the native launch store; check native root overrides"
-        )
-    return roots
-
-
-def _source_ref(worker: ConversionService, selected: SelectedSession, roots: NativeRoots) -> str:
-    resolver = worker.adapters.get(selected.identity.agent).roots
-    if resolver is None:
-        raise PreservationError("Native source location is unavailable")
-    if not selected.thread.get("nativeRoots"):
-        return resolver.resolve_source(selected.cwd, selected.source_ref)[1]
-    return resolver.source_ref(roots, selected.source_ref)
-
-
-def _source(worker: ConversionService, selected: SelectedSession) -> SourceRequest:
-    roots = _roots(worker, selected)
-    return SourceRequest(selected.identity, roots, _source_ref(worker, selected, roots))
-
-
 def _render_result(result: ConversionResult) -> str:
-    target = f"{result.target.agent}:{result.target.native_id}"
+    source = f"{display_agent(result.source.agent)}:{result.source.native_id}"
+    target = f"{display_agent(result.target.agent)}:{result.target.native_id}"
     verb = "preview" if result.dry_run else "reused" if result.reused else "created"
-    line = (
-        f"{result.source.agent}:{result.source.native_id} → {target}: {verb} ({result.lifecycle})"
-    )
+    line = f"{source} → {target}: {verb} ({result.lifecycle})"
     if result.operation_id:
         line += f"; transaction {result.operation_id}"
     if result.report:
@@ -152,7 +137,7 @@ def cmd_convert(argv: list[str]) -> int:
     ap.add_argument(
         "ids", nargs="*", help="exact native IDs or unambiguous prefixes; AGENT:ID qualifies"
     )
-    ap.add_argument("--to", required=True, help="claude, claude-code, codex, opencode or pi")
+    ap.add_argument("--to", required=True, help="claude, claude-code, codex, opencode, pi or droid")
     selection = ap.add_mutually_exclusive_group()
     selection.add_argument(
         "--open",
@@ -183,31 +168,43 @@ def cmd_convert(argv: list[str]) -> int:
     except (ValueError, OSError) as exc:
         return _error(exc, json_output=args.json)
     results = []
+    previews: list[dict[str, str]] = []
     for item in selected:
+        selector = f"{item.identity.agent}:{item.identity.native_id}"
         try:
             request = ConversionRequest(
-                _source(worker, item),
+                source_request(worker.adapters, item),
                 target,
                 worker.adapters.roots(target, item.cwd),
                 compact=args.compact,
             )
             results.append(worker.convert(request, dry_run=args.dry_run))
+        except NeedsVerification as exc:
+            if args.dry_run:
+                previews.append({"selector": selector, "wouldSelfVerify": str(exc)})
+            else:
+                errors.append({"selector": selector, "error": str(exc)})
         except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
-            errors.append(
-                {"selector": f"{item.identity.agent}:{item.identity.native_id}", "error": str(exc)}
-            )
+            errors.append({"selector": selector, "error": str(exc)})
     if args.json:
         print(
             json.dumps(
-                {"results": [asdict(result) for result in results], "errors": errors}, indent=2
+                {
+                    "results": [asdict(result) for result in results],
+                    "wouldSelfVerify": previews,
+                    "errors": errors,
+                },
+                indent=2,
             )
         )
     else:
         for result in results:
             print(_render_result(result))
+        for preview in previews:
+            print(f"{preview['selector']}: would self-verify; {preview['wouldSelfVerify']}")
         for error in errors:
             print(f"{error['selector']}: {error['error']}", file=sys.stderr)
-        if not results and not errors:
+        if not results and not errors and not previews:
             print("No sessions selected.")
     return int(bool(errors))
 
@@ -230,10 +227,10 @@ def _resume_command(identity: Identity, args: argparse.Namespace) -> str:
 def _launch(worker: ConversionService, selected: SelectedSession, launcher: Launcher) -> None:
     if selected.lifecycle != "active":
         raise PreservationError(f"Session is {selected.lifecycle}; cannot resume")
-    roots = _roots(worker, selected, launch=True)
-    source_ref = _source_ref(worker, selected, roots)
-    if not Path(source_ref).exists():
-        raise PreservationError(f"Native session file is missing: {source_ref}")
+    roots = native_roots(worker.adapters, selected, launch=True)
+    path = source_ref(worker.adapters, selected, roots)
+    if not Path(path).exists():
+        raise PreservationError(f"Native session file is missing: {path}")
     request = worker.adapters.launcher(selected.identity.agent).launch_request(
         selected.identity, roots
     )
@@ -273,7 +270,11 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
             launcher.validate(worker.adapters.launcher(target).launch_request(probe_id, roots))
         result = worker.convert(
             ConversionRequest(
-                _source(worker, selected), target, roots, compact=args.compact, fork=True
+                source_request(worker.adapters, selected),
+                target,
+                roots,
+                compact=args.compact,
+                fork=True,
             )
         )
         print(
@@ -290,7 +291,7 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
     except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
         if result is not None:
             print(
-                f"Target retained: {result.target.agent}:{result.target.native_id}. Resume with: {_resume_command(result.target, args)}",
+                f"Target retained: {display_agent(result.target.agent)}:{result.target.native_id}. Resume with: {_resume_command(result.target, args)}",
                 file=sys.stderr,
             )
         return _error(exc, json_output=args.json and result is None)
@@ -323,11 +324,12 @@ def cmd_lineage(argv: list[str]) -> int:
     ap = parser(
         "session lineage",
         "Read authoritative conversion/fork relationships, including archived and deleted sessions.",
+        verified=False,
     )
     ap.add_argument("id")
     args = ap.parse_args(argv)
     try:
-        worker = service(args)
+        worker = lineage_service(args)
         reg = registry.load_registry(args.registry)
         candidates = list(sessions(reg))
         known = {item.identity for item in candidates}
@@ -345,7 +347,9 @@ def cmd_lineage(argv: list[str]) -> int:
             for record in records:
                 source, target = record["source"], record["target"]
                 print(
-                    f"{source['agent']}:{source['nativeId']} → {target['agent']}:{target['nativeId']}: {record['kind']}; transaction {record['operationId']}"
+                    f"{display_agent(source['agent'])}:{source['nativeId']} → "
+                    f"{display_agent(target['agent'])}:{target['nativeId']}: "
+                    f"{record['kind']}; transaction {record['operationId']}"
                 )
             if not records:
                 print("No conversion lineage recorded.")

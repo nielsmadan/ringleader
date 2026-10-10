@@ -452,6 +452,14 @@ def test_a_droid_session_stored_under_its_own_cwd_slug_has_not_drifted():
     assert resume.drifted(thread) is False
 
 
+def test_a_droid_session_keeps_underscores_dots_and_spaces_in_its_slug():
+    thread = _thread(
+        "s1", source="droid", project="/w/my_api.v2 x", file=f"{DROID_DIR}/-w-my_api.v2 x/s1.jsonl"
+    )
+
+    assert resume.drifted(thread) is False
+
+
 def test_a_drifted_droid_session_recovers_its_launch_directory_from_a_sibling():
     drifted = _thread(
         "s1", source="droid", project="/w/api/sub", file=f"{DROID_DIR}/-w-api/s1.jsonl"

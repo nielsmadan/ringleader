@@ -13,7 +13,6 @@ def test_compact_preserves_prose_instructions_and_complete_omission_markers():
     validate(result.conversation)
     assert dumps(result.conversation) == dumps(compact(original).conversation)
     assert result.report.omitted_calls == 2
-    assert result.report.omitted_results == 2
     assert result.report.omitted_exchanges == 1
     assert result.report.full_tokens_approx > 0
     assert result.report.compact_tokens_approx > 0
@@ -83,7 +82,6 @@ def test_prose_between_call_and_result_keeps_exchange_intact():
     result = compact(original)
     assert result.conversation.history == history
     assert result.report.omitted_calls == 0
-    assert result.report.omitted_results == 0
 
 
 def test_multiple_tool_runs_have_separate_markers():
@@ -153,7 +151,6 @@ def test_historical_instruction_between_retained_call_and_result_blocks_omission
     ]
     assert transformed.conversation.context == context
     assert transformed.report.omitted_calls == 0
-    assert transformed.report.omitted_results == 0
     assert loads(dumps(transformed.conversation)) == transformed.conversation
 
 
@@ -202,7 +199,6 @@ def test_owned_rewritten_tool_member_retains_its_historical_partner(retained_id)
     assert transformed.conversation.context == context
     assert transformed.conversation.history[-1].content == (ToolOmission(("read",), 1, 1),)
     assert transformed.report.omitted_calls == 1
-    assert transformed.report.omitted_results == 1
     assert transformed.report.checkpoint_discarded_messages == 0
     assert loads(dumps(transformed.conversation)) == transformed.conversation
 
@@ -234,4 +230,3 @@ def test_historical_partner_selection_closes_over_grouped_tool_results():
     assert transformed.conversation.context == context
     assert transformed.conversation.history[-1].content == (ToolOmission(("read", "shell"), 2, 2),)
     assert transformed.report.omitted_calls == 2
-    assert transformed.report.omitted_results == 2

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from .model import (
@@ -10,6 +10,7 @@ from .model import (
     Conversation,
     Instruction,
     Message,
+    Opaque,
     PreservationError,
     Text,
     ToolCall,
@@ -18,22 +19,98 @@ from .model import (
     validate,
 )
 
+KINDS = (
+    "adjacent-text",
+    "call-ordered-results",
+    "flattened-checkpoint",
+    "joined-tool-output",
+    "json-argument-whitespace",
+    "model-view-history",
+)
+TOOL_TEXT_SEPARATOR = "\n\n"
+
 
 @dataclass(frozen=True)
 class Normalization:
-    kind: Literal["adjacent-text", "json-argument-whitespace"]
+    kind: Literal[
+        "adjacent-text",
+        "call-ordered-results",
+        "flattened-checkpoint",
+        "joined-tool-output",
+        "json-argument-whitespace",
+        "model-view-history",
+    ]
     profile: str
     reason: str
+    hides: bool = False
 
     def __post_init__(self) -> None:
         if (
-            self.kind not in ("adjacent-text", "json-argument-whitespace")
+            self.kind not in KINDS
             or not self.profile
             or not self.reason
+            or (self.hides and self.kind != "model-view-history")
         ):
             raise PreservationError(
                 "Normalization requires a documented supported profile and reason"
             )
+
+
+class CheckpointShape(PreservationError):
+    pass
+
+
+def flattened_checkpoint(profile: str) -> Normalization:
+    return Normalization(
+        "flattened-checkpoint",
+        profile,
+        "The target cannot express this checkpoint natively; its model view became ordinary history",
+    )
+
+
+def _attachment_ids(messages: tuple[Message, ...]) -> set[str]:
+    return {
+        part.attachment_id
+        for message in messages
+        for item in message.content
+        for part in (item.output if isinstance(item, ToolResult) else (item,))
+        if isinstance(part, AttachmentRef)
+    }
+
+
+def flattened(conversation: Conversation) -> Conversation:
+    if not conversation.checkpoints:
+        return conversation
+    used = _attachment_ids(conversation.context)
+    return model_view(
+        replace(
+            conversation,
+            checkpoints=(),
+            attachments=tuple(item for item in conversation.attachments if item.id in used),
+        ),
+        hides=True,
+    )
+
+
+def joined_tool_output(result: ToolResult) -> tuple[Text | AttachmentRef | Opaque, ...]:
+    text = TOOL_TEXT_SEPARATOR.join(item.text for item in result.output if isinstance(item, Text))
+    return (Text(text), *(item for item in result.output if not isinstance(item, Text)))
+
+
+def model_view(conversation: Conversation, *, hides: bool) -> Conversation:
+    if conversation.checkpoints:
+        return conversation
+    context = (
+        conversation.context
+        if hides
+        else tuple(replace(message, hidden=False) for message in conversation.context)
+    )
+    visible = [message for message in context if not message.hidden]
+    history = tuple(
+        replace(message, parent_id=visible[index - 1].id if index else None)
+        for index, message in enumerate(visible)
+    )
+    return replace(conversation, history=history, context=context)
 
 
 def _content(
@@ -47,15 +124,18 @@ def _content(
             arguments = json.dumps(json.loads(arguments), sort_keys=True, separators=(",", ":"))
         return ("call", value.name, value.argument_format, arguments)
     if isinstance(value, ToolResult):
+        output = joined_tool_output(value) if "joined-tool-output" in kinds else value.output
         return (
             "result",
             value.is_error,
-            tuple(_content(item, assets, kinds) for item in value.output),
+            tuple(_content(item, assets, kinds) for item in output),
         )
     if isinstance(value, Instruction):
         return ("instruction", value.text, value.authority, value.provenance)
     if isinstance(value, ToolOmission):
         return ("omission", value.names, value.calls, value.results)
+    if isinstance(value, Opaque):
+        return ("opaque", value.agent, value.kind, value.payload, value.fallback)
     return ("text", value.text)
 
 
@@ -86,6 +166,28 @@ def _messages(
             else:
                 content.append(value)
         result.append((message.role, message.provenance, message.timestamp, tuple(content)))
+    return _call_ordered(result) if "call-ordered-results" in kinds else tuple(result)
+
+
+def _results_only(message: Any) -> bool:
+    return bool(message[3]) and all(item[0] == "result" for item in message[3])
+
+
+def _call_order(message: Any) -> int:
+    return min(int(item[-1]) for item in message[3])
+
+
+def _call_ordered(messages: list[Any]) -> tuple[Any, ...]:
+    result: list[Any] = []
+    run: list[Any] = []
+    for message in [*messages, None]:
+        if message is not None and _results_only(message):
+            run.append(message)
+            continue
+        result.extend(sorted(run, key=_call_order))
+        run = []
+        if message is not None:
+            result.append(message)
     return tuple(result)
 
 
@@ -94,6 +196,9 @@ def preservation_projection(
 ) -> dict[str, Any]:
     validate(conversation)
     kinds: set[str] = {item.kind for item in normalizations}
+    views = [item for item in normalizations if item.kind == "model-view-history"]
+    if views:
+        conversation = model_view(conversation, hides=all(item.hides for item in views))
     positions = {message.id: index for index, message in enumerate(conversation.history)}
     return {
         "branch": conversation.branch_id,
@@ -125,6 +230,12 @@ def preservation_projection(
 def compare(
     expected: Conversation, actual: Conversation, normalizations: tuple[Normalization, ...] = ()
 ) -> None:
+    if (
+        expected.checkpoints
+        and not actual.checkpoints
+        and any(item.kind == "model-view-history" for item in normalizations)
+    ):
+        expected = flattened(expected)
     left = preservation_projection(expected, normalizations)
     right = preservation_projection(actual, normalizations)
     differences = [key for key in left if left[key] != right[key]]

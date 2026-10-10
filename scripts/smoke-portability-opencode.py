@@ -26,8 +26,9 @@ from ringleader.portability.model import (
     ToolOmission,
     ToolResult,
 )
-from ringleader.portability.opencode import PROFILE, OpenCodeAdapter, _payload_export, parse
-from ringleader.portability.opencode_state import decode, encode
+from ringleader.portability.opencode import PROFILE, _payload_export, parse
+from ringleader.portability.opencode_state import decode, encode, inspect_database
+from ringleader.portability.verify import opencode as verify_opencode
 from tests.portability.test_opencode import ordinary_export, shared_conversation
 
 CONTEXT_SCRIPT = r"""
@@ -223,16 +224,7 @@ def context_cases(roots):
     }
 
 
-def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--executable", required=True, type=Path)
-    parser.add_argument("--native-source", required=True, type=Path)
-    parser.add_argument("--bun", default="bun")
-    parser.add_argument("--evidence", required=True, type=Path)
-    args = parser.parse_args()
-    executable = str(args.executable.resolve())
-    source = args.native_source.resolve()
-    evidence = args.evidence.resolve()
+def context_check(executable, source, bun, evidence):
     evidence.mkdir(parents=True, exist_ok=False)
     with TemporaryDirectory(prefix="ringleader-opencode-smoke-") as temporary:
         base = Path(temporary)
@@ -240,7 +232,6 @@ def main():
         version = (
             invoke([executable, "--version"], roots.cwd, env, evidence, "version").decode().strip()
         )
-        assert version == "1.18.30", f"Expected exact OpenCode 1.18.30, got {version!r}"
         revision = (
             invoke(
                 ["git", "-C", str(source), "describe", "--tags", "--exact-match", "HEAD"],
@@ -252,7 +243,7 @@ def main():
             .decode()
             .strip()
         )
-        assert revision == "v1.18.30", revision
+        assert revision == f"v{version}", (revision, version)
         dirty = invoke(
             ["git", "-C", str(source), "status", "--porcelain", "--untracked-files=no"],
             roots.cwd,
@@ -268,12 +259,11 @@ def main():
             evidence,
             "initialize",
         )
-        adapter = OpenCodeAdapter(executable)
+        adapter = verify_opencode.candidate(executable, version, inspect_database(roots, None))
         adapter.inspect_target(roots, None).require()
         source_file = base / "context.ts"
         source_file.write_text(CONTEXT_SCRIPT)
-        cases = context_cases(roots)
-        for label, value in cases.items():
+        for label, value in context_cases(roots).items():
             result = adapter.stage(
                 value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
             )
@@ -291,24 +281,17 @@ def main():
                 evidence,
                 label + "-export",
             )
-            native_export = json.loads(exported)
-            compare(value, parse(native_export, result.identity), adapter.normalizations(PROFILE))
-            listing = json.loads(
-                invoke(
-                    [executable, "session", "list", "--format", "json"],
-                    roots.cwd,
-                    env,
-                    evidence,
-                    label + "-list",
-                )
+            compare(
+                value,
+                parse(json.loads(exported), result.identity),
+                adapter.normalizations(PROFILE),
             )
-            assert any(row["id"] == result.identity.native_id for row in listing)
             context_input = base / (label + "-export.json")
             context_input.write_bytes(exported)
             context_output = evidence / (label + "-context.json")
             invoke(
                 [
-                    args.bun,
+                    bun,
                     "--tsconfig-override",
                     str(source / "packages/opencode/tsconfig.json"),
                     str(source_file),
@@ -323,24 +306,26 @@ def main():
             )
             assert_context(json.loads(context_output.read_text()), value)
             assert imported.read_bytes() == frozen
-            published = adapter.stage(
-                value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
-            )
-            assert adapter.register_stage(published)
-            registered = json.loads(
-                invoke(
-                    [executable, "export", published.identity.native_id],
-                    roots.cwd,
-                    env,
-                    evidence,
-                    label + "-registered-export",
-                )
-            )
-            compare(value, parse(registered, published.identity), adapter.normalizations(PROFILE))
-        shutil.copy2(roots.store / "opencode.db", evidence / "isolated-native.db")
-    print(
-        "Native import/export/list, insert-only registration and source context builder passed. No provider request was made."
+    print("Native import/export and source context builder passed. No provider request was made.")
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--executable", default=shutil.which("opencode"))
+    parser.add_argument(
+        "--native-source",
+        type=Path,
+        help="dev-only: a clean official checkout at the installed tag, for the context builder",
     )
+    parser.add_argument("--bun", default="bun")
+    parser.add_argument("--evidence", required=True, type=Path)
+    args = parser.parse_args()
+    executable = str(Path(args.executable).resolve())
+    evidence = args.evidence.resolve()
+    evidence.mkdir(parents=True, exist_ok=False)
+    print(verify_opencode.run(executable, evidence / "acceptance").summary)
+    if args.native_source:
+        context_check(executable, args.native_source.resolve(), args.bun, evidence / "context")
 
 
 if __name__ == "__main__":

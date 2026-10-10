@@ -10,7 +10,7 @@ import pytest
 from ringleader import cli, commands, registry
 from ringleader.commands import conversion, doctor
 from ringleader.portability.adapters import builtin_adapters
-from ringleader.portability.capabilities import RunRequest
+from ringleader.portability.capabilities import RunRequest, RunResult
 from ringleader.portability.launch import ExecLauncher
 from ringleader.portability.model import PreservationError
 from ringleader.portability.operations import StoredRoots
@@ -113,6 +113,102 @@ def test_convert_preview_publish_reuse_fork_lineage(environment, capsys):
     assert {item["kind"] for item in output(capsys)} == {"convert", "fork"}
     assert invoke(path, "data", "transaction", "list", "--json") == 0
     assert {item["state"] for item in output(capsys)} == {"complete"}
+
+
+def test_dry_run_convert_after_a_real_one_reports_the_earlier_target_as_reused(environment, capsys):
+    path, reg = seed(environment)
+    identifier = reg["threads"][0]["sessionId"]
+    assert invoke(path, "session", "convert", identifier, "--to", "claude", "--json") == 0
+    created = output(capsys)["results"][0]
+
+    assert (
+        invoke(path, "session", "convert", identifier, "--to", "claude", "--dry-run", "--json") == 0
+    )
+    preview = output(capsys)["results"][0]
+    assert preview["reused"] is True
+    assert preview["dry_run"] is True
+    assert preview["target"] == created["target"]
+    assert preview["operation_id"] == created["operation_id"]
+    assert preview["lifecycle"] == created["lifecycle"]
+
+
+def test_corrupt_verified_state_fails_gracefully_instead_of_crashing(
+    environment, capsys, monkeypatch
+):
+    path, reg = seed(environment)
+    identifier = reg["threads"][0]["sessionId"]
+    verified = environment / "verified-targets.json"
+    verified.write_text('{"version": 1, "records": [{"agent": "pi"}]}')
+
+    assert (
+        invoke(
+            path,
+            "session",
+            "convert",
+            identifier,
+            "--to",
+            "pi",
+            "--verified",
+            str(verified),
+            "--json",
+        )
+        == 1
+    )
+    error = output(capsys)["error"]
+    assert "Invalid self-verification record" in error and str(verified) in error
+
+    # lineage is read-only and needs no self-verification state, so it takes no --verified.
+    assert invoke(path, "session", "lineage", identifier, "--json") == 0
+    with pytest.raises(SystemExit) as rejected:
+        invoke(path, "session", "lineage", identifier, "--verified", str(verified))
+    assert rejected.value.code == 2
+
+    monkeypatch.setattr(doctor, "presence_rows", lambda _: [])
+    for module in (doctor.skills, doctor.hooks, doctor.statusline):
+        monkeypatch.setattr(module, "cmd_status", lambda _: 0)
+    assert (
+        invoke(
+            path,
+            "doctor",
+            "--settings",
+            str(environment / "settings.json"),
+            "--verified",
+            str(verified),
+        )
+        == 2
+    )
+    assert "Invalid self-verification record" in capsys.readouterr().out
+
+
+def test_dry_run_reports_would_self_verify_for_an_unverified_version(
+    environment, capsys, monkeypatch
+):
+    path, reg = seed(environment)
+    identifier = reg["threads"][0]["sessionId"]
+    source_agent = reg["threads"][0]["source"]
+
+    class UnknownVersionRunner:
+        def run(self, request):
+            assert request.argv[-1] == "--version"
+            return RunResult(0, b"9.9.9", b"")
+
+    monkeypatch.setattr(conversion, "ProbeRunner", UnknownVersionRunner)
+    assert invoke(path, "session", "convert", identifier, "--to", "pi", "--dry-run", "--json") == 0
+    result = output(capsys)
+    assert result == {
+        "results": [],
+        "wouldSelfVerify": [
+            {
+                "selector": f"{source_agent}:{identifier}",
+                "wouldSelfVerify": result["wouldSelfVerify"][0]["wouldSelfVerify"],
+            }
+        ],
+        "errors": [],
+    }
+    assert "needs self-verification" in result["wouldSelfVerify"][0]["wouldSelfVerify"]
+
+    assert invoke(path, "session", "convert", identifier, "--to", "pi", "--dry-run") == 0
+    assert "would self-verify; " in capsys.readouterr().out
 
 
 def test_exact_qualified_prefix_and_ambiguities(environment, capsys):
@@ -323,11 +419,10 @@ def test_fork_resume_records_effective_cwd_argv_roots_and_failure_retains_target
     request = launches.calls[0]
     assert request.argv == ("pi", "--session", created["target"]["native_id"])
     assert request.cwd == pinned
-    assert dict(request.env)["PI_CODING_AGENT_DIR"] == str(custom)
-    assert dict(request.env)["XDG_DATA_HOME"] == str(environment / "data")
+    assert request.env == ()
     monkeypatch.setenv("PI_CODING_AGENT_DIR", str(environment / "different"))
     assert invoke(path, "session", "resume", created["target"]["native_id"]) == 0
-    assert launches.calls[-1].env == request.env
+    assert launches.calls[-1].env == (("PI_CODING_AGENT_DIR", str(custom)),)
     launches.launch_error = "exec failed"
     assert invoke(path, "session", "handoff", identifier, "--to", "pi", "--json") == 1
     captured = capsys.readouterr()
@@ -451,7 +546,7 @@ def test_absent_registry_open_preview_and_transaction_list_create_nothing(enviro
     path = environment / "nonexistent" / "registry.json"
     before = tree(environment)
     assert invoke(path, "session", "convert", "--open", "--to", "pi", "--dry-run", "--json") == 0
-    assert output(capsys) == {"results": [], "errors": []}
+    assert output(capsys) == {"results": [], "wouldSelfVerify": [], "errors": []}
     assert invoke(path, "data", "transaction", "list", "--json") == 0
     assert output(capsys) == []
     assert tree(environment) == before
@@ -771,7 +866,7 @@ def test_complete_empty_presence_is_a_success(environment, monkeypatch, capsys):
     path, _ = seed(environment)
     raw_presence(monkeypatch, environment, {"protocol": 1, "sessions": []})
     assert invoke(path, "session", "convert", "--running", "--to", "pi", "--json") == 0
-    assert output(capsys) == {"results": [], "errors": []}
+    assert output(capsys) == {"results": [], "wouldSelfVerify": [], "errors": []}
 
 
 @pytest.mark.parametrize("lifecycle", ["active", "archived", "deleted"])

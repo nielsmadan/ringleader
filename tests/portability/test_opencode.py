@@ -9,14 +9,20 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
+from ringleader.portability import native
 from ringleader.portability.adapters import builtin_adapters
 from ringleader.portability.capabilities import NativeRoots, SourceRequest, TargetRequest
 from ringleader.portability.compact import compact
 from ringleader.portability.compare import compare
 from ringleader.portability.model import (
+    Attachment,
     AttachmentRef,
+    Conversation,
+    HistoricalTimestamp,
     Identity,
+    Message,
     PreservationError,
+    Provenance,
     Text,
     ToolCall,
     ToolResult,
@@ -29,6 +35,7 @@ from ringleader.portability.opencode import (
     parse,
 )
 from ringleader.portability.opencode_state import (
+    LEGACY,
     SCHEMA_ID,
     decode,
     encode,
@@ -37,7 +44,7 @@ from ringleader.portability.opencode_state import (
     resolve_project,
     schema_identity,
 )
-from tests.portability.fixtures import conversation
+from ringleader.portability.verify.fixtures import opencode_conversation as shared_conversation
 
 
 @pytest.fixture
@@ -63,22 +70,6 @@ def roots(tmp_path):
             "INSERT INTO migration VALUES (?,0)", ((item,) for item in schema["migrations"])
         )
     return roots
-
-
-def shared_conversation():
-    base = conversation()
-    history = []
-    for message in base.history:
-        contents = []
-        for original in message.content:
-            item = original
-            if isinstance(item, ToolCall) and item.argument_format == "freeform":
-                item = replace(item, argument_format="json", arguments='{"command":"cat b"}')
-            if isinstance(item, ToolResult) and item.is_error:
-                item = replace(item, output=(Text("failed"),))
-            contents.append(item)
-        history.append(replace(message, content=tuple(contents)))
-    return replace(base, history=tuple(history), context=tuple(history))
 
 
 def stage(roots, value=None):
@@ -289,9 +280,13 @@ def test_ordinary_compaction_retained_tail_and_roundtrip(roots):
     result = adapter.stage(
         value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
     )
-    compare(value, adapter.read_stage(result), adapter.normalizations(PROFILE))
-    with pytest.raises(PreservationError, match="independent checkpoint"):
-        stage(roots, compact(value).conversation)
+    readback = adapter.read_stage(result)
+    compare(value, readback, adapter.normalizations(PROFILE))
+    assert len(readback.checkpoints) == 1
+    compacted = compact(value).conversation
+    flat = adapter.read_stage(stage(roots, compacted))
+    compare(replace(compacted, title="Portable example"), flat, adapter.normalizations(PROFILE))
+    assert (flat.checkpoints, len(flat.history)) == ((), len(compacted.context))
 
 
 def test_completed_tool_error_preserves_status(roots):
@@ -305,33 +300,50 @@ def test_completed_tool_error_preserves_status(roots):
     )
 
 
+def test_freeform_tool_call_round_trips_as_object_input(roots):
+    base = shared_conversation()
+    history = list(base.history)
+    call_index = next(
+        index
+        for index, item in enumerate(history)
+        if any(isinstance(part, ToolCall) and part.name == "shell" for part in item.content)
+    )
+    history[call_index] = replace(
+        history[call_index],
+        content=tuple(
+            replace(part, argument_format="freeform", arguments="cat b")
+            if isinstance(part, ToolCall) and part.name == "shell"
+            else part
+            for part in history[call_index].content
+        ),
+    )
+    original = replace(base, history=tuple(history), context=tuple(history))
+    result = stage(roots, original)
+    compare(
+        original, OpenCodeAdapter().read_stage(result), OpenCodeAdapter().normalizations(PROFILE)
+    )
+    export = _payload_export(decode(result.database_payload))
+    part = next(
+        p for message in export["messages"] for p in message["parts"] if p.get("callID") == "b"
+    )
+    assert part["state"]["input"] == {"input": "cat b"}
+
+
 @pytest.mark.parametrize(
     ("mutation", "diagnostic"),
     [
-        (
-            lambda x: x["messages"][1]["info"].update(
-                error={"name": "MessageAbortedError", "data": {"message": "aborted"}}
-            ),
-            "error/aborted",
-        ),
         (lambda x: x["messages"][0]["parts"][0].update(ignored=True), "ignored text"),
         (
             lambda x: x["messages"][1]["parts"][1]["state"]["time"].update(compacted=1),
             "time.compacted",
         ),
         (
-            lambda x: x["messages"][1]["parts"][1]["state"]["metadata"].update(
-                interrupted=True, output="partial"
-            ),
-            "interrupted",
+            lambda x: x["messages"][1]["parts"][1]["state"].update(status="queued"),
+            "Unknown OpenCode tool state",
         ),
         (
-            lambda x: x["messages"][1]["parts"][1]["state"].update(status="running"),
-            "Incomplete OpenCode tool",
-        ),
-        (
-            lambda x: x["messages"][1]["info"]["time"].pop("completed"),
-            "Incomplete OpenCode assistant",
+            lambda x: x["messages"][1]["parts"][1].update(metadata={"providerExecuted": True}),
+            "provider tool metadata.*providerExecuted",
         ),
         (lambda x: x["messages"][0]["parts"][0].update(type="subtask"), "conversational part"),
         (
@@ -403,12 +415,62 @@ def test_registration_atomic_collision_recovery_and_native_edits(roots):
         ]
 
 
-def test_schema_guards_and_missing_native_database(roots):
+def create_database(path, fixture):
+    schema = json.loads(Path(f"tests/portability/{fixture}").read_text())
+    with closing(sqlite3.connect(path)) as connection, connection:
+        for statement in schema["sql"]:
+            connection.execute(statement)
+        connection.executemany(
+            "INSERT INTO migration VALUES (?,0)", ((item,) for item in schema["migrations"])
+        )
+
+
+def test_fresh_and_upgraded_databases_share_one_structural_identity(tmp_path, roots):
+    identities = {}
+    for fixture in ("opencode-1.18.30.json", "opencode-upgraded.json"):
+        path = tmp_path / fixture.replace(".json", ".db")
+        create_database(path, fixture)
+        with closing(sqlite3.connect(path)) as connection:
+            identities[fixture] = schema_identity(connection)
+    assert identities == {
+        "opencode-1.18.30.json": SCHEMA_ID,
+        "opencode-upgraded.json": SCHEMA_ID,
+    }
+
+
+def test_upgraded_database_registers_by_column_name(roots):
+    (roots.store / "opencode.db").unlink()
+    create_database(roots.store / "opencode.db", "opencode-upgraded.json")
+    adapter = OpenCodeAdapter()
+    assert adapter.inspect_target(roots, None).schema_identity == SCHEMA_ID
+    result = stage(roots)
+    assert adapter.register_stage(result) is True
+    copied = adapter.snapshot(SourceRequest(result.identity, roots, "opencode.db")).conversation
+    compare(shared_conversation(), copied, adapter.normalizations(PROFILE))
+
+
+def test_unrelated_tables_are_outside_the_identity(roots):
     with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
+        connection.execute("CREATE TABLE unrelated_history (id TEXT)")
         assert schema_identity(connection) == SCHEMA_ID
-        connection.execute("CREATE TABLE unsupported (id TEXT)")
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "INSERT INTO migration VALUES ('29991231000000_future_change',0)",
+        "ALTER TABLE part ADD COLUMN future_state text",
+        "CREATE INDEX part_future_idx ON part (time_updated)",
+    ],
+)
+def test_structural_changes_to_touched_tables_refuse(roots, change):
+    with closing(sqlite3.connect(roots.store / "opencode.db")) as connection, connection:
+        connection.execute(change)
     with pytest.raises(PreservationError, match="schema/migrations"):
         stage(roots)
+
+
+def test_missing_native_database(roots):
     (roots.store / "opencode.db").unlink()
     assert OpenCodeAdapter().inspect_target(roots, None).supported is False
     assert list(roots.store.iterdir()) == []
@@ -623,7 +685,7 @@ def test_target_model_uncertain_defaults_fail_before_writes(roots, monkeypatch, 
     elif condition == "environment":
         monkeypatch.setenv("OPENCODE_CONFIG_CONTENT", '{"model":"a/b"}')
     elif condition == "project":
-        (roots.cwd / "opencode.json").write_text("{}")
+        (roots.cwd / "opencode.json").write_text('{"model":"openai/project"}')
     else:
         path.write_text('{"model":"{env:MODEL}"}')
     before = {p.name: p.read_bytes() for p in roots.store.iterdir()}
@@ -735,9 +797,6 @@ def test_native_tool_and_message_timestamps_are_verified(roots):
 @pytest.mark.parametrize(
     "metadata",
     [
-        {"output": "VISIBLE METADATA OUTPUT"},
-        {"filediff": {"patch": "@@ -1 +1 @@\n-old\n+new", "before": "old", "after": "new"}},
-        {"diagnostics": {"a.py": [{"message": "type error"}]}},
         {"files": [{"filePath": "a.py", "before": "old", "after": "new"}]},
         {"answers": [["user-selected answer"]]},
         {"future_conversation": "must not disappear"},
@@ -758,6 +817,146 @@ def test_tool_state_metadata_requires_proven_presentation_semantics(roots, statu
     with pytest.raises(PreservationError, match=r"tool-state metadata.*visible/context"):
         snapshot(roots)
     assert {p.name: p.read_bytes() for p in roots.store.iterdir()} == before
+
+
+DROPPED_METADATA = {
+    "count": 3,
+    "description": "Lists files",
+    "diagnostics": {"a.py": [{"message": "type error"}]},
+    "diff": "@@ -1 +1 @@\n-old\n+new",
+    "dir": "/skills/example",
+    "display": {"type": "text"},
+    "exists": True,
+    "exit": 0,
+    "filediff": {"patch": "@@ -1 +1 @@", "before": "old", "after": "new"},
+    "filepath": "/work/a.py",
+    "interrupted": False,
+    "loaded": ["/work/AGENTS.md"],
+    "matches": 2,
+    "model": {"providerID": "anthropic", "modelID": "claude"},
+    "name": "example",
+    "output": "VISIBLE METADATA OUTPUT",
+    "outputPath": "/tmp/full-output",
+    "parentSessionId": "ses_parent",
+    "preview": "first lines",
+    "sessionId": "ses_child",
+    "todos": [{"content": "write tests", "status": "pending"}],
+    "truncated": False,
+}
+
+
+@pytest.mark.parametrize("key", sorted(DROPPED_METADATA))
+def test_display_only_tool_metadata_is_dropped(roots, key):
+    export = ordinary_export(roots)
+    export["messages"][1]["parts"][1]["state"]["metadata"] = {key: DROPPED_METADATA[key]}
+    seed(roots, export)
+    assert snapshot(roots).conversation.history[2].content == (
+        ToolResult("call-1", (Text("full output\n" * 100),)),
+    )
+
+
+def test_openrouter_reasoning_details_on_tool_parts_are_dropped(roots):
+    plain = ordinary_export(roots)
+    export = ordinary_export(roots)
+    export["messages"][1]["parts"][1]["metadata"] = {
+        "openrouter": {"reasoning_details": [{"type": "reasoning.encrypted", "data": "opaque"}]}
+    }
+    identity = Identity("opencode", "ses_native")
+    assert parse(export, identity) == parse(plain, identity)
+
+
+def test_interrupted_error_with_streamed_output_reaches_model_as_output(roots):
+    export = ordinary_export(roots)
+    tool = export["messages"][1]["parts"][1]["state"]
+    tool.update(status="error", error="Tool execution aborted", raw='{"path":"a"}')
+    tool.pop("output")
+    tool.pop("title")
+    tool["metadata"] = {"interrupted": True, "output": "partial output"}
+    seed(roots, export)
+    assert snapshot(roots).conversation.history[2].content == (
+        ToolResult("call-1", (Text("partial output"),)),
+    )
+
+
+def test_interrupted_error_without_output_keeps_the_error(roots):
+    export = ordinary_export(roots)
+    tool = export["messages"][1]["parts"][1]["state"]
+    tool.update(status="error", error="Tool execution aborted", raw="{")
+    tool.pop("output")
+    tool.pop("title")
+    tool["metadata"] = {"interrupted": True}
+    seed(roots, export)
+    assert snapshot(roots).conversation.history[2].content == (
+        ToolResult("call-1", (Text("Tool execution aborted"),), True),
+    )
+
+
+@pytest.mark.parametrize("status", ["running", "pending"])
+def test_unfinished_tool_in_incomplete_assistant_reads_as_interrupted(roots, status):
+    export = ordinary_export(roots)
+    assistant = export["messages"][1]
+    assistant["info"]["time"].pop("completed")
+    assistant["info"].pop("finish")
+    tool = assistant["parts"][1]["state"]
+    tool.update(status=status, time={"start": 2})
+    tool.pop("output")
+    tool["metadata"] = {"output": "streamed so far"}
+    if status == "pending":
+        tool.pop("time")
+        tool.pop("metadata")
+        tool.pop("title")
+        tool["raw"] = '{"path":"a"}'
+    seed(roots, export)
+    value = snapshot(roots).conversation
+    assert value.history[2].content == (
+        ToolResult("call-1", (Text("[Tool execution was interrupted]"),), True),
+    )
+    adapter = OpenCodeAdapter()
+    result = adapter.stage(
+        value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
+    )
+    compare(value, adapter.read_stage(result), adapter.normalizations(PROFILE))
+
+
+@pytest.mark.parametrize(
+    ("error", "parts", "kept"),
+    [
+        ({"name": "APIError", "data": {"message": "rate limited"}}, None, False),
+        ({"name": "ProviderAuthError", "data": {"message": "no key"}}, None, False),
+        (
+            {"name": "MessageAbortedError", "data": {"message": "aborted"}},
+            [{"type": "step-start"}, {"type": "reasoning", "text": "thinking", "time": {}}],
+            False,
+        ),
+        ({"name": "MessageAbortedError", "data": {"message": "aborted"}}, None, True),
+    ],
+)
+def test_error_and_aborted_assistants_follow_native_context(roots, error, parts, kept):
+    export = ordinary_export(roots)
+    assistant = export["messages"][2]
+    assistant["info"]["error"] = error
+    assistant["info"].pop("finish")
+    if parts is not None:
+        assistant["parts"] = [
+            {"id": f"prt_msg_3_{index}", "sessionID": "ses_native", "messageID": "msg_3", **part}
+            for index, part in enumerate(parts)
+        ]
+    seed(roots, export)
+    value = snapshot(roots).conversation
+    texts = [item.text for m in value.history for item in m.content if isinstance(item, Text)]
+    assert texts == (
+        ["Read the full file", "Checking.", "Read complete."]
+        if kept
+        else ["Read the full file", "Checking."]
+    )
+    assert value.context == value.history
+
+
+def test_failed_compaction_summary_refuses(roots):
+    export = ordinary_export(roots, compaction=True)
+    export["messages"][4]["info"]["error"] = {"name": "APIError", "data": {"message": "failed"}}
+    with pytest.raises(PreservationError, match="incomplete or failed"):
+        parse(export, Identity("opencode", "ses_native"))
 
 
 @pytest.mark.parametrize(
@@ -812,3 +1011,271 @@ def test_native_model_override_sources_fail_at_inspection_and_staging(roots, loc
     with pytest.raises(PreservationError, match=r"(config|definitions)"):
         adapter.stage(shared_conversation(), target)
     assert {p.name: p.read_bytes() for p in roots.store.iterdir()} == before
+
+
+def parallel_export(roots):
+    export = ordinary_export(roots)
+    tool = export["messages"][1]["parts"][1]
+    second = json.loads(json.dumps(tool))
+    second.update(id="prt_msg_2_2", callID="call-2")
+    second["state"].update(input={"path": "b"}, output="second output", time={"start": 2, "end": 5})
+    export["messages"][1]["parts"].append(second)
+    return export
+
+
+def test_parallel_tool_results_read_one_per_message(roots):
+    value = parse(parallel_export(roots), Identity("opencode", "ses_native"))
+    assert [(m.id, m.content, m.timestamp.value) for m in value.history[2:4]] == [
+        ("msg_2:results", (ToolResult("call-1", (Text("full output\n" * 100),)),), "3"),
+        ("msg_2:results:1", (ToolResult("call-2", (Text("second output"),)),), "5"),
+    ]
+    adapter = OpenCodeAdapter()
+    result = adapter.stage(
+        value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
+    )
+    compare(value, adapter.read_stage(result), adapter.normalizations(PROFILE))
+
+
+def test_one_combined_result_message_round_trips_as_one_group(roots):
+    value = shared_conversation()
+    combined = next(m for m in value.history if len(m.content) > 1 and m.role == "tool")
+    result = stage(roots, value)
+    actual = OpenCodeAdapter().read_stage(result)
+    compare(value, actual, OpenCodeAdapter().normalizations(PROFILE))
+    assert next(m.content for m in actual.history if m.role == "tool") == combined.content
+
+
+@pytest.mark.parametrize("completion", [(0, 1, 2, 3, 4), (0, 1, 3, 2, 4)])
+def test_split_result_messages_from_another_agent_become_one_native_step(roots, completion):
+    base = parse(parallel_export(roots), Identity("opencode", "ses_native"))
+    history = native.linked(
+        [
+            replace(
+                base.history[position],
+                id=f"claude-{index}",
+                parent_id=None,
+                provenance=replace(base.history[position].provenance, evidence=""),
+            )
+            for index, position in enumerate(completion)
+        ]
+    )
+    value = replace(
+        base, history=history, context=history, branch_id=history[-1].id, title="Portable example"
+    )
+    result = stage(roots, value)
+    export = _payload_export(decode(result.database_payload))
+    assert [p["callID"] for p in export["messages"][1]["parts"] if p["type"] == "tool"] == [
+        "call-1",
+        "call-2",
+    ]
+    compare(value, OpenCodeAdapter().read_stage(result), OpenCodeAdapter().normalizations(PROFILE))
+
+
+def test_agent_definitions_for_other_agents_keep_the_resumed_model(roots):
+    config = roots.config / "opencode" / "opencode.json"
+    data = json.loads(config.read_text())
+    data["agent"] = {"coordinator": {"model": "openai/other", "mode": "primary"}}
+    config.write_text(json.dumps(data))
+    assert OpenCodeAdapter().inspect_target(roots, None).target_configuration == (
+        ("providerID", "anthropic"),
+        ("modelID", "offline-fixture"),
+    )
+
+
+def test_project_config_without_model_keys_keeps_the_resumed_model(roots):
+    (roots.cwd / "opencode.json").write_text('{"permission":{"bash":"ask"}}')
+    assert OpenCodeAdapter().inspect_target(roots, None).target_configuration == (
+        ("providerID", "anthropic"),
+        ("modelID", "offline-fixture"),
+    )
+
+
+def tool_exchange(output, *, is_error=False):
+    origin = Provenance("authored", Identity("claude-code", "source"), "row")
+    history = native.linked(
+        [
+            Message("ask", "user", (Text("Search"),), origin),
+            Message("call", "assistant", (ToolCall("c1", "search", "{}", "json"),), origin),
+            Message("result", "tool", (ToolResult("c1", output, is_error),), origin),
+            Message("done", "assistant", (Text("Done"),), origin),
+        ]
+    )
+    return Conversation(
+        Identity("claude-code", "source"),
+        "done",
+        history,
+        history,
+        attachments=(Attachment("image", "image/png", b"png bytes"),)
+        if AttachmentRef("image") in output
+        else (),
+        title="Portable example",
+    )
+
+
+@pytest.mark.parametrize(
+    ("output", "stored"),
+    [
+        ((Text("first"), Text("second")), "first\n\nsecond"),
+        ((Text("first"), AttachmentRef("image"), Text("second")), "first\n\nsecond"),
+        ((AttachmentRef("image"),), ""),
+    ],
+)
+def test_tool_output_blocks_join_like_native_mcp_results(roots, output, stored):
+    value = tool_exchange(output)
+    result = stage(roots, value)
+    export = _payload_export(decode(result.database_payload))
+    tool = next(p for row in export["messages"] for p in row["parts"] if p["type"] == "tool")
+    assert (tool["state"]["output"], len(tool["state"]["attachments"])) == (
+        stored,
+        output.count(AttachmentRef("image")),
+    )
+    compare(value, OpenCodeAdapter().read_stage(result), OpenCodeAdapter().normalizations(PROFILE))
+
+
+def test_decreasing_source_times_keep_order_and_annotated_originals(roots):
+    origin = Provenance("authored", Identity("claude-code", "source"), "row")
+
+    def at(key, role, text, value):
+        return Message(
+            key, role, (Text(text),), origin, timestamp=HistoricalTimestamp(value, origin)
+        )
+
+    history = native.linked(
+        [
+            at("reminder", "user", "Hoisted context", "2026-01-01T00:00:02+00:00"),
+            at("ask", "user", "Question", "2026-01-01T00:00:01+00:00"),
+            at("answer", "assistant", "Answer", "2026-01-01T00:00:03+00:00"),
+        ]
+    )
+    value = Conversation(
+        Identity("claude-code", "source"), "answer", history, history, title="Portable example"
+    )
+    result = stage(roots, value)
+    export = _payload_export(decode(result.database_payload))
+    assert [row["info"]["time"]["created"] for row in export["messages"]] == [
+        1767225602000,
+        1767225602000,
+        1767225603000,
+    ]
+    compare(value, OpenCodeAdapter().read_stage(result), OpenCodeAdapter().normalizations(PROFILE))
+    export["messages"][2]["info"]["time"]["created"] = 1767225602000
+    with pytest.raises(PreservationError, match="historical timestamp"):
+        parse(export, result.identity)
+
+
+def test_loaded_tool_metadata_is_carried_for_opencode_round_trips(roots):
+    export = ordinary_export(roots)
+    export["messages"][1]["parts"][1]["state"]["metadata"] = {"loaded": ["/work/AGENTS.md"]}
+    value = parse(export, Identity("opencode", "ses_native"))
+    adapter = OpenCodeAdapter()
+    result = adapter.stage(
+        value, TargetRequest(adapter.allocate_identity(), roots, PROFILE, value.title)
+    )
+    written = _payload_export(decode(result.database_payload))
+    tool = next(p for row in written["messages"] for p in row["parts"] if p["type"] == "tool")
+    assert tool["state"]["metadata"]["loaded"] == ["/work/AGENTS.md"]
+
+
+def test_timestamp_gap_floors_to_previous_message_not_now(roots):
+    origin = Provenance("authored", Identity("claude-code", "source"), "row")
+
+    def at(key, role, text, value=None):
+        return Message(
+            key,
+            role,
+            (Text(text),),
+            origin,
+            timestamp=HistoricalTimestamp(value, origin) if value is not None else None,
+        )
+
+    history = native.linked(
+        [
+            at("ask", "user", "Question", "2026-01-01T00:00:01+00:00"),
+            at("reply", "assistant", "Working"),
+            at("ask2", "user", "Follow-up", "2026-01-01T00:00:03+00:00"),
+            at("reply2", "assistant", "Done", "2026-01-01T00:00:04+00:00"),
+        ]
+    )
+    value = Conversation(
+        Identity("claude-code", "source"), "reply2", history, history, title="Portable example"
+    )
+    result = stage(roots, value)
+    export = _payload_export(decode(result.database_payload))
+    assert [row["info"]["time"]["created"] for row in export["messages"]] == [
+        1767225601000,
+        1767225601000,
+        1767225603000,
+        1767225604000,
+    ]
+
+
+def test_missing_destination_without_a_git_ancestor_resolves_global(roots):
+    gone = roots.cwd / "deleted" / "worktree"
+    assert resolve_project(gone) == ("global", "/", None)
+
+
+def test_missing_destination_under_an_existing_ancestor_repo_refuses(roots, monkeypatch):
+    from ringleader.portability import opencode_state
+
+    gone = roots.cwd / "deleted" / "worktree"
+    (roots.cwd / ".git").mkdir()
+    values = {
+        ("rev-parse", "--git-common-dir"): ".git",
+        ("rev-parse", "--git-dir"): ".git",
+        ("rev-parse", "--show-toplevel"): str(roots.cwd),
+        ("remote", "get-url", "origin"): "git@example.com:owner/repo.git",
+    }
+    monkeypatch.setattr(opencode_state, "_git", lambda cwd, *args: values.get(args))
+    with pytest.raises(PreservationError, match="destination cwd must exist"):
+        resolve_project(gone)
+
+
+def test_mixed_result_grouping_refuses_at_write_time(roots):
+    origin = Provenance("authored", Identity("claude-code", "source"), "row")
+    history = native.linked(
+        [
+            Message("ask", "user", (Text("Question"),), origin),
+            Message(
+                "answer",
+                "assistant",
+                (
+                    ToolCall("call-1", "read", "{}", "json"),
+                    ToolCall("call-2", "read", "{}", "json"),
+                    ToolCall("call-3", "read", "{}", "json"),
+                ),
+                origin,
+            ),
+            Message(
+                "results-1",
+                "tool",
+                (
+                    ToolResult("call-1", (Text("one"),)),
+                    ToolResult("call-2", (Text("two"),)),
+                ),
+                origin,
+            ),
+            Message("results-2", "tool", (ToolResult("call-3", (Text("three"),)),), origin),
+        ]
+    )
+    value = Conversation(
+        Identity("claude-code", "source"), "results-2", history, history, title="Portable example"
+    )
+    with pytest.raises(PreservationError, match="mixed result grouping"):
+        stage(roots, value)
+
+
+def test_user_row_with_error_refuses_instead_of_vanishing(roots):
+    export = ordinary_export(roots)
+    export["messages"][0]["info"]["error"] = {"name": "MessageAbortedError"}
+    with pytest.raises(PreservationError, match="user message error"):
+        parse(export, Identity("opencode", "ses_native"))
+
+
+def test_legacy_schema_identity_still_usable_for_reuse_and_recovery(roots):
+    adapter = OpenCodeAdapter()
+    result = stage(roots)
+    legacy_id = next(iter(LEGACY))
+    legacy = replace(result, schema_identity=legacy_id)
+    assert adapter.registration_status(legacy) == "absent"
+    assert adapter.register_stage(legacy, recover=True) is True
+    assert adapter.registration_status(legacy) == "owned"

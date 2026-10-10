@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
@@ -21,7 +22,35 @@ from .capabilities import (
     SourceRequest,
     TargetRequest,
 )
-from .compare import Normalization
+from .codex_items import (
+    COMPACTION,
+    DEFAULT_DETAIL,
+    OPAQUE_KINDS,
+    base_message,
+    compaction_message,
+    compaction_payload,
+    is_base,
+    is_compaction,
+    phase_value,
+    response,
+)
+from .codex_items import as_array as _array
+from .codex_items import as_object as _object
+from .codex_items import blocks as _blocks
+from .codex_items import calls_of as _tool_calls
+from .codex_items import image as _image
+from .codex_items import message as _message
+from .codex_items import result_status as _result_status
+from .codex_paginated import (
+    COMPACTED_FIELDS,
+    compaction_entries,
+    complete_tools,
+    read_paginated,
+    rollback_turns,
+    visible_item,
+)
+from .codex_paginated import IGNORED_ROWS as PAGINATED_IGNORED_ROWS
+from .compare import CheckpointShape, Normalization, flattened, flattened_checkpoint
 from .model import (
     Attachment,
     AttachmentRef,
@@ -31,6 +60,7 @@ from .model import (
     Identity,
     Instruction,
     Message,
+    Opaque,
     PreservationError,
     Provenance,
     Text,
@@ -40,6 +70,10 @@ from .model import (
     validate,
 )
 from .snapshot import SourceSnapshot, snapshot_files
+from .verification import VerificationRecord, local_schemas, local_versions
+from .versions import check_version
+
+PINNED = ("0.155.1", "0.157.0")
 
 PROFILE = FormatProfile(
     "codex",
@@ -50,156 +84,20 @@ PROFILE = FormatProfile(
         "https://github.com/openai/codex/blob/rust-v0.155.1/codex-rs/app-server-protocol/src/protocol/thread_history.rs",
     ),
 )
+FLATTENED_VIEW = Normalization(
+    "model-view-history",
+    PROFILE.name,
+    "A flattened checkpoint is written as one stream: the model context, hidden messages as ordinary ones",
+)
 IGNORED_EVENTS = {
     "token_count",
     "agent_reasoning",
     "agent_reasoning_raw_content",
     "agent_reasoning_section_break",
     "context_compacted",
+    "thread_settings_applied",
+    "thread_goal_updated",
 }
-IGNORED_ROWS = {"token_usage_record", "security_risk_score"}
-
-
-def _object(value: Any) -> dict[str, Any]:
-    if not isinstance(value, dict):
-        raise PreservationError("Codex payload must be an object")
-    return value
-
-
-def _array(value: Any) -> list[Any]:
-    if not isinstance(value, list):
-        raise PreservationError("Codex content must be an array")
-    return value
-
-
-def _image(value: Any, assets: list[Attachment], name: str | None = None) -> AttachmentRef:
-    url = native.string(value, "image URL")
-    if not url.startswith("data:image/") or ";base64," not in url:
-        raise PreservationError(
-            "Codex portable images require embedded data URLs; external/local image references unsupported"
-        )
-    mime, data = url[5:].split(";base64,", 1)
-    try:
-        decoded = base64.b64decode(data, validate=True)
-    except ValueError as exc:
-        raise PreservationError("Invalid Codex image bytes") from exc
-    if mime not in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
-        raise PreservationError(f"Unsupported Codex image media type: {mime}")
-    asset = next(
-        (a for a in assets if (a.media_type, a.data, a.name) == (mime, decoded, name)), None
-    )
-    if asset is None:
-        asset = Attachment(f"asset-{len(assets)}", mime, decoded, name)
-        assets.append(asset)
-    return AttachmentRef(asset.id)
-
-
-def _blocks(value: Any, assets: list[Attachment]) -> tuple[Text | AttachmentRef, ...]:
-    if isinstance(value, str):
-        return (Text(value),)
-    output: list[Text | AttachmentRef] = []
-    for raw in _array(value):
-        block = _object(raw)
-        if block.get("type") in ("input_text", "output_text"):
-            output.append(Text(native.string(block.get("text"), "text")))
-        elif block.get("type") == "input_image":
-            if block.get("detail") not in (None, "auto"):
-                raise PreservationError(
-                    "Codex image detail cannot be preserved by the canonical attachment model"
-                )
-            output.append(_image(block.get("image_url"), assets, block.get("ringleaderName")))
-        elif block.get("type") == "encrypted_content":
-            continue
-        else:
-            raise PreservationError(f"Unsupported Codex content block: {block.get('type')}")
-    return tuple(output)
-
-
-def _message(
-    identity: Identity,
-    key: str,
-    role: str,
-    content: tuple[Content, ...],
-    row: dict[str, Any],
-    turn: str | None,
-) -> Message:
-    provenance = Provenance("authored", identity, key, f"codex-turn:{turn}" if turn else "")
-    return Message(
-        key,
-        cast(Any, role),
-        content,
-        provenance,
-        timestamp=native.timestamp(row.get("timestamp"), provenance),
-    )
-
-
-def _response(
-    payload: dict[str, Any], row: dict[str, Any], key: str, state: _Reader
-) -> Message | None:
-    identity, assets, turn = state.identity, state.assets, state.turn
-    kind = payload.get("type")
-    if kind == "reasoning":
-        return None
-    if kind == "message":
-        if payload.get("phase"):
-            raise PreservationError("Codex assistant message phases are unsupported")
-        role = payload.get("role")
-        if role not in ("user", "assistant", "system", "developer"):
-            raise PreservationError(f"Unsupported Codex model role: {role}")
-        content: tuple[Content, ...] = _blocks(payload.get("content"), assets)
-        if role in ("system", "developer"):
-            if any(not isinstance(item, Text) for item in content):
-                raise PreservationError(
-                    "Codex historical policy contains unsupported non-text content"
-                )
-            prov = Provenance("authored", identity, key)
-            content = tuple(
-                Instruction(cast(Text, item).text, cast(Any, role), prov) for item in content
-            )
-    elif kind in ("function_call", "custom_tool_call"):
-        if payload.get("namespace"):
-            raise PreservationError(
-                "Codex namespaced model tools require a supported canonical namespace"
-            )
-        content = (
-            ToolCall(
-                native.string(payload.get("call_id"), "call ID"),
-                native.string(payload.get("name"), "tool name"),
-                native.string(
-                    payload.get("arguments" if kind == "function_call" else "input"),
-                    "tool arguments",
-                ),
-                "json" if kind == "function_call" else "freeform",
-            ),
-        )
-        role = "assistant"
-    elif kind in ("function_call_output", "custom_tool_call_output"):
-        call_id = native.string(payload.get("call_id"), "result call ID")
-        content = (_result(payload, call_id, state),)
-        role = "tool"
-    else:
-        raise PreservationError(f"Unsupported Codex response_item: {kind}")
-    return _message(identity, key, role, content, row, turn)
-
-
-def _result_status(error: bool) -> str:
-    return "[Historical tool result: failed]" if error else "[Historical tool result: succeeded]"
-
-
-def _result(payload: dict[str, Any], call_id: str, state: _Reader) -> ToolResult:
-    output = _blocks(payload.get("output"), state.assets)
-    error = state.errors.get(call_id, False)
-    marker = payload.get("ringleader_result_status")
-    if marker is not None:
-        if type(marker) is not bool or not output or output[0] != Text(_result_status(marker)):
-            raise PreservationError("Codex tool status annotation disagrees with native output")
-        error, output = marker, output[1:]
-    call = state.calls.get(call_id)
-    if call and (payload["type"] == "custom_tool_call_output") != (
-        call.argument_format == "freeform"
-    ):
-        raise PreservationError("Codex function/custom tool pair mismatch")
-    return ToolResult(call_id, output, error)
 
 
 def _mcp_output(value: Any, assets: list[Attachment]) -> tuple[Text | AttachmentRef, ...]:
@@ -251,8 +149,6 @@ def _event(payload: dict[str, Any], row: dict[str, Any], key: str, state: _Reade
         raise PreservationError(f"Unsupported Codex visible event: {kind}")
     if any(payload.get(key) for key in ("audio", "local_audio", "local_images", "questions")):
         raise PreservationError("Unsupported Codex local image, audio or question event")
-    if payload.get("phase"):
-        raise PreservationError("Codex assistant message phases are unsupported")
     if any(value not in (None, "auto") for value in payload.get("image_details", [])):
         raise PreservationError("Unsupported Codex image detail")
     content: tuple[Content, ...] = (Text(native.string(payload.get("message"), "visible message")),)
@@ -396,13 +292,26 @@ class _Reader:
     checkpoints: list[Checkpoint] = field(default_factory=list)
     groups: dict[str, tuple[int, int]] = field(default_factory=dict)
     context_groups: dict[str, tuple[int, int]] = field(default_factory=dict)
+    full: list[Message] = field(default_factory=list)
+    full_groups: dict[str, tuple[int, int]] = field(default_factory=dict)
     errors: dict[str, bool] = field(default_factory=dict)
     calls: dict[str, ToolCall] = field(default_factory=dict)
     turn: str | None = None
+    turns: list[int] = field(default_factory=list)
     tool_updates: dict[str, tuple[ToolCall, ToolResult]] = field(default_factory=dict)
     base: Message | None = None
     open_tools: set[str] = field(default_factory=set)
     output_ids: dict[str, str] = field(default_factory=dict)
+
+    def rollback(self, payload: dict[str, Any]) -> None:
+        count = payload.get("num_turns")
+        if type(count) is not int or count < 0:
+            raise PreservationError("Invalid Codex thread rollback")
+        self.turn = None
+        self.history, self.context, self.turns = rollback_turns(
+            self.history, self.context, self.turns, count
+        )
+        self.full = rollback_turns([], self.full, [], count)[1]
 
     def mcp(self, payload: dict[str, Any], row: dict[str, Any], index: int) -> None:
         call, result = _mcp_parts(payload, self)
@@ -499,9 +408,16 @@ class _Reader:
 
     def completed_item(self, payload: dict[str, Any], row: dict[str, Any], index: int) -> None:
         item = _object(payload.get("item"))
+        if item.get("type") != "FunctionCallOutput":
+            visible = visible_item(
+                item, row, f"visible:{index}", self.identity, self.assets, self.turn
+            )
+            if visible is not None:
+                self.history.append(visible)
+            return
         if set(item) - {"type", "id", "name", "namespace", "output"}:
             raise PreservationError("Unsupported Codex completed function output fields")
-        if item.get("type") != "FunctionCallOutput" or item.get("namespace"):
+        if item.get("namespace"):
             raise PreservationError(f"Unsupported Codex completed item: {item.get('type')}")
         output_id = native.string(item.get("id"), "completed output ID")
         call_id = self.output_ids.get(output_id)
@@ -529,8 +445,11 @@ class _Reader:
             if self.turn is not None:
                 raise PreservationError("Incomplete or nested Codex turn")
             self.turn = native.string(payload.get("turn_id"), "turn ID")
-        elif event in ("task_complete", "turn_complete"):
-            if self.turn != payload.get("turn_id") or payload.get("error"):
+            self.turns.append(len(self.history))
+        elif event in ("task_complete", "turn_complete", "turn_aborted"):
+            if self.turn != payload.get("turn_id") or (
+                event != "turn_aborted" and payload.get("error")
+            ):
                 raise PreservationError("Incomplete or mismatched Codex turn completion")
             if self.open_tools:
                 raise PreservationError("Incomplete Codex native tool at task completion")
@@ -543,6 +462,8 @@ class _Reader:
             self.completed_item(payload, row, index)
         elif event == "mcp_tool_call_end":
             self.mcp(payload, row, index)
+        elif event == "thread_rolled_back":
+            self.rollback(payload)
         elif event not in IGNORED_EVENTS:
             item = _event(payload, row, f"visible:{index}", self)
             if item:
@@ -568,37 +489,63 @@ class _Reader:
             )
         rebuilt: list[Message] = [self.base] if self.base else []
         groups: dict[str, tuple[int, int]] = {}
-        for offset, raw in enumerate(_array(payload["replacement_history"])):
-            response = _object(raw)
+        items = [_object(raw) for raw in _array(payload["replacement_history"])]
+        sealed = any(item.get("type") == "compaction" for item in items)
+        entries = (
+            compaction_entries(payload, items, COMPACTED_FIELDS | {"ringleader_checkpoint"})
+            if sealed
+            else [None] * len(items)
+        )
+        for offset, (raw_item, entry) in enumerate(zip(items, entries, strict=True)):
             item_row = {
                 **row,
-                "timestamp": response.get("ringleader_timestamp", row.get("timestamp")),
+                "timestamp": raw_item.get("ringleader_timestamp", row.get("timestamp")),
+                "metadata": entry,
             }
-            item = _response(response, item_row, f"compact:{index}:{offset}", self)
-            if item:
-                _append(rebuilt, item, response, groups)
+            key = f"compact:{index}:{offset}"
+            parsed = (
+                (compaction_message(raw_item, item_row, key, self),)
+                if raw_item.get("type") == "compaction"
+                else response(raw_item, item_row, key, self)
+            )
+            for item in parsed:
+                _append(rebuilt, item, raw_item, groups)
         if not rebuilt or any(remaining for _, remaining in groups.values()):
             raise PreservationError("Incomplete Codex replacement_history")
-        checkpoint = _restore_checkpoint(payload, self.history, rebuilt, index)
+        lead = 1 if self.base else 0
+        rebuilt[lead:] = [
+            *(item for item in rebuilt[lead:] if is_compaction(item)),
+            *(item for item in rebuilt[lead:] if not is_compaction(item)),
+        ]
+        if sealed and payload.get("ringleader_checkpoint") is None:
+            checkpoint = Checkpoint(
+                f"checkpoint:{index}",
+                self.history[-1].id,
+                native.linked(rebuilt[: lead + 1]),
+                retained_context=native.linked(rebuilt[lead + 1 :]),
+                following_context=(),
+            )
+        else:
+            checkpoint = _restore_checkpoint(payload, self.history, rebuilt, index)
+        if any(is_compaction(item) for item in checkpoint.summary):
+            prefix = [self.base] if self.base else []
+            checkpoint = replace(
+                checkpoint, replaced_context=native.linked(prefix + complete_tools(self.full))
+            )
         self.context, self.context_groups = rebuilt, groups
         self.checkpoints.append(checkpoint)
 
     def consume(self, row: dict[str, Any], index: int) -> None:
         kind, payload = row.get("type"), _object(row.get("payload"))
         if kind == "response_item":
-            item = _response(payload, row, f"model:{index}", self)
-            if item:
+            for item in response(payload, row, f"model:{index}", self):
                 _append(self.context, item, row, self.context_groups)
+                _append(self.full, item, row, self.full_groups)
         elif kind == "event_msg":
             self.event(payload, row, index)
         elif kind == "compacted":
             self.checkpoint(payload, row, index)
-        elif kind == "turn_context":
-            if payload.get("developer_instructions") or payload.get("user_instructions"):
-                raise PreservationError(
-                    "Codex turn_context authored instructions require explicit response_item history"
-                )
-        elif kind not in IGNORED_ROWS:
+        elif kind not in PAGINATED_IGNORED_ROWS:
             raise PreservationError(f"Unsupported Codex rollout record: {kind}")
 
 
@@ -680,44 +627,29 @@ def read_rollout(data: bytes, identity: Identity, branch_id: str | None = None) 
     meta = _object(rows[0].get("payload"))
     if rows[0].get("type") != "session_meta" or meta.get("id") != identity.native_id:
         raise PreservationError("Codex root session identity mismatch")
-    if (
-        meta.get("history_mode", "legacy") != "legacy"
-        or meta.get("history_base")
-        or meta.get("subagent_history_start_ordinal") is not None
-    ):
-        raise PreservationError(
-            "Codex paginated/inherited history requires an unsupported reader profile"
-        )
+    mode = meta.get("history_mode", "legacy")
+    if mode not in ("legacy", "paginated"):
+        raise PreservationError(f"Unsupported Codex history mode: {mode}")
+    if meta.get("history_base") or meta.get("subagent_history_start_ordinal") is not None:
+        raise PreservationError("Codex inherited (forked) history requires another reader profile")
     if meta.get("session_id", identity.native_id) != identity.native_id:
         raise PreservationError(
             "Codex inherited root session identity requires another reader profile"
         )
     if branch_id not in (None, identity.native_id):
-        raise PreservationError("Codex legacy rollout has no selectable branch")
+        raise PreservationError("Codex rollout has no selectable branch")
+    if mode == "paginated":
+        paginated = read_paginated(rows, identity, meta)
+        return replace(paginated, title=meta.get("ringleader_title"))
     state = _Reader(identity)
-    base = meta.get("base_instructions")
-    if base is not None:
-        text = native.string(_object(base).get("text"), "base instructions")
-        if text:
-            provenance = Provenance(
-                "native",
-                identity,
-                "session_meta.base_instructions",
-                "SessionMeta lacks author/default provenance; preserved as historical context",
-            )
-            state.base = Message(
-                "base-instructions",
-                "system",
-                (Instruction(text, "system", provenance),),
-                provenance,
-            )
-            state.context.append(state.base)
+    state.base = base_message(meta, identity)
+    if state.base is not None:
+        state.context.append(state.base)
     for row in rows[1:]:
         _scan_tool_metadata(row, state)
     for index, row in enumerate(rows[1:], 1):
         if row.get("type") == "response_item":
-            item = _response(_object(row.get("payload")), row, f"model:{index}", state)
-            if item:
+            for item in response(_object(row.get("payload")), row, f"model:{index}", state):
                 state.calls.update(
                     (part.call_id, part) for part in item.content if isinstance(part, ToolCall)
                 )
@@ -778,6 +710,7 @@ def _encoded_blocks(
                 {
                     "type": "input_image",
                     "image_url": f"data:{asset.media_type};base64,{base64.b64encode(asset.data).decode()}",
+                    "detail": DEFAULT_DETAIL,
                     "ringleaderName": asset.name,
                 }
             )
@@ -792,20 +725,30 @@ def _model_parts(
     role = native.native_role(message)
     result: list[dict[str, Any]] = []
     prose: list[Content] = []
+    phase: list[str] = []
 
     def flush() -> None:
         if prose:
-            result.append(
-                {
-                    "type": "message",
-                    "role": role,
-                    "content": _encoded_blocks(tuple(prose), assets, assistant=role == "assistant"),
-                }
-            )
+            payload: dict[str, Any] = {
+                "type": "message",
+                "role": role,
+                "content": _encoded_blocks(tuple(prose), assets, assistant=role == "assistant"),
+            }
+            if phase:
+                payload["phase"] = phase.pop()
+            result.append(payload)
             prose.clear()
 
+    if any(isinstance(part, Opaque) and part.kind == COMPACTION for part in message.content):
+        if len(message.content) != 1 or role != "assistant":
+            raise PreservationError("Codex compaction item must stand alone")
+        return [compaction_payload(cast(Opaque, message.content[0]))]
     for part in message.content:
-        if isinstance(part, ToolCall):
+        if isinstance(part, Opaque):
+            if phase or prose or result or role != "assistant":
+                raise PreservationError(f"Unsupported opaque kind: {part.kind}")
+            phase.append(phase_value(part))
+        elif isinstance(part, ToolCall):
             flush()
             result.append(
                 {
@@ -820,19 +763,31 @@ def _model_parts(
         elif isinstance(part, ToolResult):
             flush()
             call = calls[part.call_id]
-            result.append(
-                {
-                    "type": "function_call_output"
-                    if call.argument_format == "json"
-                    else "custom_tool_call_output",
-                    "call_id": part.call_id,
-                    "output": [
-                        {"type": "input_text", "text": _result_status(part.is_error)},
-                        *_encoded_blocks(part.output, assets),
-                    ],
-                    "ringleader_result_status": part.is_error,
-                }
+            kind = (
+                "function_call_output"
+                if call.argument_format == "json"
+                else "custom_tool_call_output"
             )
+            if message.provenance.origin == "harness":
+                result.append(
+                    {
+                        "type": kind,
+                        "call_id": part.call_id,
+                        "output": _encoded_blocks(part.output, assets),
+                    }
+                )
+            else:
+                result.append(
+                    {
+                        "type": kind,
+                        "call_id": part.call_id,
+                        "output": [
+                            {"type": "input_text", "text": _result_status(part.is_error)},
+                            *_encoded_blocks(part.output, assets),
+                        ],
+                        "ringleader_result_status": part.is_error,
+                    }
+                )
         else:
             prose.append(part)
     flush()
@@ -841,13 +796,14 @@ def _model_parts(
     return result
 
 
-def _tool_calls(messages: tuple[Message, ...]) -> dict[str, ToolCall]:
-    return {
-        part.call_id: part
-        for message in messages
-        for part in message.content
-        if isinstance(part, ToolCall)
-    }
+def _split_base(messages: tuple[Message, ...]) -> tuple[Message | None, tuple[Message, ...]]:
+    if any(is_base(item) for item in messages[1:]):
+        raise PreservationError("Codex base instructions must lead the model context")
+    if messages and is_base(messages[0]):
+        if len(messages[0].content) != 1:
+            raise PreservationError("Codex base instructions must stand alone")
+        return messages[0], messages[1:]
+    return None, messages
 
 
 def _mcp_payload(
@@ -902,6 +858,8 @@ def _visible_parts(
             block = _encoded_blocks((part,), assets)[0]
             result[-1]["images"].append(block["image_url"])
             result[-1]["ringleaderImageNames"].append(block["ringleaderName"])
+        elif isinstance(part, Opaque):
+            raise PreservationError(f"Unsupported opaque kind: {part.kind}")
         else:
             if role not in ("user", "assistant"):
                 raise PreservationError(
@@ -951,9 +909,14 @@ def _checkpoint_payload(
         if checkpoint.retained_context is not None
         else tuple(by_id[key] for key in checkpoint.retained_message_ids)
     )
-    calls = _tool_calls((*checkpoint.summary, *retained))
+    summary = _split_base(checkpoint.summary)[1]
+    calls = _tool_calls((*summary, *retained))
     replacement = []
-    for message in (*checkpoint.summary, *retained):
+    compactions = tuple(item for item in summary if is_compaction(item))
+    if compactions and compactions != summary:
+        raise PreservationError("Codex compaction cannot share a summary with other messages")
+    ordered = (*retained, *summary) if compactions else (*summary, *retained)
+    for message in ordered:
         rows = _group_rows(
             _model_parts(message, assets, calls),
             message,
@@ -1013,9 +976,21 @@ def _turn_starts(conversation: Conversation) -> set[str]:
     return starts
 
 
+def cli_version(output: str) -> str:
+    match = re.fullmatch(r"codex-cli (\S+)", output.strip())
+    return match.group(1) if match else output.strip()
+
+
 class CodexAdapter:
-    def __init__(self, executable: str = "codex") -> None:
+    profile = PROFILE
+
+    def __init__(
+        self, executable: str = "codex", verified: tuple[VerificationRecord, ...] = ()
+    ) -> None:
         self.executable = executable
+        self.versions = local_versions(verified, "codex")
+        self.local_schemas = local_schemas(verified, "codex")
+        self.schemas = codex_state.ACCEPTED | frozenset(self.local_schemas.values())
 
     def inspect_source(self, request: SourceRequest) -> Compatibility:
         try:
@@ -1048,19 +1023,26 @@ class CodexAdapter:
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         result = native.probe_version(self.executable, "codex", runner)
-        version = result.stdout.decode().strip()
-        if result.returncode or version != "codex-cli 0.155.1":
-            return Compatibility(
-                False, None, (f"Unsupported Codex writer version: {version}",), version
-            )
+        output = result.stdout.decode(errors="replace").strip()
+        verdict = check_version(
+            cli_version(output) if result.returncode == 0 else "", PINNED, self.versions
+        )
+        if not verdict.accepted or verdict.basis is None:
+            return native.version_compatibility("Codex writer", PROFILE, verdict, output)
+        expected = {**self.local_schemas, **codex_state.SCHEMAS}.get(verdict.basis)
         try:
-            schema = codex_state.inspect_database(roots)
+            schema = codex_state.inspect_database(
+                roots, frozenset({expected}) if expected else frozenset()
+            )
         except (PreservationError, OSError) as exc:
-            return Compatibility(False, None, (str(exc),), version)
-        return Compatibility(True, PROFILE, (), version, schema)
+            return Compatibility(False, None, (str(exc),), output)
+        return native.version_compatibility("Codex writer", PROFILE, verdict, output, schema)
 
     def stage(self, conversation: Conversation, request: TargetRequest) -> NativeStage:
         validate(conversation)
+        native.reject_opaque(conversation, OPAQUE_KINDS)
+        if any(is_base(item) for item in conversation.history):
+            raise PreservationError("Codex base instructions must lead the model context")
         if request.profile != PROFILE or request.identity.agent != "codex":
             raise PreservationError("Unsupported Codex target profile")
         try:
@@ -1069,30 +1051,87 @@ class CodexAdapter:
             raise PreservationError("Codex target ID must be a UUID") from exc
         if request.identity == conversation.source:
             raise PreservationError("Codex target must have a fresh identity")
-        schema = codex_state.inspect_database(request.roots)
+        schema = codex_state.inspect_database(request.roots, self.schemas)
+        version = cli_version(request.runtime_version) if request.runtime_version else PINNED[0]
         now = datetime.now(UTC)
         target = request.identity.native_id
         ref = now.strftime("sessions/%Y/%m/%d/rollout-%Y-%m-%dT%H-%M-%S-") + target + ".jsonl"
+        applied = self.normalizations(PROFILE)
+        try:
+            rows, preview = self._rows(conversation, request, now, target, version)
+        except CheckpointShape:
+            conversation = flattened(conversation)
+            rows, preview = self._rows(conversation, request, now, target, version)
+            applied = (*applied, flattened_checkpoint(PROFILE.name), FLATTENED_VIEW)
+        epoch = int(now.timestamp())
+        payload = {
+            "id": target,
+            "rollout_path": str(request.roots.store / ref),
+            "created_at": epoch,
+            "updated_at": epoch,
+            "created_at_ms": int(now.timestamp() * 1000),
+            "updated_at_ms": int(now.timestamp() * 1000),
+            "recency_at": epoch,
+            "recency_at_ms": int(now.timestamp() * 1000),
+            "source": "cli",
+            "model_provider": "openai",
+            "cwd": str(request.roots.cwd),
+            "title": request.title,
+            "name": request.title,
+            "preview": preview,
+            "first_user_message": preview,
+            "sandbox_policy": '{"type":"read-only"}',
+            "approval_mode": "on-request",
+            "has_user_event": 1,
+            "history_mode": "legacy",
+            "cli_version": version,
+            "tokens_used": 0,
+            "originator": "ringleader",
+        }
+        return NativeStage(
+            request.identity,
+            PROFILE,
+            request.roots,
+            (NativeFile(ref, native.jsonl(rows), visibility=True),),
+            ref,
+            json.dumps(payload, separators=(",", ":")).encode(),
+            schema,
+            applied,
+        )
+
+    def _rows(
+        self,
+        conversation: Conversation,
+        request: TargetRequest,
+        now: datetime,
+        target: str,
+        version: str,
+    ) -> tuple[list[dict[str, Any]], str]:
+        base, context = _split_base(conversation.context)
         meta = {
             "id": target,
             "session_id": target,
             "timestamp": now.isoformat(),
             "cwd": str(request.roots.cwd),
             "originator": "ringleader",
-            "cli_version": "0.155.1",
+            "cli_version": version,
             "source": "cli",
             "history_mode": "legacy",
             "model_provider": "openai",
-            "base_instructions": None,
+            "base_instructions": json.loads(cast(Opaque, base.content[0]).payload)
+            if base
+            else None,
             "ringleader": native.session_metadata(conversation),
             "ringleader_title": request.title,
         }
+        if base:
+            meta["ringleader_base_instructions"] = native.message_annotations(base)
         rows: list[dict[str, Any]] = [
             {"timestamp": now.isoformat(), "type": "session_meta", "payload": meta}
         ]
         assets = {item.id: item for item in conversation.attachments}
         visible_calls = _tool_calls(conversation.history)
-        model_calls = _tool_calls(conversation.context)
+        model_calls = _tool_calls(context)
         results = {
             part.call_id: part
             for message in conversation.history
@@ -1106,7 +1145,7 @@ class CodexAdapter:
             checkpoint.after_message_id: checkpoint for checkpoint in conversation.checkpoints
         }
         if len(boundaries) != len(conversation.checkpoints):
-            raise PreservationError("Codex multiple checkpoints at one boundary are unsupported")
+            raise CheckpointShape("Codex multiple checkpoints at one boundary are unsupported")
         turn: str | None = None
         last_stamp = now
         explicit_suffix = False
@@ -1197,7 +1236,7 @@ class CodexAdapter:
                 }
             )
         if not conversation.checkpoints:
-            for message in conversation.context:
+            for message in context:
                 rows.extend(
                     _group_rows(
                         _model_parts(message, assets, model_calls),
@@ -1217,46 +1256,12 @@ class CodexAdapter:
             ),
             request.title,
         )
-        epoch = int(now.timestamp())
-        payload = {
-            "id": target,
-            "rollout_path": str(request.roots.store / ref),
-            "created_at": epoch,
-            "updated_at": epoch,
-            "created_at_ms": int(now.timestamp() * 1000),
-            "updated_at_ms": int(now.timestamp() * 1000),
-            "recency_at": epoch,
-            "recency_at_ms": int(now.timestamp() * 1000),
-            "source": "cli",
-            "model_provider": "openai",
-            "cwd": str(request.roots.cwd),
-            "title": request.title,
-            "name": request.title,
-            "preview": preview,
-            "first_user_message": preview,
-            "sandbox_policy": '{"type":"read-only"}',
-            "approval_mode": "on-request",
-            "has_user_event": 1,
-            "history_mode": "legacy",
-            "cli_version": "0.155.1",
-            "tokens_used": 0,
-            "originator": "ringleader",
-        }
-        return NativeStage(
-            request.identity,
-            PROFILE,
-            request.roots,
-            (NativeFile(ref, native.jsonl(rows), visibility=True),),
-            ref,
-            json.dumps(payload, separators=(",", ":")).encode(),
-            schema,
-        )
+        return rows, preview
 
     def stage_metadata(self, stage: NativeStage) -> NativeMetadata:
-        rows = native.records(
+        meta = native.first_record(
             next(item.data for item in stage.files if item.relative_path == stage.source_ref)
-        )
-        meta = rows[0]["payload"]
+        )["payload"]
         payload = json.loads(stage.database_payload or "null")
         if not isinstance(payload, dict) or (payload["id"], payload["cwd"], payload["name"]) != (
             meta["id"],
@@ -1281,20 +1286,28 @@ class CodexAdapter:
             ),
         )
 
+    def legacy_normalizations(self, profile: FormatProfile) -> tuple[Normalization, ...]:
+        # pre-wave-1 Codex always declared model-view-history; a journal written
+        # then recorded no normalizations of its own, so it still needs this to
+        # compare a stage that was flattened at write time
+        return (*self.normalizations(profile), FLATTENED_VIEW)
+
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         native.safe_id(identity, "codex")
-        return native.run_request(self.executable, ("resume", identity.native_id), roots, "codex")
+        return native.launch_request(
+            self.executable, ("resume", identity.native_id), roots, "codex"
+        )
 
     def registration_status(
         self, stage: NativeStage
     ) -> Literal["absent", "owned", "archived", "conflict"]:
-        return codex_state.registration_status(stage)
+        return codex_state.registration_status(stage, self.schemas)
 
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool:
-        return codex_state.registration(stage, recover=recover)
+        return codex_state.registration(stage, recover=recover, accepted=self.schemas)
 
     def append_name(self, stage: NativeStage) -> bool:
-        return codex_state.append_name(stage)
+        return codex_state.append_name(stage, self.schemas)
 
     def index_intent(self, stage: NativeStage) -> NativeIndexIntent:
         return NativeIndexIntent("session_index.jsonl", codex_state.name_intent(stage))

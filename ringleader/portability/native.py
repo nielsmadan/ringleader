@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import base64
+import io
 import json
+import os
 import re
+from collections.abc import Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from tempfile import TemporaryDirectory
+from tempfile import TemporaryDirectory, gettempdir
 from typing import Any, cast
 
-from .capabilities import NativeRoots, Runner, RunRequest, RunResult
+from .capabilities import (
+    Compatibility,
+    FormatProfile,
+    NativeRoots,
+    Runner,
+    RunRequest,
+    RunResult,
+)
 from .model import (
     Attachment,
     AttachmentRef,
@@ -19,17 +29,22 @@ from .model import (
     Identity,
     Instruction,
     Message,
+    Opaque,
     PreservationError,
     Provenance,
     Text,
     ToolCall,
     ToolOmission,
     ToolResult,
+    canonical_json,
     unique_object,
 )
 from .serialization import _decode, _encode
+from .versions import VersionVerdict
 
 MAX_BYTES = 128 * 1024 * 1024
+AUTH_MARKERS = ("authenticat", "device authorization", "browser opened", "device code")
+DROID_LOGIN = "droid --version started Factory's login flow; refusing droid as a target"
 
 
 def records(data: bytes) -> list[dict[str, Any]]:
@@ -42,6 +57,19 @@ def records(data: bytes) -> list[dict[str, Any]]:
     except (ValueError, UnicodeError) as exc:
         raise PreservationError(f"Invalid native JSONL: {exc}") from exc
     if not result or any(not isinstance(item, dict) for item in result):
+        raise PreservationError("Native JSONL requires object records")
+    return result
+
+
+def first_record(data: bytes) -> dict[str, Any]:
+    line = next((line for line in io.BytesIO(data) if line.strip()), None)
+    if line is None:
+        raise PreservationError("Native JSONL requires object records")
+    try:
+        result = json.loads(line, object_pairs_hook=unique_object)
+    except (ValueError, UnicodeError) as exc:
+        raise PreservationError(f"Invalid native JSONL: {exc}") from exc
+    if not isinstance(result, dict):
         raise PreservationError("Native JSONL requires object records")
     return result
 
@@ -92,12 +120,6 @@ def linked(messages: list[Message] | tuple[Message, ...]) -> tuple[Message, ...]
     )
 
 
-def same_messages(left: tuple[Message, ...], right: tuple[Message, ...]) -> bool:
-    return tuple(replace(item, id="", parent_id=None) for item in left) == tuple(
-        replace(item, id="", parent_id=None) for item in right
-    )
-
-
 def timestamp(value: Any, provenance: Provenance) -> HistoricalTimestamp | None:
     return HistoricalTimestamp(str(value), provenance) if value is not None else None
 
@@ -111,10 +133,16 @@ def env(roots: NativeRoots, agent: str) -> tuple[tuple[str, str], ...]:
         "XDG_STATE_HOME": str(roots.state or roots.home / "state"),
         "TMPDIR": str(roots.temporary or roots.cache / "tmp"),
     }
+    if agent == "droid":
+        values["FACTORY_HOME_OVERRIDE"] = str(roots.store.parent)
+        return tuple(values.items())
     values[
-        {"claude-code": "CLAUDE_CONFIG_DIR", "pi": "PI_CODING_AGENT_DIR", "codex": "CODEX_HOME"}[
-            agent
-        ]
+        {
+            "claude-code": "CLAUDE_CONFIG_DIR",
+            "pi": "PI_CODING_AGENT_DIR",
+            "codex": "CODEX_HOME",
+            "opencode": "OPENCODE_CONFIG_DIR",
+        }[agent]
     ] = str(roots.store)
     return tuple(values.items())
 
@@ -123,6 +151,54 @@ def run_request(
     executable: str, args: tuple[str, ...], roots: NativeRoots, agent: str
 ) -> RunRequest:
     return RunRequest((executable, *args), roots.cwd, env(roots, agent))
+
+
+def _same_path(left: str, right: str) -> bool:
+    return Path(left).expanduser().resolve() == Path(right).expanduser().resolve()
+
+
+def launch_env(
+    values: Mapping[str, str], environ: Mapping[str, str]
+) -> tuple[tuple[str, str], ...]:
+    home = values.get("HOME") or environ.get("HOME") or str(Path.home())
+    data = values.get("XDG_DATA_HOME") or environ.get("XDG_DATA_HOME") or f"{home}/.local/share"
+    builtin = {
+        "HOME": str(Path.home()),
+        "XDG_CONFIG_HOME": f"{home}/.config",
+        "XDG_CACHE_HOME": f"{home}/.cache",
+        "XDG_DATA_HOME": f"{home}/.local/share",
+        "XDG_STATE_HOME": f"{home}/.local/state",
+        "TMPDIR": gettempdir(),
+        "CLAUDE_CONFIG_DIR": f"{home}/.claude",
+        "CODEX_HOME": f"{home}/.codex",
+        "PI_CODING_AGENT_DIR": f"{home}/.pi/agent",
+        "FACTORY_HOME_OVERRIDE": home,
+        "OPENCODE_DB": f"{data}/opencode/opencode.db",
+    }
+    return tuple(
+        (key, value)
+        for key, value in values.items()
+        if not (
+            (native := environ.get(key) or builtin.get(key)) is not None
+            and _same_path(value, native)
+        )
+    )
+
+
+def launch_request(
+    executable: str, args: tuple[str, ...], roots: NativeRoots, agent: str
+) -> RunRequest:
+    unresolved = {
+        key
+        for key, root in (
+            ("XDG_DATA_HOME", roots.data),
+            ("XDG_STATE_HOME", roots.state),
+            ("TMPDIR", roots.temporary),
+        )
+        if root is None
+    }
+    values = {key: value for key, value in env(roots, agent) if key not in unresolved}
+    return RunRequest((executable, *args), roots.cwd, launch_env(values, os.environ))
 
 
 def safe_id(identity: Identity, agent: str) -> None:
@@ -134,13 +210,76 @@ def safe_id(identity: Identity, agent: str) -> None:
         raise PreservationError(f"Invalid {agent} target identity")
 
 
+def streams(conversation: Conversation) -> tuple[tuple[Message, ...], ...]:
+    return (
+        conversation.history,
+        conversation.context,
+        *(
+            stream
+            for checkpoint in conversation.checkpoints
+            for stream in (
+                checkpoint.summary,
+                checkpoint.retained_context,
+                checkpoint.following_context,
+                checkpoint.replaced_context,
+            )
+            if stream is not None
+        ),
+    )
+
+
+def reject_opaque(
+    conversation: Conversation, allowed: frozenset[tuple[str, str]] = frozenset()
+) -> None:
+    for stream in streams(conversation):
+        for message in stream:
+            for item in message.content:
+                parts = item.output if isinstance(item, ToolResult) else (item,)
+                opaque = next(
+                    (
+                        part
+                        for part in parts
+                        if isinstance(part, Opaque) and (part.agent, part.kind) not in allowed
+                    ),
+                    None,
+                )
+                if opaque is not None:
+                    raise PreservationError(f"Unsupported opaque kind: {opaque.kind}")
+
+
 def note(item: Instruction | ToolOmission) -> str:
     if isinstance(item, Instruction):
         return f"[Historical {item.authority} instruction; origin {item.provenance.source.agent}:{item.provenance.source.native_id} at {item.provenance.locator}]\n{item.text}"
     return f"[Omitted {item.calls} tool calls and {item.results} results: {', '.join(item.names)}]"
 
 
-def message_annotations(message: Message) -> dict[str, Any]:
+def object_arguments(call: ToolCall, dialect: str) -> dict[str, Any]:
+    if call.argument_format == "freeform":
+        return {"input": call.arguments}
+    arguments = json.loads(call.arguments)
+    if not isinstance(arguments, dict):
+        raise PreservationError(f"{dialect} requires object JSON tool arguments")
+    return arguments
+
+
+def _annotated(item: Content, freeform_calls: bool = True) -> bool:
+    return isinstance(item, Instruction | ToolOmission) or (
+        freeform_calls and isinstance(item, ToolCall) and item.argument_format == "freeform"
+    )
+
+
+def _matches_native(item: Instruction | ToolOmission | ToolCall, actual: Content | None) -> bool:
+    if isinstance(item, ToolCall):
+        return (
+            isinstance(actual, ToolCall)
+            and (actual.call_id, actual.name, actual.argument_format)
+            == (item.call_id, item.name, "json")
+            and json.loads(actual.arguments) == {"input": item.arguments}
+        )
+    return actual == Text(note(item))
+
+
+def message_annotations(message: Message, *, freeform_calls: bool = False) -> dict[str, Any]:
     return {
         "provenance": _encode(message.provenance),
         "timestamp": _encode(message.timestamp),
@@ -148,7 +287,7 @@ def message_annotations(message: Message) -> dict[str, Any]:
         "content": {
             str(i): _encode(item)
             for i, item in enumerate(message.content)
-            if isinstance(item, Instruction | ToolOmission)
+            if _annotated(item, freeform_calls)
         },
     }
 
@@ -172,11 +311,11 @@ def restore(message: Message, row: dict[str, Any]) -> Message:
             index = int(key)
             if str(index) != key:
                 raise PreservationError("Invalid historical content index")
-            item = _decode(raw, Instruction | ToolOmission)
+            item = _decode(raw, Instruction | ToolOmission | ToolCall)
             actual = content[index] if index >= 0 else None
         except (ValueError, IndexError, TypeError) as exc:
             raise PreservationError("Invalid historical annotation") from exc
-        if actual != Text(note(item)):
+        if not _annotated(item) or not _matches_native(item, actual):
             raise PreservationError("Historical annotation disagrees with native content")
         content[index] = item
     role = metadata["role"]
@@ -281,14 +420,25 @@ def blocks(value: Any, assets: list[Attachment], dialect: str) -> tuple[Content,
                     "json",
                 )
             )
+        elif kind == "fallback" and dialect == "claude":
+            continue
+        elif kind == "tool_reference" and dialect == "claude":
+            output.append(
+                Opaque(
+                    "claude-code",
+                    "claude.tool_reference",
+                    canonical_json(block),
+                    (Text(f"[loaded tool schema: {string(block.get('tool_name'), 'tool name')}]"),),
+                )
+            )
         elif kind == "tool_result" and dialect == "claude":
             nested = blocks(block.get("content", []), assets, dialect)
-            if any(not isinstance(item, Text | AttachmentRef) for item in nested):
+            if any(not isinstance(item, Text | AttachmentRef | Opaque) for item in nested):
                 raise PreservationError("Unsupported nested tool result content")
             output.append(
                 ToolResult(
                     string(block.get("tool_use_id"), "tool result ID"),
-                    cast(tuple[Text | AttachmentRef, ...], nested),
+                    cast(tuple[Text | AttachmentRef | Opaque, ...], nested),
                     block.get("is_error", False),
                 )
             )
@@ -320,18 +470,22 @@ def emit_blocks(
                 block.update(data=data, mimeType=asset.media_type, ringleaderName=asset.name)
             output.append(block)
         elif isinstance(item, ToolCall):
-            if item.argument_format != "json" or not isinstance(json.loads(item.arguments), dict):
-                raise PreservationError(
-                    f"{dialect} requires object JSON tool arguments; freeform calls unsupported"
-                )
             output.append(
                 {
                     "type": "tool_use" if dialect == "claude" else "toolCall",
                     "id": item.call_id,
                     "name": item.name,
-                    "input" if dialect == "claude" else "arguments": json.loads(item.arguments),
+                    "input" if dialect == "claude" else "arguments": object_arguments(
+                        item, dialect
+                    ),
                 }
             )
+        elif (
+            isinstance(item, Opaque)
+            and dialect == "claude"
+            and (item.agent, item.kind) == ("claude-code", "claude.tool_reference")
+        ):
+            output.append(json.loads(item.payload))
         elif isinstance(item, ToolResult) and dialect == "claude":
             output.append(
                 {
@@ -351,12 +505,16 @@ def source_path(ref: str, roots: NativeRoots) -> Path:
     return path if path.is_absolute() else roots.store / path
 
 
+def started_auth(result: RunResult) -> bool:
+    output = (result.stdout + result.stderr).decode(errors="replace").lower()
+    return any(marker in output for marker in AUTH_MARKERS)
+
+
 def probe_version(executable: str, agent: str, runner: Runner) -> RunResult:
     with TemporaryDirectory(prefix="ringleader-version-") as temporary:
-        base = Path(temporary)
-        roots = NativeRoots(
-            base / "home", base / "store", base / "cwd", base / "config", base / "cache"
-        )
+        base = Path(temporary).resolve()
+        store = base / "home" / ".factory" if agent == "droid" else base / "store"
+        roots = NativeRoots(base / "home", store, base / "cwd", base / "config", base / "cache")
         for path in (
             roots.home,
             roots.store,
@@ -367,7 +525,39 @@ def probe_version(executable: str, agent: str, runner: Runner) -> RunResult:
             roots.home / "state",
         ):
             path.mkdir(parents=True, exist_ok=True)
-        return runner.run(run_request(executable, ("--version",), roots, agent))
+        request = run_request(executable, ("--version",), roots, agent)
+        if agent == "droid":
+            request = replace(request, env=(*request.env, ("FACTORY_DISABLE_KEYRING", "1")))
+        result = runner.run(request)
+    if agent == "droid" and started_auth(result):
+        raise PreservationError(DROID_LOGIN)
+    return result
+
+
+def version_compatibility(
+    label: str,
+    profile: FormatProfile,
+    verdict: VersionVerdict,
+    output: str,
+    schema_identity: str | None = None,
+) -> Compatibility:
+    if not verdict.accepted:
+        hint = verification_hint(profile.agent) if verdict.needs_verification else ""
+        return Compatibility(
+            False,
+            None,
+            (f"{label} {verdict.message}{hint}",),
+            output,
+            needs_verification=verdict.needs_verification,
+        )
+    return Compatibility(
+        True,
+        profile,
+        (),
+        output,
+        schema_identity,
+        warnings=(f"{label} {verdict.message}",) if verdict.message else (),
+    )
 
 
 def native_role(message: Message) -> str:
@@ -398,6 +588,33 @@ def historical_time(message: Message, fallback: datetime) -> datetime:
         return result.astimezone(UTC)
     except (ValueError, OverflowError, OSError) as exc:
         raise PreservationError(f"Cannot preserve native historical timestamp: {value!r}") from exc
+
+
+def unparented(messages: list[Message] | tuple[Message, ...]) -> tuple[Message, ...]:
+    return tuple(replace(message, parent_id=None) for message in messages)
+
+
+def results_only(message: Message) -> bool:
+    return bool(message.content) and all(isinstance(item, ToolResult) for item in message.content)
+
+
+def validate_replay(messages: tuple[Message, ...], label: str) -> None:
+    pending: set[str] = set()
+    for message in messages:
+        if pending and not results_only(message):
+            raise PreservationError(
+                f"{label} tool results must follow their assistant calls contiguously; "
+                "an intervening message changes native replay"
+            )
+        for item in message.content:
+            if isinstance(item, ToolCall):
+                pending.add(item.call_id)
+            elif isinstance(item, ToolResult):
+                pending.discard(item.call_id)
+
+
+def verification_hint(agent: str) -> str:
+    return f"; run rl doctor --verify-conversion {agent}"
 
 
 def reject_assistant_images(message: Message, agent: str) -> None:

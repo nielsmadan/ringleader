@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import json
 import os
 import re
 import secrets
@@ -26,7 +25,15 @@ from .capabilities import (
     SourceRequest,
     TargetRequest,
 )
-from .compare import Normalization, compare
+from .compare import (
+    CheckpointShape,
+    Normalization,
+    compare,
+    flattened,
+    flattened_checkpoint,
+    joined_tool_output,
+    model_view,
+)
 from .model import (
     Attachment,
     AttachmentRef,
@@ -45,6 +52,7 @@ from .model import (
     validate,
 )
 from .snapshot import SnapshotFile, SourceSnapshot, database_snapshot, snapshot_files
+from .verification import VerificationRecord, local_schemas
 
 PROFILE = FormatProfile(
     "opencode",
@@ -59,8 +67,38 @@ PROFILE = FormatProfile(
 QUESTION = "What did we do so far?"
 TOOL_TIME_EVIDENCE = "opencode-tool-times:"
 SUMMARY_MESSAGES = 2
+COMBINED_GROUP = 2
+RESUMED_AGENT = "build"
+MODEL_KEYS = frozenset({"model", "agent", "mode", "default_agent"})
 ZERO_TOKENS = {"input": 0, "output": 0, "reasoning": 0, "cache": {"read": 0, "write": 0}}
 MEDIA = {"image/png", "image/jpeg", "image/webp", "image/gif", "application/pdf"}
+INTERRUPTED = "[Tool execution was interrupted]"
+DROPPED_TOOL_METADATA = frozenset(
+    {
+        "count",
+        "description",
+        "diagnostics",
+        "diff",
+        "dir",
+        "display",
+        "exists",
+        "exit",
+        "filediff",
+        "filepath",
+        "interrupted",
+        "loaded",
+        "matches",
+        "model",
+        "name",
+        "output",
+        "outputPath",
+        "parentSessionId",
+        "preview",
+        "sessionId",
+        "todos",
+        "truncated",
+    }
+)
 
 
 class IDs:
@@ -145,32 +183,71 @@ def _file(part: dict[str, Any], assets: list[Attachment], files: dict[str, bytes
     return AttachmentRef((previous or asset).id)
 
 
+def _tool_metadata(part: dict[str, Any]) -> None:
+    metadata = object_value(part.get("metadata") or {}, "tool part metadata")
+    provider = object_value(metadata.get("openrouter", {}), "tool part provider metadata")
+    unknown = sorted(set(metadata) - {"openrouter"}) + sorted(set(provider) - {"reasoning_details"})
+    if unknown:
+        raise PreservationError(
+            "OpenCode provider tool metadata requires a proven context profile: "
+            + ", ".join(unknown)
+        )
+
+
+def _tool_time(tool_state: dict[str, Any], created: int) -> dict[str, Any]:
+    if tool_state.get("status") == "pending":
+        result: dict[str, Any] = {"start": created, "end": created}
+    else:
+        times = object_value(tool_state.get("time"), "tool times")
+        fields(times, "start end compacted", "tool times")
+        start = _time(times.get("start"), "tool start")
+        if tool_state.get("status") == "running":
+            result = {"start": start, "end": start}
+        elif times.get("end") is None:
+            raise PreservationError("Incomplete OpenCode tool timing")
+        else:
+            result = {"start": start, "end": _time(times.get("end"), "tool end")}
+    loaded = object_value(tool_state.get("metadata") or {}, "tool metadata").get("loaded")
+    if loaded is not None:
+        result["loaded"] = loaded
+    return result
+
+
+def _tool_output(tool_state: dict[str, Any], metadata: dict[str, Any]) -> tuple[str, bool]:
+    status = tool_state.get("status")
+    if status in ("pending", "running"):
+        return INTERRUPTED, True
+    if (status == "error" and "output" in tool_state) or (
+        status == "completed" and "error" in tool_state
+    ):
+        raise PreservationError("OpenCode tool state has contradictory output/error fields")
+    if status == "completed":
+        return native.string(tool_state.get("output"), "tool output"), False
+    if metadata.get("interrupted") is True and isinstance(metadata.get("output"), str):
+        return metadata["output"], False
+    return native.string(tool_state.get("error"), "tool output"), True
+
+
 def _tool(
     part: dict[str, Any], assets: list[Attachment], files: dict[str, bytes]
 ) -> tuple[ToolCall, ToolResult]:
     fields(part, "id sessionID messageID type callID tool state metadata", "tool part")
-    if part.get("metadata"):
-        raise PreservationError("OpenCode provider tool metadata requires a proven context profile")
+    _tool_metadata(part)
     tool_state = object_value(part.get("state"), "tool state")
-    fields(tool_state, "status input output title metadata time attachments error", "tool state")
+    fields(
+        tool_state, "status input output title metadata time attachments error raw", "tool state"
+    )
     status = tool_state.get("status")
-    if status not in ("completed", "error"):
-        raise PreservationError(f"Incomplete OpenCode tool state: {status}")
-    times = object_value(tool_state.get("time"), "tool times")
-    fields(times, "start end compacted", "tool times")
-    if times.get("end") is None:
-        raise PreservationError("Incomplete OpenCode tool timing")
-    _time(times.get("start"), "tool start")
-    _time(times.get("end"), "tool end")
-    if times.get("compacted"):
+    if status not in ("completed", "error", "running", "pending"):
+        raise PreservationError(f"Unknown OpenCode tool state: {status}")
+    if object_value(tool_state.get("time", {}), "tool times").get("compacted"):
         raise PreservationError("OpenCode tool time.compacted changes active model output")
     metadata = object_value(tool_state.get("metadata", {}), "tool metadata")
-    if metadata.get("interrupted") is True:
-        raise PreservationError("OpenCode metadata.interrupted changes error model-context output")
-    if metadata:
+    unknown = set(metadata) - DROPPED_TOOL_METADATA
+    if unknown:
         raise PreservationError(
             "Unsupported OpenCode tool-state metadata with unverified visible/context semantics: "
-            + ", ".join(sorted(metadata))
+            + ", ".join(sorted(unknown))
         )
     args = object_value(tool_state.get("input"), "tool input")
     call = ToolCall(
@@ -179,25 +256,18 @@ def _tool(
         state.encode(args).decode(),
         "json",
     )
-    output: list[Text | AttachmentRef] = [
-        Text(
-            native.string(tool_state.get("error" if status == "error" else "output"), "tool output")
-        )
-    ]
-    attachments = tool_state.get("attachments", [])
-    if status == "error" and attachments:
+    text, is_error = _tool_output(tool_state, metadata)
+    output: list[Text | AttachmentRef] = [Text(text)]
+    attachments = tool_state.get("attachments", []) if status == "completed" else []
+    if status != "completed" and tool_state.get("attachments"):
         raise PreservationError("OpenCode error tool attachments are outside the native schema")
-    if (status == "error" and "output" in tool_state) or (
-        status == "completed" and "error" in tool_state
-    ):
-        raise PreservationError("OpenCode tool state has contradictory output/error fields")
     for item in attachments:
         if not native.string(item.get("url"), "tool attachment URL").startswith("data:"):
             raise PreservationError(
                 "OpenCode tool attachments must be embedded for native model context"
             )
         output.append(_file(item, assets, files))
-    return call, ToolResult(call.call_id, tuple(output), status == "error")
+    return call, ToolResult(call.call_id, tuple(output), is_error)
 
 
 def _part_content(
@@ -244,6 +314,16 @@ def _part_content(
     raise PreservationError(f"Unsupported OpenCode conversational part: {kind}")
 
 
+def _skipped_assistant(info: dict[str, Any], parts: list[dict[str, Any]]) -> bool:
+    error = info.get("error")
+    if error is None:
+        return False
+    aborted = object_value(error, "message error").get("name") == "MessageAbortedError"
+    return not (
+        aborted and any(part.get("type") not in ("step-start", "reasoning") for part in parts)
+    )
+
+
 def _message(
     row: dict[str, Any], identity: Identity, assets: list[Attachment], files: dict[str, bytes]
 ) -> tuple[Message, ...]:
@@ -257,10 +337,11 @@ def _message(
     role = info.get("role")
     if role not in ("user", "assistant"):
         raise PreservationError(f"Unknown OpenCode role: {role}")
-    if info.get("error") is not None:
-        raise PreservationError(
-            "OpenCode assistant error/aborted state needs separate visible/context preservation"
-        )
+    if role == "user":
+        if info.get("error") is not None:
+            raise PreservationError("OpenCode user message error is unsupported")
+    elif _skipped_assistant(info, row["parts"]):
+        return ()
     if info.get("structured") is not None:
         raise PreservationError("OpenCode structured assistant output is unsupported")
     if info.get("system"):
@@ -271,14 +352,16 @@ def _message(
         raise PreservationError("OpenCode structured output format is unsupported")
     times = object_value(info.get("time"), "message time")
     fields(times, "created completed", "message time")
-    _time(times.get("created"), "message creation")
-    if role == "assistant" and (times.get("completed") is None or not info.get("finish")):
-        raise PreservationError("Incomplete OpenCode assistant message")
-    tool_times = {p["callID"]: p["state"]["time"] for p in row["parts"] if p.get("type") == "tool"}
+    created = _time(times.get("created"), "message creation")
+    tool_times = {
+        p["callID"]: _tool_time(object_value(p.get("state"), "tool state"), created)
+        for p in row["parts"]
+        if p.get("type") == "tool"
+    }
     evidence = TOOL_TIME_EVIDENCE + state.encode(tool_times).decode() if tool_times else ""
     provenance = Provenance("authored", identity, key, evidence)
     content: list[Content] = []
-    results: list[Content] = []
+    results: list[ToolResult] = []
     seen_tool = False
     for part in row["parts"]:
         if part.get("type") == "tool":
@@ -305,23 +388,23 @@ def _message(
         provenance,
         timestamp=native.timestamp(times.get("created"), provenance),
     )
-    if not results:
-        return (message,)
     return (
         message,
-        Message(
-            key + ":results",
-            "tool",
-            tuple(results),
-            provenance,
-            timestamp=native.timestamp(
-                max(
-                    part["state"]["time"]["end"] for part in row["parts"] if part["type"] == "tool"
-                ),
+        *(
+            Message(
+                _result_id(key, index),
+                "tool",
+                (result,),
                 provenance,
-            ),
+                timestamp=native.timestamp(tool_times[result.call_id]["end"], provenance),
+            )
+            for index, result in enumerate(results)
         ),
     )
+
+
+def _result_id(key: str, index: int) -> str:
+    return f"{key}:results" if index == 0 else f"{key}:results:{index}"
 
 
 def _checkpoint(
@@ -344,6 +427,8 @@ def _checkpoint(
         if len(summaries) != 1:
             raise PreservationError("Incomplete or ambiguous OpenCode compaction summary")
         summary = summaries[0]
+        if summary["info"].get("error") is not None or not summary["info"].get("finish"):
+            raise PreservationError("OpenCode compaction summary is incomplete or failed")
         if by_id[summary["info"]["id"]] != index + 1:
             raise PreservationError("OpenCode compaction summary is not adjacent to its trigger")
         tail = parts[0].get("tail_start_id")
@@ -369,23 +454,44 @@ def _restore_groups(
             "OpenCode structural message annotations disagree with native graph"
         )
     restored = {}
-    for key, messages in groups.items():
-        if key not in annotations:
-            restored[key] = messages
-            continue
-        descriptors = annotations[key]
-        if len(descriptors) != len(messages):
-            raise PreservationError(
-                "OpenCode structural result grouping disagrees with native parts"
+    floor: datetime | None = None
+    for key, native_messages in groups.items():
+        if key in annotations:
+            descriptors = annotations[key]
+            messages = _regrouped(native_messages, len(descriptors))
+            if len(descriptors) != len(messages):
+                raise PreservationError(
+                    "OpenCode structural result grouping disagrees with native parts"
+                )
+            restored[key] = tuple(
+                _restore_message(message, descriptor, floor if index == 0 else None)
+                for index, (message, descriptor) in enumerate(
+                    zip(messages, descriptors, strict=True)
+                )
             )
-        restored[key] = tuple(
-            _restore_message(message, descriptor)
-            for message, descriptor in zip(messages, descriptors, strict=True)
-        )
+        else:
+            restored[key] = native_messages
+        if native_messages:
+            floor = native.historical_time(native_messages[0], datetime.now(UTC))
     return restored
 
 
-def _restore_message(message: Message, descriptor: Any) -> Message:
+def _regrouped(messages: tuple[Message, ...], groups: int) -> tuple[Message, ...]:
+    if groups != COMBINED_GROUP or len(messages) <= COMBINED_GROUP:
+        return messages
+    results = messages[1:]
+    return messages[0], replace(
+        results[0],
+        content=tuple(item for message in results for item in message.content),
+        timestamp=max(
+            (message.timestamp for message in results if message.timestamp is not None),
+            key=lambda timestamp: int(timestamp.value),
+            default=None,
+        ),
+    )
+
+
+def _restore_message(message: Message, descriptor: Any, floor: datetime | None) -> Message:
     result = native.restore(message, {"ringleader": descriptor})
     if (
         result.provenance.source.agent == "opencode"
@@ -397,12 +503,14 @@ def _restore_message(message: Message, descriptor: Any) -> Message:
         )
     ):
         raise PreservationError("OpenCode original tool timestamps disagree with native state")
-    if result.timestamp is not None and native.historical_time(
-        result, datetime.now(UTC)
-    ) != native.historical_time(message, datetime.now(UTC)):
-        raise PreservationError(
-            "OpenCode historical timestamp annotation disagrees with native time"
-        )
+    if result.timestamp is not None:
+        now = datetime.now(UTC)
+        original = native.historical_time(result, now)
+        actual = native.historical_time(message, now)
+        if original != actual and not (floor is not None and original < actual == floor):
+            raise PreservationError(
+                "OpenCode historical timestamp annotation disagrees with native time"
+            )
     return result
 
 
@@ -569,8 +677,14 @@ def _read_graph(connection: Any, identity: Identity) -> tuple[dict[str, Any], di
 
 
 class OpenCodeAdapter:
-    def __init__(self, executable: str = "opencode") -> None:
+    profile = PROFILE
+
+    def __init__(
+        self, executable: str = "opencode", verified: tuple[VerificationRecord, ...] = ()
+    ) -> None:
         self.executable = executable
+        self.local_schemas = local_schemas(verified, "opencode")
+        self.schemas = state.ACCEPTED | frozenset(self.local_schemas.values())
 
     def target_model(self, roots: NativeRoots) -> tuple[str, str]:
         if any(
@@ -580,16 +694,23 @@ class OpenCodeAdapter:
             raise PreservationError(
                 "OpenCode custom config overrides are unsupported by the explicit-model profile"
             )
-        for directory in (roots.cwd, *roots.cwd.parents):
-            if any(
-                (directory / file).exists()
-                for file in (
+        project = tuple(
+            (str(path), path)
+            for directory in (roots.cwd, *roots.cwd.parents)
+            for path in (
+                directory / name
+                for name in (
                     "opencode.json",
                     "opencode.jsonc",
                     ".opencode/opencode.json",
                     ".opencode/opencode.jsonc",
                 )
-            ):
+            )
+            if path.exists()
+        )
+        for item in snapshot_files(project, max_bytes=1024 * 1024):
+            config = object_value(state.decode(item.data), "project JSON config")
+            if MODEL_KEYS & set(config):
                 raise PreservationError(
                     "OpenCode project config model precedence is unverified by this target profile"
                 )
@@ -617,9 +738,12 @@ class OpenCodeAdapter:
         )
         for item in snapshot_files(paths, max_bytes=1024 * 1024):
             config = object_value(state.decode(item.data), "target JSON config")
-            if "default_agent" in config or any(config.get(key) for key in ("agent", "mode")):
+            if "default_agent" in config or any(
+                RESUMED_AGENT in object_value(config.get(key) or {}, f"target {key} config")
+                for key in ("agent", "mode")
+            ):
                 raise PreservationError(
-                    "OpenCode agent/mode/default_agent configuration precedence is unverified"
+                    "OpenCode build agent/mode or default_agent configuration can override the resumed model"
                 )
             model = config.get("model", model)
         if not isinstance(model, str) or "/" not in model or "{" in model:
@@ -640,8 +764,8 @@ class OpenCodeAdapter:
                 raise PreservationError("Not an OpenCode source")
             path = native.source_path(request.source_ref, request.roots)
             with state.database_copy(path) as isolated, database_snapshot(isolated) as connection:
-                state.schema_identity(connection)
-            return Compatibility(True, PROFILE, (), schema_identity=state.SCHEMA_ID)
+                schema = state.schema_identity(connection, self.schemas)
+            return Compatibility(True, PROFILE, (), schema_identity=schema)
         except (OSError, PreservationError) as exc:
             return Compatibility(False, None, (str(exc),))
 
@@ -650,7 +774,7 @@ class OpenCodeAdapter:
             raise PreservationError("OpenCode source requires its complete selected native session")
         path = native.source_path(request.source_ref, request.roots)
         with state.database_copy(path) as isolated, database_snapshot(isolated) as connection:
-            state.schema_identity(connection)
+            schema = state.schema_identity(connection, self.schemas)
             export, graph = _read_graph(connection, request.identity)
             attachments = snapshot_files(
                 tuple((str(p), p) for p in sorted(_attachment_paths(export))),
@@ -665,23 +789,55 @@ class OpenCodeAdapter:
             conversation,
             (SnapshotFile("graph.json", graph_bytes), *attachments),
             PROFILE.name,
-            (("schema", state.SCHEMA_ID),),
+            (("schema", schema),),
         )
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         try:
-            schema = state.inspect_database(roots)
-            state.resolve_project(roots.cwd)
-            provider, model = self.target_model(roots)
-            return Compatibility(
-                True,
-                PROFILE,
-                ("Source/schema-backed profile; native runtime smoke unverified",),
-                schema_identity=schema,
-                target_configuration=(("providerID", provider), ("modelID", model)),
-            )
+            schema = state.inspect_database(roots, None)
         except (OSError, PreservationError) as exc:
             return Compatibility(False, None, (str(exc),))
+        if schema not in self.schemas:
+            if self.local_schemas:
+                probed = native.probe_version(self.executable, "opencode", runner)
+                version = (
+                    probed.stdout.decode(errors="replace").strip() if probed.returncode == 0 else ""
+                )
+                if version in self.local_schemas:
+                    return Compatibility(
+                        False, None, (f"OpenCode writer schema {schema} is not supported",)
+                    )
+            return Compatibility(
+                False,
+                None,
+                (
+                    (
+                        f"OpenCode writer schema {schema} is not verified; it needs "
+                        f"self-verification{native.verification_hint('opencode')}"
+                    ),
+                ),
+                needs_verification=True,
+            )
+        try:
+            state.resolve_project(roots.cwd)
+            provider, model = self.target_model(roots)
+        except (OSError, PreservationError) as exc:
+            return Compatibility(False, None, (str(exc),))
+        verified_locally = schema in frozenset(self.local_schemas.values()) - state.ACCEPTED
+        return Compatibility(
+            True,
+            PROFILE,
+            ()
+            if verified_locally
+            else ("Source/schema-backed profile; native runtime smoke unverified",),
+            schema_identity=schema,
+            target_configuration=(("providerID", provider), ("modelID", model)),
+            warnings=(
+                (f"OpenCode writer schema {schema} accepted: self-verified on this machine",)
+                if verified_locally
+                else ()
+            ),
+        )
 
     def normalizations(self, profile: FormatProfile) -> tuple[Normalization, ...]:
         return (
@@ -689,6 +845,23 @@ class OpenCodeAdapter:
                 "json-argument-whitespace",
                 profile.name,
                 "OpenCode native tool input is a JSON object",
+            ),
+            Normalization(
+                "model-view-history",
+                profile.name,
+                "OpenCode keeps one stream: the model context, with hidden messages as ordinary parts",
+            ),
+            Normalization(
+                "call-ordered-results",
+                profile.name,
+                "OpenCode stores each result inside its call's part, so one step's results "
+                "replay in call order",
+            ),
+            Normalization(
+                "joined-tool-output",
+                profile.name,
+                "OpenCode tool output is one string: text blocks joined by a blank line with "
+                "media after it, as its own MCP tool results are stored",
             ),
         )
 
@@ -702,18 +875,21 @@ class OpenCodeAdapter:
         )
 
     def read_stage(self, stage: NativeStage) -> Conversation:
-        if stage.database_payload is None or stage.schema_identity != state.SCHEMA_ID:
+        if (
+            stage.database_payload is None
+            or stage.schema_identity not in self.schemas | state.LEGACY
+        ):
             raise PreservationError("Missing OpenCode staged graph")
         return parse(_payload_export(state.decode(stage.database_payload)), stage.identity)
 
     def registration_status(
         self, stage: NativeStage
     ) -> Literal["absent", "owned", "archived", "conflict"]:
-        return state.registration_status(stage)
+        return state.registration_status(stage, self.schemas)
 
     def register_stage(self, stage: NativeStage, *, recover: bool = False) -> bool:
         self.read_stage(stage)
-        return state.registration(stage, recover=recover)
+        return state.registration(stage, recover=recover, accepted=self.schemas)
 
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         target_id(identity)
@@ -733,7 +909,7 @@ class OpenCodeAdapter:
         return RunRequest(
             (self.executable, "--session", identity.native_id),
             roots.cwd,
-            tuple(environment.items()),
+            native.launch_env(environment, os.environ),
         )
 
 
@@ -758,7 +934,7 @@ def _compactions(conversation: Conversation) -> dict[str, Checkpoint]:
     result = {}
     for checkpoint in conversation.checkpoints:
         if checkpoint.following_context is not None or checkpoint.retained_context is not None:
-            raise PreservationError(
+            raise CheckpointShape(
                 "OpenCode cannot preserve independent checkpoint retained/following context"
             )
         summary = checkpoint.summary
@@ -770,20 +946,18 @@ def _compactions(conversation: Conversation) -> dict[str, Checkpoint]:
             or summary[0].id not in by_id
             or summary[1].id not in by_id
         ):
-            raise PreservationError(
+            raise CheckpointShape(
                 "OpenCode compaction requires the native question and assistant summary in visible history"
             )
         start = by_id[summary[0].id]
         end = by_id[summary[1].id]
         if end != start + 1 or checkpoint.after_message_id != summary[1].id:
-            raise PreservationError(
-                "OpenCode compaction summary must be adjacent to native trigger"
-            )
+            raise CheckpointShape("OpenCode compaction summary must be adjacent to native trigger")
         if checkpoint.retained_message_ids:
             ids = checkpoint.retained_message_ids
             expected = tuple(m.id for m in conversation.history[by_id[ids[0]] : start])
             if ids != expected:
-                raise PreservationError(
+                raise CheckpointShape(
                     "OpenCode retained compaction tail must be a contiguous preceding suffix"
                 )
         result[summary[0].id] = checkpoint
@@ -797,22 +971,18 @@ def _emit_tool(
     ids: IDs,
     owner: dict[str, Any],
 ) -> dict[str, Any]:
-    if call.argument_format != "json" or not isinstance(json.loads(call.arguments), dict):
-        raise PreservationError(
-            "OpenCode tools require JSON object input; freeform arguments unsupported"
-        )
-    text = [item.text for item in result.output if isinstance(item, Text)]
-    images = [item for item in result.output if isinstance(item, AttachmentRef)]
-    if len(text) != 1 or tuple(result.output) != (Text(text[0]), *images):
-        raise PreservationError(
-            "OpenCode tool result requires one text output followed by attachments"
-        )
+    arguments = native.object_arguments(call, "OpenCode")
+    joined = joined_tool_output(result)
+    images = [item for item in joined[1:] if isinstance(item, AttachmentRef)]
+    if len(images) != len(joined) - 1 or not isinstance(joined[0], Text):
+        raise PreservationError("OpenCode tool result output must be text and attachments")
+    text = [joined[0].text]
     if result.is_error and images:
         raise PreservationError("OpenCode error tool state cannot preserve attachments")
     timing = owner["time"]["created"]
     tool_state: dict[str, Any] = {
         "status": "error" if result.is_error else "completed",
-        "input": json.loads(call.arguments),
+        "input": arguments,
         "metadata": {},
         "time": {"start": timing, "end": timing},
     }
@@ -858,18 +1028,19 @@ def _emit_messages(
             raise PreservationError(
                 "OpenCode tool results must immediately follow their assistant calls"
             )
-        created = int(native.historical_time(message, now).timestamp() * 1000)
-        if created < previous_time:
-            raise PreservationError(
-                "OpenCode native message chronology cannot preserve decreasing timestamps"
-            )
+        gap_fallback = (
+            datetime.fromtimestamp(previous_time / 1000, UTC) if previous_time >= 0 else now
+        )
+        created = max(
+            int(native.historical_time(message, gap_fallback).timestamp() * 1000), previous_time
+        )
         previous_time = created
         info: dict[str, Any] = {
             "id": native_ids[message.id],
             "sessionID": request.identity.native_id,
             "role": role,
             "time": {"created": created},
-            "agent": "build",
+            "agent": RESUMED_AGENT,
         }
         if role == "user":
             last_user = info["id"]
@@ -886,7 +1057,7 @@ def _emit_messages(
                 parentID=last_user,
                 modelID=conversation.source.agent,
                 providerID="ringleader-history",
-                mode="build",
+                mode=RESUMED_AGENT,
                 path={"cwd": str(request.roots.cwd), "root": str(request.roots.cwd)},
                 cost=0,
                 tokens=ZERO_TOKENS,
@@ -925,29 +1096,36 @@ def _emit_content(
     ids: IDs,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], int]:
     calls = [item for item in message.content if isinstance(item, ToolCall)]
-    descriptors = [native.message_annotations(message)]
-    result_by_id: dict[str, ToolResult] = {}
-    if calls:
-        if not following or not all(isinstance(item, ToolResult) for item in following[0].content):
-            raise PreservationError(
-                "OpenCode needs one contiguous result message after assistant tool calls"
-            )
-        result_by_id = {
-            item.call_id: item for item in following[0].content if isinstance(item, ToolResult)
-        }
-        if list(result_by_id) != [call.call_id for call in calls]:
-            raise PreservationError(
-                "OpenCode tool results must preserve native call order and complete the exchange"
-            )
-        descriptors.append(native.message_annotations(following[0]))
+    replies = _result_messages(following, len(calls)) if calls else ()
+    order = {call.call_id: index for index, call in enumerate(calls)}
+    ordered = sorted(
+        replies,
+        key=lambda reply: min(
+            order.get(item.call_id, len(order))
+            for item in reply.content
+            if isinstance(item, ToolResult)
+        ),
+    )
+    descriptors = [
+        native.message_annotations(item, freeform_calls=True) for item in (message, *ordered)
+    ]
+    result_by_id = {
+        item.call_id: (item, reply)
+        for reply in ordered
+        for item in reply.content
+        if isinstance(item, ToolResult)
+    }
+    if list(result_by_id) != [call.call_id for call in calls]:
+        raise PreservationError("OpenCode tool results must answer every call of one native step")
     parts = []
     seen_tool = False
     for item in message.content:
         if isinstance(item, ToolCall):
-            part = _emit_tool(item, result_by_id[item.call_id], assets, ids, info)
+            result, reply = result_by_id[item.call_id]
+            part = _emit_tool(item, result, assets, ids, info)
             part["state"]["time"]["end"] = int(
                 native.historical_time(
-                    following[0], datetime.fromtimestamp(info["time"]["created"] / 1000, UTC)
+                    reply, datetime.fromtimestamp(info["time"]["created"] / 1000, UTC)
                 ).timestamp()
                 * 1000
             )
@@ -958,7 +1136,11 @@ def _emit_content(
                 times = state.decode(message.provenance.evidence.removeprefix(TOOL_TIME_EVIDENCE))
                 if item.call_id not in times:
                     raise PreservationError("Missing original OpenCode tool timestamps")
-                part["state"]["time"] = times[item.call_id]
+                original = dict(times[item.call_id])
+                loaded = original.pop("loaded", None)
+                part["state"]["time"] = original
+                if loaded is not None:
+                    part["state"]["metadata"]["loaded"] = loaded
             parts.append(part)
             seen_tool = True
             continue
@@ -989,7 +1171,26 @@ def _emit_content(
             raise PreservationError("Unsupported OpenCode content placement")
     if not parts:
         raise PreservationError("OpenCode native context omits empty messages")
-    return parts, descriptors, int(bool(calls))
+    return parts, descriptors, len(replies)
+
+
+def _result_messages(following: tuple[Message, ...], calls: int) -> tuple[Message, ...]:
+    replies: list[Message] = []
+    answered = 0
+    for reply in following:
+        if answered >= calls or not reply.content:
+            break
+        if not all(isinstance(item, ToolResult) for item in reply.content):
+            break
+        replies.append(reply)
+        answered += len(reply.content)
+    if not replies:
+        raise PreservationError(
+            "OpenCode needs contiguous result messages after assistant tool calls"
+        )
+    if len(replies) not in (1, calls):
+        raise PreservationError("OpenCode mixed result grouping is unsupported")
+    return tuple(replies)
 
 
 def _payload_export(payload: dict[str, Any]) -> dict[str, Any]:
@@ -1035,10 +1236,18 @@ def _stage(
     conversation: Conversation, request: TargetRequest, adapter: OpenCodeAdapter
 ) -> NativeStage:
     validate(conversation)
+    native.reject_opaque(conversation)
+    applied = adapter.normalizations(PROFILE)
+    try:
+        _compactions(conversation)
+    except CheckpointShape:
+        conversation = flattened(conversation)
+        applied = (*applied, flattened_checkpoint(PROFILE.name))
+    conversation = model_view(conversation, hides=False)
     target_id(request.identity)
     if request.profile != PROFILE:
         raise PreservationError("Unsupported OpenCode writer profile")
-    state.inspect_database(request.roots)
+    schema = state.inspect_database(request.roots, adapter.schemas)
     now = datetime.now(UTC)
     created = int(now.timestamp() * 1000)
     project_id, worktree, vcs = state.resolve_project(request.roots.cwd)
@@ -1114,8 +1323,9 @@ def _stage(
         (),
         "opencode.db",
         state.encode(payload),
-        state.SCHEMA_ID,
+        schema,
+        applied,
     )
     actual = adapter.read_stage(stage)
-    compare(replace(conversation, title=request.title), actual, adapter.normalizations(PROFILE))
+    compare(replace(conversation, title=request.title), actual, applied)
     return stage

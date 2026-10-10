@@ -198,22 +198,20 @@ sidecars beside it: `<uuid>.settings.json` and `<uuid>.settings.json.bak`. `FACT
 replaces **HOME**, not the `.factory` name, so under an override the tree is
 `$FACTORY_HOME_OVERRIDE/.factory/sessions/`.
 
-**The directory encoding is Claude Code's.** `slug.slugify(normalize(cwd))` — the encoder
-ringleader already reimplements for Claude Code — reproduces the directory name for 257/257 local
-sessions. That makes `slug.py` load-bearing for two agents rather than one: it reimplements a
-private function, and an upgrade to *either* CLI can break both callers at once. It is lossy and
-not invertible in the same way, so the same rule follows — read `cwd` off the transcript, never
-off the directory name.
+**Droid has its own directory encoding**, not Claude Code's — corrected after a later survey
+against 438 local sessions (434/438 matched Claude Code's `slugify`, but all 438 matched droid's
+own encoder, which is what `slug.droid_slug()` now implements). Droid's encoder
+calls `realpathSync`, then replaces only `/` with `-`, keeping `_`, `.`, and spaces that Claude
+Code's `slugify` would also replace with `-` — the 4-session gap is exactly the launch
+directories whose name uses one of those characters. `slug.py` is still load-bearing for two
+agents, each with its own encoder now, so an upgrade to *either* CLI can change its own output
+without affecting the other.
 
-That match is verified for launch directories containing no symlink, which is all 257 of them.
-Droid's own schema comment says its encoder calls `realpathSync` and is therefore *not* a pure
-function of its argument, while `slug.normalize()` deliberately does not resolve symlinks, so a
-session launched under a symlinked cwd sanitizes differently and the two encoders diverge. The
-failure direction is safe: `storage_for()` then names a directory that does not exist, which
-surfaces as a `drifted` badge and a `relocate_storage()` that returns `{}` rather than as
-anything being overwritten. *(Unverified: whether droid also implements the 200-char
-truncate-and-hash branch. No local droid path was long enough to exercise it, so the 257/257
-match does not speak to it.)*
+A launch-directory mismatch is still safe in the same direction: `storage_for()` then names a
+directory that does not exist, which surfaces as a `drifted` badge and a `relocate_storage()`
+that returns `{}` rather than as anything being overwritten. *(Unverified: whether droid also
+implements a 200-char truncate-and-hash branch like Claude Code's. No local droid path was long
+enough to exercise it.)*
 
 **There are three layouts, not one.** Droid's `findSessionFilePath` knows the global root
 (`sessions/<uuid>.jsonl`), a btw fork (`sessions/btw/<uuid>.jsonl`) and a project directory
@@ -355,10 +353,11 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
 ## Implications for ringleader
 
 1. **Never derive a cwd from a directory name.** Claude's encoding is lossy and truncating; Droid
-   reuses that same encoding verbatim; Pi's differs; OpenCode has none. Always read the cwd from
-   inside the session (Claude: `relocatedCwd` from the tail, else `cwd` from the head). The
-   corollary of Droid reusing Claude's encoding is that `slug.py` now has two callers to break:
-   re-verify it against *both* CLIs when either ships.
+   has its own, similarly lossy encoding; Pi's differs; OpenCode has none. Always read the cwd
+   from inside the session (Claude: `relocatedCwd` from the tail, else `cwd` from the head).
+   `slug.py` now holds both Claude's and Droid's encoders, reached through each source's
+   `storage_for()`: each is its own caller to break, so re-verify both independently when
+   either CLI ships.
 2. **A Claude transcript's path is mutable.** Relocation moves the file between project directories
    mid-session, so a path-keyed registry entry can dangle without any user action.
 3. **File deletion is not delete-everywhere.** It is for Claude Code and Pi. It is not for Codex —

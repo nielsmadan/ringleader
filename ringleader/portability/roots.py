@@ -20,6 +20,7 @@ class RootLayout:
     scan_variable: str = ""
     session_leaf: str = ""
     database: bool = False
+    names_home: bool = False
 
     def resolve_source(self, cwd: Path, recorded: str | None) -> tuple[NativeRoots, str]:
         if recorded is None and self.database:
@@ -39,7 +40,11 @@ class RootLayout:
     def resolve(self, cwd: Path, *, source_ref: str | None = None) -> NativeRoots:
         home = Path.home().resolve()
         data = _path("XDG_DATA_HOME", home / ".local/share")
-        store = _path(self.native_variable, home / self.default_store)
+        store = (
+            _path(self.native_variable, home) / self.default_store
+            if self.names_home
+            else _path(self.native_variable, home / self.default_store)
+        )
         if self.database:
             database = _path("OPENCODE_DB", data / "opencode/opencode.db")
             if source_ref is not None:

@@ -1,9 +1,12 @@
 # Converting and continuing sessions
 
-Conversion creates a fresh native session for Claude Code, Codex, OpenCode, or Pi
-and preserves the source. It carries supported visible history, historical
+Conversion creates a fresh native session for Claude Code, Codex, OpenCode, Pi, or
+Droid and preserves the source. It carries supported visible history, historical
 instructions, tool exchanges, attachment bytes, and resumed model context. Native
 format profiles are strict: preview the session before relying on a conversion.
+`rl resume --to <agent>` uses this same mechanism, falling back to a Markdown
+handoff only on refusal or `--markdown` — see
+[resuming sessions](../features/resuming-sessions.md).
 
 ## Preview and convert
 
@@ -99,26 +102,40 @@ recreating another process's session. Unverified private remnants are named.
 
 `rl doctor` reports compatibility for its current cwd/native roots and unfinished
 journals. A passing check in one workspace does not validate every batch workspace,
-especially for OpenCode model configuration. Exact initial writer profiles are:
+especially for OpenCode model configuration.
 
-| Agent | Profile prerequisite | Independent native evidence |
+A target version converts when it is either pinned from upstream source research or
+self-verified on this machine. Self-verification runs an offline harness —
+`rl doctor --verify-conversion [AGENT]` — that captures a real outbound model
+request (or, for OpenCode, checks CLI acceptance and schema identity) against
+whatever version is actually installed, and records the pass in
+`verified-targets.json`. A version that is neither known nor yet verified refuses
+conversion with that command rather than converting against an unproven writer.
+`rl resume --to` runs this itself, interactively only, the first time it needs an
+unverified target.
+
+| Agent | Prerequisite | Native evidence tier |
 |---|---|---|
-| Claude Code | 2.1.278 | SDK picker/history and actual bare-mode model payload |
-| Codex | 0.155.1, initialized exact state_5 schema/backfill | Cold app-server list/read/resume and actual model payload |
-| Pi | 0.85.1, v3 | Native SessionManager/context and provider payload interception |
-| OpenCode | Exact 1.18.30 v1 schema, initialized DB, supported explicit provider/model | Pinned source/schema; native executable check blocked |
+| Claude Code | pinned or self-verified version | model-request-capture |
+| Codex | pinned or self-verified version, initialized state_5 schema/backfill | model-request-capture |
+| Pi | pinned or self-verified version, v3 session format | model-request-capture |
+| Droid | self-verified version (none pinned) | model-request-capture |
+| OpenCode | pinned or self-verified version, exact structural schema identity, initialized DB, supported explicit provider/model | cli-acceptance only |
 
 The shared-content matrix is not a promise that every ordinary session converts.
 For example, Codex can retain distinct display/model streams and ambiguous
 `base_instructions` as historical context; Claude/Pi cannot write those visibility
-splits. OpenCode also restricts tool output shape, compaction, and configuration.
-Claude rejects images in failed tool results because its actual resume drops them;
-successful tool-result images and textual failures are supported. Pi's installed
-runtime ignores the documented embedded `retainedTail`, so its writer refuses it.
-Unknown conversational shapes, incomplete/changing sources, unsupported attachment
-types, and newer writer versions fail before publication.
+splits, so a writer that cannot keep the native shape writes the checkpoint's model
+view as an ordinary stream instead. OpenCode also restricts tool output shape,
+compaction, and configuration. Claude rejects images in failed tool results because
+its actual resume drops them; successful tool-result images and textual failures
+are supported. Pi's installed runtime ignores the documented embedded
+`retainedTail`, so its writer refuses it. Unknown conversational shapes,
+incomplete/changing sources, and unsupported attachment types fail before
+publication.
 
 See [native profiles and runnable offline checks](../reference/session-portability-native.md)
-for exact content/configuration limits and evidence scope, and the
-[complete flags](cli.md#session-portability). Native interactive TUI rendering and
-Claude normal-mode project instruction loading are not established by these checks.
+for exact content/configuration limits, evidence scope, and the current pairwise
+conversion rates, and the [complete flags](cli.md#session-portability). Native
+interactive TUI rendering and Claude normal-mode project instruction loading are
+not established by these checks.

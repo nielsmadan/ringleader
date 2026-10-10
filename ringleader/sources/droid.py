@@ -11,7 +11,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..slug import normalize, slugify
+from ..slug import droid_slug
 from .base import NormalizedSession, RawRef, stat_fingerprint
 
 _SIDECAR_SUFFIXES = (".settings.json", ".settings.json.bak")
@@ -146,8 +146,7 @@ class DroidSource:
         return ("droid", prompt)
 
     def storage_for(self, cwd: str) -> Path:
-        # droid encodes the launch directory exactly as Claude Code does
-        return self.sessions_dir / slugify(normalize(cwd))
+        return self.sessions_dir / droid_slug(cwd)
 
     def companion_paths(self, file_path: str) -> tuple[Path, ...]:
         src = Path(file_path)

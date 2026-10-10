@@ -16,6 +16,7 @@ class ProbeRunner:
             request.argv,
             cwd=request.cwd,
             env=environment,
+            stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=15,
             check=False,

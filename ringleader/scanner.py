@@ -19,6 +19,7 @@ from .sources.base import (
     Source,
     SourceUnavailableError,
     WorkspaceRebindingSource,
+    WorkspaceRelocatingSource,
 )
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
@@ -89,7 +90,20 @@ def active_sources(
 
 
 def source_by_name(name: str) -> Any:
-    return next((source for source in _new_sources() if source.name == name), None)
+    source_type = next((st for st in SOURCE_TYPES if st.name == name), None)
+    return source_type() if source_type else None
+
+
+def storage_slug(name: str, cwd: str) -> str:
+    """The directory `name`'s agent files a session launched in `cwd` under."""
+    source = source_by_name(name)
+    if not supports(source, "relocates_workspace", WorkspaceRelocatingSource):
+        raise ValueError(f"{name} does not file sessions under a workspace directory")
+    return cast(WorkspaceRelocatingSource, source).storage_for(cwd).name
+
+
+def stored_under(file: str | Path, cwd: str, name: str) -> bool:
+    return Path(file).parent.name == storage_slug(name, cwd)
 
 
 def source_for_thread(thread: dict[str, Any]) -> Source | None:

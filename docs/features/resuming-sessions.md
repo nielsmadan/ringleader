@@ -14,7 +14,8 @@ rl resume                  # picker, sessions recorded in this directory
 rl resume --last           # the most recent session here, no picker
 rl resume 3f2a91c7         # unambiguous id prefix — no picker, straight in
 rl resume auth             # picker, pre-filtered to "auth"
-rl resume 3f2a91c7 --to codex   # hand it to a different agent
+rl resume 3f2a91c7 --to codex   # hand it to a different agent: native conversion, consented fallback
+rl resume 3f2a91c7 --to codex --markdown   # skip native conversion, go straight to the Markdown handoff
 rl resume 3f2a91c7 --dry-run    # print the directory and argv, launch nothing
 ```
 
@@ -71,12 +72,24 @@ does not ask, because it starts a new session and leaves the source untouched.
 | `opencode` | `opencode --session <id>` |
 | `pi` | `pi --session <id>` |
 
-**A different agent** — a *seeded handoff*, not a conversion. The session is rendered to Markdown,
-written under `~/.local/share/ringleader/handoffs/`, and the target agent is launched fresh with a
-prompt pointing at that file. The target has read the old session; it is not continuing it. The
-loss is real and deliberate — see [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md).
+**A different agent** — `--to <agent>` tries a **native conversion** first: a fresh session in
+the target agent, built from the source's visible history and active model context, that
+genuinely continues it (the same mechanism as `rl session convert`/`fork`). A previously
+converted target that's still active is reopened, as long as the source has not moved on
+since; one that was archived or deleted is forked again, and later resumes reopen that fork. If the target agent's installed version has never been verified on this machine, the
+first use self-verifies it offline (`rl doctor --verify-conversion`), which takes about a minute
+and only happens interactively.
 
-The source session is never modified, archived or marked by a handoff.
+Native conversion can refuse — an unsupported native shape, a missing or incompatible native
+store. On refusal, `rl resume` asks before falling back to the original *seeded handoff*: the
+session rendered to Markdown, written under `~/.local/share/ringleader/handoffs/`, and the
+target agent launched fresh with a prompt pointing at that file. The target has read the old
+session; it is not continuing it. `--markdown` skips the native attempt and goes straight to
+this fallback. See [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md) for why
+the fallback exists, and [ADR 0013](../decisions/0013-native-conversion-behind-resume.md) for why
+native conversion now comes first.
+
+The source session is never modified, archived, or marked, either way.
 
 ## Starting directory
 

@@ -63,7 +63,8 @@ rl install             # skills, session-end hook, statusline capture
   → [Archives and retention](docs/user/archives-and-retention.md)
 - **Resume** — `rl resume` is one picker over every agent's sessions, filtered as you type.
   Pick one and it re-enters it with that agent's own resume command, in the right directory —
-  or hands it to a *different* agent, seeded with a transcript of the old session.
+  or hands it to a *different* agent via a native conversion (falling back to a Markdown
+  transcript of the old session only if that's refused, or if you pass `--markdown`).
   → [Resuming sessions](docs/features/resuming-sessions.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
 - **Usage** — where your tokens went, across five harnesses, plus 5h/weekly subscription
@@ -136,14 +137,19 @@ recorded workspace. A repeat reuses that result; `fork` always creates a new one
 `handoff` forks and resumes. `--compact` deterministically replaces complete tool
 exchanges with explicit omission markers while keeping instructions and prose.
 `--open` selects visible open work; `--running` selects verified live sessions.
-Selection reads the registry without implicitly refreshing it.
+Selection reads the registry without implicitly refreshing it. `rl resume --to`
+uses this same conversion, so the same support and limits below apply there too.
 
-Support is pinned to Claude Code 2.1.278, Codex 0.155.1, Pi 0.85.1, and OpenCode's
-exact 1.18.30 v1 schema. Codex/OpenCode require initialized compatible databases;
+Targets are Claude Code, Codex, OpenCode, Pi, and Droid. Each converts when its
+installed version is either pinned from upstream research or self-verified on
+this machine — `rl doctor --verify-conversion [AGENT]`, a one-time offline check
+that `rl resume --to` also runs itself, interactively, the first time it needs an
+unverified target. Codex/OpenCode require initialized compatible databases;
 OpenCode also requires supported explicit model configuration, and its native
-runtime smoke remains unverified. Ordinary sessions with unsupported context,
-compaction, tools, or attachments fail explicitly. Preview first; `rl doctor`
-checks compatibility for its current workspace and native roots.
+runtime request construction remains unverified (CLI-acceptance tier only).
+Ordinary sessions with unsupported context, compaction, tools, or attachments
+fail explicitly. Preview first; `rl doctor` checks compatibility for its current
+workspace and native roots.
 
 After an interruption, use `rl data transaction list` and `resume <transaction-id>`.
 Rollback removes only private staging; published targets are recovered forward.

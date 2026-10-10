@@ -27,6 +27,7 @@ class SnapshotFile:
 class TransformOptions:
     compact: bool = False
     version: int = 1
+    portable_version: int = 0
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,11 @@ class SourceSnapshot:
             "files": sorted((item.name, item.digest) for item in self.files),
             "profile": self.format_profile,
             "metadata": sorted(self.metadata),
-            "transform": {"compact": options.compact, "version": options.version},
+            "transform": {
+                "compact": options.compact,
+                "version": options.version,
+                **({"portable": options.portable_version} if options.portable_version else {}),
+            },
         }
         return hashlib.sha256(
             json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()

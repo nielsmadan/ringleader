@@ -18,13 +18,16 @@ from .capabilities import (
     NativeMetadata,
     NativeRoots,
     NativeStage,
+    NativeWriter,
     Runner,
+    RunRequest,
+    RunResult,
     SourceRequest,
     TargetRequest,
 )
-from .compact import CompactReport, compact
-from .compare import compare
-from .model import Identity, PreservationError
+from .compact import PORTABLE_TRANSFORM_VERSION, CompactReport, compact, portable
+from .compare import Normalization, compare
+from .model import Conversation, Identity, PreservationError
 from .operations import (
     OPERATION_VERSION,
     Artifacts,
@@ -62,6 +65,43 @@ class ConversionResult:
     dry_run: bool = False
     report: CompactReport | None = None
     diagnostics: tuple[str, ...] = ()
+    normalizations: tuple[str, ...] = ()
+
+
+Probes = tuple[tuple[tuple[str, ...], RunResult], ...]
+
+
+@dataclass(frozen=True)
+class PreparedConversion:
+    source: Identity
+    target: Identity
+    artifacts: Artifacts
+    # prepare() read the stage back and probed the target; publish reuses both
+    checked: bool = False
+    probes: Probes = ()
+
+
+class _Recording:
+    def __init__(self, runner: Runner) -> None:
+        self.runner = runner
+        self.results: dict[tuple[str, ...], RunResult] = {}
+
+    def run(self, request: RunRequest) -> RunResult:
+        result = self.runner.run(request)
+        self.results[request.argv] = result
+        return result
+
+
+class _Replay:
+    # keyed by argv: each probe runs in its own scratch roots, so env and cwd always differ
+    def __init__(self, runner: Runner, probes: Probes) -> None:
+        self.runner = runner
+        self.probes = dict(probes)
+
+    def run(self, request: RunRequest) -> RunResult:
+        if request.argv in self.probes:
+            return self.probes[request.argv]
+        return self.runner.run(request)
 
 
 @dataclass(frozen=True)
@@ -83,6 +123,38 @@ def _record(reg: dict[str, Any], target: Identity) -> tuple[str, dict[str, Any] 
     return "missing", None
 
 
+def _applied(writer: NativeWriter, stage: NativeStage) -> tuple[Normalization, ...]:
+    if stage.normalizations is None:
+        # a journal written before normalizations were recorded predates today's
+        # declared set; a writer that narrowed its set since then exposes the
+        # wider, pre-recording one so a stage flattened at write time still compares
+        legacy = getattr(writer, "legacy_normalizations", None)
+        return legacy(stage.profile) if legacy is not None else writer.normalizations(stage.profile)
+    return stage.normalizations
+
+
+def _check_stage(expected: Conversation, writer: NativeWriter, stage: NativeStage) -> None:
+    actual = writer.read_stage(stage)
+    applied = _applied(writer, stage)
+    if (
+        stage.normalizations is not None
+        and expected.checkpoints
+        and not actual.checkpoints
+        and all(item.kind != "flattened-checkpoint" for item in applied)
+    ):
+        raise PreservationError("Native stage dropped checkpoints without recording a flattening")
+    compare(expected, actual, applied)
+
+
+def _reuse_identity(artifacts: Artifacts) -> tuple[object, ...]:
+    return (
+        artifacts.snapshot.identity(artifacts.options),
+        (artifacts.stage.roots.store, artifacts.stage.roots.cwd),
+        artifacts.stage.profile,
+        artifacts.conversation.title,
+    )
+
+
 def _lineage(record: dict[str, Any]) -> dict[str, Any] | None:
     while record:
         if record.get("lineage"):
@@ -90,6 +162,9 @@ def _lineage(record: dict[str, Any]) -> dict[str, Any] | None:
             return lineage
         record = record.get("thread") or {}
     return None
+
+
+RETIRED = frozenset({"archived", "deleted", "missing"})
 
 
 class ConversionService:
@@ -137,18 +212,25 @@ class ConversionService:
         return self._save(operation.with_step(step), f"{step.name}:{step.phase}")
 
     def convert(self, request: ConversionRequest, *, dry_run: bool = False) -> ConversionResult:
+        prepared = self.prepare(request)
+        return self.preview(prepared) if dry_run else self.publish(prepared)
+
+    def prepare(self, request: ConversionRequest) -> PreparedConversion:
         source = replace(request.source, roots=StoredRoots.capture(request.source.roots).native())
         snapshot = self.adapters.reader(source.identity.agent).snapshot(source)
         if snapshot.conversation.source != source.identity:
             raise PreservationError("Source snapshot identity disagrees with selection")
-        options = TransformOptions(compact=request.compact)
+        options = TransformOptions(
+            compact=request.compact, portable_version=PORTABLE_TRANSFORM_VERSION
+        )
         snapshot.identity(options)
         roots = StoredRoots.capture(replace(request.target_roots, cwd=source.roots.cwd)).native()
         adapter = self.adapters.get(request.target_agent)
         writer = self.adapters.writer(adapter.agent)
-        compatibility = writer.inspect_target(roots, self.runner)
+        recording = _Recording(self.runner)
+        compatibility = writer.inspect_target(roots, recording)
         profile = compatibility.require()
-        original = snapshot.conversation
+        original = portable(snapshot.conversation, adapter.agent)
         if request.title is not None:
             original = replace(original, title=request.title)
         transformed = compact(original) if options.compact else None
@@ -166,10 +248,11 @@ class ConversionService:
                 profile,
                 conversation.title or "Imported session",
                 compatibility.target_configuration,
+                compatibility.runtime_version,
             ),
         )
         expected = replace(conversation, title=conversation.title or "Imported session")
-        compare(expected, writer.read_stage(stage), writer.normalizations(profile))
+        _check_stage(expected, writer, stage)
         self._metadata(stage, expected.title)
         if stage.identity != identity or stage.roots != roots or stage.profile != profile:
             raise PreservationError("Native stage disagrees with inspected target")
@@ -187,41 +270,149 @@ class ConversionService:
             transformed.report if transformed else None,
             str(self.registry_path.resolve()),
         )
-        if dry_run:
+        return PreparedConversion(
+            source.identity,
+            identity,
+            artifacts,
+            checked=True,
+            probes=tuple(recording.results.items()),
+        )
+
+    def as_fork(self, prepared: PreparedConversion) -> PreparedConversion:
+        return replace(prepared, artifacts=replace(prepared.artifacts, kind="fork"))
+
+    def preview(self, prepared: PreparedConversion) -> ConversionResult:
+        artifacts = prepared.artifacts
+        diagnostics = (*artifacts.compatibility.diagnostics, *artifacts.compatibility.warnings)
+        prior = None if artifacts.kind == "fork" else self._prior(artifacts.key())
+        if prior is None:
             return ConversionResult(
                 None,
-                source.identity,
-                identity,
+                prepared.source,
+                prepared.target,
                 "preview",
-                stage.source_ref,
+                artifacts.stage.source_ref,
                 dry_run=True,
                 report=artifacts.report,
-                diagnostics=compatibility.diagnostics,
+                diagnostics=diagnostics,
             )
+        operation, prior_artifacts = prior
+        self._check_registry(prior_artifacts)
+        return ConversionResult(
+            operation.id,
+            operation.source,
+            operation.target,
+            self._prior_lifecycle(operation, prior_artifacts),
+            prior_artifacts.stage.source_ref,
+            reused=True,
+            dry_run=True,
+            report=prior_artifacts.report,
+            diagnostics=diagnostics,
+        )
+
+    def publish(self, prepared: PreparedConversion) -> ConversionResult:
+        artifacts = prepared.artifacts
         reuse_key = artifacts.key()
         with self._lock():
-            if not request.fork:
-                for operation_id in self.store.ids():
-                    prior = self.store.load(operation_id)
-                    if prior.key == reuse_key and prior.state != "rolled_back":
-                        prior_artifacts = self.store.artifacts(prior)
-                        if prior_artifacts.kind == "convert":
-                            return self._run(prior, prior_artifacts, reused=True)
+            if artifacts.kind == "convert":
+                prior = self._prior(reuse_key)
+                if prior is not None:
+                    return self._run(*prior, reused=True)
+            encoded = encode(artifacts)
             operation = Operation(
                 OPERATION_VERSION,
                 uuid4().hex,
                 reuse_key,
-                digest(encode(artifacts)),
-                source.identity,
-                identity,
+                digest(encoded),
+                prepared.source,
+                prepared.target,
                 datetime.now(UTC).isoformat(),
                 "prepared",
                 artifacts.registry_path,
             )
             self._point("before:create", operation)
-            self.store.create(operation, artifacts)
+            self.store.create(operation, encoded)
             self._point("after:create", operation)
-            return self._run(operation, artifacts)
+            return self._run(operation, artifacts, checked=prepared.checked, probes=prepared.probes)
+
+    def _prior(self, key: str) -> tuple[Operation, Artifacts] | None:
+        for operation_id in self.store.matching(key=key):
+            prior = self.store.load(operation_id)
+            if prior.key == key and prior.state != "rolled_back":
+                try:
+                    prior_artifacts = self.store.artifacts(prior)
+                except FileNotFoundError:
+                    continue  # a concurrent publish wrote the journal but not artifacts.json yet
+                if prior_artifacts.kind == "convert":
+                    return prior, prior_artifacts
+        return None
+
+    def _prior_lifecycle(self, operation: Operation, artifacts: Artifacts) -> str:
+        if operation.terminal_lifecycle:
+            return operation.terminal_lifecycle
+        lifecycle, _ = _record(registry.load_registry(self.registry_path), operation.target)
+        if lifecycle in ("archived", "deleted"):
+            return lifecycle
+        if operation.state != "complete":
+            return "pending"
+        return self._result(operation, artifacts, reused=True).lifecycle
+
+    def reusable(self, request: ConversionRequest) -> ConversionResult | None:
+        source = replace(request.source, roots=StoredRoots.capture(request.source.roots).native())
+        snapshot = self.adapters.reader(source.identity.agent).snapshot(source)
+        options = TransformOptions(
+            compact=request.compact, portable_version=PORTABLE_TRANSFORM_VERSION
+        )
+        agent = self.adapters.get(request.target_agent).agent
+        roots = StoredRoots.capture(replace(request.target_roots, cwd=source.roots.cwd))
+        wanted = (
+            snapshot.identity(options),
+            (roots.store, roots.cwd),
+            self.adapters.writer(agent).profile,
+            (request.title if request.title is not None else snapshot.conversation.title)
+            or "Imported session",
+        )
+        candidates = sorted(
+            (
+                self.store.load(operation_id)
+                for operation_id in self.store.matching(source=source.identity, target_agent=agent)
+            ),
+            key=lambda item: item.created_at,
+            reverse=True,
+        )
+        forks: list[ConversionResult] = []
+        for operation in candidates:
+            if (
+                operation.source != source.identity
+                or operation.target.agent != agent
+                or operation.state != "complete"
+                or operation.registry_path != str(self.registry_path.resolve())
+            ):
+                continue
+            try:
+                artifacts = self.store.artifacts(operation)
+            except FileNotFoundError:
+                continue
+            if _reuse_identity(artifacts) != wanted:
+                continue
+            result = ConversionResult(
+                operation.id,
+                operation.source,
+                operation.target,
+                self._prior_lifecycle(operation, artifacts),
+                artifacts.stage.source_ref,
+                reused=True,
+                report=artifacts.report,
+                normalizations=tuple(item.kind for item in artifacts.stage.normalizations or ()),
+            )
+            if artifacts.kind == "fork":
+                forks.append(result)
+                continue
+            if result.lifecycle not in RETIRED:
+                return result
+            # a fork made after this convert was retired replaces it for later resumes
+            return next((item for item in forks if item.lifecycle not in RETIRED), result)
+        return None
 
     def batch(
         self, requests: tuple[ConversionRequest, ...], *, dry_run: bool = False
@@ -273,10 +464,10 @@ class ConversionService:
                 "Native picker metadata does not preserve target identity, cwd and title"
             )
 
-    def _configuration(self, artifacts: Artifacts) -> None:
+    def _configuration(self, artifacts: Artifacts, probes: Probes = ()) -> None:
         stage = artifacts.stage.native()
         current = self.adapters.writer(stage.identity.agent).inspect_target(
-            stage.roots, self.runner
+            stage.roots, _Replay(self.runner, probes)
         )
         if (current.require(), current.schema_identity, current.target_configuration) != (
             stage.profile,
@@ -288,18 +479,30 @@ class ConversionService:
             )
 
     def _run(
-        self, operation: Operation, artifacts: Artifacts, *, reused: bool = False
+        self,
+        operation: Operation,
+        artifacts: Artifacts,
+        *,
+        reused: bool = False,
+        checked: bool = False,
+        probes: Probes = (),
     ) -> ConversionResult:
         self._check_registry(artifacts)
         try:
-            return self._resume(operation, artifacts, reused=reused)
+            return self._resume(operation, artifacts, reused=reused, checked=checked, probes=probes)
         except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
             current = self.store.load(operation.id)
             self.store.save(replace(current, last_error=str(exc)))
             raise
 
     def _resume(
-        self, operation: Operation, artifacts: Artifacts, *, reused: bool = False
+        self,
+        operation: Operation,
+        artifacts: Artifacts,
+        *,
+        reused: bool = False,
+        checked: bool = False,
+        probes: Probes = (),
     ) -> ConversionResult:
         lifecycle, record = _record(registry.load_registry(self.registry_path), operation.target)
         if record is not None and not operation.steps:
@@ -317,12 +520,11 @@ class ConversionService:
         if registration and registration.registration_status(stage) == "archived":
             operation = self._retire(operation, artifacts, "archived", record)
             return self._result(operation, artifacts, reused=reused)
-        self._configuration(artifacts)
-        writer = self.adapters.writer(stage.identity.agent)
-        compare(
-            artifacts.conversation, writer.read_stage(stage), writer.normalizations(stage.profile)
-        )
-        self._metadata(stage, artifacts.conversation.title)
+        # the target's configuration and schema can still drift after prepare()
+        self._configuration(artifacts, probes)
+        if not checked:
+            _check_stage(artifacts.conversation, self.adapters.writer(stage.identity.agent), stage)
+            self._metadata(stage, artifacts.conversation.title)
         operation = self._index(operation, stage, artifacts.index_intent)
         for index in range(len(stage.files)):
             operation = self._file(operation, stage, index)
@@ -668,26 +870,30 @@ class ConversionService:
     ) -> ConversionResult:
         lifecycle, _ = _record(registry.load_registry(self.registry_path), operation.target)
         stage = artifacts.stage.native()
-        diagnostics = artifacts.compatibility.diagnostics
+        diagnostics = (*artifacts.compatibility.diagnostics, *artifacts.compatibility.warnings)
         if operation.abandoned_private:
             diagnostics += (
                 "Unverified private artifacts retained: " + ", ".join(operation.abandoned_private),
             )
         if lifecycle not in ("archived", "deleted"):
             registration = self.adapters.get(operation.target.agent).registration
+            registered = False
             if registration and (operation.step("database") or operation.terminal_lifecycle):
                 status = registration.registration_status(stage)
+                registered = status == "owned"
                 if status != "owned":
                     lifecycle = {"absent": "missing", "archived": "archived"}.get(status, "changed")
+            identified = registered and operation.state == "complete"
             for index, item in enumerate(stage.files) if lifecycle != "archived" else ():
                 path = self._native_path(stage, item.relative_path)
                 step = operation.step(f"file:{index}")
-                if step and not self._owned_file(path, step, item.data):
+                if identified:
+                    if not path.is_file():
+                        lifecycle = "missing"
+                elif step and not self._owned_file(path, step, item.data):
                     lifecycle = "changed" if path.exists() else "missing"
-            if lifecycle in ("missing", "changed"):
-                diagnostics += (
-                    "Existing conversion target is missing or changed; it was not recreated",
-                )
+            if lifecycle == "missing":
+                diagnostics += ("Existing conversion target is missing; it was not recreated",)
         return ConversionResult(
             operation.id,
             operation.source,
@@ -697,6 +903,7 @@ class ConversionService:
             reused=reused,
             report=artifacts.report,
             diagnostics=diagnostics,
+            normalizations=tuple(item.kind for item in artifacts.stage.normalizations or ()),
         )
 
     def rollback(self, operation_id: str) -> Operation:

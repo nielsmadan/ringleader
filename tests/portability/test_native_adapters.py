@@ -126,15 +126,38 @@ def test_native_annotation_cannot_restore_modified_historical_content(adapter, p
         adapter.read_stage(changed)
 
 
-@pytest.mark.parametrize(("adapter", "profile"), ADAPTERS)
-def test_unknown_content_and_freeform_tools_fail_before_any_files(adapter, profile, tmp_path):
-    original = shared()
+def _freeform(original):
     messages = list(original.history)
-    messages[1] = replace(messages[1], content=(ToolCall("call", "read", "read a", "freeform"),))
-    original = replace(original, history=tuple(messages), context=tuple(messages))
-    with pytest.raises(PreservationError, match="freeform"):
-        stage_for(adapter, profile, tmp_path, original)
-    assert list(tmp_path.iterdir()) == []
+    calls = [
+        index
+        for index, item in enumerate(messages)
+        if any(isinstance(part, ToolCall) for part in item.content)
+    ]
+    call = next(part for part in messages[calls[0]].content if isinstance(part, ToolCall))
+    messages[calls[0]] = replace(
+        messages[calls[0]],
+        content=tuple(
+            replace(part, arguments="read a", argument_format="freeform") if part == call else part
+            for part in messages[calls[0]].content
+        ),
+    )
+    return replace(original, history=tuple(messages), context=tuple(messages)), call
+
+
+@pytest.mark.parametrize(("adapter", "profile"), ADAPTERS)
+def test_freeform_tools_are_written_as_object_input_and_restored(adapter, profile, tmp_path):
+    original, call = _freeform(shared())
+    stage = stage_for(adapter, profile, tmp_path, original)
+    compare(original, adapter.read_stage(stage), adapter.normalizations(profile))
+    blocks = [
+        block
+        for row in native.records(stage.files[0].data)
+        if "message" in row
+        for block in row["message"].get("content", [])
+        if isinstance(block, dict) and block.get("id") == call.call_id
+    ]
+    key = "input" if profile.agent == "claude-code" else "arguments"
+    assert [block[key] for block in blocks] == [{"input": "read a"}]
 
 
 @pytest.mark.parametrize(("adapter", "profile"), ADAPTERS)
@@ -282,8 +305,15 @@ def test_pi_both_checkpoint_forms_preserve_active_context(tmp_path):
     newer = pi_compacted(tmp_path, True)
     assert newer.checkpoints[0].retained_context[0].content == (Text("embedded replacement"),)
     assert newer.context[1].content == (Text("embedded replacement"),)
-    with pytest.raises(PreservationError, match="does not honor embedded retainedTail"):
-        stage_for(PiAdapter(), PI_PROFILE, tmp_path, newer)
+    flat = stage_for(PiAdapter(), PI_PROFILE, tmp_path, replace(newer, title="Compacted"))
+    readback = PiAdapter().read_stage(flat)
+    compare(replace(newer, title="Compacted"), readback, PiAdapter().normalizations(PI_PROFILE))
+    assert readback.checkpoints == ()
+    assert [item.content[0].text for item in readback.context] == [
+        SUMMARY_PREFIX + "summary" + SUMMARY_SUFFIX,
+        "embedded replacement",
+        "after",
+    ]
 
 
 def test_claude_compaction_preserves_logical_history_and_active_chain(tmp_path):
@@ -414,14 +444,28 @@ def test_unknown_blocks_malformed_json_and_incomplete_tools_are_fatal(
         reader(native.jsonl(rows), identity)
     with pytest.raises(PreservationError, match="Invalid native JSONL"):
         reader(native.jsonl(rows) + b"{broken", identity)
-    block = (
-        {"type": "tool_use", "id": "call", "name": "read", "input": {}}
-        if agent == "claude-code"
-        else {"type": "toolCall", "id": "call", "name": "read", "arguments": {}}
-    )
-    rows = builder(tmp_path, [{"role": "assistant", "content": [block]}])
+    if agent != "claude-code":
+        return
+    block = {"type": "tool_use", "id": "call", "name": "read", "input": {}}
+    messages = [
+        {"role": "assistant", "content": [block, {**block, "id": "done"}]},
+        {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "done"}]},
+        {"role": "user", "content": "next"},
+        {"role": "assistant", "content": "ok"},
+    ]
+    rows = builder(tmp_path, messages)
     with pytest.raises(PreservationError, match="Incomplete tool exchanges"):
         reader(native.jsonl(rows), identity)
+
+
+def test_pi_resolves_an_incomplete_tool_exchange_by_synthesizing_its_result(tmp_path):
+    identity = Identity("pi", SESSION_ID)
+    block = {"type": "toolCall", "id": "call", "name": "read", "arguments": {}}
+    rows = pi_records(tmp_path, [{"role": "assistant", "content": [block]}])
+    conversation = read_pi(native.jsonl(rows), identity)
+    assert conversation.history[-1].content == (
+        ToolResult("call", (Text("No result provided"),), True),
+    )
 
 
 def test_registry_factory_has_independent_capabilities():
@@ -463,7 +507,7 @@ def test_historical_authority_remains_labeled_user_history(adapter, profile, tmp
     )
 
 
-def test_hidden_pi_context_cannot_be_promoted_to_visible_history(tmp_path):
+def test_hidden_pi_context_is_staged_in_the_target_model_view(tmp_path):
     rows = pi_records(tmp_path, [{"role": "user", "content": "visible"}])
     rows.append(
         {
@@ -482,9 +526,31 @@ def test_hidden_pi_context_cannot_be_promoted_to_visible_history(tmp_path):
         (Text("visible"),),
         (Text("hidden context"),),
     )
+    assert conversation.context[1].hidden is True
     for adapter, profile in ADAPTERS:
-        with pytest.raises(PreservationError, match="distinct history/context"):
-            stage_for(adapter, profile, tmp_path, conversation)
+        native_stage = stage_for(adapter, profile, tmp_path, conversation)
+        staged = adapter.read_stage(native_stage)
+        if profile is CLAUDE_PROFILE:
+            # Claude has a native hidden form (isMeta): the hidden context stays out of
+            # history and comes back marked hidden in context, never a visible row.
+            assert tuple(message.content for message in staged.history) == ((Text("visible"),),)
+            assert tuple(message.content for message in staged.context) == (
+                (Text("visible"),),
+                (Text("hidden context"),),
+            )
+            assert staged.context[1].hidden is True
+            hidden_row = next(
+                row
+                for row in native.records(native_stage.files[0].data)
+                if row.get("message", {}).get("content", [{}])[0].get("text") == "hidden context"
+            )
+            assert hidden_row["isMeta"] is True
+        else:
+            assert tuple(message.content for message in staged.history) == (
+                (Text("visible"),),
+                (Text("hidden context"),),
+            )
+        compare(conversation, staged, adapter.normalizations(profile))
 
 
 def test_claude_meta_context_remains_hidden_and_selected_after_visible_parent(tmp_path):
@@ -543,7 +609,7 @@ def test_version_preflight_cannot_initialize_the_destination_store(adapter, prof
     assert all(not home.exists() for home in homes)
 
 
-@pytest.mark.parametrize("reason", ["aborted", "error", "pending", "future", "", None])
+@pytest.mark.parametrize("reason", ["pending", "future", "", None])
 @pytest.mark.parametrize("error_message", [None, ""])
 def test_pi_rejects_incomplete_and_unknown_assistant_states(tmp_path, reason, error_message):
     message = {
@@ -556,6 +622,244 @@ def test_pi_rejects_incomplete_and_unknown_assistant_states(tmp_path, reason, er
     rows = pi_records(tmp_path, [{"role": "user", "content": "question"}, message])
     with pytest.raises(PreservationError, match="Pi assistant stopReason"):
         read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+
+
+@pytest.mark.parametrize("reason", ["aborted", "error"])
+def test_pi_drops_aborted_or_error_assistants_from_both_streams(tmp_path, reason):
+    rows = pi_records(
+        tmp_path,
+        [
+            {"role": "user", "content": "question"},
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "partial answer"}],
+                "stopReason": reason,
+            },
+        ],
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert [message.content for message in conversation.history] == [(Text("question"),)]
+    assert [message.content for message in conversation.context] == [(Text("question"),)]
+
+
+@pytest.mark.parametrize("reason", ["aborted", "error"])
+def test_pi_synthesizes_no_result_for_calls_pending_before_a_dropped_turn(tmp_path, reason):
+    rows = pi_records(
+        tmp_path,
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "a", "name": "read", "arguments": {}}],
+                "stopReason": "toolUse",
+            },
+            {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "gone"}],
+                "stopReason": reason,
+            },
+        ],
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert len(conversation.history) == 2
+    synthetic = conversation.history[-1]
+    assert synthetic.content == (ToolResult("a", (Text("No result provided"),), True),)
+    assert synthetic.provenance.origin == "harness"
+    assert conversation.context[-1] == synthetic
+
+
+@pytest.mark.parametrize("reason", ["aborted", "error"])
+def test_pi_refuses_dropped_turn_whose_calls_were_answered_later(tmp_path, reason):
+    rows = pi_records(
+        tmp_path,
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "a", "name": "read", "arguments": {}}],
+                "stopReason": reason,
+            },
+            {
+                "role": "toolResult",
+                "toolCallId": "a",
+                "toolName": "read",
+                "content": [{"type": "text", "text": "late result"}],
+                "isError": False,
+            },
+        ],
+    )
+    with pytest.raises(PreservationError, match="answered later"):
+        read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+
+
+@pytest.mark.parametrize(
+    ("kind", "row_extra"),
+    [
+        ("custom_message", {"customType": "note", "content": "keep going", "display": True}),
+        ("branch_summary", {"fromId": "other", "summary": "other branch work"}),
+        ("compaction", {"summary": "summary", "tokensBefore": 0, "firstKeptEntryId": "boundary"}),
+    ],
+)
+def test_pi_closes_pending_tool_call_before_custom_branch_and_compaction_entries(
+    tmp_path, kind, row_extra
+):
+    rows = pi_records(
+        tmp_path,
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "a", "name": "read", "arguments": {}}],
+                "stopReason": "toolUse",
+            }
+        ],
+    )
+    rows.append(
+        {
+            "type": kind,
+            "id": "boundary",
+            "parentId": "00000000",
+            "timestamp": TIMESTAMP,
+            **row_extra,
+        }
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    synthetic = conversation.history[1]
+    assert synthetic.content == (ToolResult("a", (Text("No result provided"),), True),)
+    assert synthetic.provenance.origin == "harness"
+
+
+def test_pi_drops_system_messages_as_regenerated_harness_bootstrap(tmp_path):
+    rows = pi_records(
+        tmp_path,
+        [
+            {"role": "system", "content": "current environment and tool catalog"},
+            {"role": "user", "content": "question"},
+        ],
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert [message.content for message in conversation.history] == [(Text("question"),)]
+    assert [message.content for message in conversation.context] == [(Text("question"),)]
+
+
+def test_pi_ignores_usage_entries(tmp_path):
+    rows = pi_records(tmp_path, [{"role": "user", "content": "question"}])
+    rows.append(
+        {
+            "type": "usage",
+            "id": "usage-1",
+            "parentId": "00000000",
+            "timestamp": TIMESTAMP,
+            "kind": "turn",
+            "provider": "anthropic",
+            "model": "claude-sonnet-4-5",
+            "usage": {"input": 10, "output": 5},
+        }
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert [message.content for message in conversation.history] == [(Text("question"),)]
+
+
+def test_pi_context_edit_replaces_target_content_leaving_history_intact(tmp_path):
+    rows = pi_records(tmp_path, [{"role": "user", "content": "original"}])
+    rows.append(
+        {
+            "type": "context_edit",
+            "id": "edit",
+            "parentId": "00000000",
+            "timestamp": TIMESTAMP,
+            "targetId": "00000000",
+            "replacement": {"content": "edited"},
+        }
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert conversation.history[0].content == (Text("original"),)
+    assert conversation.context[0].content == (Text("edited"),)
+
+
+def test_pi_context_edit_null_removes_target_from_context_only(tmp_path):
+    rows = pi_records(
+        tmp_path, [{"role": "user", "content": "keep"}, {"role": "user", "content": "drop"}]
+    )
+    rows.append(
+        {
+            "type": "context_edit",
+            "id": "edit",
+            "parentId": "00000001",
+            "timestamp": TIMESTAMP,
+            "targetId": "00000001",
+            "replacement": None,
+        }
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert [message.content[0].text for message in conversation.history] == ["keep", "drop"]
+    assert [message.content[0].text for message in conversation.context] == ["keep"]
+
+
+def test_pi_context_edit_unknown_target_fails_explicitly(tmp_path):
+    rows = pi_records(tmp_path, [{"role": "user", "content": "keep"}])
+    rows.append(
+        {
+            "type": "context_edit",
+            "id": "edit",
+            "parentId": "00000000",
+            "timestamp": TIMESTAMP,
+            "targetId": "missing",
+            "replacement": None,
+        }
+    )
+    with pytest.raises(PreservationError, match="context_edit targets an unknown entry"):
+        read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+
+
+def test_pi_context_edit_applies_to_retained_window_and_tail_after_checkpoint(tmp_path):
+    rows = pi_records(
+        tmp_path, [{"role": "user", "content": "old"}, {"role": "user", "content": "retained"}]
+    )
+    rows.append(
+        {
+            "type": "compaction",
+            "id": "compacted",
+            "parentId": "00000001",
+            "timestamp": TIMESTAMP,
+            "summary": "summary",
+            "tokensBefore": 42,
+            "firstKeptEntryId": "00000001",
+        }
+    )
+    rows.append(
+        {
+            "type": "message",
+            "id": "after",
+            "parentId": "compacted",
+            "timestamp": TIMESTAMP,
+            "message": {"role": "user", "content": "after"},
+        }
+    )
+    rows.append(
+        {
+            "type": "context_edit",
+            "id": "edit-retained",
+            "parentId": "after",
+            "timestamp": TIMESTAMP,
+            "targetId": "00000001",
+            "replacement": {"content": "EDITED RETAINED CONTENT"},
+        }
+    )
+    rows.append(
+        {
+            "type": "context_edit",
+            "id": "edit-tail",
+            "parentId": "edit-retained",
+            "timestamp": TIMESTAMP,
+            "targetId": "after",
+            "replacement": {"content": "EDITED TAIL CONTENT"},
+        }
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert [item.content[0].text for item in conversation.context] == [
+        SUMMARY_PREFIX + "summary" + SUMMARY_SUFFIX,
+        "EDITED RETAINED CONTENT",
+        "EDITED TAIL CONTENT",
+    ]
+    assert conversation.history[1].content == (Text("retained"),)
 
 
 @pytest.mark.parametrize(("adapter", "profile"), ADAPTERS)
@@ -621,8 +925,31 @@ def test_pi_rejects_tool_exchange_interruption_in_writer_and_reader(tmp_path, in
             },
         ],
     )
-    with pytest.raises(PreservationError, match=r"tool results must follow.*contiguously"):
+    with pytest.raises(PreservationError, match="answered later"):
         read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+
+
+@pytest.mark.parametrize("interruption_role", ["user", "assistant"])
+def test_pi_synthesizes_no_result_for_a_call_interrupted_and_never_answered(
+    tmp_path, interruption_role
+):
+    rows = pi_records(
+        tmp_path,
+        [
+            {
+                "role": "assistant",
+                "content": [{"type": "toolCall", "id": "a", "name": "read", "arguments": {}}],
+                "stopReason": "toolUse",
+            },
+            {"role": interruption_role, "content": [{"type": "text", "text": "moving on"}]},
+        ],
+    )
+    conversation = read_pi(native.jsonl(rows), Identity("pi", SESSION_ID))
+    assert conversation.history[1].content == (
+        ToolResult("a", (Text("No result provided"),), True),
+    )
+    assert conversation.history[2].content == (Text("moving on"),)
+    assert conversation.context == conversation.history
 
 
 def test_pi_supports_prose_with_calls_and_contiguous_multiple_results(tmp_path):

@@ -3,17 +3,46 @@ from __future__ import annotations
 import base64
 import json
 import types
-from dataclasses import fields, is_dataclass
+from dataclasses import MISSING, fields, is_dataclass
 from typing import Any, Literal, Union, get_args, get_origin, get_type_hints
 
 from .model import Conversation, PreservationError, unique_object, validate
+
+SPARSE_FIELDS = {
+    "Checkpoint": ("replaced_context",),
+    "Message": ("hidden",),
+    "StoredStage": ("normalizations",),
+    "TransformOptions": ("portable_version",),
+}
+ADDITIVE_FIELDS = {
+    "Checkpoint": ("following_context", "replaced_context"),
+    "Compatibility": ("warnings", "needs_verification"),
+    "Message": ("hidden",),
+    "StoredStage": ("normalizations",),
+    "TransformOptions": ("portable_version",),
+}
+# Fields older journals still carry; decoding drops them.
+RETIRED_FIELDS = {
+    "CompactReport": ("omitted_results",),
+}
+
+
+def _sparse(value: Any, field: Any) -> bool:
+    return (
+        field.name in SPARSE_FIELDS.get(type(value).__name__, ())
+        and getattr(value, field.name) == field.default
+    )
 
 
 def _encode(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return {
             "type": type(value).__name__,
-            **{f.name: _encode(getattr(value, f.name)) for f in fields(value)},
+            **{
+                f.name: _encode(getattr(value, f.name))
+                for f in fields(value)
+                if not _sparse(value, f)
+            },
         }
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
@@ -44,8 +73,17 @@ def _decode(value: Any, expected: Any) -> Any:
         names = {field.name for field in fields(expected)}
         if not isinstance(value, dict) or value.get("type") != expected.__name__:
             raise PreservationError("Unknown canonical object type")
-        if expected.__name__ == "Checkpoint" and "following_context" not in value:
-            value = {**value, "following_context": None}
+        value = {
+            **{
+                item.name: _encode(item.default)
+                for item in fields(expected)
+                if item.name in ADDITIVE_FIELDS.get(expected.__name__, ())
+                and item.default is not MISSING
+            },
+            **value,
+        }
+        for retired in RETIRED_FIELDS.get(expected.__name__, ()):
+            value.pop(retired, None)
         if set(value) != names | {"type"}:
             raise PreservationError(f"Unknown or missing fields in {expected.__name__}")
         hints = get_type_hints(expected)

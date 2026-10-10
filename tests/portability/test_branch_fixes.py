@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import importlib.util
 import json
 import sqlite3
 from contextlib import closing
@@ -18,6 +17,7 @@ from ringleader.portability.codex import CodexAdapter
 from ringleader.portability.model import Identity, PreservationError
 from ringleader.portability.operations import Artifacts
 from ringleader.portability.service import ConversionService
+from ringleader.portability.verify.common import VerificationFailed
 from tests.portability.fixtures import SESSION_ID, claude_records, codex_tool_records
 from tests.portability.test_cli import environment as cli_environment
 from tests.portability.test_codex import initialized
@@ -39,8 +39,8 @@ def environment(tmp_path, monkeypatch):
     "kind,subtype,diagnostic",
     [
         ("system", "compact_boundary", "missing its summary"),
-        ("attachment", None, "attachment records are unsupported"),
-        ("system", "api_error", "Unsupported Claude system content"),
+        ("attachment", None, "Invalid Claude attachment record"),
+        ("system", "future_subtype", "Unsupported Claude system content"),
     ],
 )
 def test_claude_default_selection_validates_terminal_records(tmp_path, kind, subtype, diagnostic):
@@ -348,12 +348,9 @@ def test_public_recovery_and_reuse_refuse_different_registry(environment, capsys
 
 @pytest.fixture
 def codex_oracle():
-    spec = importlib.util.spec_from_file_location(
-        "codex_native_smoke", Path("scripts/smoke-portability-codex.py")
-    )
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    from ringleader.portability.verify import codex
+
+    return codex
 
 
 def oracle_conversation():
@@ -419,7 +416,7 @@ def test_native_model_oracle_rejects_corrupted_preservation(codex_oracle, mutati
     else:
         items.insert(0, deepcopy(items[0]))
     assert body != before
-    with pytest.raises(AssertionError):
+    with pytest.raises(VerificationFailed):
         codex_oracle.assert_model(body, original, Path("/native-probe/cwd"))
 
 
@@ -445,5 +442,5 @@ def test_native_visible_oracle_rejects_corruption(codex_oracle, mutation):
     else:
         items[4]["status"] = "completed"
     assert thread != before
-    with pytest.raises(AssertionError):
+    with pytest.raises(VerificationFailed):
         codex_oracle.assert_visible(thread, original)
