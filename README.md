@@ -185,18 +185,25 @@ names `rl data presence install`.
 to that binary. `rl doctor` ends with a `presence` section, and
 `hooklinesinker doctor` reports the same checks first-hand.
 
-Working from a source checkout? `just install` stages the artifacts first (see
-`scripts/vendor-hooklinesinker.sh`, which verifies a release build's `SHA256SUMS` before
-copying anything into `ringleader/_vendor/`). Without a staged artifact everything else still
-installs and works — only `rl data presence` reports what is missing.
+Working from a source checkout? `just install` stages the artifacts first: it downloads the
+hooklinesinker release pinned in `scripts/hooklinesinker.json`, verifies its `SHA256SUMS` and
+that the binary reports the pinned version, and copies it into `ringleader/_vendor/`. Without
+network access everything else still installs and works — only `rl data presence` reports
+what is missing.
 
-For a local release build outside the default `../hooklinesinker/dist` location:
+```sh
+just check-hooklinesinker          # is a newer release published?
+just update-hooklinesinker         # pin the latest release (or pass a version)
+just install                       # stage the new pin and reinstall
+```
+
+To stage a local release build instead of the pinned download:
 
 ```sh
 HOOKLINESINKER_DIST=/path/to/hooklinesinker/dist just install
 ```
 
-The directory must contain all three release binaries and `SHA256SUMS`.
+That directory must contain all three release binaries and `SHA256SUMS`.
 
 ## The AI engine
 

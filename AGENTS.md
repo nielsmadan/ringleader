@@ -89,8 +89,10 @@ pruning them before the GC clock deletes them.
   shells out to a bundled `hooklinesinker` binary (`sessions --json`, `consumers --json`,
   `doctor --json`, 2s timeout) and parses protocol 1 only. Its state under
   `$XDG_STATE_HOME/hooklinesinker` is private — do not read it. The binary is **not** a Brew
-  dependency: `scripts/vendor-hooklinesinker.sh` stages checksum-verified release artifacts
-  into the gitignored `ringleader/_vendor/<platform>/`, and `pyproject.toml`'s wheel
+  dependency: `scripts/hooklinesinker.json` pins a published release, `just vendor` (run by
+  `just install`) downloads and checksum-verifies it and stages it into the gitignored
+  `ringleader/_vendor/<platform>/`, `just update-hooklinesinker [version]` moves the pin (never
+  backwards), and `just check-hooklinesinker` warns when a newer release exists. `pyproject.toml`'s wheel
   `artifacts` key is what carries them into the wheel. Activation is explicit
   (`rl data presence install`) and never implicit — a caller that needs live sessions gets
   `PresenceUnavailable` naming the setup command, not a silent install and not an empty result.

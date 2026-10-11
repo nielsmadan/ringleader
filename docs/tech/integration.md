@@ -114,8 +114,12 @@ Each successful hook install is verified with `hooks status --json`; unsupported
 are reported as failures. OpenCode, Pi, Qwen, and Kimi detection follows the helper's config
 directory overrides. Uninstall removes the shared binary and hooks only for the last consumer.
 
-`scripts/vendor-hooklinesinker.sh` stages a local release's three binaries and checksum
-manifest under `ringleader/_vendor/`. Hatchling includes those ignored artifacts in the wheel.
+`scripts/hooklinesinker.json` pins the bundled release. `scripts/hooklinesinker.py vendor`
+downloads it into `build/hooklinesinker/downloads/<version>/` (reused while its checksums and
+the binary's `version --json` still match the pin), and `scripts/vendor-hooklinesinker.sh`
+stages its three binaries and checksum manifest under `ringleader/_vendor/`. `update` moves
+the pin to a published stable release carrying every artifact, refusing downgrades.
+Hatchling includes those ignored artifacts in the wheel.
 Source installs without artifacts still work; presence installation reports the missing bundle.
 
 ### Which session am I in?

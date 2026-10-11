@@ -21,7 +21,7 @@ PROTOCOL = 1
 TIMEOUT_SECONDS = 2
 CONSUMER = "ringleader"
 SETUP_COMMAND = "rl data presence install"
-VENDOR_COMMAND = "./scripts/vendor-hooklinesinker.sh && just install"
+VENDOR_COMMAND = "just install"
 CHECKSUM_MANIFEST = "checksums.txt"
 AGENTS = ("claude", "codex", "opencode", "pi", "droid", "qwen", "kimi")
 

@@ -76,10 +76,19 @@ install-editable:
     -@rl data presence install --yes
     @echo "Installed (editable): $(which rl)"
 
-# Stage the pinned hooklinesinker artifacts into ringleader/_vendor. Without a sibling
-# release build there is nothing to stage, and `rl` installs without presence support.
+# Stage the hooklinesinker release pinned in scripts/hooklinesinker.json into
+# ringleader/_vendor (`--dist DIR` or $HOOKLINESINKER_DIST stages a local build instead).
+# Offline, `rl` still installs, just without presence support.
 vendor *ARGS:
-    -@bash scripts/vendor-hooklinesinker.sh {{ARGS}}
+    -@uv run python scripts/hooklinesinker.py vendor {{ARGS}}
+
+# Pin a published hooklinesinker release: the latest, or the given version.
+update-hooklinesinker *ARGS:
+    @uv run python scripts/hooklinesinker.py update {{ARGS}}
+
+# Warn when a newer hooklinesinker release is published than the one pinned.
+check-hooklinesinker:
+    @uv run python scripts/hooklinesinker.py check
 
 uninstall:
     @uv tool uninstall ringleader
