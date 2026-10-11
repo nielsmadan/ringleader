@@ -14,6 +14,8 @@ from ..presence import (
     detected_agents,
 )
 
+CODEX_TRUST_HINT = "  codex: approve new or changed hooks in Codex's /hooks before they run"
+
 
 def _make_client() -> PresenceClient:
     return PresenceClient()
@@ -88,6 +90,8 @@ def cmd_install(argv: list[str]) -> int:
     print(outcome.detail or f"registered consumer {CONSUMER}")
     for hook in outcome.hooks:
         print(f"  {hook.agent}: {'ok' if hook.ok else 'failed'} {hook.detail}")
+    if any(hook.agent == "codex" and hook.ok for hook in outcome.hooks):
+        print(CODEX_TRUST_HINT)
     return 0 if outcome.ok else 1
 
 
@@ -142,6 +146,8 @@ def _print_status(state: dict[str, Any]) -> None:
         print(f"consumer {CONSUMER}: not registered — run `{state['setup_command']}`")
     for agent, hook_state in state["hooks"].items():
         print(f"  hooks {agent}: {hook_state}")
+    if "drifted" in state["hooks"].values():
+        print(f"  drifted hooks predate the active hooklinesinker — run `{state['setup_command']}`")
     print(f"running sessions: {state['running_sessions']}")
     for problem in state["problems"]:
         print(f"  problem: {problem}")

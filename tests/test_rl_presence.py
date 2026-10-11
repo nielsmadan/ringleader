@@ -176,7 +176,24 @@ def test_install_accepts_explicit_agents(world, monkeypatch, capsys):
 
     agents = [c[-1] for c in runner.calls if c[1:3] == ["hooks", "install"]]
     assert agents == ["codex", "pi"]
-    capsys.readouterr()
+    assert presence_cmd.CODEX_TRUST_HINT in capsys.readouterr().out
+
+
+def test_install_without_codex_prints_no_codex_trust_hint(world, monkeypatch, capsys):
+    _, candidate = world
+    runner = FakeRunner(
+        results={
+            f"{candidate}|version": ok({"protocol": 1, "version": "0.1.0"}),
+            **installed_hooks("pi"),
+        }
+    )
+    bind(monkeypatch, install_client(world, runner))
+
+    assert main(["data", "presence", "install", "--yes", "--agent", "pi"]) == 0
+
+    out = capsys.readouterr().out
+    assert "pi: ok" in out
+    assert "codex" not in out
 
 
 def test_install_accepts_the_new_agents(world, monkeypatch, capsys):
@@ -236,6 +253,30 @@ def test_status_reports_a_registered_consumer(world, monkeypatch, capsys):
     assert "macos-universal" in out
 
 
+def test_status_names_the_setup_command_for_drifted_hooks(world, monkeypatch, capsys):
+    runner = FakeRunner(
+        results={
+            "version": ok({"protocol": 1, "version": "1.1.0"}),
+            "consumers": ok({"protocol": 1, "consumers": [{"name": "ringleader"}], "problems": []}),
+            "hooks status": ok({"protocol": 1, "agent": "claude", "state": "drifted"}),
+            "sessions": ok({"protocol": 1, "sessions": [], "problems": []}),
+        }
+    )
+    tmp_path, _ = world
+    exe = tmp_path / "data" / "hooklinesinker" / "bin" / "hooklinesinker"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("#!/bin/sh\n")
+    bind(monkeypatch, install_client(world, runner, executable=exe))
+
+    assert main(["data", "presence", "status"]) == 0
+
+    out = capsys.readouterr().out
+    assert "hooks claude: drifted" in out
+    assert (
+        f"drifted hooks predate the active hooklinesinker — run `{presence.SETUP_COMMAND}`" in out
+    )
+
+
 def test_status_is_nonzero_and_names_the_setup_command_when_absent(world, monkeypatch, capsys):
     runner = FakeRunner(raises=FileNotFoundError(2, "No such file or directory"))
     bind(monkeypatch, install_client(world, runner))
@@ -263,12 +304,23 @@ def test_uninstall_removes_only_the_ringleader_consumer(world, monkeypatch, caps
     exe = tmp_path / "data" / "hooklinesinker" / "bin" / "hooklinesinker"
     exe.parent.mkdir(parents=True)
     exe.write_text("#!/bin/sh\n")
-    runner = FakeRunner(stdout="removed consumer ringleader")
+    runner = FakeRunner(
+        stdout="removed consumer ringleader",
+        results={
+            "consumers": ok(
+                {
+                    "protocol": 1,
+                    "consumers": [{"name": "ringleader"}, {"name": "juggler"}],
+                    "problems": [],
+                }
+            )
+        },
+    )
     bind(monkeypatch, install_client(world, runner, executable=exe))
 
     assert main(["data", "presence", "uninstall", "--yes"]) == 0
 
-    assert runner.calls == [[str(exe), "uninstall", "--consumer", "ringleader"]]
+    assert runner.calls[-1] == [str(exe), "uninstall", "--consumer", "ringleader"]
     assert "ringleader" in capsys.readouterr().out
 
 

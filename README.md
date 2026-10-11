@@ -180,6 +180,11 @@ uninstalling removes only ringleader's registration, leaving the hooks in place 
 else still uses them. A command that needs live sessions never installs silently; it fails and
 names `rl data presence install`.
 
+The shared binary is never downgraded, so whichever consumer bundles a newer hooklinesinker
+first activates it for all of them. Hooks written by an older version then show as `drifted`
+in `rl data presence status` until `rl data presence install` rewrites them, and Codex asks
+you to approve new or changed hooks in its `/hooks` menu before they run.
+
 **The privacy boundary:** presence reads use Hooklinesinker's CLI JSON commands with a
 2-second timeout. The status ledger under `$XDG_STATE_HOME/hooklinesinker` stays private
 to that binary. `rl doctor` ends with a `presence` section, and

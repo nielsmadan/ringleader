@@ -520,12 +520,16 @@ class PresenceClient:
             return UninstallOutcome(
                 True, f"hooklinesinker is not installed at {self.executable}", False
             )
+        listed = self.consumers()
+        if listed.available and CONSUMER not in listed.names:
+            return UninstallOutcome(
+                True, f"{CONSUMER} is not registered with hooklinesinker", False
+            )
         result = self._invoke(self.executable, ["uninstall", "--consumer", CONSUMER])
         if isinstance(result, str):
             return UninstallOutcome(False, result, True)
-        return UninstallOutcome(
-            result.returncode == 0, (result.stdout or result.stderr).strip(), True
-        )
+        detail = "\n".join(text.strip() for text in (result.stdout, result.stderr) if text.strip())
+        return UninstallOutcome(result.returncode == 0, detail, True)
 
 
 def _running_ids(result: PresenceResult) -> frozenset[tuple[str, str]]:

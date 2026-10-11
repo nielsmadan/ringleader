@@ -112,7 +112,10 @@ Installation verifies the bundled binary's checksum, compares it with the active
 registers the `ringleader` consumer, and delegates native hook edits to the helper.
 Each successful hook install is verified with `hooks status --json`; unsupported configurations
 are reported as failures. OpenCode, Pi, Qwen, and Kimi detection follows the helper's config
-directory overrides. Uninstall removes the shared binary and hooks only for the last consumer.
+directory overrides. Uninstall removes the shared binary and hooks only for the last consumer;
+it is a no-op when ringleader is not registered, and keeps any warning hooklinesinker prints
+about hooks it left in place. Status prints the setup command when a hook is `drifted` (written
+by an older hooklinesinker), and install reminds you to approve Codex hooks in Codex's `/hooks`.
 
 `scripts/hooklinesinker.json` pins the bundled release. `scripts/hooklinesinker.py vendor`
 downloads it into `build/hooklinesinker/downloads/<version>/` (reused while its checksums and

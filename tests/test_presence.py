@@ -566,10 +566,59 @@ def test_hook_state_reads_verified_states(tmp_path, state):
 
 def test_uninstall_removes_only_the_ringleader_consumer(tmp_path):
     exe = active_binary(tmp_path)
-    runner = FakeRunner(stdout="removed consumer ringleader")
+    runner = FakeRunner(
+        stdout="removed consumer ringleader",
+        results={
+            "consumers": ok(
+                {
+                    "protocol": 1,
+                    "consumers": [{"name": "ringleader"}, {"name": "juggler"}],
+                    "problems": [],
+                }
+            )
+        },
+    )
     outcome = PresenceClient(executable=exe, runner=runner).uninstall_consumer()
     assert outcome.ok is True
-    assert runner.calls == [[str(exe), "uninstall", "--consumer", "ringleader"]]
+    assert runner.calls == [
+        [str(exe), "consumers", "--json"],
+        [str(exe), "uninstall", "--consumer", "ringleader"],
+    ]
+
+
+def test_uninstall_when_ringleader_is_not_registered_succeeds_without_running_it(tmp_path):
+    exe = active_binary(tmp_path)
+    runner = FakeRunner(
+        results={
+            "consumers": ok({"protocol": 1, "consumers": [{"name": "juggler"}], "problems": []}),
+            "uninstall": presence.RunResult(1, "", "consumer ringleader is not registered"),
+        }
+    )
+    outcome = PresenceClient(executable=exe, runner=runner).uninstall_consumer()
+    assert (outcome.ok, outcome.ran) == (True, False)
+    assert outcome.detail == "ringleader is not registered with hooklinesinker"
+    assert runner.commands() == ["consumers"]
+
+
+def test_uninstall_keeps_the_warning_hooklinesinker_prints_on_success(tmp_path):
+    exe = active_binary(tmp_path)
+    runner = FakeRunner(
+        results={
+            "consumers": ok(
+                {
+                    "protocol": 1,
+                    "consumers": [{"name": "ringleader"}, {"name": "juggler"}],
+                    "problems": [],
+                }
+            ),
+            "uninstall": presence.RunResult(
+                0, "removed consumer ringleader\n", "hooks remain for codex: config changed\n"
+            ),
+        }
+    )
+    outcome = PresenceClient(executable=exe, runner=runner).uninstall_consumer()
+    assert outcome.ok is True
+    assert outcome.detail == "removed consumer ringleader\nhooks remain for codex: config changed"
 
 
 def test_uninstall_without_an_installed_binary_is_a_no_op(tmp_path):
