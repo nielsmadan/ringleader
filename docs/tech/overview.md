@@ -3,7 +3,7 @@
 How ringleader is built — module internals, the scan-to-registry data flow, and the
 cross-cutting patterns that constrain the package. This is the implementation layer; for what
 each feature does for the user, see [`../features/overview.md`](../features/overview.md).
-`AGENTS.md` (repo root) is the canonical contributor summary; `CLAUDE.md` imports it. These docs
+`AGENTS.md` (repo root) is the canonical contributor summary. These docs
 go deeper, per subsystem.
 
 ## Module docs
