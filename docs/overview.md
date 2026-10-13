@@ -26,6 +26,7 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
 - [reference/](reference/agent-session-management.md): how the **external** agent CLIs store and
   index sessions — verified findings stamped with date and version. Not our code; it goes stale
   when an agent ships, not when we refactor.
+- [tests/](tests/picker/README.md): repeatable manual measurements and recorded baselines.
 
 ## Layering
 

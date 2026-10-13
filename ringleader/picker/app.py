@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from queue import Empty, SimpleQueue
+from threading import Event, Thread
 from typing import Any, ClassVar, cast
 
 from rich.text import Text
@@ -12,7 +15,7 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.containers import Grid
 from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, Label, ListItem, ListView
+from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, OptionList
 
 from .. import overview, refresh, registry, resume
 from ..presence import PresenceClient
@@ -35,6 +38,14 @@ class Choice:
     target: str
     threads: tuple[dict[str, Any], ...] = ()
     confirmed: bool = False
+
+
+@dataclass(frozen=True)
+class RefreshResult:
+    reg: dict[str, Any] | None
+    running: frozenset[tuple[str, str]] | None
+    note: str | None
+    error: str | None
 
 
 def _now_iso() -> str:
@@ -209,9 +220,6 @@ class PickerApp(App[Choice | None]):
     DEFAULT_CSS = """
     PickerApp #rows {
         height: 1fr;
-    }
-    PickerApp #rows Label {
-        width: 100%;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
@@ -261,7 +269,7 @@ class PickerApp(App[Choice | None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(placeholder="filter…", id="filter")
-        yield ListView(id="rows")
+        yield OptionList(id="rows", compact=True)
         yield Label("", id="empty")
         yield Footer()
 
@@ -278,26 +286,42 @@ class PickerApp(App[Choice | None]):
     def _alive(self) -> bool:
         return self.is_running and not self._exit
 
-    @work(thread=True)
-    def _converge(self) -> None:
+    @work
+    async def _converge(self) -> None:
+        results: SimpleQueue[RefreshResult] = SimpleQueue()
+        stopped = Event()
+        # The default executor joins scan threads at App.run() exit, delaying resume.
+        Thread(target=self._refresh, args=(results, stopped), daemon=True).start()
+        try:
+            while self._alive():
+                try:
+                    result = results.get_nowait()
+                except Empty:
+                    await asyncio.sleep(0.02)
+                    continue
+                if result.error:
+                    self.notify(result.error, title="rl resume", severity="warning")
+                self._adopt(result.reg, result.running, result.note)
+                return
+        finally:
+            stopped.set()
+
+    def _refresh(self, results: SimpleQueue[RefreshResult], stopped: Event) -> None:
         reg: dict[str, Any] | None = None
         note: str | None = None
+        warning: str | None = None
         try:
             reg, note = self._refresher(self.registry_path, _now_iso())
         except Exception as error:  # noqa: BLE001 -- report in the UI, do not crash it
-            if not self._alive():
-                return
-            self.call_from_thread(
-                self.notify, f"scan failed: {error}", title="rl resume", severity="warning"
-            )
+            warning = f"scan failed: {error}"
+        if stopped.is_set():
+            return
         running: frozenset[tuple[str, str]] | None = None
         try:
             running = self._presence()
         except Exception:  # noqa: BLE001 -- no presence means no live sessions
             running = None
-        if not self._alive():
-            return
-        self.call_from_thread(self._adopt, reg, running, note)
+        results.put(RefreshResult(reg, running, note, warning))
 
     def _adopt(
         self,
@@ -318,14 +342,14 @@ class PickerApp(App[Choice | None]):
 
     # -- rendering ---------------------------------------------------------
 
-    def _list_view(self) -> ListView:
-        return self.query_one("#rows", ListView)
+    def _list_view(self) -> OptionList:
+        return self.query_one("#rows", OptionList)
 
-    def _highlighted_id(self) -> str | None:
-        index = self._list_view().index
+    def _highlighted_id(self) -> tuple[str, str] | None:
+        index = self._list_view().highlighted
         if index is None or not (0 <= index < len(self._rows)):
             return None
-        return self._rows[index].get("sessionId")
+        return registry.identity(self._rows[index])
 
     def _is_running(self, thread: dict[str, Any]) -> bool:
         session_id = thread.get("sessionId")
@@ -342,13 +366,11 @@ class PickerApp(App[Choice | None]):
         in_scope = resume.candidates(self._reg, scope=self._scope, cwd=self.cwd)
         self._rows = resume.rank(in_scope, self._query)
         list_view = self._list_view()
-        await list_view.clear()
-        await list_view.extend(
-            ListItem(Label(row_text(t, now, running=self._is_running(t)))) for t in self._rows
-        )
+        list_view.clear_options()
+        list_view.add_options(row_text(t, now, running=self._is_running(t)) for t in self._rows)
         if self._rows:
-            list_view.index = next(
-                (i for i, t in enumerate(self._rows) if t.get("sessionId") == keep), 0
+            list_view.highlighted = next(
+                (i for i, t in enumerate(self._rows) if registry.identity(t) == keep), 0
             )
         self.sub_title = f"[{self._scope.value}] ({len(self._rows)})"
         self._render_empty()
@@ -375,10 +397,16 @@ class PickerApp(App[Choice | None]):
         return not (action in self._GATED_ACTIONS and len(self.screen_stack) > 1)
 
     def action_cursor_down(self) -> None:
-        self._list_view().action_cursor_down()
+        rows = self._list_view()
+        if rows.option_count:
+            rows.highlighted = 0 if rows.highlighted is None else rows.highlighted + 1
 
     def action_cursor_up(self) -> None:
-        self._list_view().action_cursor_up()
+        rows = self._list_view()
+        if rows.option_count:
+            rows.highlighted = (
+                rows.option_count - 1 if rows.highlighted is None else rows.highlighted - 1
+            )
 
     # -- scope -------------------------------------------------------------
 
@@ -395,7 +423,7 @@ class PickerApp(App[Choice | None]):
     # -- choosing ----------------------------------------------------------
 
     def _current(self) -> dict[str, Any] | None:
-        index = self._list_view().index
+        index = self._list_view().highlighted
         if index is None or not (0 <= index < len(self._rows)):
             return None
         return self._rows[index]

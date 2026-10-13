@@ -50,15 +50,19 @@ recovery silently falls through to the drifted directory.
 
 ### The picker (`picker/app.py`)
 
-`PickerApp` is `Header` / `Input#filter` / `ListView#rows` / `Label#empty` / `Footer`.
+`PickerApp` is `Header` / `Input#filter` / `OptionList#rows` / `Label#empty` / `Footer`.
+The result list holds Rich text options, avoiding a widget per match. It keeps every result,
+clips long rows with an ellipsis, and preserves the highlighted `(source, sessionId)` across
+filtering, scope changes and refreshes. Filtering updates immediately on each input change.
+The [picker benchmark](../tests/picker/README.md) measures result replacement on a fixed workload.
 
-`on_mount` renders **synchronously from the registry**, then starts a `@work(thread=True)` worker
-that runs `refresh.auto_refresh` and the presence probe and updates in place. The scan is skipped
-when `lastScan` is under a minute old, because the command already scans for a query the registry
-cannot answer and a second full scan behind the picker would double that cost. Query and
-highlighted session survive the update. Every widget touch from that worker goes through
-`call_from_thread`; the callback is synchronous because `call_from_thread` typed with a
-`None`-returning coroutine solves to `Never` and fails mypy.
+`on_mount` renders **synchronously from the registry**, then starts an async Textual worker
+which receives the scan and presence result through a queue from a daemon thread. It always
+scans, including when `lastScan` is recent, so sessions just left can appear. Only the async
+worker touches widgets; cancelling it on exit drops late results and signals the thread to
+skip any presence probe it has not started. The scan can outlive the UI, but cannot hold up
+resume or process exit. Using Textual's `@work(thread=True)` here would put it in asyncio's
+default executor, whose shutdown waits for running threads even after worker cancellation.
 
 Presence comes from `PresenceClient.require_running_session_ids()`, matched on the
 `(agent, session_id)` **pair** — presence names agents `claude` where the registry says

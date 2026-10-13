@@ -1,4 +1,7 @@
 import json
+import subprocess
+import sys
+import textwrap
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,11 +20,68 @@ from ringleader.presence import PresenceUnavailable
 from ringleader.resume import Scope
 from ringleader.sources.base import SessionLaunchingSource
 from textual.geometry import Region
-from textual.widgets import Input, Label, ListView
+from textual.widgets import Input, Label, ListView, OptionList
 
 CWD = "/work/repo"
 NOW = "2026-05-05T00:00:00+00:00"
 SCANNED = "2026-05-05T12:00:00+00:00"
+
+
+@pytest.mark.parametrize("blocked", ["refresh", "presence"])
+@pytest.mark.parametrize("action", ["choose", "quit"])
+def test_app_run_returns_while_background_work_is_blocked(tmp_path, blocked, action):
+    reg_path = _seed(tmp_path, [_thread("s0", title="alpha")])
+    script = textwrap.dedent("""
+        import asyncio
+        import json
+        import sys
+        import threading
+        from pathlib import Path
+        from ringleader.picker.app import PickerApp, AgentModal
+
+        path, blocked, action = sys.argv[1:]
+        started = threading.Event()
+        gate = threading.Event()
+
+        def refresh(path, now):
+            if blocked == "refresh":
+                started.set()
+                gate.wait()
+            return json.loads(Path(path).read_text()), None
+
+        def presence():
+            if blocked == "presence":
+                started.set()
+                gate.wait()
+            return frozenset()
+
+        async def choose(pilot):
+            while not started.is_set():
+                await asyncio.sleep(0.01)
+            if action == "choose":
+                await pilot.press("enter")
+                assert isinstance(pilot.app.screen, AgentModal)
+                await pilot.press("enter")
+            else:
+                await pilot.press("escape")
+
+        app = PickerApp(path, "/work/repo", refresher=refresh, presence=presence)
+        result = app.run(headless=True, auto_pilot=choose)
+        if action == "choose":
+            assert result.thread["sessionId"] == "s0"
+            assert result.target == "claude-code"
+        else:
+            assert result is None
+        print("returned")
+    """)
+    result = subprocess.run(
+        [sys.executable, "-c", script, str(reg_path), blocked, action],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        check=True,
+    )
+    assert result.stdout.strip() == "returned"
 
 
 def _thread(session_id, *, source="claude-code", project=CWD, title=None, mtime="2026-01-01"):
@@ -101,12 +161,12 @@ def _rendered(widget):
 
 
 def _row_labels(app):
-    rows = app.query_one("#rows", ListView)
-    return [_rendered(item.query_one(Label)) for item in rows.children]
+    rows = app.query_one("#rows", OptionList)
+    return [rows.render_line(index).text.strip() for index in range(rows.option_count)]
 
 
 def _highlighted_id(app):
-    return app._rows[app.query_one("#rows", ListView).index]["sessionId"]
+    return app._rows[app.query_one("#rows", OptionList).highlighted]["sessionId"]
 
 
 async def _open_confirm(app, pilot):
@@ -121,23 +181,23 @@ async def test_ctrl_j_and_ctrl_k_move_the_highlight(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        rows = app.query_one("#rows", ListView)
-        assert rows.index == 0
+        rows = app.query_one("#rows", OptionList)
+        assert rows.highlighted == 0
         await pilot.press("ctrl+j")
-        assert rows.index == 1
+        assert rows.highlighted == 1
         await pilot.press("ctrl+k")
-        assert rows.index == 0
+        assert rows.highlighted == 0
 
 
 async def test_arrow_keys_move_the_highlight(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        rows = app.query_one("#rows", ListView)
+        rows = app.query_one("#rows", OptionList)
         await pilot.press("down")
-        assert rows.index == 1
+        assert rows.highlighted == 1
         await pilot.press("up")
-        assert rows.index == 0
+        assert rows.highlighted == 0
 
 
 async def test_ctrl_k_moves_the_highlight_and_leaves_the_typed_query_intact(tmp_path):
@@ -149,15 +209,15 @@ async def test_ctrl_k_moves_the_highlight_and_leaves_the_typed_query_intact(tmp_
         await pilot.press("ctrl+a")
         await pilot.press("a")
         filter_input = app.query_one("#filter", Input)
-        rows = app.query_one("#rows", ListView)
+        rows = app.query_one("#rows", OptionList)
         assert filter_input.value == "a"
         assert len(app._rows) > 1
         filter_input.cursor_position = 0
         await pilot.press("ctrl+j")
-        assert rows.index == 1
+        assert rows.highlighted == 1
         await pilot.press("ctrl+k")
         assert filter_input.value == "a"
-        assert rows.index == 0
+        assert rows.highlighted == 0
 
 
 async def test_ctrl_a_switches_to_all_scope_without_moving_the_input_cursor(tmp_path):
@@ -203,6 +263,61 @@ async def test_an_opening_query_filters_the_very_first_render(tmp_path):
         assert _ids(app) == ["s1"]
 
 
+async def test_typing_then_enter_chooses_the_latest_match(tmp_path):
+    app = _app(tmp_path, target="codex")
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("b", "r", "a", "enter")
+    assert app.return_value.thread["sessionId"] == "s1"
+
+
+async def test_every_result_in_a_large_list_is_reachable(tmp_path):
+    threads = [_thread(f"s{index}", title=f"session {index}") for index in range(2000)]
+    app = _app(tmp_path, threads, query="session", target="claude-code")
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        rows = app.query_one("#rows", OptionList)
+        assert rows.option_count == 2000
+        rows.focus()
+        await pilot.press("end")
+        assert _highlighted_id(app) == "s1999"
+        assert "session 1999" in _rendered(rows)
+        await pilot.press("enter")
+    assert app.return_value.thread["sessionId"] == "s1999"
+
+
+async def test_clicking_a_result_selects_it_for_enter(tmp_path):
+    app = _app(tmp_path, target="codex")
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.click("#rows", offset=(2, 1))
+        assert _highlighted_id(app) == "s1"
+        await pilot.press("enter")
+    assert app.return_value.thread["sessionId"] == "s1"
+
+
+async def test_cursor_movement_stops_at_the_first_and_last_result(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("up")
+        assert _highlighted_id(app) == "s0"
+        await pilot.press("down", "down")
+        assert _highlighted_id(app) == "s1"
+
+
+async def test_clearing_a_query_restores_results_after_no_matches(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("z", "q", "x")
+        assert app.query_one("#empty", Label).display
+        await pilot.press("backspace", "backspace", "backspace")
+        assert _ids(app) == ["s0", "s1"]
+        assert _highlighted_id(app) == "s0"
+        assert app.query_one("#rows", OptionList).display
+
+
 async def test_rows_are_ordered_most_recent_first_with_a_blank_query(tmp_path):
     app = _app(tmp_path, scope=Scope.ALL)
     async with app.run_test() as pilot:
@@ -219,7 +334,7 @@ async def test_the_rows_render_from_disk_before_the_background_scan_lands(tmp_pa
     async with app.run_test() as pilot:
         await pilot.pause()
         assert _ids(app) == ["s0", "s1"]
-        assert len(app.query_one("#rows", ListView).children) == 2
+        assert app.query_one("#rows", OptionList).option_count == 2
         gate.set()
         await _settle(app, pilot)
         assert _ids(app) == ["s0", "s1"]
@@ -274,6 +389,22 @@ async def test_a_scan_keeps_the_typed_query_and_the_highlighted_session(tmp_path
         assert app.query_one("#filter", Input).value == "a"
         assert "s9" in _ids(app)
         assert _highlighted_id(app) == held
+
+
+async def test_a_scan_preserves_the_agent_when_session_ids_collide(tmp_path):
+    gate = threading.Event()
+    threads = [
+        _thread("dup", title="claude side", mtime="2026-03-03"),
+        _thread("dup", source="codex", title="codex side", mtime="2026-02-02"),
+    ]
+    app = _app(tmp_path, threads, refresher=_gated_refresher(gate, threads))
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("down")
+        assert app._current()["source"] == "codex"
+        gate.set()
+        await _settle(app, pilot)
+        assert app._current()["source"] == "codex"
 
 
 async def test_a_scan_that_drops_the_highlighted_session_falls_back_to_the_first_row(tmp_path):
@@ -595,7 +726,7 @@ async def test_escape_in_the_agent_modal_returns_to_the_list(tmp_path):
         await pilot.pause()
         assert len(app.screen_stack) == 1
         assert app.is_running
-        assert app.query_one("#rows", ListView).index == 0
+        assert app.query_one("#rows", OptionList).highlighted == 0
 
 
 async def test_the_scope_keys_stay_inert_while_the_agent_modal_is_open(tmp_path):
@@ -651,7 +782,7 @@ async def test_declining_the_running_confirmation_returns_to_the_list(tmp_path, 
         await pilot.pause()
         assert len(app.screen_stack) == 1
         assert app.is_running
-        assert app.query_one("#rows", ListView).index == 0
+        assert app.query_one("#rows", OptionList).highlighted == 0
     assert app.return_value is None
 
 
