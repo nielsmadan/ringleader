@@ -66,6 +66,9 @@ class ClaudeCodeSource:
     def resume_argv(self, session_id: str) -> tuple[str, ...]:
         return ("claude", "--resume", session_id)
 
+    def fork_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("claude", "--resume", session_id, "--fork-session")
+
     def launch_argv(self, prompt: str) -> tuple[str, ...]:
         return ("claude", prompt)
 

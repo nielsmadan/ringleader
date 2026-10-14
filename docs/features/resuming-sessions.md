@@ -6,8 +6,9 @@ one.
 ## What it does
 
 A picker (Textual) over every session the registry knows, filtered as you type, sorted
-most-recent-first. Choosing one replaces the `rl` process with the agent's own resume command,
-started in the session's directory.
+most-recent-first. After choosing a session, choose whether to resume it, fork a new session
+in the same agent, or hand it to another agent. The selected command replaces the `rl` process
+and starts in the session's directory.
 
 ```sh
 rl resume                  # picker, sessions recorded in this directory
@@ -57,10 +58,11 @@ agent's reach, so they are absent, and asking for one by id says so and names
 
 Rows carry the agent, the age, the name, any badges, and a one-line preview. A session presence
 reports as live is badged `running`; resuming it in its own agent asks for confirmation first,
-because two agents appending to one transcript is not recoverable. A handoff to a different agent
-does not ask, because it starts a new session and leaves the source untouched.
+because two agents appending to one transcript is not recoverable. Forking needs no reopening
+confirmation: it starts a separate session. Cross-agent native conversion checks whether the
+source or a reused target is running before proceeding.
 
-## Two ways to continue
+## Ways to continue
 
 **Same agent** — the default, and what the agent's own picker would have done:
 
@@ -71,6 +73,28 @@ does not ask, because it starts a new session and leaves the source untouched.
 | `droid` | `droid resume <id>` |
 | `opencode` | `opencode --session <id>` |
 | `pi` | `pi --session <id>` |
+
+**Fork in the same agent** — the second entry creates a fresh session continuing from the
+source's current conversation state. The original is preserved, and the workspace stays the
+same. Each selection forks anew. This uses the agent's native command:
+
+| source | command |
+|---|---|
+| `claude-code` | `claude --resume <id> --fork-session` |
+| `codex` | `codex fork <id>` |
+| `droid` | `droid resume <id> --fork` |
+| `opencode` | `opencode --session <id> --fork` |
+| `pi` | `pi --fork <id>` |
+
+Pi's CLI fork copies the session tree into a fresh file; its interactive `/fork` instead asks
+for an earlier prompt. Native metadata follows each agent's rules. Forking creates no git
+worktree or filesystem snapshot, and a running source can advance while the agent reads it.
+The new session enters ringleader on the next scan; this path does not create conversion-journal
+lineage. `rl session fork` remains the separate intermediate-format, journaled operation.
+
+Use the picker to fork (`rl resume`, optionally with a text filter). An exact ID, `--last`, or
+`--to` bypasses the action menu. `rl resume --dry-run` lets you select a fork and prints its
+command without launching it.
 
 **A different agent** — `--to <agent>` tries a **native conversion** first: a fresh session in
 the target agent, built from the source's visible history and active model context, that

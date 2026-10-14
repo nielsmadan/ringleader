@@ -376,8 +376,10 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
    implementation everywhere.
 5. **Fork/branch is universal but shaped differently** — Claude and OpenCode fork the whole session
    under a new id, Codex and Droid fork from a picker or an id, Pi distinguishes in-file branching
-   (`/tree`) from new files (`/fork`, `/clone`). A ringleader "branch this session" command would
-   need per-source verbs rather than one shared implementation.
+   (`/tree`) from new files (`/fork`, `/clone`). `rl resume` offers a same-agent fork through
+   per-source native CLI commands; see [Resuming sessions](../features/resuming-sessions.md).
+   Pi’s CLI `--fork` copies the session entries to a fresh file and continues at its current
+   leaf, unlike the earlier-prompt selector in interactive `/fork`.
 6. **Liveness has a source of truth per agent**: Claude `~/.claude/sessions/<pid>.json`
    (`status`, `updatedAt`), Codex `threads.recency_at_ms`, OpenCode `session.time_updated`. Useful
    for not curating a session someone is currently sitting in. *(Unverified for Droid and Pi — no

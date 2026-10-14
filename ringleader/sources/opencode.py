@@ -242,6 +242,9 @@ class OpenCodeSource:
     def resume_argv(self, session_id: str) -> tuple[str, ...]:
         return ("opencode", "--session", session_id)
 
+    def fork_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("opencode", "--session", session_id, "--fork")
+
     def launch_argv(self, prompt: str) -> tuple[str, ...]:
         return ("opencode", "--prompt", prompt)
 

@@ -10,6 +10,7 @@ from typing import ClassVar
 import pytest
 from ringleader import scanner
 from ringleader.picker.app import (
+    AgentChoice,
     AgentModal,
     ConfirmModal,
     PickerApp,
@@ -526,12 +527,20 @@ async def test_enter_opens_the_agent_modal_with_the_sessions_own_agent_first(tmp
         await pilot.pause()
         modal = app.screen
         assert isinstance(modal, AgentModal)
-        assert modal._agents == ["codex", "claude-code", "droid", "opencode", "pi"]
+        assert modal._choices == [
+            AgentChoice("codex"),
+            AgentChoice("codex", "fork"),
+            AgentChoice("claude-code"),
+            AgentChoice("droid"),
+            AgentChoice("opencode"),
+            AgentChoice("pi"),
+        ]
         agents = modal.query_one("#agents", ListView)
         assert agents.index == 0
         first = _rendered(agents.children[0].query_one(Label))
         assert "codex" in first
-        assert "(original)" in first
+        assert "(resume existing)" in first
+        assert "(fork into new session)" in _rendered(agents.children[1].query_one(Label))
 
 
 def test_the_handoff_agents_are_the_sources_that_declare_they_can_launch_one():
@@ -541,13 +550,15 @@ def test_the_handoff_agents_are_the_sources_that_declare_they_can_launch_one():
         if scanner.supports(source, "launches_sessions", SessionLaunchingSource)
     }
     assert set(launchable_agents()) == declared
-    assert set(AgentModal(_thread("s0", source="codex"))._agents) == declared
+    assert {c.target for c in AgentModal(_thread("s0", source="codex"))._choices} == declared
 
 
 def test_the_agent_modal_leaves_out_a_source_rl_cannot_launch():
     """The thread's own agent is the highlighted default, so offering one the command
     would refuse sends the user back with a flag for an agent it had just listed."""
-    assert AgentModal(_thread("s0", source="mystery"))._agents == list(launchable_agents())
+    assert AgentModal(_thread("s0", source="mystery"))._choices == [
+        AgentChoice(a) for a in launchable_agents()
+    ]
 
 
 def test_the_agent_modal_checks_both_halves_of_the_launch_capability(monkeypatch):
@@ -560,10 +571,10 @@ def test_the_agent_modal_checks_both_halves_of_the_launch_capability(monkeypatch
         return capability in source.capabilities
 
     monkeypatch.setattr(scanner, "supports", lambda s, c, p: real(s, c, p) and s.name != "codex")
-    assert "codex" not in AgentModal(_thread("s0", source="codex"))._agents
+    assert "codex" not in [c.target for c in AgentModal(_thread("s0", source="codex"))._choices]
 
     monkeypatch.setattr(scanner, "supports", only_declared)
-    assert "codex" in AgentModal(_thread("s0", source="codex"))._agents
+    assert "codex" in [c.target for c in AgentModal(_thread("s0", source="codex"))._choices]
 
 
 async def test_the_choice_carries_the_thread_list_the_picker_converged_on(tmp_path):
@@ -617,7 +628,7 @@ async def test_choosing_another_agent_exits_as_a_handoff_to_that_agent(tmp_path)
         await pilot.press("ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("ctrl+j")
+        await pilot.press("ctrl+j", "ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
     assert app.return_value.thread["sessionId"] == "s1"
@@ -631,7 +642,7 @@ async def test_handing_a_running_session_to_another_agent_needs_no_confirmation(
         assert "running" in _row_labels(app)[0]
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("ctrl+j")
+        await pilot.press("ctrl+j", "ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
     assert app.return_value.thread["sessionId"] == "s0"
@@ -919,3 +930,26 @@ async def test_the_unfiltered_everywhere_scope_says_there_is_simply_nothing_yet(
         await _settle(app, pilot)
         hint = _rendered(app.query_one("#empty", Label))
         assert hint == "nothing here — no sessions on this machine yet"
+
+
+@pytest.mark.parametrize("source", ["claude-code", "codex", "droid", "opencode", "pi"])
+@pytest.mark.parametrize("running", [False, True])
+async def test_fork_choice_creates_a_new_session_without_reopening_confirmation(
+    tmp_path, source, running
+):
+    live_agent = "claude" if source == "claude-code" else source
+    app = _app(
+        tmp_path,
+        [_thread("s0", source=source)],
+        presence=lambda: frozenset({(live_agent, "s0")}) if running else frozenset(),
+    )
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+    assert app.return_value.thread["sessionId"] == "s0"
+    assert app.return_value.target == source
+    assert app.return_value.action == "fork"
+    assert app.return_value.confirmed is False

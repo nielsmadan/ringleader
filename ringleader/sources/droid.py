@@ -142,6 +142,9 @@ class DroidSource:
     def resume_argv(self, session_id: str) -> tuple[str, ...]:
         return ("droid", "resume", session_id)
 
+    def fork_argv(self, session_id: str) -> tuple[str, ...]:
+        return ("droid", "resume", session_id, "--fork")
+
     def launch_argv(self, prompt: str) -> tuple[str, ...]:
         return ("droid", prompt)
 

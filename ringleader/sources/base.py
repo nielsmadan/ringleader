@@ -173,13 +173,14 @@ class WorkspaceRebindingSource(Source, Protocol):
 
 @runtime_checkable
 class SessionLaunchingSource(Source, Protocol):
-    """A source whose agent can be re-entered at one of its own sessions, or started
-    fresh carrying an opening prompt. Both return argv whose first element is the
-    binary, never a shell string — and neither carries a directory, because every
+    """A source whose agent can resume or fork its own sessions, or start fresh with
+    an opening prompt. All return argv whose first element is the binary, never a
+    shell string — and none carries a directory, because every
     agent resolves a session id relative to the directory it is launched in, so the
     caller chdirs first."""
 
     def resume_argv(self, session_id: str) -> tuple[str, ...]: ...
+    def fork_argv(self, session_id: str) -> tuple[str, ...]: ...
     def launch_argv(self, prompt: str) -> tuple[str, ...]: ...
 
 

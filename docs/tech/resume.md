@@ -69,9 +69,11 @@ Presence comes from `PresenceClient.require_running_session_ids()`, matched on t
 `claude-code`, so `agent_name()` maps between them, and an id colliding across two agents does not
 produce a false badge. Any failure degrades to no badges and never fails the app.
 
-`Choice(thread, target, threads, confirmed)` is the result; quitting exits `None`. `threads` is
+`Choice(thread, target, threads, confirmed, action)` is the result; quitting exits `None`. `threads` is
 the registry the picker converged on, and `confirmed` records that the user already answered the
-running-session modal, so the command does not ask a second time. `action_choose` is
+running-session modal, so the command does not ask a second time. `action` is `resume` (default)
+or `fork`. `AgentModal` returns an `AgentChoice(target, action)`, with resume and fork entries
+for the original agent followed by other-agent handoffs. `action_choose` is
 `@work(exclusive=True)`: with `--to` set no modal is pushed, so two fast `enter` presses would
 otherwise both reach `self.exit`.
 
@@ -87,8 +89,9 @@ because after `execvpe` there is no recovering:
    picker
 3. resolve and verify the launch directory
 4. check the binary is on `PATH` — before the render, so a missing binary costs nothing
-5. **same agent**: render the handoff transcript if any (there isn't one), ask if presence
-   reports it already running, then `os.chdir(dir)` + `os.execvpe`.
+5. **same agent**: select the source’s `resume_argv` or `fork_argv`. Resuming asks if presence
+   reports it already running; forking creates a separate session without that confirmation.
+   Then `os.chdir(dir)` + `os.execvpe`.
    **`--to` a different agent**: try `_native()` first (below); only on refusal does it fall
    back to steps 6–7 below, after asking
 6. render the Markdown handoff transcript

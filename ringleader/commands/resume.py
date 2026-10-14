@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import export, paths, refresh, registry, resume, scanner
 from ..presence import PresenceClient
-from ..resume import Scope
+from ..resume import Scope, SessionAction
 from ..sources.base import SessionLaunchingSource
 from ..stateio import atomic_write_text
 from . import default_registry
@@ -51,6 +51,7 @@ class _Pick:
     threads: Sequence[dict[str, Any]]
     target: str | None
     confirmed: bool = False
+    action: SessionAction = "resume"
 
 
 @dataclass(frozen=True)
@@ -61,6 +62,7 @@ class _Plan:
     transcript: Path | None
     confirmed: bool
     target: str
+    action: SessionAction = "resume"
 
 
 def _launchable(source_name: str) -> SessionLaunchingSource | None:
@@ -294,6 +296,7 @@ def _choose(
         _eligible_threads(threads),
         choice.target,
         confirmed=choice.confirmed,
+        action=choice.action,
     )
 
 
@@ -341,8 +344,10 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
         )
     cwd = _launch_dir(thread, pick.threads)
     if target_source == source:
-        argv = tuple(src.resume_argv(session_id))
-        return _Plan(thread, argv, cwd, None, pick.confirmed, target_source)
+        argv = src.fork_argv(session_id) if pick.action == "fork" else src.resume_argv(session_id)
+        return _Plan(thread, argv, cwd, None, pick.confirmed, target_source, pick.action)
+    if pick.action == "fork":
+        raise _Abort("native fork requires the session's original agent")
     path = _handoff_path(session_id)
     argv = tuple(src.launch_argv(_prompt(thread, path)))
     return _Plan(thread, argv, cwd, path, pick.confirmed, target_source)
@@ -371,9 +376,13 @@ def _ask(question: str) -> bool:
 
 
 def _permitted(plan: _Plan, probe: Presence) -> bool:
-    """Two agents appending to one transcript is not recoverable, so resuming a session
-    presence reports as live asks first. A handoff starts a new session and never does."""
-    if plan.transcript is not None or plan.confirmed or not _running(plan.thread, probe):
+    """Concurrent writers to the same transcript require confirmation."""
+    if (
+        plan.action == "fork"
+        or plan.transcript is not None
+        or plan.confirmed
+        or not _running(plan.thread, probe)
+    ):
         return True
     if _ask(f"{resume.label(plan.thread)} is running right now — resume it anyway?"):
         return True

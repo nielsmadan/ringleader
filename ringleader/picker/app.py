@@ -19,7 +19,7 @@ from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, Op
 
 from .. import overview, refresh, registry, resume
 from ..presence import PresenceClient
-from ..resume import Scope, agent_name, launchable_agents
+from ..resume import Scope, SessionAction, agent_name, launchable_agents
 from ..tui.keys import nav_bindings
 
 Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
@@ -38,6 +38,13 @@ class Choice:
     target: str
     threads: tuple[dict[str, Any], ...] = ()
     confirmed: bool = False
+    action: SessionAction = "resume"
+
+
+@dataclass(frozen=True)
+class AgentChoice:
+    target: str
+    action: SessionAction = "resume"
 
 
 @dataclass(frozen=True)
@@ -98,13 +105,15 @@ def row_text(thread: dict[str, Any], now_iso: str, *, running: bool = False) -> 
     return text
 
 
-def agent_row_text(agent: str, *, original: bool) -> Text:
-    suffix = "(original)" if original else "(hand off)"
-    return Text(f"{agent_name(agent):<9} {suffix}")
+def agent_row_text(choice: AgentChoice, *, original: bool) -> Text:
+    suffix = "resume existing" if original else "hand off"
+    if choice.action == "fork":
+        suffix = "fork into new session"
+    return Text(f"{agent_name(choice.target):<9} ({suffix})")
 
 
-class AgentModal(ModalScreen[str | None]):
-    """Which agent resumes this thread — its own first, the rest as a handoff."""
+class AgentModal(ModalScreen[AgentChoice | None]):
+    """Choose a same-agent resume or fork, or a handoff to another agent."""
 
     BINDINGS: ClassVar[list[BindingType]] = [
         *nav_bindings(),
@@ -130,16 +139,20 @@ class AgentModal(ModalScreen[str | None]):
         super().__init__()
         self._source = resume.source_of(thread)
         agents = launchable_agents()
-        own = (self._source,) if self._source in agents else ()
-        self._agents = [*own, *(a for a in agents if a != self._source)]
+        own = (
+            [AgentChoice(self._source), AgentChoice(self._source, "fork")]
+            if self._source in agents
+            else []
+        )
+        self._choices = [*own, *(AgentChoice(a) for a in agents if a != self._source)]
 
     def compose(self) -> ComposeResult:
         yield Grid(
             Label("resume with which agent?"),
             ListView(
                 *(
-                    ListItem(Label(agent_row_text(agent, original=agent == self._source)))
-                    for agent in self._agents
+                    ListItem(Label(agent_row_text(choice, original=choice.target == self._source)))
+                    for choice in self._choices
                 ),
                 id="agents",
             ),
@@ -159,9 +172,9 @@ class AgentModal(ModalScreen[str | None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         index = event.list_view.index
-        if index is None or not (0 <= index < len(self._agents)):
+        if index is None or not (0 <= index < len(self._choices)):
             return
-        self.dismiss(self._agents[index])
+        self.dismiss(self._choices[index])
 
     def action_cancel(self) -> None:
         self.dismiss(None)
@@ -433,12 +446,16 @@ class PickerApp(App[Choice | None]):
         thread = self._current()
         if thread is None:
             return
-        target = self._target or await self.push_screen_wait(AgentModal(thread))
-        if target is None:
+        choice = (
+            AgentChoice(self._target)
+            if self._target
+            else await self.push_screen_wait(AgentModal(thread))
+        )
+        if choice is None:
             return
-        handoff = target != resume.source_of(thread)
+        handoff = choice.target != resume.source_of(thread)
         confirmed = False
-        if not handoff and self._is_running(thread):
+        if choice.action == "resume" and not handoff and self._is_running(thread):
             message = Text(resume.label(thread))
             message.append(" is running right now — resume it anyway? [y/n]")
             confirmed = await self.push_screen_wait(ConfirmModal(message))
@@ -447,7 +464,8 @@ class PickerApp(App[Choice | None]):
         self.exit(
             Choice(
                 thread=thread,
-                target=target,
+                target=choice.target,
+                action=choice.action,
                 threads=(
                     tuple(cast(list[dict[str, Any]], self._reg.get("threads") or []))
                     if self._scanned

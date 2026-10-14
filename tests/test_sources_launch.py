@@ -57,7 +57,7 @@ def test_argv_starts_with_the_binary_and_holds_no_directory(name):
     """The caller chdirs before exec, so a cwd baked into argv would be a second,
     conflicting answer about where the agent starts."""
     src = _sources()[name]
-    for argv in (src.resume_argv("SID"), src.launch_argv("p")):
+    for argv in (src.resume_argv("SID"), src.fork_argv("SID"), src.launch_argv("p")):
         assert argv[0] in ("claude", "codex", "droid", "opencode", "pi")
         assert all("/" not in part for part in argv[1:])
 
@@ -68,4 +68,19 @@ def test_a_session_id_is_passed_as_one_argv_element(name):
     argument rather than being re-split by a shell that never runs."""
     src = _sources()[name]
     assert "weird id" in src.resume_argv("weird id")
+    assert "weird id" in src.fork_argv("weird id")
     assert "two words" in src.launch_argv("two words")
+
+
+FORK = {
+    "claude-code": ("claude", "--resume", "SID", "--fork-session"),
+    "codex": ("codex", "fork", "SID"),
+    "droid": ("droid", "resume", "SID", "--fork"),
+    "opencode": ("opencode", "--session", "SID", "--fork"),
+    "pi": ("pi", "--fork", "SID"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(RESUME))
+def test_fork_argv_matches_the_agent_cli(name):
+    assert _sources()[name].fork_argv("SID") == FORK[name]

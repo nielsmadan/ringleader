@@ -5,12 +5,14 @@ from enum import Enum
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from . import namefilter, overview, scanner, search
 from .agents import canonical_agent, display_agent
 from .search import _BLURB_FIELDS
 from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource
+
+SessionAction = Literal["resume", "fork"]
 
 _UNKNOWN = "(unknown)"
 

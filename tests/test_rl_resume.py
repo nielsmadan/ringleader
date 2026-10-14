@@ -1352,3 +1352,79 @@ def test_a_dry_run_reused_native_line_names_the_targets_own_launch_directory(tmp
     out = capsys.readouterr().out
     assert f"directory: {target_cwd}" in out
     assert str(tmp_path / "work" / "api") not in out
+
+
+FORK_ARGV = {
+    "claude-code": ("claude", "--resume", "aaa111", "--fork-session"),
+    "codex": ("codex", "fork", "aaa111"),
+    "droid": ("droid", "resume", "aaa111", "--fork"),
+    "opencode": ("opencode", "--session", "aaa111", "--fork"),
+    "pi": ("pi", "--fork", "aaa111"),
+}
+
+
+@pytest.mark.parametrize("source", sorted(FORK_ARGV))
+def test_picker_fork_launches_native_command_each_time_preserving_source(
+    tmp_path, source, monkeypatch
+):
+    thread = _session(tmp_path, "aaa111", source=source)
+    reg = _registry(tmp_path, thread)
+    original = Path(thread["file"]).read_bytes()
+    original_registry = Path(reg).read_bytes()
+    runner = Runner()
+    picker = Picker(Choice(thread, source, action="fork"))
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("fork must not ask to reopen"))
+    live_agent = "claude" if source == "claude-code" else source
+    for _ in range(2):
+        assert (
+            _run(
+                ["--registry", reg],
+                runner=runner,
+                picker=picker,
+                presence=lambda: frozenset({(live_agent, "aaa111")}),
+            )
+            == 0
+        )
+    assert runner.calls == [(FORK_ARGV[source], thread["project"])] * 2
+    assert Path(thread["file"]).read_bytes() == original
+    assert Path(reg).read_bytes() == original_registry
+
+
+@pytest.mark.parametrize("source", sorted(FORK_ARGV))
+def test_picker_fork_dry_run_reports_command_without_launching(tmp_path, source, capsys):
+    thread = _session(tmp_path, "aaa111", source=source)
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    assert (
+        _run(
+            ["--registry", reg, "--dry-run"],
+            runner=runner,
+            picker=Picker(Choice(thread, source, action="fork")),
+        )
+        == 0
+    )
+    output = capsys.readouterr().out
+    assert "argv: " + " ".join(FORK_ARGV[source]) in output
+    assert f"directory: {thread['project']}" in output
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("problem", ["binary", "directory"])
+def test_picker_fork_refuses_missing_launch_requirements(tmp_path, problem, capsys):
+    thread = _session(tmp_path, "aaa111", source="codex")
+    if problem == "directory":
+        thread["project"] = str(tmp_path / "missing-workspace")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    assert (
+        _run(
+            ["--registry", reg],
+            runner=runner,
+            picker=Picker(Choice(thread, "codex", action="fork")),
+            which=missing if problem == "binary" else installed,
+        )
+        == 1
+    )
+    expected = "codex is not installed" if problem == "binary" else "no longer exists"
+    assert expected in capsys.readouterr().err
+    assert runner.calls == []
