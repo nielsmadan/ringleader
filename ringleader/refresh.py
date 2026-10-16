@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,13 @@ def delta_note(added: int, removed: int) -> str | None:
     return "(scanning… " + ", ".join(bits) + ")"
 
 
+@dataclass(frozen=True)
+class Refreshed:
+    reg: dict[str, Any]
+    note: str | None
+    unavailable_sources: frozenset[str]
+
+
 def auto_refresh(  # noqa: PLR0913
     registry_path: str | Path,
     now_iso: str,
@@ -35,6 +43,32 @@ def auto_refresh(  # noqa: PLR0913
     name_filters: Iterable[str] | None = None,
     persist: bool = True,
 ) -> tuple[dict[str, Any], str | None]:
+    refreshed = refresh_registry(
+        registry_path,
+        now_iso,
+        tail=tail,
+        claude_projects_dir=claude_projects_dir,
+        projects_root=projects_root,
+        git_resolver=git_resolver,
+        sources=sources,
+        name_filters=name_filters,
+        persist=persist,
+    )
+    return refreshed.reg, refreshed.note
+
+
+def refresh_registry(  # noqa: PLR0913
+    registry_path: str | Path,
+    now_iso: str,
+    *,
+    tail: int = 30,
+    claude_projects_dir: Path | None = None,
+    projects_root: Path | None = None,
+    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    sources: Iterable[Source] | None = None,
+    name_filters: Iterable[str] | None = None,
+    persist: bool = True,
+) -> Refreshed:
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. Read commands run this before rendering; an unavailable source
     retains its cached sessions. Classification and naming remain separate agentic steps.
@@ -72,4 +106,6 @@ def auto_refresh(  # noqa: PLR0913
     if persist:
         registry.commit_registry(registry_path, reg)
     after = {registry.identity(t) for t in reg["threads"]}
-    return reg, delta_note(len(after - before), len(before - after))
+    return Refreshed(
+        reg, delta_note(len(after - before), len(before - after)), frozenset(unavailable_sources)
+    )

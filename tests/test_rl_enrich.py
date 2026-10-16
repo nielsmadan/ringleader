@@ -1,8 +1,10 @@
 import json
 
+from ringleader import registry
 from ringleader.commands import enrich as enrich_mod
 from ringleader.models.base import ModelError
-from ringleader.sources.base import NormalizedSession
+
+from tui_e2e import write_claude_session
 
 
 class FakeModel:
@@ -15,58 +17,55 @@ class FakeModel:
             "suggestedName": "did-a-thing",
         }
         self._raise_on = raise_on or set()
+        self.prompts = []
 
     def available(self):
         return True
 
     def complete_json(self, prompt, schema):
+        self.prompts.append(prompt)
         if any(k in prompt for k in self._raise_on):
             raise ModelError("boom")
         return self._out
 
 
-def _ns(sid, cwd="/p", tail="hello world"):
-    return NormalizedSession(
-        source="claude-code",
-        session_id=sid,
-        cwd=cwd,
-        mtime="2026-01-01T00:00:00+00:00",
-        size_bytes=10,
-        custom_title=None,
-        summary=None,
-        last_prompt="hi",
-        file=f"/p/{sid}.jsonl",
-        message_count=3,
-        tail_text=tail,
-    )
+def _session(tmp_path, sid="s1", prompt="fix the login bug"):
+    project = tmp_path / "work" / "proj"
+    project.mkdir(parents=True, exist_ok=True)
+    return write_claude_session(tmp_path / "_claude", project, sid, prompt)
 
 
-def test_enrich_classifies_pending(tmp_path, monkeypatch):
+def test_enrich_classifies_pending_from_transcript_on_disk(tmp_path, monkeypatch, capsys):
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1")])
-    monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
-    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: FakeModel())
-    rc = enrich_mod.cmd_enrich(["--registry", str(reg)])
-    assert rc == 0
+    _session(tmp_path)
+    model = FakeModel()
+    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: model)
 
-    t = json.loads(reg.read_text())["threads"][0]
-    assert t["status"] == "finished" and t["suggestedName"] == "did-a-thing"
+    assert enrich_mod.cmd_enrich(["--registry", str(reg)]) == 0
+
+    t = registry.find_session(registry.load_registry(reg), "claude-code:s1")
+    assert (t["status"], t["whatItIs"], t["suggestedName"]) == (
+        "finished",
+        "did a thing",
+        "did-a-thing",
+    )
+    assert t["classifiedAtMtime"] == t["mtime"]
+    assert "fix the login bug" in model.prompts[0]
+    assert "enriched 1, skipped 0 (model: fake (default model))" in capsys.readouterr().out
 
 
 def test_enrich_no_model_is_noop(tmp_path, monkeypatch, capsys):
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1")])
-    monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
+    _session(tmp_path)
     monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: None)
     rc = enrich_mod.cmd_enrich(["--registry", str(reg)])
     assert rc == 0
     assert "no model configured" in capsys.readouterr().out.lower()
 
 
-def test_enrich_skips_on_model_error(tmp_path, monkeypatch):
+def test_enrich_skips_on_model_error(tmp_path, monkeypatch, capsys):
     reg = tmp_path / "registry.json"
-    monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1", tail="EXPLODE now")])
-    monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
+    _session(tmp_path, prompt="EXPLODE now")
     monkeypatch.setattr(
         enrich_mod, "active_model", lambda cfg, task: FakeModel(raise_on={"EXPLODE"})
     )
@@ -74,6 +73,9 @@ def test_enrich_skips_on_model_error(tmp_path, monkeypatch):
     assert rc == 0
 
     assert json.loads(reg.read_text())["threads"][0]["status"] == "unclassified"
+    captured = capsys.readouterr()
+    assert "skipped s1: boom" in captured.err
+    assert "enriched 0, skipped 1" in captured.out
 
 
 def test_enrich_skips_cached_threads_from_an_unavailable_source(tmp_path, monkeypatch, capsys):
@@ -107,8 +109,8 @@ def test_enrich_skips_cached_threads_from_an_unavailable_source(tmp_path, monkey
         def complete_json(self, prompt, schema):
             raise AssertionError("unavailable transcript was sent to the model")
 
-    monkeypatch.setattr(enrich_mod.scanner, "active_sources", unavailable_sources)
-    monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kwargs: [])
+    monkeypatch.setattr("ringleader.scanner.active_sources", unavailable_sources)
+    monkeypatch.setattr("ringleader.scanner.scan", lambda **kwargs: [])
     monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: FailIfCalled())
 
     assert enrich_mod.cmd_enrich(["--registry", str(reg)]) == 0

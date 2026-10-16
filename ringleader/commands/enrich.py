@@ -3,41 +3,23 @@ from __future__ import annotations
 import argparse
 import sys
 from datetime import UTC, datetime
-from typing import Any
 
-from .. import projects, registry, scanner
+from .. import enrichment, projects, refresh, registry
 from ..config import load_config
-from ..models import active_model
-from ..models.base import ModelError
+from ..models import active_model, describe, proc
+from ..progress import never_cancelled
 from . import default_registry
 
-ENRICH_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "status": {"type": "string", "enum": ["active", "unfinished", "blocked", "finished"]},
-        "whatItIs": {"type": "string"},
-        "suggestedName": {"type": "string"},
-    },
-    "required": ["status", "whatItIs", "suggestedName"],
-}
+_PROGRESS_EVERY = 10
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _prompt(thread: dict[str, Any], tail: str) -> str:
-    return (
-        "You are classifying a DORMANT coding-agent session for a curation tool.\n"
-        f"project: {thread.get('project')}\n"
-        f"git branch: {thread.get('gitBranch')}\n"
-        f"last prompt: {thread.get('lastPrompt')}\n"
-        f"message count: {thread.get('messageCount')}\n\n"
-        "Recent transcript tail:\n"
-        f"{tail[:6000]}\n\n"
-        "Return: status (active|unfinished|blocked|finished), whatItIs (one line), "
-        "suggestedName (short kebab-case)."
-    )
+def _report_progress(done: int, total: int) -> None:
+    if done % _PROGRESS_EVERY == 0 or done == total:
+        print(f"enriching {done}/{total}", file=sys.stderr)
 
 
 def cmd_enrich(argv: list[str]) -> int:
@@ -55,49 +37,31 @@ def cmd_enrich(argv: list[str]) -> int:
         )
         return 0
 
-    now = _now()
-    reg = registry.load_registry(args.registry)
-    unavailable_sources: set[str] = set()
-    scanned = scanner.scan(
-        sources=scanner.active_sources(
-            unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
-        ),
-        unavailable_sources=unavailable_sources,
-    )
-    tails = {(ns.source, ns.session_id): ns.tail_text for ns in scanned}
-    reg = registry.reconcile(
-        reg,
-        scanned,
-        now,
-        unavailable_sources=unavailable_sources,
-    )
-    registry.apply_name_filters(reg, cfg.session_filters)
-
-    pending = registry.sessions_needing_classification(reg)
+    refreshed = refresh.refresh_registry(args.registry, _now(), name_filters=cfg.session_filters)
+    pending = registry.sessions_needing_classification(refreshed.reg)
     if args.project:
         pending = projects.filter_by_projects(pending, args.project)
-    unavailable = [t for t in pending if (t.get("source") or "claude-code") in unavailable_sources]
-    pending = [t for t in pending if (t.get("source") or "claude-code") not in unavailable_sources]
+    unavailable = [t for t in pending if registry.identity(t)[0] in refreshed.unavailable_sources]
+    pending = [t for t in pending if registry.identity(t)[0] not in refreshed.unavailable_sources]
     if args.limit is not None:
         pending = pending[: args.limit]
 
-    done = 0
-    skipped = len(unavailable)
-    for t in pending:
-        try:
-            source_key = (t.get("source") or "claude-code", t["sessionId"])
-            out = model.complete_json(_prompt(t, tails[source_key]), ENRICH_SCHEMA)
-            registry.apply_classification(
-                reg,
-                registry.qualified_id(t),
-                status=out["status"],
-                what_it_is=out["whatItIs"],
-                suggested_name=out["suggestedName"],
-            )
-            done += 1
-        except (ModelError, KeyError) as e:
-            print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
-            skipped += 1
-    registry.commit_registry(args.registry, reg)
-    print(f"enriched {done}, skipped {skipped} (model: {model.name})")
+    try:
+        outcome = enrichment.enrich_sessions(
+            args.registry,
+            [registry.identity(t) for t in pending],
+            model=model,
+            concurrency=enrichment.default_concurrency(model),
+            progress=_report_progress,
+            cancelled=never_cancelled,
+        )
+    except KeyboardInterrupt:
+        proc.kill_all_children()
+        raise
+    for error in outcome.errors:
+        print(f"skipped {error}", file=sys.stderr)
+    if outcome.aborted:
+        print(f"stopped early: {outcome.aborted}", file=sys.stderr)
+    skipped = outcome.failed + outcome.stale + len(unavailable)
+    print(f"enriched {outcome.classified}, skipped {skipped} (model: {describe(model)})")
     return 0

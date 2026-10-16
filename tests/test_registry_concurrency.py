@@ -146,8 +146,8 @@ def test_enrich_preserves_keep_during_model_call(tmp_path, monkeypatch):
 
     monkeypatch.setattr(enrich, "active_model", lambda _cfg, _task: Model())
     monkeypatch.setattr(enrich, "load_config", Config)
-    monkeypatch.setattr(enrich.scanner, "active_sources", lambda **_: [])
-    monkeypatch.setattr(enrich.scanner, "scan", lambda **_: [scanned(tmp_path)])
+    monkeypatch.setattr(refresh.scanner, "active_sources", lambda **_: [])
+    monkeypatch.setattr(refresh.scanner, "scan", lambda **_: [scanned(tmp_path)])
     assert enrich.cmd_enrich(["--registry", str(path)]) == 0
     thread = registry.load_registry(path)["threads"][0]
     assert (thread["decision"], thread["status"], thread["whatItIs"]) == (

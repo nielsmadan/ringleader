@@ -486,3 +486,19 @@ def test_auto_refresh_restamps_when_the_filter_changes(tmp_path):
     )
 
     assert reg["threads"][0]["filteredBy"] is None
+
+
+def test_refresh_registry_reports_unavailable_sources(tmp_path, monkeypatch):
+    reg_path = _registry(tmp_path, [])
+
+    def active_sources(*, unavailable_sources, recorded_threads):
+        unavailable_sources.add("opencode")
+        return []
+
+    monkeypatch.setattr(refresh.scanner, "active_sources", active_sources)
+
+    refreshed = refresh.refresh_registry(reg_path, "2026-10-15T00:00:00+00:00", name_filters=[])
+
+    assert refreshed.unavailable_sources == frozenset({"opencode"})
+    assert refreshed.note is None
+    assert refreshed.reg["threads"] == []

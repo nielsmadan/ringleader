@@ -248,6 +248,25 @@ def test_render_conversation_routes_through_opencode_and_preserves_order(tmp_pat
     assert "second" in rendered
 
 
+def test_render_tail_routes_through_the_native_opencode_renderer(tmp_path):
+    db = _create_db(tmp_path / "store" / "opencode.db")
+    _session(db)
+    _message(db, "ses_live", "msg_user", "user", 1770998200000, "first")
+    _message(db, "ses_live", "msg_assistant", "assistant", 1770998300000, "second answer")
+    thread = {
+        "source": "opencode",
+        "sourceRef": "ses_live",
+        "sessionId": "ses_live",
+        "file": None,
+        "nativeRoots": {"store": str(tmp_path / "store")},
+    }
+
+    rendered = export.render_conversation(thread)
+
+    assert export.render_tail(thread, 12) == rendered[-12:]
+    assert "second answer" in export.render_tail(thread, 100)
+
+
 def test_available_handles_missing_schema_and_locked_db(tmp_path):
     missing = OpenCodeSource(db_path=tmp_path / "missing.db")
     wrong = tmp_path / "wrong.db"
