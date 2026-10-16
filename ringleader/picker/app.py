@@ -21,6 +21,7 @@ from .. import overview, refresh, registry, resume
 from ..presence import PresenceClient
 from ..resume import Scope, SessionAction, agent_name, launchable_agents
 from ..tui.keys import nav_bindings
+from ..tui.types import Clock
 
 Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
 Presence = Callable[[], frozenset[tuple[str, str]]]
@@ -53,10 +54,6 @@ class RefreshResult:
     running: frozenset[tuple[str, str]] | None
     note: str | None
     error: str | None
-
-
-def _now_iso() -> str:
-    return datetime.now(UTC).isoformat()
 
 
 def live_session_ids() -> frozenset[tuple[str, str]]:
@@ -265,6 +262,7 @@ class PickerApp(App[Choice | None]):
         target: str | None = None,
         refresher: Refresher | None = None,
         presence: Presence | None = None,
+        now: Clock | None = None,
     ) -> None:
         super().__init__()
         self.registry_path = str(registry_path)
@@ -274,6 +272,7 @@ class PickerApp(App[Choice | None]):
         self._target = target
         self._refresher: Refresher = refresher or refresh.auto_refresh
         self._presence: Presence = presence or live_session_ids
+        self._now: Clock = now or (lambda: datetime.now(UTC))
         self._reg: dict[str, Any] = registry.empty_registry()
         self._rows: list[dict[str, Any]] = []
         self._live_ids: frozenset[tuple[str, str]] = frozenset()
@@ -324,7 +323,7 @@ class PickerApp(App[Choice | None]):
         note: str | None = None
         warning: str | None = None
         try:
-            reg, note = self._refresher(self.registry_path, _now_iso())
+            reg, note = self._refresher(self.registry_path, self._now().isoformat())
         except Exception as error:  # noqa: BLE001 -- report in the UI, do not crash it
             warning = f"scan failed: {error}"
         if stopped.is_set():
@@ -375,7 +374,7 @@ class PickerApp(App[Choice | None]):
         if not self._alive():
             return
         keep = self._highlighted_id()
-        now = _now_iso()
+        now = self._now().isoformat()
         in_scope = resume.candidates(self._reg, scope=self._scope, cwd=self.cwd)
         self._rows = resume.rank(in_scope, self._query)
         list_view = self._list_view()

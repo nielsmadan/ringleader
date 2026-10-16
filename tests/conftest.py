@@ -1,9 +1,60 @@
+import difflib
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 import pytest
 from ringleader.portability import claude
+from ringleader.tui.snapshot import normalize_text
 
 SKILLS_ROOT = Path(__file__).resolve().parent.parent / ".agents" / "skills"
+GOLDENS_ROOT = Path(__file__).resolve().parent / "goldens"
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption(
+        "--update-goldens",
+        action="store_true",
+        default=False,
+        help="rewrite tests/goldens from the current output",
+    )
+
+
+def _replaced(text: str, replace: Mapping[str, str]) -> str:
+    for old in sorted(replace, key=len, reverse=True):
+        text = text.replace(old, replace[old])
+    return text
+
+
+def golden_checker(
+    request: pytest.FixtureRequest, root: Path = GOLDENS_ROOT
+) -> Callable[..., None]:
+    def check(name: str, text: str, *, replace: Mapping[str, str] | None = None) -> None:
+        path = root / f"{name}.txt"
+        actual = normalize_text(_replaced(text, replace or {}))
+        if request.config.getoption("--update-goldens"):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(actual, encoding="utf-8")
+            return
+        if not path.exists():
+            pytest.fail(
+                f"no golden at {path}: run uv run pytest {request.node.nodeid} --update-goldens"
+            )
+        expected = path.read_text(encoding="utf-8")
+        if actual != expected:
+            diff = difflib.unified_diff(
+                expected.splitlines(keepends=True),
+                actual.splitlines(keepends=True),
+                fromfile=f"{name}.txt (golden)",
+                tofile=f"{name}.txt (actual)",
+            )
+            pytest.fail("golden mismatch:\n" + "".join(diff), pytrace=False)
+
+    return check
+
+
+@pytest.fixture
+def golden(request: pytest.FixtureRequest) -> Callable[..., None]:
+    return golden_checker(request)
 
 
 @pytest.fixture(scope="session")

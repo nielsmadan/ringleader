@@ -29,6 +29,8 @@ go deeper, per subsystem.
 - [inbox.md](inbox.md) — `inbox/app.py`: the Textual TUI.
 - [resume.md](resume.md) — `resume.py`, `picker/app.py`, `commands/resume.py`: selecting a
   dormant session and handing the process to an agent.
+- [tui-testing.md](tui-testing.md) — `tui/snapshot.py`, `scripts/tui_fixture.py`,
+  `scripts/tui_shot.py`, `tests/tui_e2e.py`: golden screens, text shots, and pty end-to-end runs.
 - `search.py` / `searchview.py` / `tty.py` — `rl session search`: the matcher (tiers,
   scope, archived-tombstone fallbacks) is kept apart from the renderer that colours it,
   so `jsonout.py` never depends on terminal formatting. `tty.py` owns the `--color`
