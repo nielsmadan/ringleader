@@ -1,10 +1,11 @@
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
-from ringleader.portability import native
+from ringleader.portability import claude, native
 from ringleader.portability.adapters import builtin_adapters
 from ringleader.portability.capabilities import NativeRoots, RunResult, SourceRequest, TargetRequest
 from ringleader.portability.claude import PROFILE as CLAUDE_PROFILE
@@ -175,6 +176,107 @@ def test_source_snapshot_is_owned_and_version_probe_is_separate(adapter, profile
         stage.identity.native_id,
     )
     assert adapter.launch_request(stage.identity, stage.roots).cwd == stage.roots.cwd
+
+
+def _settings(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(data)
+
+
+def _converted(tmp_path, *appended):
+    stage = stage_for(ClaudeAdapter(), CLAUDE_PROFILE, tmp_path)
+    rows = [*native.records(stage.files[0].data), *appended]
+    _settings(stage.roots.store / stage.source_ref, native.jsonl(rows).decode())
+    return stage
+
+
+def _claude_launch(stage):
+    return ClaudeAdapter().launch_request(stage.identity, stage.roots).argv
+
+
+def _claude_launch_model(tmp_path):
+    stage = _converted(tmp_path)
+    argv = _claude_launch(stage)
+    assert argv[:4] == ("claude", "--resume", stage.identity.native_id, "--model")
+    return argv[4]
+
+
+def _assistant(model):
+    message = {"role": "assistant", "model": model, "content": []}
+    return {"type": "assistant", "isSidechain": False, "message": message}
+
+
+def test_claude_launch_leaves_a_native_session_on_its_own_model(tmp_path):
+    stage = _converted(tmp_path)
+    rows = [
+        {key: value for key, value in row.items() if key != "ringleader"}
+        for row in native.records(stage.files[0].data)
+    ]
+    _settings(stage.roots.store / stage.source_ref, native.jsonl(rows).decode())
+    assert _claude_launch(stage) == ("claude", "--resume", stage.identity.native_id)
+
+
+def test_claude_launch_leaves_a_continued_conversion_on_its_latest_model(tmp_path):
+    stage = _converted(tmp_path, _assistant("claude-opus-5-5"))
+    assert _claude_launch(stage) == ("claude", "--resume", stage.identity.native_id)
+
+
+def test_claude_launch_looks_past_a_synthetic_error_row(tmp_path):
+    stage = _converted(tmp_path, _assistant("<synthetic>"))
+    assert _claude_launch(stage)[3:] == ("--model", "default")
+
+
+def test_claude_launch_without_a_transcript_passes_no_model(tmp_path):
+    identity = Identity("claude-code", str(uuid4()))
+    argv = ClaudeAdapter().launch_request(identity, roots(tmp_path)).argv
+    assert argv == ("claude", "--resume", identity.native_id)
+
+
+def test_claude_launch_prefers_a_settings_env_model(tmp_path, monkeypatch):
+    _settings(
+        tmp_path / "store" / "settings.json",
+        '{"model": "opus", "env": {"ANTHROPIC_MODEL": "claude-sonnet-5-5"}}',
+    )
+    monkeypatch.setenv("ANTHROPIC_MODEL", "haiku")
+    assert _claude_launch_model(tmp_path) == "claude-sonnet-5-5"
+
+
+def test_claude_launch_names_the_user_settings_model(tmp_path):
+    _settings(tmp_path / "store" / "settings.json", '{"model": "opus"}')
+    assert _claude_launch_model(tmp_path) == "opus"
+
+
+def test_claude_launch_prefers_project_settings_over_user_settings(tmp_path):
+    _settings(tmp_path / "store" / "settings.json", '{"model": "opus"}')
+    _settings(tmp_path / "cwd" / ".claude" / "settings.json", '{"model": "sonnet"}')
+    _settings(tmp_path / "cwd" / ".claude" / "settings.local.json", '{"model": "haiku"}')
+    assert _claude_launch_model(tmp_path) == "haiku"
+
+
+def test_claude_launch_prefers_managed_settings(tmp_path, monkeypatch):
+    managed = tmp_path / "managed-settings.json"
+    _settings(managed, '{"model": "claude-opus-5-5"}')
+    _settings(tmp_path / "cwd" / ".claude" / "settings.local.json", '{"model": "haiku"}')
+    monkeypatch.setattr(claude, "MANAGED_SETTINGS", {sys.platform: managed})
+    assert _claude_launch_model(tmp_path) == "claude-opus-5-5"
+
+
+def test_claude_launch_prefers_anthropic_model_env(tmp_path, monkeypatch):
+    _settings(tmp_path / "store" / "settings.json", '{"model": "opus"}')
+    monkeypatch.setenv("ANTHROPIC_MODEL", "haiku")
+    assert _claude_launch_model(tmp_path) == "haiku"
+
+
+def test_claude_launch_skips_unreadable_and_modelless_settings(tmp_path):
+    _settings(tmp_path / "cwd" / ".claude" / "settings.local.json", "{not json")
+    _settings(tmp_path / "cwd" / ".claude" / "settings.json", '{"model": ""}')
+    _settings(tmp_path / "store" / "settings.json", '{"model": "sonnet"}')
+    assert _claude_launch_model(tmp_path) == "sonnet"
+
+
+def test_claude_launch_falls_back_to_the_default_model(tmp_path):
+    _settings(tmp_path / "store" / "settings.json", '{"theme": "dark"}')
+    assert _claude_launch_model(tmp_path) == "default"
 
 
 @pytest.mark.parametrize(

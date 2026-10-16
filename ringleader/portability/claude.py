@@ -1,12 +1,17 @@
 from __future__ import annotations
 
 import base64
+import json
+import os
 import re
+import sys
 import unicodedata
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from hashlib import sha256
+from pathlib import Path
 from typing import Any
 from uuid import UUID, uuid4
 
@@ -43,6 +48,10 @@ from .verification import VerificationRecord, local_versions
 from .versions import check_version
 
 MAX_SLUG_LENGTH = 200
+MANAGED_SETTINGS = {
+    "darwin": Path("/Library/Application Support/ClaudeCode/managed-settings.json"),
+    "linux": Path("/etc/claude-code/managed-settings.json"),
+}
 PINNED = ("2.1.278", "2.1.283")
 
 PROFILE = FormatProfile(
@@ -1011,6 +1020,69 @@ class ClaudeAdapter:
 
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:
         native.safe_id(identity, "claude-code")
-        return native.launch_request(
-            self.executable, ("--resume", identity.native_id), roots, "claude-code"
-        )
+        args: tuple[str, ...] = ("--resume", identity.native_id)
+        transcripts = roots.store.glob(f"projects/*/{identity.native_id}.jsonl")
+        if resumes_on_placeholder(_rows(next(transcripts, None))):
+            settings = [_load(path) for path in _settings_paths(roots)]
+            args = (*args, "--model", resume_model(os.environ, settings))
+        return native.launch_request(self.executable, args, roots, "claude-code")
+
+
+# Claude resumes on the last assistant row's model, and converted rows carry a placeholder.
+def resumes_on_placeholder(rows: Sequence[object]) -> bool:
+    last = next((row for row in reversed(rows) if _restorable(row)), None)
+    return isinstance(last, dict) and "ringleader" in last
+
+
+def _restorable(row: object) -> bool:
+    if not isinstance(row, dict) or row.get("type") != "assistant" or row.get("isSidechain"):
+        return False
+    message = row.get("message")
+    return not (isinstance(message, dict) and message.get("model") == "<synthetic>")
+
+
+def resume_model(environ: Mapping[str, str], settings: Sequence[object]) -> str:
+    files = [item for item in settings if isinstance(item, dict)]
+    candidates = (
+        *(_env(item).get("ANTHROPIC_MODEL") for item in files),
+        environ.get("ANTHROPIC_MODEL"),
+        *(item.get("model") for item in files),
+    )
+    return next((item for item in candidates if isinstance(item, str) and item), "default")
+
+
+def _env(settings: dict[str, Any]) -> dict[str, Any]:
+    env = settings.get("env")
+    return env if isinstance(env, dict) else {}
+
+
+def _settings_paths(roots: NativeRoots) -> tuple[Path, ...]:
+    managed = MANAGED_SETTINGS.get(sys.platform)
+    return (
+        *((managed,) if managed else ()),
+        roots.cwd / ".claude" / "settings.local.json",
+        roots.cwd / ".claude" / "settings.json",
+        roots.store / "settings.json",
+    )
+
+
+def _load(path: Path) -> object:
+    try:
+        return json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+
+
+def _rows(path: Path | None) -> list[object]:
+    try:
+        lines = path.read_text().splitlines() if path else []
+    except OSError:
+        return []
+    return [_row(line) for line in lines]
+
+
+def _row(line: str) -> object:
+    try:
+        return json.loads(line)
+    except ValueError:
+        return None

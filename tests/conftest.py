@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pytest
+from ringleader.portability import claude
 
 SKILLS_ROOT = Path(__file__).resolve().parent.parent / ".agents" / "skills"
 
@@ -32,8 +33,10 @@ def isolate_agent_environment(monkeypatch, tmp_path):
         "PI_CODING_AGENT_DIR",
         "QWEN_HOME",
         "KIMI_CODE_HOME",
+        "ANTHROPIC_MODEL",
     ):
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(claude, "MANAGED_SETTINGS", {})
 
 
 @pytest.fixture(autouse=True, scope="session")

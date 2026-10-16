@@ -520,7 +520,8 @@ def native_case(original: Conversation, compact: bool, executable: str, base: Pa
     for variant in VARIANTS:
         capture_case(stage, compact, executable, base / variant, variant)
     launch = adapter.launch_request(identity, roots)
-    require_equal(launch.argv, (executable, "--resume", identity.native_id), "launch argv")
+    require_equal(launch.argv[:3], (executable, "--resume", identity.native_id), "launch argv")
+    require_equal(launch.argv[3], "--model", "launch names the configured model")
     require_equal(launch.cwd, roots.cwd, "launch cwd")
 
 

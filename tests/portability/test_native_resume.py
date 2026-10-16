@@ -99,7 +99,13 @@ def test_a_first_attempt_converts_and_launches_the_published_target(offline):
     assert result.outcome == "converted"
     assert result.target is not None and result.target.agent == "claude-code"
     assert result.launch is not None
-    assert result.launch.argv == ("claude", "--resume", result.target.native_id)
+    assert result.launch.argv == (
+        "claude",
+        "--resume",
+        result.target.native_id,
+        "--model",
+        "default",
+    )
     assert result.launch.cwd == Path(thread["project"])
     # CLAUDE_CONFIG_DIR is unset here; setting it would rename Claude's keychain item
     assert result.launch.env == ()
@@ -188,7 +194,13 @@ def test_an_archived_reuse_forks_a_fresh_target(offline):
     assert (forked.outcome, forked.previous) == ("forked", "archived")
     assert forked.target is not None and forked.target != first.target
     assert forked.launch is not None
-    assert forked.launch.argv == ("claude", "--resume", forked.target.native_id)
+    assert forked.launch.argv == (
+        "claude",
+        "--resume",
+        forked.target.native_id,
+        "--model",
+        "default",
+    )
 
 
 def test_after_an_archived_target_is_forked_later_resumes_reopen_the_fork(offline):
@@ -454,8 +466,8 @@ def test_rl_resume_converts_a_pi_session_into_claude_and_execs_it(offline, monke
     )
     assert rc == 0
     (request,) = launched
-    target = registry.find_session(registry.load_registry(path), request.argv[-1])
-    assert request.argv == ("claude", "--resume", target["sessionId"])
+    target = registry.find_session(registry.load_registry(path), request.argv[2])
+    assert request.argv == ("claude", "--resume", target["sessionId"], "--model", "default")
     assert request.cwd == Path(thread["project"])
     assert request.env == ()
     assert target["source"] == "claude-code"

@@ -62,8 +62,8 @@ exceeds 200 characters fail because the CLI/SDK hash variants are not verified.
 `RunRequest.env` contains overrides, not a complete process environment. A production
 runner applies them to the user's environment, retaining authentication and PATH.
 The overrides also place XDG data/state beneath `home` and TMPDIR beneath `cache`.
-Production resume passes only the session selector and cwd, allowing the native
-agent to load current destination project instructions. Version preflight uses
+Production resume passes only the session selector and cwd (plus `--model` for a converted Claude session, below),
+allowing the native agent to load current destination project instructions. Version preflight uses
 separate disposable roots, never the destination store. The smoke runner uses a
 complete allowlisted environment with PATH, locale, disposable roots, and its
 explicit probe inputs; it inherits no authentication, native settings, hooks, or
@@ -87,6 +87,20 @@ telemetry do not become messages. Meta messages stay in context, outside visible
 history; their combination with compaction currently fails explicitly. Branch IDs
 can select an earlier or alternate valid chain. Duplicate IDs, forward/missing
 parents, cycles, incomplete tools, and unknown conversational payloads fail.
+
+Every written assistant row carries the placeholder model `claude-sonnet-4-5`, and Claude
+2.1.301 resumes on the last assistant row's model over a configured default — measured
+offline against a loopback capture, in both `--print` and the interactive TUI: a settings
+`model` that names a non-default model (`haiku`) wins over the row, but one that names the
+default (`opus`), or no setting at all, leaves the session on `claude-sonnet-4-5`; only
+`ANTHROPIC_MODEL` and `--model` reliably win. A settings file's `env.ANTHROPIC_MODEL` beats the
+shell's, which beats any settings `model`. So when the transcript's last main-chain assistant
+row (skipping `<synthetic>` error rows) is one ringleader wrote, launch is
+`claude --resume <id> --model <m>`, where `<m>` is the first `env.ANTHROPIC_MODEL` across managed
+settings, `<cwd>/.claude/settings.local.json`, `<cwd>/.claude/settings.json` and
+`$CLAUDE_CONFIG_DIR/settings.json`, else the shell's `ANTHROPIC_MODEL`, else the first `model` in
+those files, else `default`. A native session, or a converted one Claude has since answered in,
+launches as plain `claude --resume <id>` and keeps its own model.
 
 The writer emits fresh session/message IDs, current session metadata, a tail
 `custom-title`, zero assistant usage, matched native `tool_use`/`tool_result`
