@@ -10,7 +10,7 @@ from textual.widgets import Footer, Header, Label, OptionList, Static
 
 from ... import overview, registry, resume
 from ...tui.keys import nav_bindings
-from ...tui.rows import set_rows
+from ...tui.rows import highlighted_key, set_rows
 from ..base import InboxScreen
 from ..state import HomeState, NextStep
 
@@ -52,11 +52,6 @@ def wrap_items(items: list[str], width: int) -> str:
         else:
             lines.append(item)
     return "\n".join(lines)
-
-
-def _highlighted_key(option_list: OptionList) -> str | None:
-    option = option_list.highlighted_option
-    return option.id if option is not None else None
 
 
 def step_text(index: int, step: NextStep) -> Text:
@@ -176,7 +171,7 @@ class HomeScreen(InboxScreen):
         set_rows(
             steps,
             [(f"{step.kind}", step_text(index, step)) for index, step in enumerate(self._steps, 1)],
-            keep=_highlighted_key(steps),
+            keep=highlighted_key(steps),
         )
         steps.display = bool(self._steps)
         self.query_one("#steps-heading", Label).display = bool(self._steps)
@@ -193,7 +188,7 @@ class HomeScreen(InboxScreen):
                 )
                 for t in self._in_flight
             ],
-            keep=_highlighted_key(in_flight),
+            keep=highlighted_key(in_flight),
         )
         self.query_one("#waking", Static).update(
             Text(waking_line(state.waking_soon, state.now_iso))

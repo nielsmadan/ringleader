@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from typing import ClassVar, Literal
 
@@ -21,6 +20,8 @@ from ..policy import SCAN_FRESH_SECONDS
 from ..state import plural
 
 type ScopeChoice = EnrichScope | Literal["cancel"]
+
+CANCEL: ScopeChoice = "cancel"
 
 STAGES: tuple[RoundupPhase, ...] = ("sweep", "prune", "purge", "enrich", "stamp")
 ACTIVE = frozenset({"phases", "enrich", "stamp"})
@@ -43,6 +44,8 @@ def confirm_text(plan: RoundupPlan, scope: EnrichScope) -> str:
 
 def warning_title(plan: RoundupPlan) -> str:
     return (
+        f"Run the roundup? deletes {len(plan.prune_items)}, purges {len(plan.purge_ids)}, "
+        f"archives {len(plan.sweep_items)}.\n"
         f"Enrich {len(plan.enrich_all_ids)} sessions? "
         f"about {duration(plan.estimated_seconds('all'))}"
     )
@@ -61,7 +64,7 @@ def scope_options(plan: RoundupPlan) -> list[ChoiceOption[ScopeChoice]]:
             "recent",
         ),
         ChoiceOption("Run, skip enrich", "none"),
-        ChoiceOption("Cancel", "cancel"),
+        ChoiceOption("Cancel", CANCEL),
     ]
 
 
@@ -289,9 +292,12 @@ class RoundupScreen(InboxScreen):
         reg = overlay.visible(inbox.state.snapshot.reg, inbox.state.overlay)
         registry_path = inbox.registry_path
         now_iso = inbox.now_iso()
+        now_epoch = inbox.now_epoch()
         note = landed.note
         unavailable = landed.unavailable_sources
         model_for = inbox.model_for
+        configured_model = inbox.configured_model
+        read_only = inbox.read_only
 
         def job(_token: CancelToken, _progress: Callable[[None], None]) -> RoundupPlan:
             return roundup.plan_roundup(
@@ -300,9 +306,10 @@ class RoundupScreen(InboxScreen):
                 now_iso,
                 scan_note=note,
                 model=model_for("enrich"),
-                now_epoch=time.time(),
+                now_epoch=now_epoch,
                 retention_days=load_config().archive_retention_days,
                 unavailable_sources=unavailable,
+                read_only_model=configured_model("enrich") if read_only else None,
             )
 
         inbox.run_job(job, name="rl-roundup-plan", on_result=self._planned)
@@ -343,8 +350,10 @@ class RoundupScreen(InboxScreen):
         if plan is None:
             return
         if plan.enrich_warning:
+            options = scope_options(plan)
+            cancel = next(i for i, option in enumerate(options) if option.value == CANCEL)
             self.app.push_screen(
-                ChoiceModal(warning_title(plan), scope_options(plan)),
+                ChoiceModal(warning_title(plan), options, initial=cancel),
                 callback=lambda choice: self._chosen(plan, choice),
             )
             return

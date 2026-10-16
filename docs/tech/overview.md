@@ -26,7 +26,8 @@ go deeper, per subsystem.
   queue and the guarded write path into a repository.
 - [integration.md](integration.md) — `commands/skills.py`, `hooks.py`, `statusline.py`,
   `session_env.py`, `safe_write.py`: editing five other programs' configs, removably.
-- [inbox.md](inbox.md) — `inbox/app.py`: the Textual TUI.
+- [inbox.md](inbox.md) — `home/`, `commands/inbox.py`: the Textual home TUI, its single writer and
+  the leave barrier.
 - [resume.md](resume.md) — `resume.py`, `picker/app.py`, `commands/resume.py`: selecting a
   dormant session and handing the process to an agent.
 - [tui-testing.md](tui-testing.md) — `tui/snapshot.py`, `scripts/tui_fixture.py`,

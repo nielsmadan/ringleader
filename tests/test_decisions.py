@@ -179,6 +179,85 @@ def test_delete_refuses_a_changed_transcript(tmp_path):
     assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
 
 
+def test_delete_refuses_a_running_session(tmp_path):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    ctx = _ctx(path, tmp_path, live=frozenset({("claude", "s1")}))
+    outcome = decisions.execute(DeleteOp(_seen(thread)), ctx)
+    assert (outcome.ok, outcome.message) == (
+        False,
+        "s1-title is running — finish it from inside with the ringleader-finish skill",
+    )
+    assert Path(thread["file"]).exists()
+    assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
+
+
+def test_delete_refuses_when_presence_is_unknown(tmp_path):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    outcome = decisions.execute(DeleteOp(_seen(thread)), _ctx(path, tmp_path, live=None))
+    assert (outcome.ok, outcome.message) == (
+        False,
+        "can't tell whether s1-title is running — install presence with rl data presence install",
+    )
+    assert Path(thread["file"]).exists()
+    assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
+
+
+def test_delete_refuses_a_session_without_a_fingerprint(tmp_path):
+    thread = _thread(tmp_path, fileFingerprint=None)
+    path = _write(tmp_path, [thread])
+    outcome = decisions.execute(DeleteOp(_seen(thread)), _ctx(path, tmp_path))
+    assert (outcome.ok, outcome.message) == (
+        False,
+        "s1-title: changed since you looked: no fingerprint, rescan",
+    )
+    assert Path(thread["file"]).exists()
+    assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
+
+
+def _stray_thread(tmp_path):
+    notes = tmp_path / "work" / "notes.jsonl"
+    notes.parent.mkdir()
+    notes.write_text("{}\n")
+    (tmp_path / "work" / "notes").mkdir()
+    (tmp_path / "work" / "notes" / "keep.md").write_text("mine\n")
+    return _thread(tmp_path, file=str(notes), fileFingerprint=stat_fingerprint(notes.stat())), notes
+
+
+def test_delete_refuses_a_transcript_outside_the_session_store(tmp_path):
+    thread, notes = _stray_thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    outcome = decisions.execute(DeleteOp(_seen(thread)), _ctx(path, tmp_path))
+    reason = (
+        f"cannot delete claude-code session s1: {notes} is outside the claude-code session store"
+    )
+    assert (outcome.ok, outcome.message) == (False, f"s1-title: {reason}")
+    assert (notes.exists(), (notes.parent / "notes" / "keep.md").exists()) == (True, True)
+
+
+def test_prune_skips_a_transcript_outside_the_session_store(tmp_path):
+    thread, notes = _stray_thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    outcome = decisions.execute(PruneOp((_seen(thread),)), _ctx(path, tmp_path))
+    assert outcome.message == "deleted 0 tiny sessions"
+    assert [reason for _, reason in outcome.refused] == [
+        f"cannot prune claude-code session s1: {notes} is outside the claude-code session store"
+    ]
+    assert (notes.exists(), (notes.parent / "notes" / "keep.md").exists()) == (True, True)
+
+
+def test_prune_skips_a_session_without_a_fingerprint(tmp_path):
+    thread = _thread(tmp_path, fileFingerprint=None)
+    path = _write(tmp_path, [thread])
+    outcome = decisions.execute(PruneOp((_seen(thread),)), _ctx(path, tmp_path))
+    assert outcome.message == "deleted 0 tiny sessions"
+    assert [reason for _, reason in outcome.refused] == [
+        "changed since you looked: no fingerprint, rescan"
+    ]
+    assert Path(thread["file"]).exists()
+
+
 def test_keep_going_marks_reviewed_at_the_seen_mtime(tmp_path):
     thread = _thread(tmp_path)
     path = _write(tmp_path, [thread, _thread(tmp_path, "s2")])

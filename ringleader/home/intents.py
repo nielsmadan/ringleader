@@ -5,9 +5,12 @@ import shlex
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
+from .. import overview
 from ..picker.app import Choice
+from .harvest_view import HarvestGroup
+from .state import ProjectRef
 
 type HandoffPurpose = Literal["triage", "publish"]
 
@@ -47,3 +50,31 @@ def publish_prompt(repo_label: str | None) -> str:
 
 def handoff_cwd(candidates: Sequence[str | None], home: Path) -> str:
     return next((c for c in candidates if c and os.path.isdir(c)), str(home))
+
+
+def triage_handoff(
+    agent: str, project: ProjectRef, threads: Sequence[dict[str, Any]], home: Path
+) -> AgentHandoffIntent:
+    members = sorted(
+        (t for t in threads if overview.group_key(t) == project.key),
+        key=lambda t: t.get("mtime") or "",
+        reverse=True,
+    )
+    candidates = [path for t in members for path in (t.get("gitRoot"), t.get("project"))]
+    return AgentHandoffIntent(
+        agent=agent,
+        cwd=handoff_cwd(candidates, home),
+        prompt=triage_prompt(project.label, project.key),
+        purpose="triage",
+        label=project.label,
+    )
+
+
+def publish_handoff(agent: str, group: HarvestGroup | None, cwd: str) -> AgentHandoffIntent:
+    return AgentHandoffIntent(
+        agent=agent,
+        cwd=cwd,
+        prompt=publish_prompt(group.label if group is not None else None),
+        purpose="publish",
+        label=group.label if group is not None else "all harvests",
+    )

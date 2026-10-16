@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from ringleader import prune, scanner
 from ringleader.commands import delete
-from ringleader.sources.base import IndexUpdate
+from ringleader.sources.base import IndexUpdate, stat_fingerprint
 from ringleader.sources.codex import CodexSource, CodexStateError
 
 NOW = "2026-08-16T00:00:00+00:00"
@@ -134,7 +134,11 @@ def test_sources_without_an_index_are_left_alone(tmp_path, monkeypatch):
 def test_prune_clears_the_picker_entry_before_deleting_the_transcript(tmp_path, monkeypatch):
     home = _codex_home(tmp_path, monkeypatch)
     rollout = _add_thread(home, "sess-1")
-    reg = _reg([_thread("sess-1", str(rollout))])
+    thread = {
+        **_thread("sess-1", str(rollout)),
+        "fileFingerprint": stat_fingerprint(rollout.stat()),
+    }
+    reg = _reg([thread])
 
     assert prune.delete_sessions(reg, list(reg["threads"]), NOW) == 1
 

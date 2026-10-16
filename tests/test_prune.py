@@ -246,14 +246,24 @@ def test_purge_archived_refuses_non_jsonl(tmp_path):
     assert n == 0 and other.exists() and "purgedAt" not in ts
 
 
+def _droid_slug(tmp_path):
+    return tmp_path / "_factory" / ".factory" / "sessions" / "-w-api"
+
+
 def _droid_thread(tmp_path, sid="d"):
-    slug = tmp_path / "sessions" / "-w-api"
+    slug = _droid_slug(tmp_path)
     slug.mkdir(parents=True)
     transcript = slug / f"{sid}.jsonl"
     transcript.write_text("{}\n")
     (slug / f"{sid}.settings.json").write_text("{}")
     (slug / f"{sid}.settings.json.bak").write_text("{}")
-    return {"sessionId": sid, "source": "droid", "file": str(transcript), "mtime": OLD}
+    return {
+        "sessionId": sid,
+        "source": "droid",
+        "file": str(transcript),
+        "fileFingerprint": stat_fingerprint(transcript.stat()),
+        "mtime": OLD,
+    }
 
 
 def test_deleting_a_droid_session_removes_its_settings_sidecars(tmp_path):
@@ -261,7 +271,7 @@ def test_deleting_a_droid_session_removes_its_settings_sidecars(tmp_path):
     reg = _reg([thread])
 
     assert delete_sessions(reg, [thread], NOW) == 1
-    assert list((tmp_path / "sessions" / "-w-api").iterdir()) == []
+    assert list(_droid_slug(tmp_path).iterdir()) == []
 
 
 def test_purging_an_archived_droid_session_removes_its_settings_sidecars(tmp_path):
@@ -291,7 +301,6 @@ def test_delete_sessions_routes_skip_messages_to_report(tmp_path):
 
 def test_delete_sessions_refuses_a_transcript_changed_since_the_scan(tmp_path):
     thread = _droid_thread(tmp_path)
-    thread["fileFingerprint"] = stat_fingerprint(Path(thread["file"]).stat())
     reg = _reg([thread])
     with open(thread["file"], "a", encoding="utf-8") as handle:
         handle.write("{}\n")

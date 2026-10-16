@@ -149,9 +149,11 @@ def _revalidated(
     seen: Seen,
     live: frozenset[Identity] | None,
     unknown: UnknownPresence,
+    *,
+    require_stamp: bool = False,
 ) -> dict[str, Any] | Outcome:
     thread = _find(reg, seen)
-    changed = revalidate.changed_reason(thread, seen)
+    changed = revalidate.changed_reason(thread, seen, require_stamp=require_stamp)
     if thread is None or changed is not None:
         reason = changed or "no longer in the registry"
         return _refused(seen, reason, f"{seen.label}: {reason}")
@@ -186,7 +188,7 @@ def _archive(op: ArchiveOp, ctx: OpContext) -> Outcome:
 def _delete_from(
     reg: dict[str, Any], seen: Seen, live: frozenset[Identity] | None, ctx: OpContext
 ) -> Outcome:
-    thread = _revalidated(reg, seen, live, ctx.unknown)
+    thread = _revalidated(reg, seen, live, ctx.unknown, require_stamp=True)
     if isinstance(thread, Outcome):
         return thread
     try:
@@ -284,7 +286,7 @@ def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
                 reason = "nothing harvested to save"
                 return _refused(op.seen, reason, f"{op.seen.label}: {reason}")
             try:
-                _, path = harvest_cmd._save_harvest_unlocked(
+                _, path = harvest_cmd.save_harvest_unlocked(
                     _selector(op.seen), ctx.registry_path, op.markdown
                 )
             except registry.RegistryConflict as error:
@@ -427,5 +429,5 @@ def _worth_keeping(data: dict[str, Any]) -> bool:
 
 def harvest_markdown(thread: dict[str, Any], model: Model) -> str | None:
     text = export.render_conversation(thread)
-    data = model.complete_json(harvest_cmd._prompt(thread, text), harvest_cmd.HARVEST_SCHEMA)
-    return harvest_cmd._render_md(thread, data) if _worth_keeping(data) else None
+    data = model.complete_json(harvest_cmd.build_prompt(thread, text), harvest_cmd.HARVEST_SCHEMA)
+    return harvest_cmd.render_markdown(thread, data) if _worth_keeping(data) else None

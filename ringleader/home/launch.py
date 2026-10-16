@@ -4,14 +4,27 @@ import os
 import shlex
 import sys
 from collections.abc import Callable, Sequence
+from typing import Protocol
 
 from .. import scanner
+from ..picker.app import Choice
+from ..resume import Scope
 from ..sources.base import SessionLaunchingSource
 from .intents import AgentHandoffIntent, ExitIntent, ResumeIntent
 
 type Runner = Callable[[Sequence[str], str], int]
 type Which = Callable[[str], str | None]
-type ResumeCommand = Callable[..., int]
+
+
+class ResumeCommand(Protocol):
+    def __call__(
+        self,
+        argv: list[str],
+        *,
+        picker: Callable[[str, str, Scope, str, str | None], Choice | None],
+        runner: Runner,
+        which: Which,
+    ) -> int: ...
 
 
 def _fail(message: str) -> int:

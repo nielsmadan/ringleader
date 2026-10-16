@@ -4,8 +4,7 @@ import os
 import threading
 import time
 from collections.abc import Callable, Sequence
-from contextlib import ExitStack
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
@@ -21,7 +20,6 @@ from textual.widgets import Static
 
 from .. import (
     decisions,
-    enrichment,
     overview,
     paths,
     refresh,
@@ -29,7 +27,6 @@ from .. import (
     resume,
     revalidate,
     scanner,
-    stateio,
 )
 from ..config import load_config
 from ..decisions import (
@@ -49,29 +46,33 @@ from ..decisions import (
     SnoozeOp,
     StampRoundupOp,
 )
-from ..enrichment import Classified, EnrichOutcome
-from ..models import Model, ModelTask, active_model, proc, with_cancel
+from ..enrichment import Classified
+from ..models import Model, ModelTask, active_model, proc
 from ..picker.app import Choice, PickerScreen, ask_resume_choice, live_session_ids
 from ..progress import CancelCheck
 from ..resume import Scope
-from ..revalidate import Identity, PresenceProbe, Seen
+from ..revalidate import Seen
 from ..roundup import EnrichScope, RoundupPlan, RoundupProgress
-from ..tui.background import CancelToken, Done, Failed, Job, start_daemon
+from ..tui.background import CancelToken, Done, Failed, Job
 from ..tui.modals import AgentPickModal, ConfirmModal
 from ..tui.types import Clock, Presence, Refresher
 from . import overlay
 from .base import AppState, InboxScreen, RoundupRun, ScreenTarget
 from .harvest_view import HarvestGroup, publish_all_cwd
-from .intents import (
-    AgentHandoffIntent,
-    ExitIntent,
-    ResumeIntent,
-    handoff_cwd,
-    publish_prompt,
-    triage_prompt,
+from .intents import ExitIntent, ResumeIntent, publish_handoff, triage_handoff
+from .jobs import (
+    HarvestBlocked,
+    HarvestEmpty,
+    HarvestMessage,
+    HarvestReady,
+    JobBook,
+    JobMessage,
+    harvest_job,
 )
 from .palette import InboxCommands
 from .policy import DELETE_GRACE_SECONDS
+from .prints import PrintCoalescer
+from .roundup_run import EnrichDoneMessage, EnrichProgressMessage, RoundupDriver
 from .scan import ScanLanded, ScanService
 from .screens.harvests import HarvestsScreen
 from .screens.home import HomeScreen
@@ -109,7 +110,6 @@ from .writer import (
 
 type ModelResolver = Callable[[ModelTask], Model | None]
 
-PRINT_COALESCE_SECONDS = 1.0
 SUBTITLE_REFRESH_SECONDS = 30.0
 PICKER_SCAN_WAIT_SECONDS = 60.0
 
@@ -132,50 +132,6 @@ class ScanFailedMessage(Message):
         self.error = error
 
 
-@dataclass(frozen=True)
-class HarvestReady:
-    markdown: str | None
-
-
-@dataclass(frozen=True)
-class HarvestEmpty:
-    pass
-
-
-@dataclass(frozen=True)
-class HarvestBlocked:
-    reason: str
-
-
-type HarvestResult = HarvestReady | HarvestEmpty | HarvestBlocked
-
-
-class HarvestMessage(Message):
-    def __init__(self, ticket: int, seen: Seen, result: Done[HarvestResult] | Failed) -> None:
-        super().__init__()
-        self.ticket = ticket
-        self.seen = seen
-        self.result = result
-
-
-class EnrichProgressMessage(Message):
-    def __init__(self, progress: RoundupProgress) -> None:
-        super().__init__()
-        self.progress = progress
-
-
-class EnrichDoneMessage(Message):
-    def __init__(self, result: Done[EnrichOutcome] | Failed) -> None:
-        super().__init__()
-        self.result = result
-
-
-class JobMessage(Message):
-    def __init__(self, deliver: Callable[[], None]) -> None:
-        super().__init__()
-        self.deliver = deliver
-
-
 NOTHING_TO_HARVEST = "nothing worth harvesting — archive it with a if it is done"
 NO_HARVEST_MODEL = "no harvest model configured — rl config, or hand the project to an agent with t"
 _DECISION_WORDS: dict[Decision, str] = {
@@ -189,43 +145,7 @@ _DECISION_WORDS: dict[Decision, str] = {
 _DECISION_OPS = (ArchiveOp, DeleteOp, KeepGoingOp, SnoozeOp, KeepOp, HarvestSaveOp)
 _ROUNDUP_OPS = (RoundupPhasesOp, PruneOp)
 _QUIET_WHEN_OK = (RoundupPhasesOp, ClassifyOp, StampRoundupOp)
-ROUNDUP_ACTIVE = frozenset({"phases", "enrich", "stamp"})
 REFUSALS_SHOWN = 3
-
-
-def harvest_job(
-    thread: dict[str, Any], model: Model, presence: PresenceProbe
-) -> Callable[[CancelToken, Callable[[None], None]], HarvestResult]:
-    def job(token: CancelToken, _progress: Callable[[None], None]) -> HarvestResult:
-        running = revalidate.running_reason(thread, presence(), "refuse")
-        if running is not None:
-            return HarvestBlocked(running)
-        if thread.get("decision") == "harvested":
-            return HarvestReady(None)
-        markdown = decisions.harvest_markdown(thread, with_cancel(model, token.is_cancelled))
-        return HarvestEmpty() if markdown is None else HarvestReady(markdown)
-
-    return job
-
-
-def enrich_job(
-    plan: RoundupPlan,
-    ids: tuple[Identity, ...],
-    model: Model,
-    apply: Callable[[tuple[Classified, ...]], None],
-) -> Job[EnrichOutcome, RoundupProgress]:
-    def job(token: CancelToken, report: Callable[[RoundupProgress], None]) -> EnrichOutcome:
-        return enrichment.enrich_sessions(
-            plan.registry_path,
-            ids,
-            model=model,
-            concurrency=plan.concurrency,
-            progress=lambda done, total: report(RoundupProgress("enrich", done, total)),
-            cancelled=token.is_cancelled,
-            apply=apply,
-        )
-
-    return job
 
 
 def refusal_lines(refused: Sequence[tuple[Seen, str]], limit: int | None) -> list[str]:
@@ -309,43 +229,36 @@ class InboxApp(App[ExitIntent | None]):
             partial(refresh.auto_refresh, persist=False) if read_only else refresh.auto_refresh
         )
         self._state = AppState(
-            Snapshot(registry.empty_registry(), 0, False, time.monotonic()),
-            {},
-            None,
-            None,
-            0,
-            None,
-            None,
-            None,
-            0,
+            snapshot=Snapshot(registry.empty_registry(), 0, False, time.monotonic())
         )
         self._undelivered = 0
         self._undelivered_lock = threading.Lock()
         self._scanned_at: datetime | None = None
         self._scan_failed = False
         self._running_ticket: int | None = None
-        self._jobs: dict[int, CancelToken] = {}
-        self._job_labels: dict[int, str] = {}
-        self._next_job_ticket = 0
-        self._batch_labels: dict[int, str] = {}
+        self._batch_labels: dict[int, tuple[str, int]] = {}
         self._decided = 0
         self._last_archived: str | None = None
         self._delete_grace = delete_grace
-        self._enrich_job: CancelToken | None = None
-        self._roundup: RoundupRun | None = None
-        self._roundup_ticket: int | None = None
-        self._roundup_error: str | None = None
-        self._roundup_stopping = False
-        self._roundup_stale = 0
-        self._roundup_lock: ExitStack | None = None
-        self._side_jobs = 0
-        self._side_tokens: set[CancelToken] = set()
         self._leaving = False
         self._leave_intent: ExitIntent | None = None
-        self._print_buffer = ""
-        self._print_lines: list[str] = []
-        self._last_print_toast = float("-inf")
-        self._print_timer_armed = False
+        self._render_pending = False
+        self.jobs = JobBook(self._post)
+        self.roundups = RoundupDriver(
+            read_only=read_only,
+            submit=lambda ops, label: self.submit_batch(ops, label=label),
+            classify=self._apply_classified,
+            cancel_op=self.cancel_op,
+            enrich_model=lambda: self.model_for("enrich"),
+            leaving=lambda: self._leaving,
+            post=self._post,
+            toast=lambda message, warning: self._toast(message, warning=warning),
+            ended=self._roundup_ended,
+        )
+        self._prints = PrintCoalescer(
+            toast=lambda text: self._toast(text, warning=True),
+            schedule=self.set_timer,
+        )
         self.writer = Writer(
             self.registry_path,
             execute=execute or decisions.execute,
@@ -379,11 +292,12 @@ class InboxApp(App[ExitIntent | None]):
         return (
             undelivered == 0
             and not self.scans.running
-            and self.writer.idle
-            and not self._jobs
-            and self._enrich_job is None
-            and self._side_jobs == 0
+            and not self._render_pending
+            and not self._background_busy()
         )
+
+    def _background_busy(self) -> bool:
+        return not self.writer.idle or self.jobs.busy or self.roundups.enriching
 
     @property
     def decided_count(self) -> int:
@@ -391,7 +305,7 @@ class InboxApp(App[ExitIntent | None]):
 
     @property
     def harvesting(self) -> tuple[str, ...]:
-        return tuple(self._job_labels.values())
+        return self.jobs.harvesting
 
     def view_threads(self) -> list[dict[str, Any]]:
         return visible_threads(overlay.visible(self._state.snapshot.reg, self._state.overlay))
@@ -402,8 +316,14 @@ class InboxApp(App[ExitIntent | None]):
     def now_iso(self) -> str:
         return self._now().isoformat()
 
+    def now_epoch(self) -> float:
+        return self._now().timestamp()
+
     def model_for(self, task: ModelTask) -> Model | None:
         return None if self.read_only else self._models(task)
+
+    def configured_model(self, task: ModelTask) -> Model | None:
+        return self._models(task)
 
     def home_state(self) -> HomeState:
         harvests = self._state.harvests
@@ -423,7 +343,7 @@ class InboxApp(App[ExitIntent | None]):
         return live is not None and key in live
 
     def status_line(self) -> str:
-        pending = self.writer.pending + len(self._jobs)
+        pending = self.writer.pending + self.jobs.harvest_count
         parts = [
             *([f"{plural(pending, 'change')} pending"] if pending else []),
             *(["roundup running"] if self.roundup_active else []),
@@ -434,6 +354,13 @@ class InboxApp(App[ExitIntent | None]):
         self._state = replace(self._state, **changes, version=self._state.version + 1)
 
     def _rerender(self) -> None:
+        if self._render_pending:
+            return
+        self._render_pending = True
+        self.call_after_refresh(self._render_now)
+
+    def _render_now(self) -> None:
+        self._render_pending = False
         self._update_subtitle()
         if not self.screen_stack:
             return
@@ -456,9 +383,7 @@ class InboxApp(App[ExitIntent | None]):
     def on_mount(self) -> None:
         self.begin_capture_print(self, stdout=False, stderr=True)
         reg = registry.load_registry(self.registry_path)
-        self._state = AppState(
-            Snapshot(reg, 0, False, time.monotonic()), {}, None, None, 0, None, None, None, 1
-        )
+        self._state = AppState(snapshot=Snapshot(reg, 0, False, time.monotonic()), version=1)
         self._update_subtitle()
         self.push_screen(HomeScreen())
         self.writer.start()
@@ -467,7 +392,7 @@ class InboxApp(App[ExitIntent | None]):
 
     def on_unmount(self) -> None:
         proc.kill_all_children()
-        self._release_roundup_lock()
+        self.roundups.release_lock()
 
     def _make_context(
         self, cancelled: CancelCheck, progress: Callable[[RoundupProgress], None]
@@ -476,7 +401,7 @@ class InboxApp(App[ExitIntent | None]):
             registry_path=self.registry_path,
             archive_root_path=str(paths.archive_root()),
             now_iso=self.now_iso,
-            now_epoch=time.time,
+            now_epoch=self.now_epoch,
             presence=revalidate.probe(self._presence),
             unknown="refuse",
             cancelled=cancelled,
@@ -502,8 +427,7 @@ class InboxApp(App[ExitIntent | None]):
                 self._set(overlay=overlay.started(self._state.overlay, event.ticket))
                 self._rerender()
             case OpProgress():
-                if event.ticket == self._roundup_ticket:
-                    self._roundup_progress(event.progress)
+                if self.roundups.op_progress(event.ticket, event.progress):
                     self._rerender()
                 for screen in self._inbox_screens():
                     screen.op_progress(event.ticket, event.progress)
@@ -537,10 +461,7 @@ class InboxApp(App[ExitIntent | None]):
             self.rescan()
         if event.snapshot is not None:
             self._adopt(event.snapshot)
-        if isinstance(event.op, ClassifyOp):
-            self._roundup_stale += outcome.stale
-        if event.ticket == self._roundup_ticket:
-            self._roundup_step_finished(event)
+        self.roundups.finished(event)
         for screen in self._inbox_screens():
             screen.op_finished(event)
         self._rerender()
@@ -595,27 +516,8 @@ class InboxApp(App[ExitIntent | None]):
         self.rescan()
 
     def on_print(self, event: events.Print) -> None:
-        if not event.stderr:
-            return
-        *complete, self._print_buffer = (self._print_buffer + event.text).split("\n")
-        self._print_lines.extend(line for line in complete if line.strip())
-        self._flush_prints()
-
-    def _timed_flush(self) -> None:
-        self._print_timer_armed = False
-        self._flush_prints()
-
-    def _flush_prints(self) -> None:
-        if not self._print_lines or self._print_timer_armed:
-            return
-        wait = self._last_print_toast + PRINT_COALESCE_SECONDS - time.monotonic()
-        if wait > 0:
-            self._print_timer_armed = True
-            self.set_timer(wait, self._timed_flush)
-            return
-        lines, self._print_lines = self._print_lines, []
-        self._last_print_toast = time.monotonic()
-        self._toast("\n".join(lines), warning=True)
+        if event.stderr:
+            self._prints.feed(event.text)
 
     def go(self, target: ScreenTarget) -> None:
         if isinstance(self.screen, ModalScreen):
@@ -730,7 +632,8 @@ class InboxApp(App[ExitIntent | None]):
                 self._set(overlay=overlay.removed(self._state.overlay, replacing))
                 self._rerender()
             return None
-        self._batch_labels.update((ticket, label) for ticket, _ in result.tickets)
+        size = len(result.tickets)
+        self._batch_labels.update((ticket, (label, size)) for ticket, _ in result.tickets)
         base = overlay.removed(self._state.overlay, replacing)
         self._set(overlay=overlay.submitted(base, result.tickets))
         self._rerender()
@@ -756,18 +659,11 @@ class InboxApp(App[ExitIntent | None]):
         name: str,
         on_result: Callable[[Done[T] | Failed], None],
     ) -> CancelToken:
-        self._side_jobs += 1
-
-        def landed(result: Done[T] | Failed) -> None:
-            self._post(JobMessage(lambda: on_result(result)))
-
-        token = start_daemon(job, on_progress=lambda _update: None, on_result=landed, name=name)
-        self._side_tokens.add(token)
-        return token
+        return self.jobs.run_side(job, name=name, on_result=on_result)
 
     def on_job_message(self, message: JobMessage) -> None:
         self._delivered()
-        self._side_jobs -= 1
+        self.jobs.side_landed()
         message.deliver()
         if self._leaving:
             self._leave_if_settled()
@@ -797,7 +693,6 @@ class InboxApp(App[ExitIntent | None]):
         if not self.submit(ops, label=f"{_DECISION_WORDS[decision]} {what}"):
             return False
         self._decided += len(ops)
-        self._rerender()
         if decision == "delete":
             self._toast(f"deleting {what} in {self._delete_grace:g} s — u to undo")
         return True
@@ -818,26 +713,17 @@ class InboxApp(App[ExitIntent | None]):
         if refusal is not None or model is None:
             self._toast(refusal or NO_HARVEST_MODEL, warning=True)
             return
-        self._next_job_ticket -= 1
-        ticket = self._next_job_ticket
-        token = CancelToken()
-        self._jobs[ticket] = token
-        self._job_labels[ticket] = label
+        ticket = self.jobs.start_harvest(
+            label,
+            revalidate.seen(thread),
+            harvest_job(thread, model, revalidate.probe(self._presence)),
+        )
         self._set(overlay=overlay.held(self._state.overlay, identity, ticket))
         self._rerender()
-        seen = revalidate.seen(thread)
-        start_daemon(
-            harvest_job(thread, model, revalidate.probe(self._presence)),
-            on_progress=lambda _update: None,
-            on_result=lambda result: self._post(HarvestMessage(ticket, seen, result)),
-            name="rl-harvest",
-            token=token,
-        )
 
     def on_harvest_message(self, message: HarvestMessage) -> None:
         self._delivered()
-        token = self._jobs.pop(message.ticket, None)
-        self._job_labels.pop(message.ticket, None)
+        token = self.jobs.harvest_landed(message.ticket)
         cancelled = token is None or token.is_cancelled()
         seen = message.seen
         markdown: str | None = None
@@ -877,7 +763,7 @@ class InboxApp(App[ExitIntent | None]):
             self._toast(hint)
             return
         tickets = [ticket for ticket, _ in undone]
-        label = self._batch_labels.get(tickets[0], plural(len(tickets), "change"))
+        label, size = self._batch_labels.get(tickets[0], (plural(len(tickets), "change"), 0))
         for ticket in tickets:
             self._batch_labels.pop(ticket, None)
         decided = sum(1 for _, op in undone if isinstance(op, _DECISION_OPS))
@@ -885,172 +771,59 @@ class InboxApp(App[ExitIntent | None]):
         self._set(overlay=overlay.removed(self._state.overlay, tickets))
         self._dropped(tickets)
         self._rerender()
-        self._toast(f"undone: {label}")
+        applied = size - len(tickets)
+        self._toast(
+            f"undone: {len(tickets)} of {label} ({applied} already applied)"
+            if applied > 0
+            else f"undone: {label}"
+        )
 
     def _dropped(self, tickets: Sequence[int]) -> None:
-        run = self._roundup
-        if run is not None and self._roundup_ticket in tickets:
-            self._end_roundup(replace(run, stage="cancelled"), None)
+        self.roundups.dropped(tickets)
         for screen in self._inbox_screens():
             screen.ops_dropped(tickets)
 
     @property
     def roundup(self) -> RoundupRun | None:
-        return self._roundup
+        return self.roundups.run
 
     @property
     def roundup_active(self) -> bool:
-        return self._roundup is not None and self._roundup.stage in ROUNDUP_ACTIVE
+        return self.roundups.active
 
     @property
     def roundup_error(self) -> str | None:
-        return self._roundup_error
+        return self.roundups.error
 
     @property
     def roundup_stopping(self) -> bool:
-        return self._roundup_stopping
+        return self.roundups.stopping
 
     def start_roundup(self, plan: RoundupPlan, scope: EnrichScope) -> None:
-        if self.read_only:
-            self._toast("read-only: roundup is disabled", warning=True)
-            return
-        if self.roundup_active:
-            self._toast("a roundup is already running", warning=True)
-            return
-        batch = self.submit_batch([RoundupPhasesOp(plan)], label="roundup")
-        if batch is None:
-            return
-        self._roundup = RoundupRun(plan, scope, "phases", None, None, None)
-        self._roundup_ticket = batch.tickets[0][0]
-        self._roundup_error = None
-        self._roundup_stopping = False
-        self._roundup_stale = 0
-        self._rerender()
+        if self.roundups.start(plan, scope):
+            self._rerender()
 
     def cancel_roundup(self) -> None:
-        run = self._roundup
-        if run is None or run.stage not in ("phases", "enrich"):
-            return
-        self._roundup_stopping = True
-        if run.stage == "phases":
-            if self._roundup_ticket is not None:
-                self.cancel_op(self._roundup_ticket)
-        elif self._enrich_job is not None:
-            self._enrich_job.cancel()
-        self._rerender()
-
-    def _roundup_progress(self, progress: RoundupProgress) -> None:
-        if self._roundup is not None:
-            self._roundup = replace(self._roundup, progress=progress)
-
-    def _roundup_step_finished(self, event: Finished) -> None:
-        run = self._roundup
-        if run is None:
-            return
-        outcome = event.outcome
-        if run.stage == "stamp":
-            failed = not outcome.ok or event.internal is not None
-            enrich = run.enrich
-            if enrich is not None:
-                run = replace(run, enrich=replace(enrich, stale=self._roundup_stale))
-            self._end_roundup(
-                replace(run, stage="failed" if failed else "done"),
-                outcome.message if failed else None,
-            )
-            return
-        phases = outcome.phases
-        if phases is None or event.internal is not None:
-            self._end_roundup(replace(run, stage="failed"), outcome.message)
-            return
-        run = replace(run, phases=phases)
-        if phases.cancelled or self._roundup_stopping or self._leaving:
-            self._end_roundup(replace(run, stage="cancelled"), None)
-            return
-        if not self._hold_roundup_lock():
-            self._end_roundup(replace(run, stage="failed"), "another roundup is running")
-            return
-        model = self.model_for("enrich")
-        ids = run.plan.enrich_ids(run.scope)
-        if model is None or not ids:
-            self._stamp_roundup(run)
-            return
-        self._roundup = replace(
-            run, stage="enrich", progress=RoundupProgress("enrich", 0, len(ids))
-        )
-        self._enrich_job = start_daemon(
-            enrich_job(run.plan, ids, model, self._apply_classified),
-            on_progress=lambda progress: self._post(EnrichProgressMessage(progress)),
-            on_result=lambda result: self._post(EnrichDoneMessage(result)),
-            name="rl-enrich",
-        )
+        if self.roundups.cancel():
+            self._rerender()
 
     def _apply_classified(self, batch: tuple[Classified, ...]) -> None:
         self.writer.submit([ClassifyOp(batch)], label="classify")
 
     def on_enrich_progress_message(self, message: EnrichProgressMessage) -> None:
         self._delivered()
-        if self._roundup is not None and self._roundup.stage == "enrich":
-            self._roundup_progress(message.progress)
+        if self.roundups.enrich_progress(message.progress):
             self._rerender()
 
     def on_enrich_done_message(self, message: EnrichDoneMessage) -> None:
         self._delivered()
-        token, self._enrich_job = self._enrich_job, None
-        run = self._roundup
-        if run is None or run.stage != "enrich":
-            self._leave_if_settled()
-            return
-        match message.result:
-            case Done(value=outcome):
-                run = replace(run, enrich=outcome)
-                stopped = token is not None and token.is_cancelled()
-                if outcome.cancelled or stopped or self._leaving:
-                    self._end_roundup(replace(run, stage="cancelled"), None)
-                else:
-                    self._stamp_roundup(run)
-            case Failed(error=error):
-                self._end_roundup(replace(run, stage="failed"), f"enrich failed: {error}")
+        self.roundups.enrich_done(message.result)
         self._leave_if_settled()
 
-    def _stamp_roundup(self, run: RoundupRun) -> None:
-        batch = self.submit_batch([StampRoundupOp(run.plan.now_iso)], label="roundup stamp")
-        if batch is None:
-            self._end_roundup(replace(run, stage="cancelled"), None)
-            return
-        self._roundup = replace(run, stage="stamp", progress=RoundupProgress("stamp", 0, 1))
-        self._roundup_ticket = batch.tickets[0][0]
-
-    def _end_roundup(self, run: RoundupRun, error: str | None) -> None:
-        self._release_roundup_lock()
-        self._roundup = run
-        self._roundup_ticket = None
-        self._roundup_error = error
-        self._roundup_stopping = False
-        match run.stage:
-            case "done":
-                self._toast("roundup finished")
-            case "cancelled":
-                self._toast("roundup cancelled — not stamped; run it again to finish")
-            case _:
-                self._toast(f"roundup failed: {error}", warning=True)
+    def _roundup_ended(self) -> None:
         self._rerender()
         if not self._leaving:
             self.rescan()
-
-    def _hold_roundup_lock(self) -> bool:
-        if self._roundup_lock is not None:
-            return True
-        stack = ExitStack()
-        if not stack.enter_context(stateio.roundup_lock()):
-            stack.close()
-            return False
-        self._roundup_lock = stack
-        return True
-
-    def _release_roundup_lock(self) -> None:
-        stack, self._roundup_lock = self._roundup_lock, None
-        if stack is not None:
-            stack.close()
 
     def start_triage_handoff(self, project: ProjectRef) -> None:
         self._triage_flow(project)
@@ -1060,27 +833,10 @@ class InboxApp(App[ExitIntent | None]):
         agent = await self.push_screen_wait(
             AgentPickModal(f"Triage {project.label} with which agent?", resume.launchable_agents())
         )
-        if agent is None:
-            return
-        members = sorted(
-            (
-                t
-                for t in self._state.snapshot.reg["threads"]
-                if overview.group_key(t) == project.key
-            ),
-            key=lambda t: t.get("mtime") or "",
-            reverse=True,
-        )
-        candidates = [path for t in members for path in (t.get("gitRoot"), t.get("project"))]
-        self.exit_with(
-            AgentHandoffIntent(
-                agent=agent,
-                cwd=handoff_cwd(candidates, Path.home()),
-                prompt=triage_prompt(project.label, project.key),
-                purpose="triage",
-                label=project.label,
+        if agent is not None:
+            self.exit_with(
+                triage_handoff(agent, project, self._state.snapshot.reg["threads"], Path.home())
             )
-        )
 
     def exit_with(self, intent: ExitIntent) -> None:
         if self._leaving:
@@ -1094,46 +850,36 @@ class InboxApp(App[ExitIntent | None]):
             return
         self._leave(None)
 
-    def _settled(self) -> bool:
-        return (
-            self.writer.idle
-            and not self._jobs
-            and self._enrich_job is None
-            and self._side_jobs == 0
-        )
-
     def _leave(self, intent: ExitIntent | None) -> None:
         self._leaving = True
         self._leave_intent = intent
-        if self._enrich_job is not None:
-            self._enrich_job.cancel()
-        self._cancel_side_jobs()
-        if self._settled():
+        self._cancel_background(include_writer=False)
+        if not self._background_busy():
             self.exit(intent)
             return
         self.writer.flush_grace()
         self._rerender()
 
-    def _cancel_side_jobs(self) -> None:
-        for token in self._side_tokens:
-            token.cancel()
+    def _cancel_background(self, *, include_writer: bool) -> tuple[tuple[int, Op], ...]:
+        self.jobs.cancel_side()
+        self.roundups.cancel_enrich()
+        if not include_writer:
+            return ()
+        self.jobs.cancel_harvests()
+        dropped = self.writer.discard_pending()
+        self.writer.cancel_current()
+        return dropped
 
     def abort_background_work(self) -> None:
-        self._cancel_side_jobs()
-        if self._enrich_job is not None:
-            self._enrich_job.cancel()
-        for token in self._jobs.values():
-            token.cancel()
-        self.writer.discard_pending()
-        self.writer.cancel_current()
+        self._cancel_background(include_writer=True)
 
     def _leave_if_settled(self) -> None:
         self._rerender()
-        if self._leaving and self._settled():
+        if self._leaving and not self._background_busy():
             self.exit(self._leave_intent)
 
     def _not_started(self) -> int:
-        return self.writer.pending - (self._running_ticket is not None) + len(self._jobs)
+        return self.writer.pending - (self._running_ticket is not None) + self.jobs.harvest_count
 
     def show_leaving(self, screen: Screen[Any]) -> None:
         banner = next(iter(screen.query("#leaving").results(Static)), None)
@@ -1141,7 +887,7 @@ class InboxApp(App[ExitIntent | None]):
             return
         banner.display = self._leaving
         if self._leaving:
-            pending = self.writer.pending + len(self._jobs) + (self._enrich_job is not None)
+            pending = self.writer.pending + self.jobs.harvest_count + self.roundups.enriching
             banner.update(
                 Text(
                     f"finishing {plural(pending, 'change')}… — q again to discard what has not "
@@ -1163,10 +909,7 @@ class InboxApp(App[ExitIntent | None]):
     def _discard_confirmed(self, confirmed: bool | None) -> None:
         if not confirmed:
             return
-        dropped = self.writer.discard_pending()
-        for token in self._jobs.values():
-            token.cancel()
-        self.writer.cancel_current()
+        dropped = self._cancel_background(include_writer=True)
         tickets = [ticket for ticket, _ in dropped]
         self._set(overlay=overlay.removed(self._state.overlay, tickets))
         self._dropped(tickets)
@@ -1200,13 +943,4 @@ class InboxApp(App[ExitIntent | None]):
             )
             if not await self.push_screen_wait(ConfirmModal(message)):
                 return
-        label = group.label if group is not None else "all harvests"
-        self.exit_with(
-            AgentHandoffIntent(
-                agent=agent,
-                cwd=cwd,
-                prompt=publish_prompt(group.label if group is not None else None),
-                purpose="publish",
-                label=label,
-            )
-        )
+        self.exit_with(publish_handoff(agent, group, cwd))

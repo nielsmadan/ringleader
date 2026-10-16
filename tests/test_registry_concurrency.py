@@ -13,10 +13,16 @@ from ringleader.cli import main
 from ringleader.commands import archive, enrich, keep, mark_mem_reviewed, mem_scan
 from ringleader.config import Config
 from ringleader.memory import MemoryEntry
-from ringleader.sources.base import NormalizedSession
+from ringleader.sources.base import NormalizedSession, stat_fingerprint
 
 NOW = "2026-09-21T12:00:00+00:00"
 LATER = "2026-09-21T13:00:00+00:00"
+
+
+@pytest.fixture(autouse=True)
+def _stores_at_tmp(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path))
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path))
 
 
 def seed(tmp_path, *, collision=False):
@@ -30,6 +36,7 @@ def seed(tmp_path, *, collision=False):
                 "sessionId": "same",
                 "source": source,
                 "file": str(file),
+                "fileFingerprint": stat_fingerprint(file.stat()),
                 "mtime": NOW,
                 "project": str(tmp_path),
                 "status": "unclassified",

@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 from contextlib import ExitStack
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -34,7 +33,7 @@ def _thread(sid, *, days, messages=20):
     path = Path(os.environ["SESSION_TRACKER_PROJECTS_DIR"]) / "-w-x" / f"{sid}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'{{"type":"user","message":{{"content":"fix the parser in {sid}"}}}}\n')
-    when = time.time() - 600
+    when = NOW_DT.timestamp() - 600
     os.utime(path, (when, when))
     return {
         "sessionId": sid,
@@ -153,6 +152,7 @@ async def test_enter_offers_the_four_enrich_choices(tmp_path):
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, ChoiceModal))
         text = screen_text(app)
+        assert "Run the roundup? deletes 1, purges 0, archives 0." in text
         assert "Enrich 29 sessions? about 1 min" in text
         assert "Run, enrich all 29 — about 1 min" in text
         assert "Run, enrich the 2 from the last 7 days — about 1 min" in text
@@ -188,6 +188,20 @@ async def test_cancel_in_the_choice_deletes_nothing(tmp_path):
         await pilot.pause()
         assert app.roundup is None
         assert _transcript(CANDIDATE).exists()
+        assert "enter run · escape back" in screen_text(app)
+
+
+async def test_enter_alone_in_the_choice_cancels_and_deletes_nothing(tmp_path):
+    path = _write(tmp_path / "registry.json", old=27)
+    model = FakeModel()
+    app = _app(path, model=model)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_plan(app, pilot)
+        await _choose(app, pilot, "enter")
+        await pilot.pause()
+        assert app.roundup is None
+        assert _transcript(CANDIDATE).exists()
+        assert model.prompts == []
         assert "enter run · escape back" in screen_text(app)
 
 
@@ -289,6 +303,23 @@ async def test_read_only_refuses_enter(tmp_path):
         await until(pilot, lambda: "read-only: roundup is disabled" in _toasts(app))
         assert isinstance(app.screen, RoundupScreen)
         assert app.roundup is None
+
+
+async def test_read_only_plan_names_the_model_it_would_use(tmp_path):
+    path = _write(tmp_path / "registry.json", old=3)
+    app = _app(path, model=FakeModel(), read_only=True)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_plan(app, pilot)
+        await until(pilot, lambda: "enrich: read-only" in screen_text(app))
+        assert "enrich: read-only — skipped (would use claude (fake))" in screen_text(app)
+
+
+async def test_read_only_plan_without_a_model_says_none_is_configured(tmp_path):
+    path = _write(tmp_path / "registry.json", old=3)
+    app = _app(path, read_only=True)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_plan(app, pilot)
+        await until(pilot, lambda: "enrich: no model configured" in screen_text(app))
 
 
 async def test_golden_roundup_plan(tmp_path, golden):
@@ -520,5 +551,6 @@ async def test_a_session_changed_during_enrich_is_reported_as_stale_not_enriched
         finally:
             gate.set()
         await until(pilot, lambda: app.roundup.stage == "done", timeout=10)
+        await until(pilot, lambda: app.idle)
         assert app.roundup.enrich.stale == 1
         assert "enriched 4 of 5 (0 failed, 1 changed meanwhile)" in screen_text(app)

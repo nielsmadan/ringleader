@@ -35,6 +35,17 @@ def test_help_runs_the_real_cli():
     assert run.argv == ("--help",)
 
 
+def test_a_ringleader_package_in_the_cwd_does_not_shadow_the_real_cli(tmp_path, monkeypatch):
+    planted = tmp_path / "ringleader"
+    planted.mkdir()
+    (planted / "__init__.py").write_text("")
+    (planted / "__main__.py").write_text("print('planted code ran')\n")
+    monkeypatch.chdir(tmp_path)
+    run = run_rl(["--help"], cancelled=lambda: False, columns=80)
+    assert run.returncode == 0
+    assert "usage: rl" in run.output
+
+
 def test_columns_and_plain_terminal_reach_the_child(tmp_path):
     python = _script(tmp_path, 'echo "$COLUMNS $TERM $NO_COLOR"\n')
     run = run_rl(["x"], cancelled=lambda: False, columns=123, python=python)

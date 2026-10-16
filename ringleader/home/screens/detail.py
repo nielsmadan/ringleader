@@ -5,8 +5,9 @@ from typing import Any
 
 from rich.text import Text
 from textual.app import ComposeResult
+from textual.containers import VerticalScroll
 from textual.message import Message
-from textual.widgets import Footer, Header, Log, Static
+from textual.widgets import Footer, Header, Static
 
 from ... import export, overview, resume
 from ...tui.background import CancelToken, Done, Failed, start_daemon
@@ -81,8 +82,11 @@ class DetailScreen(InboxScreen):
         margin-top: 1;
         color: $text-muted;
     }
-    DetailScreen #conversation {
+    DetailScreen #conversation-scroll {
         height: 1fr;
+    }
+    DetailScreen #conversation {
+        padding: 0 1;
     }
     """
 
@@ -95,14 +99,15 @@ class DetailScreen(InboxScreen):
         yield Static(Text(resume.label(self.thread), style="bold"), id="detail-title")
         yield Static("", id="detail-head")
         yield Static("", id="tail-heading")
-        yield Log(id="conversation")
+        with VerticalScroll(id="conversation-scroll"):
+            yield Static("", id="conversation")
         yield Footer()
 
     def on_mount(self) -> None:
         self.query_one("#detail-head", Static).update(
             Text("\n".join(detail_lines(self.thread, self.inbox.now_iso())))
         )
-        self.query_one("#conversation", Log).write_line("loading conversation…")
+        self._show_conversation("loading conversation…")
         start_daemon(
             conversation_job(self.thread),
             on_progress=lambda _update: None,
@@ -113,12 +118,14 @@ class DetailScreen(InboxScreen):
     def _loaded(self, result: Done[str] | Failed) -> None:
         self.post_message(ConversationLoaded(result))
 
+    def _show_conversation(self, text: str) -> None:
+        self.query_one("#conversation", Static).update(Text(text))
+        self.query_one("#conversation-scroll", VerticalScroll).scroll_home(animate=False)
+
     def on_conversation_loaded(self, message: ConversationLoaded) -> None:
-        log = self.query_one("#conversation", Log)
-        log.clear()
         match message.result:
             case Done(value=text):
                 self.query_one("#tail-heading", Static).update(Text(tail_heading(self.thread)))
-                log.write(text or "(empty conversation)")
+                self._show_conversation(text or "(empty conversation)")
             case Failed(error=error):
-                log.write_line(f"conversation unavailable: {unavailable_reason(error)}")
+                self._show_conversation(f"conversation unavailable: {unavailable_reason(error)}")

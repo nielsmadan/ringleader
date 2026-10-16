@@ -166,10 +166,13 @@ class ChoiceModal[T](ModalScreen[T | None]):
     }}
     """
 
-    def __init__(self, title: Text | str, options: Sequence[ChoiceOption[T]]) -> None:
+    def __init__(
+        self, title: Text | str, options: Sequence[ChoiceOption[T]], *, initial: int = 0
+    ) -> None:
         super().__init__()
         self._title = Text(title) if isinstance(title, str) else title
         self._options = tuple(options)
+        self._initial = initial
 
     def compose(self) -> ComposeResult:
         yield Grid(
@@ -182,7 +185,7 @@ class ChoiceModal[T](ModalScreen[T | None]):
     def on_mount(self) -> None:
         options = self.query_one("#choice-options", OptionList)
         if self._options:
-            options.highlighted = 0
+            options.highlighted = self._initial
         options.focus()
 
     def action_cursor_down(self) -> None:

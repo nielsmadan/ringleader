@@ -85,8 +85,8 @@ def test_abort_cancels_every_background_job(tmp_path):
 
     app = InboxApp(str(tmp_path / "r.json"), read_only=True)
     enrich, harvest = CancelToken(), CancelToken()
-    app._enrich_job = enrich
-    app._jobs[1] = harvest
+    app.roundups._enrich_job = enrich
+    app.jobs._harvests[1] = harvest
 
     app.abort_background_work()
 

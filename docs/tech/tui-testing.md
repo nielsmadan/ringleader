@@ -72,7 +72,7 @@ use it when the test runs a scan.
 
 ## End to end
 
-`run_scenario` spawns `python -m ringleader <argv>` under `pexpect` and feeds the output through
+`run_scenario` spawns `python -P -m ringleader <argv>` under `pexpect` and feeds the output through
 `pyte`, so `Expect("text")` matches what is on the screen, not raw escape codes. It runs
 `sys.executable -m ringleader` rather than an installed `rl`, so it tests this checkout.
 `isolated_env` strips the agent session probes and terminal size variables, points `HOME`, the

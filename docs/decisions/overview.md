@@ -17,6 +17,7 @@ history. Current behavior remains canonical in `docs/features/` and `docs/tech/`
 - [0011: Hand off to another agent by seeding it, not by converting the session](0011-seeded-handoff-over-native-conversion.md) — superseded by 0013
 - [0012: Preserve native session semantics during conversion](0012-preserve-native-session-semantics.md)
 - [0013: Put native conversion behind `rl resume --to`](0013-native-conversion-behind-resume.md)
+- [0014: Make `rl inbox` the daily home, built on one writer](0014-rl-inbox-as-the-daily-home.md)
 
 The initial decisions were harvested from the original `SPEC.md` and the design docs under the former
 `docs/specs/`, which have been retired in favor of this tree.

@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -31,7 +30,7 @@ def _thread(sid, *, days, messages=3):
     path = _transcript(sid)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f'{{"type":"user","message":{{"content":"hello from {sid}"}}}}\n')
-    when = time.time() - 600
+    when = NOW_DT.timestamp() - 600
     os.utime(path, (when, when))
     return {
         "sessionId": sid,
@@ -132,7 +131,7 @@ async def test_delete_all_no_deletes_nothing(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         await _open(app, pilot)
         await _delete_all(app, pilot, "n")
-        await pilot.pause()
+        await until(pilot, lambda: app.idle)
         assert _transcript("oldest").exists()
         assert _transcript("young").exists()
         assert _ids(app) == ["claude-code:oldest", "claude-code:young"]

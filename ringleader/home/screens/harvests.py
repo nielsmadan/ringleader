@@ -11,6 +11,7 @@ from textual.widgets.option_list import Option
 from ... import overview
 from ...harvests import Harvest
 from ...tui.keys import nav_bindings
+from ...tui.rows import highlighted_key
 from ..base import InboxScreen
 from ..harvest_view import HarvestGroup, harvest_groups, preview_line
 from ..state import plural
@@ -143,7 +144,7 @@ class HarvestsScreen(InboxScreen):
         problems.display = state.harvest_problems > 0
         rows = self.query_one("#harvest-rows", OptionList)
         options = harvest_options(self._groups, self.inbox.now_iso())
-        keep = self._highlighted_id(rows)
+        keep = highlighted_key(rows)
         rows.set_options(options)
         rows.highlighted = None
         rows.highlighted = self._target(options, keep)
@@ -151,11 +152,6 @@ class HarvestsScreen(InboxScreen):
         empty = self.query_one("#harvests-empty", Static)
         empty.update(Text("Loading harvests…" if items is None else "No pending harvests."))
         empty.display = not options
-
-    @staticmethod
-    def _highlighted_id(rows: OptionList) -> str | None:
-        option = rows.highlighted_option
-        return option.id if option is not None else None
 
     @staticmethod
     def _target(options: list[Option], keep: str | None) -> int | None:

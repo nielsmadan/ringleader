@@ -42,15 +42,15 @@ def _warn(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _changed_on_disk(candidate: dict[str, Any], file: Path) -> bool:
+def _disk_reason(candidate: dict[str, Any], file: Path) -> str | None:
     stamp = revalidate.content_stamp(candidate.get("fileFingerprint"))
     if stamp is None:
-        return False
+        return revalidate.NO_STAMP
     try:
         st = file.stat()
     except FileNotFoundError:
-        return False
-    return (st.st_size, st.st_mtime_ns) != stamp
+        return None
+    return None if (st.st_size, st.st_mtime_ns) == stamp else "session changed since selection"
 
 
 def _delete_candidate(
@@ -75,12 +75,12 @@ def _delete_candidate(
         return skip("session changed since selection")
     try:
         file = scanner.filesystem_path(thread, "prune")
-        if (
-            thread.get("decision") in {"keep", "harvested"}
-            or any(thread.get(field) != candidate.get(field) for field in fields)
-            or _changed_on_disk(candidate, file)
+        if thread.get("decision") in {"keep", "harvested"} or any(
+            thread.get(field) != candidate.get(field) for field in fields
         ):
             return skip("session changed since selection")
+        if changed := _disk_reason(candidate, file):
+            return skip(changed)
         reason = guard(thread) if guard is not None else None
         if reason:
             return skip(reason)

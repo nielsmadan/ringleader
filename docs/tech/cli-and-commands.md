@@ -36,7 +36,10 @@ Groups nest arbitrarily — `_SESSION["mark"]` is itself a dict, giving
 
 ### `main()` flow
 
-1. No args, or `-h` / `--help` / `help` → print the two-tier usage and exit 0.
+1. No args and an interactive terminal (stdin and stdout are TTYs, `TERM` is not `dumb`, and
+   `session_env.current_session()` is `None`, via `_opens_inbox`) → rewrite `argv` to `["inbox"]`
+   and dispatch normally. Otherwise no args, or `-h` / `--help` / `help` → print the two-tier
+   usage and exit 0. An agent harness running bare `rl` in a pty gets usage, never a blocking TUI.
 2. Walk `argv` token by token against the table, accumulating `crumbs` for error messages.
 3. An unknown token prints `rl: unknown command '<tok>' in 'rl <crumbs>'` and the usage, exit 2.
 4. A **callable** entry gets the remaining argv and its return value becomes the exit code
@@ -45,6 +48,8 @@ Groups nest arbitrarily — `_SESSION["mark"]` is itself a dict, giving
    what makes bare `rl session` a listing rather than an error.
 
 ### Usage rendering
+
+`_usage()` also prints one line saying that bare `rl` in a terminal opens the inbox.
 
 `_FLAT` and `_GROUPS` in `cli.py` control the ordering of the top-level help. They are separate
 from `TABLE`, so **a command added to the table but not to `_FLAT` dispatches correctly but is

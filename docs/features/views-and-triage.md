@@ -11,7 +11,7 @@ Three read surfaces over the same registry, at different altitudes:
 |---|---|
 | `rl overview` | where is my work spread — a project rollup |
 | `rl triage` | what awaits a decision — a flat inbox |
-| `rl inbox` | the same queue, interactively |
+| `rl inbox` | the daily home: the same queue, interactively, plus resume, roundup, prune, harvests and usage |
 
 All three auto-scan the disk first; `--no-scan` reports the registry as-is.
 
@@ -49,21 +49,39 @@ sessions that were **never** classified. Both take `--project`, `--source`, `--r
 
 ## `rl inbox`
 
-A Textual TUI over the same queue, in three tabs (`tab` / `shift+tab`): **inbox** (undecided),
-**selected** (picked for today), **harvesting** (digested but not yet archived).
+A full-screen Textual home, also opened by bare `rl` in an interactive terminal. It renders from
+disk at once and scans in the background.
 
-`j`/`k` move, `h` harvest, `d` stage a delete, `u` undo, `s` snooze (fuzzy: `3d`, `2w`,
-`next monday`), `K` keep long-term, `a` archive an integrated digest, `enter` select for today,
-`;` detail, `q` quit.
+**Home** shows the counts, one recommended next step and the ordered list, the sessions in flight
+(last 7 days, not snoozed), what wakes within 7 days, and the subtitle's scan age. The order:
+run the roundup when stale, review snoozed sessions that woke, triage undecided sessions from the
+last 7 days, publish pending harvests, triage the oldest project with a backlog, else resume the
+most recent in-flight session. `enter` runs the highlighted step.
 
-On entry it offers to run `rl roundup` when `lastRoundupAt` is older than `roundup_stale_hours`
-(default 8), on a background worker with a desktop notification when done.
+`1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests and Usage; `escape` goes back,
+`q` leaves, `ctrl+r` rescans, `ctrl+p` opens a palette of screens, next steps and a few read-only
+`rl` verbs (usage, harvests, doctor, `config show`, ...) whose output shows in a scrollable screen.
+
+**Triage** (a project, the last 7 days, or woke sessions) takes the five decisions on the
+highlighted row or the marked rows: `a` archive, `g` keep going, `s` snooze, `K` keep long-term,
+`d` delete, plus `h` harvest and archive through the configured model. `space` marks, `*`/`A`
+marks all, `enter` opens the detail, `r` resumes, `t` triages the project with an agent.
+Keep going marks the session reviewed until it sees new activity. Delete has no prompt: it
+waits 10 s and `u` undoes it. Bulk archive and delete confirm with the count; bulk harvest is
+refused.
+
+Every write goes through one queue that rechecks the session right before it is touched, and a
+session that is running, or that presence cannot vouch for, is refused. `q` waits for queued work
+to finish; a second `q` offers to discard what has not started. Triage with an agent and publish
+with an agent quit the app and start the agent in the right directory.
+
+`rl inbox --read-only` browses without writing and prints launches as a dry run.
 
 ## `rl roundup`
 
 Refresh, then archive finished sessions (sweep), prune (**this deletes**), purge expired
-archives, and enrich, in one pass. It is the "make everything current" verb, and what `rl inbox`
-triggers on stale state.
+archives, and enrich, in one pass. It is the "make everything current" verb, and the first step
+`rl inbox` recommends when state is stale.
 
 It scans first, then prints the plan — how many sessions each phase will touch, the enrich
 model, and an estimated duration — and acts only on the sessions that plan named. Each one is

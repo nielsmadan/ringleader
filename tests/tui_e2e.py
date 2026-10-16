@@ -115,7 +115,7 @@ def _run_steps(terminal: _Terminal, steps: tuple[Step, ...]) -> tuple[int | None
 def run_scenario(scenario: Scenario) -> ScenarioResult:
     child = pexpect.spawn(
         sys.executable,
-        ["-m", "ringleader", *scenario.argv],
+        ["-P", "-m", "ringleader", *scenario.argv],
         env=scenario.env,
         cwd=str(scenario.cwd) if scenario.cwd is not None else None,
         dimensions=(scenario.rows, scenario.cols),

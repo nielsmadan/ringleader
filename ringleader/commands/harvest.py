@@ -30,7 +30,7 @@ def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def _prompt(thread: dict[str, Any], condensed: str) -> str:
+def build_prompt(thread: dict[str, Any], condensed: str) -> str:
     return (
         "Extract the DURABLE, reusable knowledge from this finished coding session for the "
         "repo's docs. Keep only what's worth remembering later; discard routine steps.\n"
@@ -42,7 +42,7 @@ def _prompt(thread: dict[str, Any], condensed: str) -> str:
     )
 
 
-def _render_md(thread: dict[str, Any], data: dict[str, Any]) -> str:
+def render_markdown(thread: dict[str, Any], data: dict[str, Any]) -> str:
     title = thread.get("title") or thread.get("suggestedName") or thread["sessionId"]
     parts = [f"# {title}\n", f"## Summary\n\n{data.get('summary', '').strip()}\n"]
     for key, heading in (
@@ -79,14 +79,14 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
         print(f"rl-harvest: {error}", file=sys.stderr)
         return 1, None
     try:
-        data = model.complete_json(_prompt(thread, condensed), HARVEST_SCHEMA)
+        data = model.complete_json(build_prompt(thread, condensed), HARVEST_SCHEMA)
     except (ModelError, KeyError) as error:
         print(f"rl-harvest: {error}", file=sys.stderr)
         return 1, None
-    return 0, _render_md(thread, data)
+    return 0, render_markdown(thread, data)
 
 
-def _save_harvest_unlocked(
+def save_harvest_unlocked(
     session_id: str, registry_path: str, markdown: str
 ) -> tuple[dict[str, Any], Path]:
     reg = registry.load_registry(registry_path)
@@ -148,7 +148,7 @@ def cmd_harvest(argv: list[str]) -> int:
 
     with publish_lock():
         try:
-            thread, path = _save_harvest_unlocked(session_id, args.registry, markdown)
+            thread, path = save_harvest_unlocked(session_id, args.registry, markdown)
         except KeyError:
             print(
                 f"rl-harvest: unknown session {session_id} — run `rl session refresh` "

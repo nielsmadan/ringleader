@@ -18,7 +18,7 @@ from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_fixture import build_fixture
-from textual.widgets import Log, OptionList
+from textual.widgets import Label, OptionList
 
 from tui_helpers import until
 
@@ -361,6 +361,31 @@ async def test_undo_within_the_grace_brings_a_delete_back(tmp_path):
         assert Path(thread["file"]).exists()
 
 
+async def test_undo_mid_batch_reports_what_was_already_applied(tmp_path):
+    path = _write(
+        tmp_path / "registry.json",
+        _thread("s1", days=5),
+        _thread("s2", days=4),
+        _thread("s3", days=3),
+    )
+    execute = GatedExecute(gated=True)
+    app = _app(path, execute=execute)
+    async with app.run_test(size=(100, 30)) as pilot:
+        try:
+            await _open_triage(app, pilot)
+            await pilot.press("asterisk", "a")
+            await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+            await pilot.press("y")
+            await until(pilot, lambda: len(execute.started) == 1)
+            await pilot.press("u")
+            await until(pilot, lambda: any(m.startswith("undone:") for m in _toasts(app)))
+        finally:
+            execute.gate.set()
+        await until(pilot, lambda: app.idle)
+        assert "undone: 2 of archive 3 sessions (1 already applied)" in _toasts(app)
+        assert [_archived(path, sid) for sid in ("s1", "s2", "s3")] == [True, False, False]
+
+
 async def test_a_delete_runs_once_the_grace_runs_out(tmp_path):
     thread = _thread("s1", days=5)
     path = _write(tmp_path / "registry.json", thread)
@@ -490,6 +515,48 @@ async def test_marking_two_rows_then_archive_confirms_with_the_count(tmp_path, a
         )
 
 
+def _confirm_message(app):
+    return str(app.screen.query_one("#confirm-message", Label).content)
+
+
+def _deleted(path, sid):
+    return any(d["sessionId"] == sid for d in _stored(path)[1]["deleted"])
+
+
+@pytest.mark.parametrize(("answer", "deleted"), [("y", True), ("n", False)])
+async def test_marking_two_rows_then_delete_confirms_with_the_count(tmp_path, answer, deleted):
+    threads = [_thread("s1", days=5), _thread("s2", days=4), _thread("s3", days=3)]
+    path = _write(tmp_path / "registry.json", *threads)
+    app = _app(path, delete_grace=0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("space", "down", "space", "d")
+        await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert _confirm_message(app) == "Delete 2 sessions permanently? Nothing is harvested. [y/n]"
+        await pilot.press(answer)
+        await until(pilot, lambda: isinstance(app.screen, TriageScreen))
+        await until(pilot, lambda: app.idle)
+        assert [_deleted(path, sid) for sid in ("s1", "s2", "s3")] == [deleted, deleted, False]
+        assert [Path(t["file"]).exists() for t in threads] == [not deleted, not deleted, True]
+
+
+async def test_confirm_each_delete_asks_before_a_single_delete(tmp_path, monkeypatch):
+    monkeypatch.setattr("ringleader.home.screens.triage.CONFIRM_EACH_DELETE", True)
+    thread = _thread("s1", days=5)
+    path = _write(tmp_path / "registry.json", thread)
+    app = _app(path, delete_grace=0)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("d")
+        await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
+        assert _confirm_message(app) == "Delete title s1 permanently? Nothing is harvested. [y/n]"
+        await pilot.press("n")
+        await until(pilot, lambda: isinstance(app.screen, TriageScreen))
+        await until(pilot, lambda: app.idle)
+        assert Path(thread["file"]).exists()
+        assert _ids(app) == ["claude-code:s1"]
+
+
 async def test_star_marks_every_row_and_again_clears(tmp_path):
     path = _write(tmp_path / "registry.json", _thread("s1", days=5), _thread("s2", days=4))
     app = _app(path)
@@ -536,10 +603,28 @@ async def test_enter_opens_the_detail_and_the_conversation_appears(tmp_path):
         await _open_triage(app, pilot)
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, DetailScreen))
-        log = app.screen.query_one("#conversation", Log)
-        await until(pilot, lambda: any("fix the parser in s1" in line for line in log.lines))
+        await until(pilot, lambda: "fix the parser in s1" in screen_text(app))
         await pilot.press("escape")
         await until(pilot, lambda: isinstance(app.screen, TriageScreen))
+
+
+async def test_detail_wraps_a_long_conversation_line_across_screen_lines(tmp_path):
+    thread = _thread("s1", days=5)
+    words = " ".join(f"word{k:02d}" for k in range(40))
+    Path(thread["file"]).write_text(
+        f'{{"type":"user","message":{{"content":"{words}"}}}}\n', encoding="utf-8"
+    )
+    path = _write(tmp_path / "registry.json", thread)
+    app = _app(path)
+    async with app.run_test(size=(60, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, DetailScreen))
+        await until(pilot, lambda: "word39" in screen_text(app))
+        rows = [row for row in screen_text(app).splitlines() if "word" in row]
+        assert len(rows) > 1
+        assert max(len(row) for row in rows) <= 60
+        assert " ".join(" ".join(rows).split()) == words
 
 
 async def test_detail_says_when_the_conversation_is_unavailable(tmp_path):
@@ -551,12 +636,8 @@ async def test_detail_says_when_the_conversation_is_unavailable(tmp_path):
         Path(thread["file"]).unlink()
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, DetailScreen))
-        log = app.screen.query_one("#conversation", Log)
         await until(
-            pilot,
-            lambda: any(
-                "conversation unavailable: transcript not found" in line for line in log.lines
-            ),
+            pilot, lambda: "conversation unavailable: transcript not found" in screen_text(app)
         )
 
 
@@ -663,8 +744,7 @@ async def test_golden_detail(tmp_path, golden, monkeypatch):
         await _open_triage(app, pilot)
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, DetailScreen))
-        log = app.screen.query_one("#conversation", Log)
-        await until(pilot, lambda: any("fix the parser in s1" in line for line in log.lines))
+        await until(pilot, lambda: "fix the parser in s1" in screen_text(app))
         await pilot.pause()
         golden("inbox/detail", screen_text(app), replace={str(tmp_path): "<root>"})
 

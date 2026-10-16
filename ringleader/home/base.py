@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import TYPE_CHECKING, ClassVar, Literal, cast
 
@@ -33,14 +33,14 @@ class ScreenTarget(Enum):
 @dataclass(frozen=True)
 class AppState:
     snapshot: Snapshot
-    overlay: Mapping[Identity, Hidden]
-    live_ids: frozenset[Identity] | None
-    harvests: tuple[Harvest, ...] | None
-    harvest_problems: int
-    enrich_model: str | None
-    harvest_model: str | None
-    scan_note: str | None
-    version: int
+    overlay: Mapping[Identity, Hidden] = field(default_factory=dict)
+    live_ids: frozenset[Identity] | None = None
+    harvests: tuple[Harvest, ...] | None = None
+    harvest_problems: int = 0
+    enrich_model: str | None = None
+    harvest_model: str | None = None
+    scan_note: str | None = None
+    version: int = 0
 
 
 type RoundupStage = Literal["phases", "enrich", "stamp", "done", "cancelled", "failed"]

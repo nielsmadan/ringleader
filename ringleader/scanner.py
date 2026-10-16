@@ -138,6 +138,23 @@ def sources_with(capability: str, protocol: type) -> dict[str, Any]:
     return {s.name: s for s in active_sources() if supports(s, capability, protocol)}
 
 
+_CONFINED_OPERATIONS = frozenset({"delete", "prune"})
+
+
+def _strictly_under(path: Path, root: Path) -> bool:
+    placed = path.parent.resolve() / path.name
+    return placed != root and placed.is_relative_to(root)
+
+
+def _outside_store(source: Source, path: Path) -> Path | None:
+    root = getattr(source, "root", None)
+    if not isinstance(root, Path):
+        return path
+    store = root.resolve()
+    owned = (path, *companion_paths(source.name, path))
+    return next((p for p in owned if not _strictly_under(p, store)), None)
+
+
 def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
     source_name = thread.get("source") or "claude-code"
     source = source_for_thread(thread)
@@ -152,7 +169,13 @@ def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
             f"cannot {operation} {source_name} session {thread.get('sessionId')}: "
             "the source has no filesystem transcript lifecycle"
         )
-    return Path(file_path)
+    path = Path(file_path)
+    if operation in _CONFINED_OPERATIONS and (stray := _outside_store(source, path)) is not None:
+        raise RuntimeError(
+            f"cannot {operation} {source_name} session {thread.get('sessionId')}: "
+            f"{stray} is outside the {source_name} session store"
+        )
+    return path
 
 
 def companion_paths(source_name: str | None, file_path: str | Path) -> tuple[Path, ...]:

@@ -35,7 +35,7 @@ State (registry, archive, pending harvest queue) lives under `~/.local/share/rin
 ```sh
 rl overview            # where is my work spread — a rollup by git project
 rl triage              # what awaits a decision
-rl inbox               # work the queue in a TUI
+rl                     # the home TUI (rl inbox): what's waiting, what's next, triage it
 rl doctor              # what's wired, and how aggressive your GC clock is
 ```
 
@@ -55,6 +55,10 @@ rl install             # skills, session-end hook, statusline capture
 - **Triage** — every dormant session gets one of five decisions: finish it, keep going, snooze,
   keep long-term, or delete. `rl overview` groups by git project, collapsing worktrees and
   clones of the same repo. → [The triage workflow](docs/user/triage-workflow.md)
+- **Inbox** — bare `rl` opens a home screen: counts, the next thing to do, and one-key triage
+  (archive, keep going, snooze, keep, delete with undo), plus resume, roundup, prune, harvests
+  and usage. Agent handoffs start the right skill in the right directory.
+  → [The triage workflow](docs/user/triage-workflow.md)
 - **Harvest** — distill what a session taught into durable markdown before it disappears, then
   publish it into the repo's living docs. `rl session finish` refuses a session that was never
   harvested. → [Finishing a session](docs/user/finishing-a-session.md)
@@ -100,8 +104,8 @@ rl uninstall skills    # remove only what this tool created
 ```sh
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl resume --last                    # re-enter the most recent session here, no picker
-rl inbox                            # TUI to blitz dormant sessions inbox-zero style
-rl roundup [--enrich S] [--preview] # refresh + sweep + prune (deletes) + enrich, plan first
+rl inbox [--read-only]              # the daily home TUI; bare `rl` in a terminal opens it
+rl roundup [--enrich all|recent|none] [--preview] [--yes] # refresh + sweep + prune (deletes) + enrich, plan first
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions

@@ -41,6 +41,14 @@ pruning them before the GC clock deletes them.
   reports it would happen). See
   `docs/decisions/0011-seeded-handoff-over-native-conversion.md` and
   `docs/decisions/0013-native-conversion-behind-resume.md`.
+- **Bare `rl` opens the inbox only on an interactive non-agent TTY.** stdin and stdout are TTYs,
+  `TERM` is not `dumb`, and `session_env.current_session()` is `None`; anywhere else it prints
+  usage. A pty-driven agent that runs `rl` therefore never blocks on a TUI.
+- **The inbox writes through one `Writer`, never from a screen.** `ringleader/home/writer.py`
+  owns every registry mutation and file move the TUI makes, and rechecks the session right before
+  each destructive op. Quitting waits for it to drain (`q` twice offers to discard what has not
+  started). Test with `InboxApp(strict=True)` and injected clock, refresher and presence; drive
+  it with `scripts/tui_shot.py`, which is read-only on a copy. See `docs/tech/inbox.md`.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing,** meant to be
@@ -132,8 +140,9 @@ pruning them before the GC clock deletes them.
 ```sh
 rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
 rl resume --last                    # re-enter the most recent session in scope, no picker
-rl inbox                            # TUI (Textual, shipped as a dep) to blitz dormant sessions inbox-zero style
-rl roundup [--yes]                  # refresh + prune (deletes) + enrich in one shot; rl inbox runs it when stale
+rl                                  # bare, on an interactive non-agent TTY: opens rl inbox
+rl inbox [--read-only]              # the daily home TUI (Textual, shipped as a dep)
+rl roundup [--enrich all|recent|none] [--preview] [--yes] # refresh + prune (deletes) + enrich in one shot; the inbox recommends it when stale
 rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions

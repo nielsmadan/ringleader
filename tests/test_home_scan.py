@@ -85,6 +85,30 @@ def test_latest_honours_max_age():
     assert service.latest(max_age=-1) is None
 
 
+def test_latest_ages_out_by_the_injected_monotonic_clock():
+    refresher = GatedRefresher()
+    refresher.gate.set()
+    now = [100.0]
+    service = ScanService(
+        "/nowhere/registry.json",
+        refresher=refresher,
+        presence=frozenset,
+        models=lambda task: None,
+        clock=lambda: NOW,
+        generation=lambda: 0,
+        deliver=lambda landed: None,
+        monotonic=lambda: now[0],
+    )
+    service.request()
+    landed = service.wait(5)
+    assert landed is not None
+    assert landed.snapshot.taken_at == 100.0
+    now[0] = 150.0
+    assert service.latest(max_age=60) is landed
+    now[0] = 161.0
+    assert service.latest(max_age=60) is None
+
+
 def test_unavailable_presence_lands_as_unknown():
     def presence():
         raise PresenceUnavailable("no hooklinesinker")

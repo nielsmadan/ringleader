@@ -4,9 +4,12 @@ Every `rl` command at a glance. `rl <command> --help` is authoritative for flags
 
 From a source checkout without installing, prefix each call with `uv run`.
 
+Bare `rl` in an interactive terminal opens `rl inbox`. In a pipe, with `TERM=dumb`, or inside an
+agent session it prints usage.
+
 ```
 rl
-├── inbox                       TUI: blitz dormant sessions inbox-zero style
+├── inbox                       TUI home: triage, resume, roundup, prune, harvests, usage
 ├── roundup                     refresh + sweep + prune + enrich, plan first
 ├── overview [<selector>]       the view: project rollup, or a deep-dive
 ├── triage                      sessions awaiting a decision
@@ -32,7 +35,7 @@ rl
 | Command | Does | Key flags |
 |---|---|---|
 | `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent, or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
-| `rl inbox` | Textual TUI over the dormant-session queue, in three tabs. `j`/`k` move, `h` harvest, `d` delete, `u` undo, `s` snooze, `K` keep, `a` archive, `enter` select, `;` detail, `q` quit. Offers a `roundup` when state is stale. | `--registry` |
+| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape` back, `q` quit, `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry` |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |

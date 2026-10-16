@@ -14,6 +14,11 @@ OLD = "2026-01-01T00:00:00+00:00"
 GOOD = {"status": "unfinished", "whatItIs": "work in progress", "suggestedName": "wip"}
 
 
+@pytest.fixture(autouse=True)
+def _claude_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "transcripts"))
+
+
 class FakeModel:
     name = "claude"
     model = "haiku"
@@ -171,6 +176,25 @@ def test_sigint_during_prune_stops_at_the_next_batch(tmp_path, monkeypatch, mode
     assert saved["lastRoundupAt"] is None
     assert model.calls == 0
     assert signal.getsignal(signal.SIGINT) is before
+
+
+@pytest.mark.usefixtures("no_scan")
+def test_sigint_during_enrich_exits_130_without_stamping(tmp_path, monkeypatch, model):
+    path = _write(tmp_path, [_thread(tmp_path, "a"), _thread(tmp_path, "b")])
+
+    interrupted = []
+
+    def interrupt(event):
+        if event.phase == "enrich" and not interrupted:
+            interrupted.append(event)
+            signal.raise_signal(signal.SIGINT)
+
+    monkeypatch.setattr(roundup_cmd, "_print_progress", interrupt)
+
+    assert roundup_cmd.cmd_roundup(["--registry", str(path), "--yes"]) == 130
+
+    assert len(interrupted) == 1
+    assert _saved(path)["lastRoundupAt"] is None
 
 
 @pytest.mark.usefixtures("no_scan")

@@ -52,6 +52,13 @@ async def test_choice_modal_returns_the_highlighted_value_on_enter():
     assert await _run(_choices(), "enter") == "all"
 
 
+async def test_choice_modal_enter_returns_the_initial_option():
+    modal = ChoiceModal(
+        "which?", [ChoiceOption("first", "a"), ChoiceOption("last", "z")], initial=1
+    )
+    assert await _run(modal, "enter") == "z"
+
+
 async def test_choice_modal_picks_by_digit():
     assert await _run(_choices(), "2") == "recent"
 

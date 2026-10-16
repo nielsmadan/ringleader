@@ -136,5 +136,5 @@ def test_run_commands_hands_the_child_the_app_environment_and_registry_argv(tmp_
     (run,) = job(CancelToken(), lambda _update: None)
     assert run.output.splitlines() == [
         str(tmp_path / "xdg"),
-        "-m ringleader doctor --registry /r.json",
+        "-P -m ringleader doctor --registry /r.json",
     ]

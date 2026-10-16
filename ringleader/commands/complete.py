@@ -35,7 +35,7 @@ def cmd_complete(argv: list[str]) -> int:
 
     with publish_lock():
         try:
-            harvested_thread, path = harvest_mod._save_harvest_unlocked(
+            harvested_thread, path = harvest_mod.save_harvest_unlocked(
                 args.id, args.registry, markdown
             )
         except KeyError:

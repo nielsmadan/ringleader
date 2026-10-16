@@ -38,13 +38,14 @@ latest complete thread in their tombstone, including concurrent lineage changes.
 GC tombstone can be completed into an archive after its filesystem move finishes.
 
 `mutate_registry(path, callback)` supports short mutations against freshly loaded state;
-callback failure writes nothing. The inbox uses this for interactive metadata changes.
+callback failure writes nothing. The inbox's writer uses this for interactive metadata changes.
 Scans, model calls, confirmation prompts and filesystem moves run outside the registry
 lock. Pruning revalidates each candidate against current state and holds the registry lock
 through picker hiding, deletion and its tombstone write, so a committed keep decision wins
-over an earlier candidate list. Inbox deletion retains the original staged candidate
-for this check, so intervening activity or relocation cancels its deletion. Filesystem operations are not atomic with the registry; archive retries continue
-using the existing archive destination if the registry write failed.
+over an earlier candidate list. The inbox's delete carries the `mtime` and `fileFingerprint` the user saw
+into this check, so intervening activity or relocation cancels its deletion. Filesystem
+operations are not atomic with the registry; archive retries continue using the existing
+archive destination if the registry write failed.
 
 Lock order is **publish or operation lock, then registry lock**. Never acquire an outer
 lock or call another registry transaction inside a registry callback. Both transaction
@@ -86,8 +87,9 @@ editing:
   identity of every session on it.
 - **Judgment and decision fields** — `status`, `statusConfidence`, `whatItIs`, `suggestedName`,
   `appliedName`, `decision`, `harvestPath`, `tags`, plus the lifecycle stamps
-  (`snoozedAt`, `keptAt`, `finishOnExit`, `selectedForDay`, `reviewedAtMtime`,
-  `classifiedAtMtime`, `namedAtMtime`) and `locationPinned`. **Never overwritten by a scan.**
+  (`snoozedAt`, `keptAt`, `finishOnExit`, `reviewedAtMtime`, `classifiedAtMtime`,
+  `namedAtMtime`) and `locationPinned`. **Never overwritten by a scan.** `selectedForDay` is
+  unused: still written as `null` on new sessions, read by nothing.
 
 Conversion fields `lineage` and `nativeRoots` are preserved by scans and lifecycle
 transitions. `conversionLineage` retains relationships even after target deletion;

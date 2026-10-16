@@ -12,6 +12,7 @@ type PresenceProbe = Callable[[], frozenset[Identity] | None]
 type UnknownPresence = Literal["refuse", "allow"]
 
 _FINGERPRINT_FIELDS = 5
+NO_STAMP = "changed since you looked: no fingerprint, rescan"
 
 
 @dataclass(frozen=True)
@@ -60,13 +61,17 @@ def _disk_reason(thread: dict[str, Any], stamp: tuple[int, int]) -> str | None:
     return None if (st.st_size, st.st_mtime_ns) == stamp else "changed since you looked"
 
 
-def changed_reason(thread: dict[str, Any] | None, expected: Seen) -> str | None:
+def changed_reason(
+    thread: dict[str, Any] | None, expected: Seen, *, require_stamp: bool = False
+) -> str | None:
     if thread is None:
         return "no longer in the registry"
     if (thread.get("mtime") or "") != expected.mtime:
         return "changed since you looked"
     stamp = content_stamp(expected.fingerprint)
-    return None if stamp is None else _disk_reason(thread, stamp)
+    if stamp is None:
+        return NO_STAMP if require_stamp else None
+    return _disk_reason(thread, stamp)
 
 
 def running_reason(

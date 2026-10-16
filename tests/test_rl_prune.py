@@ -17,10 +17,13 @@ _OLD_ARCHIVE = "2026-01-01T00:00:00+00:00"  # far past any retention against rea
 def _isolate_state(tmp_path, monkeypatch):
     # cmd_prune reads config via load_config(); pin XDG so no test touches the real store.
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "xdg"))
-    # stub detection scans installed sources; point both at empty dirs so no test
+    # stub detection scans installed sources; point both at test dirs so no test
     # touches the real ~/.claude/projects or ~/.codex/sessions on this machine.
-    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "no-claude-projects"))
-    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "no-codex-sessions"))
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "claude-projects"))
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "codex-sessions"))
+
+
+_STORES = {"claude-code": "claude-projects", "codex": "codex-sessions"}
 
 
 def _thread(  # noqa: PLR0913 -- test data-builder helper, one arg per fixture field
@@ -33,16 +36,21 @@ def _thread(  # noqa: PLR0913 -- test data-builder helper, one arg per fixture f
     decision=None,
     git_label="repo",
     project="/p",
+    source="claude-code",
 ):
     """Write a real transcript file + sidecar dir, return the registry thread."""
-    f = tmp / f"{sid}.jsonl"
+    store = tmp / _STORES[source] / "-p"
+    store.mkdir(parents=True, exist_ok=True)
+    f = store / f"{sid}.jsonl"
     f.write_text("x" * size_bytes, encoding="utf-8")
-    side = tmp / sid
+    side = store / sid
     side.mkdir()
     (side / "note.txt").write_text("sidecar", encoding="utf-8")
     return {
         "sessionId": sid,
+        "source": source,
         "file": str(f),
+        "fileFingerprint": stat_fingerprint(f.stat()),
         "project": project,
         "title": None,
         "aiTitle": None,
@@ -114,7 +122,7 @@ def test_delete_yes_removes_file_sidecar_and_tombstones(tmp_path):
     r = _run(reg, "--delete", stdin="y\n")
     assert r.returncode == 0 and "deleted 1" in r.stdout
     assert not Path(t["file"]).exists()  # transcript gone
-    assert not (tmp_path / "a").exists()  # sidecar dir gone
+    assert not Path(t["file"]).with_suffix("").exists()  # sidecar dir gone
     data = json.loads(reg.read_text())
     assert data["threads"] == []
     assert data["deleted"][0]["sessionId"] == "a"
@@ -146,13 +154,12 @@ def test_missing_transcript_is_tolerated(tmp_path):
     reg = _write_registry(tmp_path, [t])
     r = _run(reg, "--delete", stdin="y\n")
     assert r.returncode == 0 and "deleted 1" in r.stdout
-    assert not (tmp_path / "a").exists()  # sidecar still cleaned up
+    assert not Path(t["file"]).with_suffix("").exists()  # sidecar still cleaned up
     assert json.loads(reg.read_text())["deleted"][0]["sessionId"] == "a"
 
 
 def test_delete_refuses_a_transcript_changed_after_the_scan(tmp_path):
     t = _thread(tmp_path, "a", size_bytes=100)
-    t["fileFingerprint"] = stat_fingerprint(Path(t["file"]).stat())
     reg = _write_registry(tmp_path, [t])
     with open(t["file"], "a", encoding="utf-8") as handle:
         handle.write("more")
@@ -166,8 +173,7 @@ def test_codex_thread_tiny_by_message_count_despite_large_bytes(tmp_path):
     """Codex transcripts are event-heavy (full request/response payloads), so a
     genuinely tiny session (few real messages) can sit well above the byte
     ceiling. Tininess must key on messageCount, not sizeBytes."""
-    t = _thread(tmp_path, "codex-a", size_bytes=200 * 1024, msgs=2)
-    t["source"] = "codex"
+    t = _thread(tmp_path, "codex-a", size_bytes=200 * 1024, msgs=2, source="codex")
     reg = _write_registry(tmp_path, [t])
     r = _run(reg, "--delete", stdin="y\n")
     assert r.returncode == 0 and "deleted 1" in r.stdout

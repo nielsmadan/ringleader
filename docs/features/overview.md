@@ -11,8 +11,8 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
 - [session-lifecycle.md](session-lifecycle.md) — the states a session moves through and the verbs
   that reach them: classify, snooze, keep, harvest, finish, sweep, archive, unarchive. Why
   `finish` archives nothing and why it refuses an unharvested session.
-- [views-and-triage.md](views-and-triage.md) — the three read surfaces (`overview`, `triage`,
-  `inbox`), git-project grouping, selectors, and `roundup`.
+- [views-and-triage.md](views-and-triage.md) — the read surfaces (`overview`, `triage`),
+  the `inbox` home TUI, git-project grouping, selectors, and `roundup`.
 - [harvest-and-publish.md](harvest-and-publish.md) — distilling a session into durable markdown,
   the pending queue, and the guarded path that writes it into a repo.
 - [resuming-sessions.md](resuming-sessions.md) — `rl resume`: the cross-agent picker, the

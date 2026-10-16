@@ -42,7 +42,7 @@ class FakeModel:
 
 def _session(tmp, sid="a"):
     # mimic ~/.claude/projects/<encoded>/<uuid>.jsonl + sidecar
-    proj = tmp / "-Users-me-proj"
+    proj = tmp / "_claude" / "-Users-me-proj"
     proj.mkdir(parents=True, exist_ok=True)
     f = proj / f"{sid}.jsonl"
     f.write_text("{}\n", encoding="utf-8")

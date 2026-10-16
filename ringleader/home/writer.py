@@ -67,6 +67,16 @@ type Execute = Callable[[Op, OpContext], Outcome]
 type MakeContext = Callable[[CancelCheck, Callable[[RoundupProgress], None]], OpContext]
 
 
+def _pairs(entries: Sequence[_Entry]) -> tuple[tuple[int, Op], ...]:
+    return tuple((entry.ticket, entry.op) for entry in entries)
+
+
+def _internal_outcome(error: Exception) -> Outcome:
+    return Outcome(
+        ok=False, message=f"internal error: {type(error).__name__}: {error}", wrote=False
+    )
+
+
 @dataclass(frozen=True)
 class _Entry:
     ticket: int
@@ -135,7 +145,7 @@ class Writer:
             self._next_batch += 1
             self._queue.extend(entries)
             self._cond.notify_all()
-        return Batch(tuple((entry.ticket, entry.op) for entry in entries), label)
+        return Batch(_pairs(entries), label)
 
     def undo_last(self) -> tuple[tuple[int, Op], ...]:
         with self._cond:
@@ -151,7 +161,7 @@ class Writer:
             self._cond.notify_all()
         if emptied:
             self._deliver(Drained())
-        return tuple((entry.ticket, entry.op) for entry in undone)
+        return _pairs(undone)
 
     def flush_grace(self) -> None:
         with self._cond:
@@ -168,7 +178,7 @@ class Writer:
             self._cond.notify_all()
         if emptied:
             self._deliver(Drained())
-        return tuple((entry.ticket, entry.op) for entry in dropped)
+        return _pairs(dropped)
 
     def cancel_current(self) -> None:
         with self._cond:
@@ -237,11 +247,7 @@ class Writer:
                 finished = Finished(
                     entry.ticket,
                     entry.op,
-                    Outcome(
-                        ok=False,
-                        message=f"internal error: {type(error).__name__}: {error}",
-                        wrote=False,
-                    ),
+                    _internal_outcome(error),
                     self.generation,
                     None,
                     error,
@@ -269,9 +275,7 @@ class Writer:
             outcome = self._execute(entry.op, self._make_context(cancel.is_set, progress))
         except Exception as error:  # noqa: BLE001 -- an op failure must not kill the writer
             internal = error
-            outcome = Outcome(
-                ok=False, message=f"internal error: {type(error).__name__}: {error}", wrote=False
-            )
+            outcome = _internal_outcome(error)
             self._log(entry, traceback.format_exc())
         with self._cond:
             self._generation += outcome.wrote

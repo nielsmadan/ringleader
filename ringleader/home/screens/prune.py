@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, ClassVar
@@ -144,7 +143,7 @@ class PruneScreen(InboxScreen):
         inbox = self.inbox
         now_iso = inbox.now_iso()
         view = overlay.visible(inbox.state.snapshot.reg, inbox.state.overlay)
-        self._rows = prune_rows(view, now_iso, time.time())
+        self._rows = prune_rows(view, now_iso, inbox.now_epoch())
         self.query_one("#prune-title", Static).update(Text(prune_title(len(self._rows))))
         purge = self.query_one("#prune-purge", Static)
         purging = (

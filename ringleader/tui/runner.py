@@ -54,7 +54,7 @@ def run_rl(
         "COLUMNS": str(columns),
     }
     process = subprocess.Popen(
-        [python or sys.executable, "-m", "ringleader", *argv],
+        [python or sys.executable, "-P", "-m", "ringleader", *argv],
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         stdin=subprocess.DEVNULL,

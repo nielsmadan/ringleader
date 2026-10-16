@@ -48,6 +48,7 @@ class ScanService:
         generation: Callable[[], int],
         deliver: Callable[[ScanLanded], None],
         fail: Callable[[str], None] = _ignore,
+        monotonic: Callable[[], float] = time.monotonic,
     ) -> None:
         self._registry_path = registry_path
         self._refresher = refresher
@@ -58,6 +59,7 @@ class ScanService:
         self._generation = generation
         self._deliver = deliver
         self._fail = fail
+        self._monotonic = monotonic
         self._cond = threading.Condition()
         self._running = False
         self._rerun = False
@@ -82,7 +84,7 @@ class ScanService:
             landed = self._latest
         if landed is None or max_age is None:
             return landed
-        return landed if time.monotonic() - landed.snapshot.taken_at <= max_age else None
+        return landed if self._monotonic() - landed.snapshot.taken_at <= max_age else None
 
     def wait(self, timeout: float | None = None) -> ScanLanded | None:
         with self._cond:
@@ -99,7 +101,7 @@ class ScanService:
         live_ids = self._live_ids(warnings)
         harvest_snapshot = _guarded(warnings, "harvests", harvests.snapshot_harvests)
         return ScanLanded(
-            snapshot=Snapshot(reg, generation, scanned=scanned, taken_at=time.monotonic()),
+            snapshot=Snapshot(reg, generation, scanned=scanned, taken_at=self._monotonic()),
             note=note,
             live_ids=live_ids,
             harvests=harvest_snapshot,

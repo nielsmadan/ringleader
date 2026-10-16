@@ -91,11 +91,14 @@ skipping any session whose registry `mtime`/`fileFingerprint` moved since the pl
 `prune._delete_candidate` adds the transcript `(size, mtime_ns)` check, which `rl prune
 --delete` gets too. `cancelled()` is polled between items and batches. `run_roundup()` composes
 phases, `enrichment.enrich_sessions()` over the chosen scope, and `stamp()` of
-`lastRoundupAt`, which is skipped only when the run was cancelled.
+`lastRoundupAt`, which is skipped only when the run was cancelled. `next_step()` is that
+sequencing rule (phases → enrich or stamp, never stamp a cancelled run) and `hold_lock()` the lock;
+`run_roundup()` and the inbox's `RoundupDriver` both call them.
 
 A presence probe returning `None` means "cannot tell". The caller picks what that means:
 `rl roundup` passes `unknown="allow"` (machines without presence keep working), while the inbox
-refuses.
+refuses. The inbox runs the plan's phases, enrich and stamp itself, one writer op or job each,
+and holds the roundup lock through all of them.
 
 ## Key entry points
 

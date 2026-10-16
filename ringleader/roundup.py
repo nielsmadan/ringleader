@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -25,6 +25,7 @@ from .revalidate import (
 
 type EnrichScope = Literal["all", "recent", "none"]
 type RoundupPhase = Literal["sweep", "prune", "purge", "enrich", "stamp"]
+type RoundupStep = Literal["enrich", "stamp", "cancelled"]
 
 ENRICH_WARN_THRESHOLD = 25
 RECENT_DAYS = 7
@@ -33,6 +34,8 @@ PRUNE_BATCH = 25
 _HOURS_PER_DAY = 24
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
+
+ROUNDUP_BUSY = "another roundup is running"
 
 
 class RoundupBusy(RuntimeError):
@@ -53,6 +56,7 @@ class RoundupPlan:
     model_label: str | None
     concurrency: int
     retention_days: int = 0
+    read_only: bool = False
 
     @property
     def enrich_warning(self) -> bool:
@@ -118,6 +122,7 @@ def plan_roundup(  # noqa: PLR0913 -- injection points the suite drives
     retention_days: int,
     concurrency: int | None = None,
     unavailable_sources: frozenset[str] = frozenset(),
+    read_only_model: Model | None = None,
 ) -> RoundupPlan:
     sweeping = sweep_cmd.due(reg, now_epoch)
     swept_ids = _identities(sweeping)
@@ -150,9 +155,10 @@ def plan_roundup(  # noqa: PLR0913 -- injection points the suite drives
             if t.get("mtime") and overview.age_days(t["mtime"], now_iso) <= RECENT_DAYS
         ),
         engine=model.name if model is not None else None,
-        model_label=describe(model) if model is not None else None,
+        model_label=describe(shown) if (shown := model or read_only_model) is not None else None,
         concurrency=(concurrency or enrichment.default_concurrency(model)) if model else 1,
         retention_days=retention_days,
+        read_only=read_only_model is not None and model is None,
     )
 
 
@@ -361,11 +367,28 @@ def _run_locked(  # noqa: PLR0913 -- injection points the suite drives
     )
 
 
+def next_step(
+    finished: Literal["phases", "enrich"], *, cancelled: bool, can_enrich: bool = False
+) -> RoundupStep:
+    if cancelled:
+        return "cancelled"
+    return "enrich" if finished == "phases" and can_enrich else "stamp"
+
+
+def hold_lock() -> ExitStack | None:
+    stack = ExitStack()
+    if stack.enter_context(stateio.roundup_lock()):
+        return stack
+    stack.close()
+    return None
+
+
 @contextmanager
 def _exclusive() -> Iterator[None]:
-    with stateio.roundup_lock() as acquired:
-        if not acquired:
-            raise RoundupBusy("another roundup is running")
+    held = hold_lock()
+    if held is None:
+        raise RoundupBusy(ROUNDUP_BUSY)
+    with held:
         yield
 
 
@@ -422,7 +445,12 @@ def run_roundup(  # noqa: PLR0913 -- injection points the suite drives
         )
         enriched: EnrichOutcome | None = None
         ids = plan.enrich_ids(scope)
-        if not phases.cancelled and model is not None and ids:
+        step = next_step(
+            "phases",
+            cancelled=phases.cancelled or cancelled(),
+            can_enrich=model is not None and bool(ids),
+        )
+        if step == "enrich" and model is not None:
             progress(RoundupProgress("enrich", 0, len(ids)))
             enriched = enrichment.enrich_sessions(
                 plan.registry_path,
@@ -432,7 +460,8 @@ def run_roundup(  # noqa: PLR0913 -- injection points the suite drives
                 progress=lambda done, total: progress(RoundupProgress("enrich", done, total)),
                 cancelled=cancelled,
             )
-        if phases.cancelled or cancelled():
+            step = next_step("enrich", cancelled=cancelled())
+        if step != "stamp":
             return RoundupResult(phases=phases, enrich=enriched, stamped=False)
         progress(RoundupProgress("stamp", 0, 1))
         stamp(plan.registry_path, plan.now_iso)
@@ -459,6 +488,8 @@ def _scan_line(note: str | None) -> str:
 
 
 def _enrich_line(plan: RoundupPlan) -> str:
+    if plan.read_only and plan.model_label is not None:
+        return f"enrich: read-only — skipped (would use {plan.model_label})"
     if plan.model_label is None:
         return "enrich: no model configured — skipped (rl config)"
     if not plan.enrich_all_ids:

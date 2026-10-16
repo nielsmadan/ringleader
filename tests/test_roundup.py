@@ -14,6 +14,11 @@ RECENT = "2026-06-28T00:00:00+00:00"
 GOOD = {"status": "unfinished", "whatItIs": "work in progress", "suggestedName": "wip"}
 
 
+@pytest.fixture(autouse=True)
+def _claude_store(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "projects"))
+
+
 class FakeModel:
     name = "claude"
     model = "haiku"
@@ -192,6 +197,23 @@ def test_describe_plan_names_counts_model_and_durations(tmp_path):
 def test_describe_plan_says_enrich_is_skipped_without_a_model(tmp_path):
     lines = roundup_api.describe_plan(_plan(_world(tmp_path)))
     assert lines[-1] == "enrich: no model configured — skipped (rl config)"
+
+
+def test_describe_plan_names_the_model_a_read_only_run_would_use(tmp_path):
+    path = _world(tmp_path)
+    plan = roundup_api.plan_roundup(
+        path,
+        registry.load_registry(path),
+        NOW,
+        scan_note=None,
+        model=None,
+        now_epoch=time.time(),
+        retention_days=30,
+        read_only_model=FakeModel(),
+    )
+    assert roundup_api.describe_plan(plan)[-1] == (
+        "enrich: read-only — skipped (would use claude (haiku))"
+    )
 
 
 def test_run_phases_sweeps_prunes_and_purges_the_plan(tmp_path):
