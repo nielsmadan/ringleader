@@ -3,13 +3,17 @@ from __future__ import annotations
 import contextlib
 import shutil
 import sys
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
-from . import overview, registry, scanner
+from . import overview, registry, revalidate, scanner
+from .progress import CancelCheck, never_cancelled
 
 DEFAULT_OLDER_THAN_DAYS = 7
 DEFAULT_MAX_TURNS = 12
+
+type SkipHandler = Callable[[dict[str, Any], str], None]
 
 
 def prune_candidates(
@@ -34,46 +38,140 @@ def prune_candidates(
     return out
 
 
-def _delete_candidate(reg: dict[str, Any], candidate: dict[str, Any], now_iso: str) -> bool:
+def _warn(message: str) -> None:
+    print(message, file=sys.stderr)
+
+
+def _changed_on_disk(candidate: dict[str, Any], file: Path) -> bool:
+    stamp = revalidate.content_stamp(candidate.get("fileFingerprint"))
+    if stamp is None:
+        return False
+    try:
+        st = file.stat()
+    except FileNotFoundError:
+        return False
+    return (st.st_size, st.st_mtime_ns) != stamp
+
+
+def _delete_candidate(
+    reg: dict[str, Any],
+    candidate: dict[str, Any],
+    now_iso: str,
+    *,
+    report: Callable[[str], None],
+    guard: Callable[[dict[str, Any]], str | None] | None,
+    on_skip: SkipHandler | None = None,
+) -> bool:
+    def skip(reason: str) -> bool:
+        if on_skip is not None:
+            on_skip(candidate, reason)
+        else:
+            report(f"skipped {candidate['sessionId']}: {reason}")
+        return False
+
     thread = registry.find_session(reg, registry.qualified_id(candidate))
     fields = ("decision", "file", "sourceRef", "mtime", "messageCount", "project")
     if thread is None:
-        print(f"skipped {candidate['sessionId']}: session changed since selection", file=sys.stderr)
-        return False
+        return skip("session changed since selection")
     try:
         file = scanner.filesystem_path(thread, "prune")
-        if thread.get("decision") in {"keep", "harvested"} or any(
-            thread.get(field) != candidate.get(field) for field in fields
+        if (
+            thread.get("decision") in {"keep", "harvested"}
+            or any(thread.get(field) != candidate.get(field) for field in fields)
+            or _changed_on_disk(candidate, file)
         ):
-            print(
-                f"skipped {candidate['sessionId']}: session changed since selection",
-                file=sys.stderr,
-            )
-            return False
+            return skip("session changed since selection")
+        reason = guard(thread) if guard is not None else None
+        if reason:
+            return skip(reason)
         companions = scanner.companion_paths(thread.get("source"), file)
         scanner.hide_from_picker(thread)
         file.unlink(missing_ok=True)
         scanner.remove_companions(companions)
     except (RuntimeError, OSError) as error:
-        print(f"skipped {thread['sessionId']}: {error}", file=sys.stderr)
-        return False
+        return skip(str(error))
     registry.prune_session(reg, registry.qualified_id(thread), now_iso)
     return True
 
 
-def delete_sessions(reg: dict[str, Any], candidates: list[dict[str, Any]], now_iso: str) -> int:
+def _delete_each(
+    reg: dict[str, Any],
+    candidates: Sequence[dict[str, Any]],
+    now_iso: str,
+    *,
+    report: Callable[[str], None],
+    guard: Callable[[dict[str, Any]], str | None] | None,
+    on_skip: SkipHandler | None,
+) -> tuple[int, bool]:
     deleted = 0
     for candidate in candidates:
-        if isinstance(reg, registry.Registry) and reg.path is not None:
+        try:
+            deleted += _delete_candidate(
+                reg, candidate, now_iso, report=report, guard=guard, on_skip=on_skip
+            )
+        except KeyboardInterrupt:
+            return deleted, True
+        # one bad candidate must not abort the batch whose earlier unlinks need tombstones
+        except Exception as error:  # noqa: BLE001
+            if on_skip is not None:
+                on_skip(candidate, str(error))
+            else:
+                report(f"skipped {candidate.get('sessionId')}: {error}")
+    return deleted, False
 
-            def remove(current: dict[str, Any], candidate: dict[str, Any] = candidate) -> None:
-                nonlocal deleted
-                deleted += _delete_candidate(current, candidate, now_iso)
 
-            current = registry.mutate_registry(reg.path, remove)
-            reg.replace(current)
-        else:
-            deleted += _delete_candidate(reg, candidate, now_iso)
+def _delete_batch(
+    reg: dict[str, Any],
+    batch: Sequence[dict[str, Any]],
+    now_iso: str,
+    *,
+    report: Callable[[str], None],
+    guard: Callable[[dict[str, Any]], str | None] | None,
+    on_skip: SkipHandler | None,
+) -> int:
+    outcomes: list[tuple[int, bool]] = []
+    if not isinstance(reg, registry.Registry) or reg.path is None:
+        outcomes.append(
+            _delete_each(reg, batch, now_iso, report=report, guard=guard, on_skip=on_skip)
+        )
+    else:
+        reg.replace(
+            registry.mutate_registry(
+                reg.path,
+                lambda current: outcomes.append(
+                    _delete_each(
+                        current, batch, now_iso, report=report, guard=guard, on_skip=on_skip
+                    )
+                ),
+            )
+        )
+    if any(interrupted for _, interrupted in outcomes):
+        raise KeyboardInterrupt
+    return sum(count for count, _ in outcomes)
+
+
+def delete_sessions(  # noqa: PLR0913 -- injection points the suite drives
+    reg: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    now_iso: str,
+    *,
+    report: Callable[[str], None] = _warn,
+    cancelled: CancelCheck = never_cancelled,
+    progress: Callable[[int, int], None] | None = None,
+    guard: Callable[[dict[str, Any]], str | None] | None = None,
+    batch_size: int = 1,
+    on_skip: SkipHandler | None = None,
+) -> int:
+    size = max(batch_size, 1)
+    batches = [candidates[start : start + size] for start in range(0, len(candidates), size)]
+    deleted = done = 0
+    for batch in batches:
+        if cancelled():
+            break
+        deleted += _delete_batch(reg, batch, now_iso, report=report, guard=guard, on_skip=on_skip)
+        done += len(batch)
+        if progress is not None:
+            progress(done, len(candidates))
     return deleted
 
 
@@ -97,7 +195,12 @@ def archive_purge_candidates(
 
 
 def purge_archived(
-    reg: dict[str, Any], candidates: list[dict[str, Any]], now_iso: str, *, archive_root_path: str
+    reg: dict[str, Any],
+    candidates: list[dict[str, Any]],
+    now_iso: str,
+    *,
+    archive_root_path: str,
+    report: Callable[[str], None] = _warn,
 ) -> int:
     root = Path(archive_root_path).resolve()
     purged = 0
@@ -112,16 +215,15 @@ def purge_archived(
             try:
                 scanner.filesystem_path(lifecycle_thread, "purge")
             except RuntimeError as error:
-                print(f"skipped archived {ts['sessionId']}: {error}", file=sys.stderr)
+                report(f"skipped archived {ts['sessionId']}: {error}")
                 continue
             rp = Path(archive_path).resolve()
             # Never delete outside the archive tree: registry.json is hand-editable,
             # and these deletes are irreversible last-copy data.
             if not rp.is_relative_to(root) or rp.suffix != ".jsonl":
-                print(
+                report(
                     f"skipped archived {ts['sessionId']}: {archive_path} is not an "
-                    f"archive-root .jsonl transcript",
-                    file=sys.stderr,
+                    f"archive-root .jsonl transcript"
                 )
                 continue
             companions = scanner.companion_paths(lifecycle_thread.get("source"), rp)

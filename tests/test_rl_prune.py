@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from ringleader.commands import prune
+from ringleader.sources.base import stat_fingerprint
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -147,6 +148,18 @@ def test_missing_transcript_is_tolerated(tmp_path):
     assert r.returncode == 0 and "deleted 1" in r.stdout
     assert not (tmp_path / "a").exists()  # sidecar still cleaned up
     assert json.loads(reg.read_text())["deleted"][0]["sessionId"] == "a"
+
+
+def test_delete_refuses_a_transcript_changed_after_the_scan(tmp_path):
+    t = _thread(tmp_path, "a", size_bytes=100)
+    t["fileFingerprint"] = stat_fingerprint(Path(t["file"]).stat())
+    reg = _write_registry(tmp_path, [t])
+    with open(t["file"], "a", encoding="utf-8") as handle:
+        handle.write("more")
+    r = _run(reg, "--delete", stdin="y\n")
+    assert r.returncode == 0 and "deleted 0 sessions, skipped 1" in r.stdout
+    assert "skipped a: session changed since selection" in r.stderr
+    assert Path(t["file"]).exists()
 
 
 def test_codex_thread_tiny_by_message_count_despite_large_bytes(tmp_path):

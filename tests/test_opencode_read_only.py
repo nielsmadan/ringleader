@@ -3,7 +3,7 @@ import sqlite3
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from ringleader import export, prune, registry, scanner
+from ringleader import export, prune, refresh, registry, scanner
 from ringleader.commands import (
     archive,
     complete,
@@ -179,10 +179,14 @@ def test_prune_and_roundup_skip_opencode(tmp_path, monkeypatch, capsys):
     assert prune.delete_sessions(reg, list(reg["threads"]), "2026-08-30T00:00:00+00:00") == 0
     assert [thread["sessionId"] for thread in reg["threads"]] == ["ses_1"]
 
-    monkeypatch.setattr(roundup.refresh, "auto_refresh", lambda path, now: (reg, None))
-    monkeypatch.setattr(roundup.sweep, "cmd_sweep", lambda argv: 0)
-    monkeypatch.setattr(roundup.enrich, "cmd_enrich", lambda argv: 0)
-    assert roundup.cmd_roundup(["--registry", str(reg_path)]) == 0
+    monkeypatch.setattr(
+        roundup.refresh,
+        "refresh_registry",
+        lambda path, now, **kwargs: refresh.Refreshed(reg, None, frozenset()),
+    )
+    monkeypatch.setattr(roundup, "active_model", lambda cfg, task: None)
+    monkeypatch.setattr(roundup, "_live_sessions", frozenset)
+    assert roundup.cmd_roundup(["--registry", str(reg_path), "--yes"]) == 0
     assert [thread["sessionId"] for thread in registry.load_registry(reg_path)["threads"]] == [
         "ses_1"
     ]

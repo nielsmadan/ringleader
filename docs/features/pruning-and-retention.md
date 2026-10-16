@@ -26,6 +26,12 @@ defaults are `--older-than 7` days and `--max-turns 12` messages; a session must
 `rl roundup` runs prune **with deletion enabled** — it is the one everyday verb that deletes
 without a separate flag.
 
+Deletion rechecks each session against disk first: when the transcript's size or modification
+time differs from what the last scan recorded, the session is skipped with `session changed
+since selection` rather than deleted. Activity after the scan means the session is no longer
+the dead end it looked like. `rl roundup` additionally skips a session presence reports as
+running.
+
 OpenCode's SQLite-backed sessions can appear in the preview but are skipped during deletion;
 ringleader never mutates `opencode.db`.
 

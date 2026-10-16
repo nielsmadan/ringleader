@@ -22,6 +22,21 @@ def publish_lock() -> Iterator[None]:
 
 
 @contextmanager
+def roundup_lock() -> Iterator[bool]:
+    lock_path = ensure_state_dir() / "roundup.lock"
+    with lock_path.open("a+b") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
 def registry_lock(path: Path) -> Iterator[None]:
     path = path.resolve()
     lock_path = path.with_name(path.name + ".lock")

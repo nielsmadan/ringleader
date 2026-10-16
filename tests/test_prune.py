@@ -1,3 +1,5 @@
+from pathlib import Path
+
 from ringleader.prune import (
     DEFAULT_MAX_TURNS,
     archive_purge_candidates,
@@ -5,6 +7,7 @@ from ringleader.prune import (
     prune_candidates,
     purge_archived,
 )
+from ringleader.sources.base import stat_fingerprint
 
 NOW = "2026-06-30T00:00:00+00:00"
 OLD = "2026-06-23T00:00:00+00:00"  # exactly 7 days before NOW
@@ -274,3 +277,38 @@ def test_purging_an_archived_droid_session_removes_its_settings_sidecars(tmp_pat
 
     assert purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive")) == 1
     assert not slug.exists()
+
+
+def test_delete_sessions_routes_skip_messages_to_report(tmp_path):
+    thread = _droid_thread(tmp_path)
+    reg = _reg([thread])
+    messages = []
+
+    deleted = delete_sessions(reg, [thread], NOW, report=messages.append, guard=lambda t: "busy")
+
+    assert (deleted, messages) == (0, ["skipped d: busy"])
+
+
+def test_delete_sessions_refuses_a_transcript_changed_since_the_scan(tmp_path):
+    thread = _droid_thread(tmp_path)
+    thread["fileFingerprint"] = stat_fingerprint(Path(thread["file"]).stat())
+    reg = _reg([thread])
+    with open(thread["file"], "a", encoding="utf-8") as handle:
+        handle.write("{}\n")
+    messages = []
+
+    assert delete_sessions(reg, [thread], NOW, report=messages.append) == 0
+    assert messages == ["skipped d: session changed since selection"]
+    assert Path(thread["file"]).exists()
+
+
+def test_delete_sessions_batches_and_reports_progress(tmp_path):
+    threads = [{**_t(sid), "source": "opencode", "file": None} for sid in ("a", "b", "c")]
+    reg = _reg(threads)
+    events = []
+
+    delete_sessions(
+        reg, threads, NOW, report=lambda m: None, progress=lambda *e: events.append(e), batch_size=2
+    )
+
+    assert events == [(2, 3), (3, 3)]

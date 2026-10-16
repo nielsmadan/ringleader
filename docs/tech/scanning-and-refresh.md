@@ -71,10 +71,38 @@ The rest of the module is path arithmetic that must match what the agent recorde
 the one-line summary (`+3 new, -1 gone`) or `None` when nothing moved. Counts are refreshed on
 every view so they are never stale; classification and naming stay separate, agentic steps.
 
+### Roundup
+
+`roundup.py` is the roundup as a function API, so the CLI and the inbox share one
+implementation. `plan_roundup()` takes a registry the caller already scanned and names the
+exact identities each phase may touch: the sweep set (`sweep.due`), the prune set
+(`prune_candidates` minus the sweep set), the purge set, and the enrich sets (pending
+classification minus sweep and prune, newest first, plus the subset active within
+`RECENT_DAYS`). Each sweep and prune entry is a `revalidate.Seen` — the identity, label,
+registry `mtime` and `fileFingerprint` at planning time.
+
+`run_phases()` holds the non-blocking `stateio.roundup_lock()` (`RoundupBusy` when another
+roundup has it) and executes only what the plan named, rechecking each item first via
+`revalidate.py`. Sweep archives one session per `publish_lock` and commits each separately, so
+a later conflict cannot undo an earlier archive; it skips a session no longer marked
+`finishOnExit`, one written within `sweep.GRACE_SECONDS`, or one presence reports running.
+Prune (`prune_planned`) works in batches of `PRUNE_BATCH`, probing presence once per batch and
+skipping any session whose registry `mtime`/`fileFingerprint` moved since the plan;
+`prune._delete_candidate` adds the transcript `(size, mtime_ns)` check, which `rl prune
+--delete` gets too. `cancelled()` is polled between items and batches. `run_roundup()` composes
+phases, `enrichment.enrich_sessions()` over the chosen scope, and `stamp()` of
+`lastRoundupAt`, which is skipped only when the run was cancelled.
+
+A presence probe returning `None` means "cannot tell". The caller picks what that means:
+`rl roundup` passes `unknown="allow"` (machines without presence keep working), while the inbox
+refuses.
+
 ## Key entry points
 
 - `scanner.scan()` — the loop above.
 - `refresh.auto_refresh()` — scan + reconcile + persist; what `--no-scan` skips.
+- `roundup.plan_roundup()` / `run_phases()` / `run_roundup()` — the roundup API;
+  `revalidate.py` — the per-item checks it runs before touching a session.
 - `gitinfo.resolve_git_project()` — cwd → `GitProject`.
 - `projects.matches()` — the selector contract.
 - `slug.slugify()` — cwd → Claude Code's directory name.

@@ -61,8 +61,32 @@ On entry it offers to run `rl roundup` when `lastRoundupAt` is older than `round
 
 ## `rl roundup`
 
-Refresh, prune (**this deletes**), and enrich in one pass. It is the "make everything current"
-verb, and what `rl inbox` triggers on stale state.
+Refresh, then archive finished sessions (sweep), prune (**this deletes**), purge expired
+archives, and enrich, in one pass. It is the "make everything current" verb, and what `rl inbox`
+triggers on stale state.
+
+It scans first, then prints the plan — how many sessions each phase will touch, the enrich
+model, and an estimated duration — and acts only on the sessions that plan named. Each one is
+rechecked right before it is touched: a sweep skips a transcript written in the last two
+minutes, a prune skips a session whose registry entry or transcript changed since the plan, and
+both skip a session presence reports as running (when presence is not installed, roundup
+proceeds as before). Skips print with their reason.
+
+```sh
+rl roundup                     # scan, print the plan, run it
+rl roundup --preview           # scan and print the plan only
+rl roundup --enrich recent     # all | recent | none — which pending sessions to classify
+rl roundup --yes               # never prompt
+```
+
+Enrichment over 25 pending sessions asks for a scope on a terminal (`[a]ll / [r]ecent / [s]kip`,
+recent = active in the last 7 days); without a terminal, or with `--yes`, it enriches the recent
+ones and prints the command for the rest. The roundup is stamped (`lastRoundupAt`) whatever the
+enrich scope, so skipping enrich does not leave it stale.
+
+Ctrl-C stops at the next session or batch boundary (a second Ctrl-C aborts outright), exits
+130 and leaves the roundup unstamped. Two roundups never overlap: the second exits 1 with
+`another roundup is running`.
 
 ## Filtering noisy sessions
 
@@ -95,6 +119,7 @@ A `<selector>` is a git-project label (`ringleader`) or a cwd path — **never a
 
 - **Scanning dominates runtime** on a large `~/.claude/projects`; both views scan by default.
 - **`rl roundup` deletes.** It runs prune with deletion enabled, unlike bare `rl prune`.
+  `--preview` shows the plan without running it, but its scan still persists.
 - **Filtering hides, it does not protect.** `rl prune` still deletes a filtered session from
   disk when it is tiny and stale, even though another tool wrote it.
 
