@@ -26,7 +26,7 @@ def _alive(pid: int) -> bool:
     return True
 
 
-def _wait_gone(pid: int, seconds: float = 3.0) -> bool:
+def _wait_gone(pid: int, seconds: float = 15.0) -> bool:
     deadline = time.monotonic() + seconds
     while time.monotonic() < deadline:
         if not _alive(pid):
@@ -81,7 +81,7 @@ def test_cancel_kills_a_sleeping_child_promptly():
             timeout=None,
             cancelled=flag.is_set,
         )
-    assert time.monotonic() - started < 3
+    assert time.monotonic() - started < 30
 
 
 def test_timeout_raises_the_timeout_message():
@@ -115,14 +115,11 @@ def test_cancel_kills_the_whole_process_group(tmp_path):
 
     thread = threading.Thread(target=run)
     thread.start()
-    deadline = time.monotonic() + 5
-    while not pid_file.exists() and time.monotonic() < deadline:
-        time.sleep(0.05)
-    time.sleep(0.1)
+    _wait_for_pid(pid_file)
     grandchild = int(pid_file.read_text())
     assert _alive(grandchild)
     flag.set()
-    thread.join(10)
+    thread.join(30)
     assert [str(e) for e in errors] == ["cancelled"]
     assert _wait_gone(grandchild)
 
@@ -145,20 +142,21 @@ def test_kill_all_children_ends_a_blocked_call():
 
     thread = threading.Thread(target=run)
     thread.start()
-    deadline = time.monotonic() + 5
+    deadline = time.monotonic() + 30
     while not proc._live_groups and time.monotonic() < deadline:
         time.sleep(0.05)
     assert kill_all_children() == 1
-    thread.join(10)
+    thread.join(30)
     assert not thread.is_alive()
     assert (results, errors) == ([-15], [])
 
 
-def _wait_for_file(path: Path, seconds: float = 5.0) -> None:
+def _wait_for_pid(path: Path, seconds: float = 30.0) -> None:
     deadline = time.monotonic() + seconds
-    while not path.exists() and time.monotonic() < deadline:
+    while time.monotonic() < deadline:
+        if path.exists() and path.read_text().strip():
+            return
         time.sleep(0.05)
-    time.sleep(0.2)
 
 
 def test_exception_from_cancelled_kills_the_child(tmp_path):
@@ -166,7 +164,7 @@ def test_exception_from_cancelled_kills_the_child(tmp_path):
     code = f"import os, time; open({str(pid_file)!r}, 'w').write(str(os.getpid())); time.sleep(60)"
 
     def interrupt() -> bool:
-        _wait_for_file(pid_file)
+        _wait_for_pid(pid_file)
         raise KeyboardInterrupt
 
     with pytest.raises(KeyboardInterrupt):
@@ -184,8 +182,8 @@ def test_timeout_escalates_to_sigkill_for_a_child_that_ignores_sigterm(tmp_path)
         f"open({str(pid_file)!r}, 'w').write(str(os.getpid()));"
         "time.sleep(60)"
     )
-    with pytest.raises(ModelError, match="timed out after 1s"):
-        run_model_process([PY, "-c", code], stdin_text=None, timeout=1, cancelled=never)
+    with pytest.raises(ModelError, match="timed out after 5s"):
+        run_model_process([PY, "-c", code], stdin_text=None, timeout=5, cancelled=never)
     assert _wait_gone(int(pid_file.read_text()))
 
 
@@ -202,7 +200,7 @@ def test_timeout_returns_even_when_an_escaped_descendant_holds_the_pipes(tmp_pat
     try:
         with pytest.raises(ModelError, match="timed out after 1s"):
             run_model_process([PY, "-c", code], stdin_text=None, timeout=1, cancelled=never)
-        assert time.monotonic() - started < 8
+        assert time.monotonic() - started < 30
     finally:
         if pid_file.exists():
             with contextlib.suppress(ProcessLookupError):

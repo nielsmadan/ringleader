@@ -9,7 +9,6 @@ from pathlib import Path
 
 import pytest
 from ringleader import cli, refresh, registry, scanner
-from ringleader.inbox.app import InboxApp
 from ringleader.portability import native
 from ringleader.portability.capabilities import SourceRequest
 from ringleader.portability.claude import read as read_claude
@@ -26,8 +25,17 @@ from tests.portability.test_opencode import ordinary_export, snapshot
 from tests.portability.test_opencode import roots as opencode_roots
 from tests.portability.test_opencode import seed as opencode_seed
 from tests.portability.test_service import Crash, OfflineRunner, crash_at, request, service, tree
-from tests.test_inbox import FakeModel, _setup
 from tests.test_registry_concurrency import seed
+
+
+class FakeModel:
+    name = "fake"
+
+    def available(self):
+        return True
+
+    def complete_json(self, prompt, schema):
+        return {"summary": "did the thing", "gotchas": ["watch it"]}
 
 
 @pytest.fixture
@@ -83,29 +91,6 @@ def test_claude_terminal_telemetry_stays_on_selected_branch(tmp_path):
     )
     value = read_claude(native.jsonl(rows), Identity("claude-code", SESSION_ID))
     assert value.branch_id == "tail" and value.history[0].content[0].text == "question"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("change", ["activity", "relocation"])
-async def test_inbox_delete_revalidates_original_candidate(tmp_path, monkeypatch, change):
-    path = _setup(tmp_path, monkeypatch)
-    original = tmp_path / "s0.jsonl"
-    relocated = tmp_path / "new.jsonl"
-    relocated.write_text("new work")
-    app = InboxApp(registry_path=str(path))
-    async with app.run_test() as pilot:
-        await pilot.press("d")
-
-        def update(reg):
-            row = registry.find_session(reg, "s0")
-            row.update(mtime="2999-01-01T00:00:00+00:00", messageCount=500)
-            if change == "relocation":
-                row.update(file=str(relocated), project=str(tmp_path / "new-project"))
-
-        registry.mutate_registry(path, update)
-        await pilot.press("q")
-    assert original.read_text() and relocated.read_text() == "new work"
-    assert registry.find_session(registry.load_registry(path), "s0")["messageCount"] == 500
 
 
 def test_codex_snapshot_native_names_and_rename_identity(tmp_path):

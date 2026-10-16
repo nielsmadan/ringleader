@@ -5,11 +5,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..sources.pi import default_sessions_dir as pi_sessions_dir
 from .base import UsageRecord, as_dict, as_float_or_none, as_int, total_of
 
 
 def default_sessions_dir() -> Path:
-    return Path.home() / ".pi" / "agent" / "sessions"
+    return pi_sessions_dir()
 
 
 def _session_id(path: Path) -> str:

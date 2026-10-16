@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ Roundup
+ scanned — no changes
+ archive 1 finished session (sweep)
+ delete 14 tiny sessions older than 7 days (prune)
+ purge 0 archived sessions past retention
+ enrich: no model configured — skipped (rl config)
+
+ enter run · escape back
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back  ⏎ run  q quit  u undo  ^r rescan                                             ▏^p palette

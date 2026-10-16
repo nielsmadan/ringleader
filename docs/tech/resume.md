@@ -50,13 +50,19 @@ recovery silently falls through to the drifted directory.
 
 ### The picker (`picker/app.py`)
 
-`PickerApp` is `Header` / `Input#filter` / `OptionList#rows` / `Label#empty` / `Footer`.
+The picker is a `PickerScreen`: `Header` / `Input#filter` / `OptionList#rows` / `Label#empty` /
+`Footer`. `PickerApp` is a thin shell that pushes one on mount and exits with whatever it
+dismisses, so `rl resume` behaves as before; a host app can push the same screen, where `escape`
+dismisses `None` back to the screen below instead of quitting. The screen touches `self.app` only
+to notify, push modals and check that the app is running. Its row renderer is `_render_rows`, not
+`_render` (every `Widget` already has one). App-level queries resolve against the default screen,
+so tests reach the picker through the `PickerScreen` on `app.screen_stack`.
 The result list holds Rich text options, avoiding a widget per match. It keeps every result,
 clips long rows with an ellipsis, and preserves the highlighted `(source, sessionId)` across
 filtering, scope changes and refreshes. Filtering updates immediately on each input change.
 The [picker benchmark](../tests/picker/README.md) measures result replacement on a fixed workload.
 
-`on_mount` renders **synchronously from the registry**, then starts an async Textual worker
+The screen's `on_mount` renders **synchronously from the registry**, then starts an async Textual worker
 which receives the scan and presence result through a queue from a daemon thread. It always
 scans, including when `lastScan` is recent, so sessions just left can appear. Only the async
 worker touches widgets; cancelling it on exit drops late results and signals the thread to
@@ -73,9 +79,20 @@ produce a false badge. Any failure degrades to no badges and never fails the app
 the registry the picker converged on, and `confirmed` records that the user already answered the
 running-session modal, so the command does not ask a second time. `action` is `resume` (default)
 or `fork`. `AgentModal` returns an `AgentChoice(target, action)`, with resume and fork entries
-for the original agent followed by other-agent handoffs. `action_choose` is
+for the original agent followed by other-agent handoffs. The modal half of choosing lives in
+`ask_resume_choice(screen, thread, *, target, running, threads)` — a preset target skips the agent
+modal, a same-agent resume of a running session asks `ConfirmModal` — so any screen can reuse it
+from an async `@work` worker (it awaits `push_screen_wait`). `action_choose` is
 `@work(exclusive=True)`: with `--to` set no modal is pushed, so two fast `enter` presses would
-otherwise both reach `self.exit`.
+otherwise both dismiss the screen.
+
+`AgentChoice`, `agent_row_text`, `AgentModal` and `ConfirmModal` live in `tui/modals.py` (and are
+re-exported from `picker/app.py`) beside the other shared modals: `ChoiceModal[T]` (enter, digits
+`1`–`9`, escape), `SnoozeModal(now)` (a `fuzzytime.parse_duration` input with an inline error) and
+`AgentPickModal(title, agents)` (canonical source names in and out). Each binds its own keys,
+because app bindings do not fire under a `ModalScreen`. `tui/rows.py:set_rows(option_list, rows,
+keep=)` rebuilds an `OptionList` keyed by option id and restores the highlight — the kept key,
+else the previous index clamped — since `set_options` resets it.
 
 ### The command (`commands/resume.py`)
 
@@ -152,7 +169,9 @@ chdirs or prompts the test process.
 - `resume.candidates`, `resume.rank`, `resume.launch_cwd`, `resume.badges`
 - `resume.agent_name` / `resume.source_name`, `resume.launchable_agents` — shared by the picker
   and the command
-- `picker.app.PickerApp`, `picker.app.Choice`, `picker.app.row_text`
+- `picker.app.PickerScreen`, `picker.app.PickerApp`, `picker.app.Choice`, `picker.app.row_text`,
+  `picker.app.ask_resume_choice`
+- `tui/modals.py`, `tui/rows.py:set_rows`
 - `commands.resume.cmd_resume`
 - `tui/keys.py:nav_bindings(priority=)` — the ctrl+j/ctrl+k motions every ringleader TUI carries
 
@@ -161,7 +180,8 @@ chdirs or prompts the test process.
 - **`ctrl+a` and `ctrl+k` collide with the focused `Input`.** Textual binds `home,ctrl+a → home`
   and `ctrl+k → delete_right_all`. Without `priority=True` the user's "move up" key deletes the
   rest of their query. That is why `nav_bindings` takes a `priority` flag rather than being a
-  constant, and why priority bindings are gated in `check_action` so a modal keeps its own keys.
+  constant. The picker's priority bindings sit on the `PickerScreen`, so a modal pushed above it
+  takes them out of the binding chain and keeps its own keys.
 - **Row text is `rich.text.Text`, not `str`.** Session names contain brackets —
   `rl config filter add '[cadet-city]*'` is the documented example — and a `Label` markup-parses a
   `str`, silently eating `[cadet-city]` and raising `MarkupError` on `[/]`.

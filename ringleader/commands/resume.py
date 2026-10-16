@@ -83,7 +83,7 @@ def _live_session_ids() -> frozenset[tuple[str, str]]:
     return PresenceClient().require_running_session_ids()
 
 
-def _exec(argv: Sequence[str], cwd: str) -> int:
+def exec_agent(argv: Sequence[str], cwd: str) -> int:
     # an agent resolves a session id against the directory it starts in
     os.chdir(cwd)
     os.execvpe(argv[0], list(argv), os.environ)
@@ -575,7 +575,7 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     except _Abort as error:
         return _fail(str(error))
     seams = _Seams(
-        runner or _exec,
+        runner or exec_agent,
         presence or _live_session_ids,
         native or _native_resume,
         launch or _exec_request,

@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ Harvests — 3 pending harvests · enter reads one
+proj — 2 harvests
+  name-a1                        1d ago   First durable line.
+  name-a2                        3d ago   First durable line.
+no repository — 1 harvest
+  name-b1                        5d ago   First durable line.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back  p publish  P publish all  q quit  u undo  ^r rescan                          ▏^p palette

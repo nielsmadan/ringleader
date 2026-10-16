@@ -225,15 +225,15 @@ def test_project_detail_empty():
     assert "no sessions" in project_detail(_reg([]), NOW).lower()
 
 
-from ringleader.overview import _human_size
+from ringleader.overview import human_size
 
 
-def test_human_size():
-    assert _human_size(0) == "0B"
-    assert _human_size(512) == "512B"
-    assert _human_size(2048) == "2.0KB"
-    assert round(float(_human_size(6_000_000)[:-2])) == 6  # ~5.7MB
-    assert _human_size(6_000_000).endswith("MB")
+def testhuman_size():
+    assert human_size(0) == "0B"
+    assert human_size(512) == "512B"
+    assert human_size(2048) == "2.0KB"
+    assert round(float(human_size(6_000_000)[:-2])) == 6  # ~5.7MB
+    assert human_size(6_000_000).endswith("MB")
 
 
 def test_render_includes_size_when_present():

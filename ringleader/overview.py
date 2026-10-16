@@ -178,7 +178,7 @@ def source_badge(thread: dict[str, Any]) -> str:
 _BYTES_PER_UNIT = 1024
 
 
-def _human_size(num_bytes: float | None) -> str:
+def human_size(num_bytes: float | None) -> str:
     n = float(num_bytes or 0)
     for unit in ("B", "KB", "MB"):
         if n < _BYTES_PER_UNIT:
@@ -189,7 +189,7 @@ def _human_size(num_bytes: float | None) -> str:
 
 def _size_suffix(thread: dict[str, Any]) -> str:
     b = thread.get("sizeBytes")
-    return f", {_human_size(b)}" if b else ""
+    return f", {human_size(b)}" if b else ""
 
 
 def render(
@@ -400,7 +400,7 @@ def project_detail(
     lines += [f"  {tilde(c)}" for c in checkouts]
     lines.append("")
     total_bytes = sum(t.get("sizeBytes") or 0 for t in threads)
-    lines.append(f"{len(threads)} sessions  |  total size: {_human_size(total_bytes)}")
+    lines.append(f"{len(threads)} sessions  |  total size: {human_size(total_bytes)}")
     lines.append("by status: " + ", ".join(f"{k}:{v}" for k, v in sorted(by_status.items())))
     lines.append(
         f"blocked (waiting on you): {blocked}  |  "

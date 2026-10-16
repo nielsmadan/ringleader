@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ triage 36 · unclassified 36 · kept 1 · projects 2 · harvests 0 · roundup never run
+
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+
+  🔎 us
+
+
+  Go to Usage
+  jump to this screen
+  rl usage
+  token usage across agents, last 7 days
+  rl usage --breakdown
+  token usage broken down per session
+  rl usage windows
+  5-hour and weekly limit windows
+  rl triage --unclassified --no-scan
+  sessions never classified, from the registry
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+opencode  6d ago    parser cache schema 22  unclassified
+
+
+
+
+
+
+
+
+ Waking soon: fix export login 29 (in 2d)
+ q quit  u undo  ^r rescan

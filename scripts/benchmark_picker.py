@@ -9,7 +9,7 @@ from importlib.metadata import version
 from pathlib import Path
 from time import perf_counter
 
-from ringleader.picker.app import PickerApp
+from ringleader.picker.app import PickerApp, PickerScreen
 from ringleader.resume import Scope
 
 MATCH_COUNT = 1322
@@ -27,12 +27,14 @@ async def benchmark(path: Path) -> None:
     async with app.run_test(size=(80, 24)) as pilot:
         await app.workers.wait_for_complete()
         await pilot.pause()
-        app._query = "session"
-        await app._render()
+        screen = app.screen
+        assert isinstance(screen, PickerScreen)
+        screen._query = "session"
+        await screen._render_rows()
         samples = []
         for _ in range(3):
             start = perf_counter()
-            await app._render()
+            await screen._render_rows()
             samples.append(perf_counter() - start)
         print(
             json.dumps(
@@ -40,8 +42,8 @@ async def benchmark(path: Path) -> None:
                     "python": platform.python_version(),
                     "platform": platform.platform(),
                     "textual": version("textual"),
-                    "threads": len(app._reg["threads"]),
-                    "matches": len(app._rows),
+                    "threads": len(screen._reg["threads"]),
+                    "matches": len(screen._rows),
                     "seconds": samples,
                     "median_seconds": statistics.median(samples),
                 },

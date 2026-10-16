@@ -608,18 +608,6 @@ def test_apply_name_targets_source_when_ids_collide():
     assert by_source["codex"]["title"] == "codex-name"
 
 
-def test_select_and_clear_for_day():
-    from ringleader import registry
-
-    reg = {"threads": [{"sessionId": "s1"}], "archived": [], "deleted": []}
-    registry.select_for_day(reg, "s1", "2026-01-01")
-    assert reg["threads"][0]["selectedForDay"] == "2026-01-01"
-    assert [t["sessionId"] for t in registry.selected_today(reg, "2026-01-01")] == ["s1"]
-    assert registry.selected_today(reg, "2026-01-02") == []
-    registry.clear_selected(reg, "s1")
-    assert reg["threads"][0]["selectedForDay"] is None
-
-
 def test_mark_finish_on_exit_sets_the_fields():
     from ringleader import registry
 

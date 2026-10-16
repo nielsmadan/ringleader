@@ -6,6 +6,7 @@ import os
 import shutil
 import sys
 import tempfile
+import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ringleader import registry
+from ringleader.home.app import InboxApp
 from ringleader.picker.app import PickerApp
 from ringleader.resume import Scope
 from ringleader.tui.snapshot import screen_text
@@ -78,7 +80,29 @@ def _picker(ctx: ShotContext) -> tuple[App[Any], Settle]:
     return app, settle_workers
 
 
-APPS: dict[str, AppFactory] = {"picker": _picker}
+async def settle_inbox(app: App[Any], pilot: Pilot[Any]) -> None:
+    deadline = time.monotonic() + SETTLE_TIMEOUT
+    while not (isinstance(app, InboxApp) and app.idle):
+        if time.monotonic() >= deadline:
+            print(f"settle timed out after {SETTLE_TIMEOUT}s; inbox is still busy", file=sys.stderr)
+            break
+        await pilot.pause(0.02)
+    await pilot.pause()
+
+
+def _inbox(ctx: ShotContext) -> tuple[App[Any], Settle]:
+    app = InboxApp(
+        ctx.registry_path,
+        refresher=_reload,
+        presence=frozenset,
+        now=lambda: ctx.now,
+        models=lambda task: None,
+        read_only=ctx.read_only,
+    )
+    return app, settle_inbox
+
+
+APPS: dict[str, AppFactory] = {"inbox": _inbox, "picker": _picker}
 
 
 def parse_keys(spec: str) -> list[str]:
@@ -138,17 +162,31 @@ def _parser() -> argparse.ArgumentParser:
     return ap
 
 
+def _empty_stores(workdir: Path) -> dict[str, str]:
+    empty = workdir / "empty-home"
+    empty.mkdir(exist_ok=True)
+    return {
+        "HOME": str(empty),
+        "SESSION_TRACKER_PROJECTS_DIR": str(empty / "claude"),
+        "CODEX_SESSIONS_DIR": str(empty / "codex"),
+        "PI_SESSIONS_DIR": str(empty / "pi"),
+        "FACTORY_HOME_OVERRIDE": str(empty / "factory"),
+    }
+
+
 def _context(args: argparse.Namespace, workdir: Path) -> ShotContext:
     if args.registry is not None:
         copy = workdir / "registry.json"
         shutil.copyfile(args.registry, copy)
         os.environ["XDG_DATA_HOME"] = str(workdir / "xdg-data")
         os.environ["XDG_STATE_HOME"] = str(workdir / "xdg-state")
+        os.environ.update(_empty_stores(workdir))
         now = datetime.fromisoformat(args.now) if args.now else datetime.now(UTC)
         return ShotContext(registry_path=copy, now=now, read_only=True)
     now = datetime.fromisoformat(args.now or DEFAULT_NOW)
     fixture = build_fixture(workdir, threads=args.fixture, now=now)
     os.environ.update(fixture.env)
+    os.environ["HOME"] = str(workdir / "fixture-home")
     return ShotContext(registry_path=fixture.registry_path, now=now, read_only=False)
 
 

@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ 14 tiny sessions older than 7 days (fewer than 12 messages) — D to delete all
+115d ago   9 msgs  claude   hooks parser flaky 15  …/work/proj-01
+113d ago   9 msgs  claude   picker bench search 4  …/work/proj-00
+110d ago   9 msgs  claude   release migrate deploy 9  …/work/proj-01
+106d ago   4 msgs  claude   refactor fix migrate 28  …/work/proj-00
+61d ago    7 msgs  claude   docs flaky export 25  …/work/proj-01
+55d ago    9 msgs  claude   fix deploy hooks 23  …/work/proj-01
+51d ago    4 msgs  claude   export hooks search 30  …/work/proj-00
+44d ago    5 msgs  claude   deploy export cache 6  …/work/proj-00
+42d ago   10 msgs  claude   search login hooks 26  …/work/proj-00
+34d ago    2 msgs  claude   bench flaky refactor 24  …/work/proj-00
+29d ago    9 msgs  claude   deploy docs refactor 3  …/work/proj-01
+26d ago    8 msgs  opencode refactor picker deploy 13  …/work/proj-01
+25d ago    7 msgs  claude   hooks cache migrate 18  …/work/proj-00
+23d ago    6 msgs  claude   cache refactor fix 12  …/work/proj-00
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back  D delete all  q quit  u undo  ^r rescan                                      ▏^p palette

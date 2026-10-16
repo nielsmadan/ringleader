@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ Projects — 36 waiting across 2 projects
+…/work/proj-01                          18 waiting     17 unclassified  oldest 115d   newest 6h
+…/work/proj-00                          18 waiting     17 unclassified  oldest 113d   newest 2d
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back  t triage with an agent  q quit  u undo  ^r rescan                            ▏^p palette

@@ -1,6 +1,6 @@
 import json
 import sqlite3
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import Mock
 
 import pytest
 from ringleader import export, prune, refresh, registry, scanner
@@ -14,7 +14,6 @@ from ringleader.commands import (
     sweep,
     unarchive,
 )
-from ringleader.inbox.app import InboxApp
 
 
 def _db(path):
@@ -191,21 +190,6 @@ def test_prune_and_roundup_skip_opencode(tmp_path, monkeypatch, capsys):
         "ses_1"
     ]
     assert "cannot prune opencode session" in capsys.readouterr().err
-
-
-@pytest.mark.asyncio
-async def test_inbox_does_not_stage_opencode_deletion(tmp_path, monkeypatch):
-    app = InboxApp(tmp_path / "registry.json")
-    thread = _thread()
-    app._inbox = [thread]
-    monkeypatch.setattr(app, "_current", lambda: (0, thread))
-    monkeypatch.setattr(app, "_remove_row", AsyncMock())
-    monkeypatch.setattr(app, "notify", lambda *args, **kwargs: None)
-
-    await app.action_delete()
-
-    assert app._staged_deletes == set()
-    app._remove_row.assert_not_awaited()
 
 
 def test_unarchive_and_unknown_sources_fail_safe_before_path_conversion():

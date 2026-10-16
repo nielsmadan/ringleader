@@ -634,26 +634,6 @@ def mark_reviewed(reg: dict[str, Any], session_id: str, mtime: str | None = None
     raise KeyError(session_id)
 
 
-def select_for_day(reg: dict[str, Any], session_id: str, day: str) -> dict[str, Any]:
-    t = find_session(reg, session_id)
-    if t is not None:
-        t["selectedForDay"] = day
-        return reg
-    raise KeyError(session_id)
-
-
-def clear_selected(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
-    t = find_session(reg, session_id)
-    if t is not None:
-        t["selectedForDay"] = None
-        return reg
-    raise KeyError(session_id)
-
-
-def selected_today(reg: dict[str, Any], today: str) -> list[dict[str, Any]]:
-    return [t for t in reg["threads"] if t.get("selectedForDay") == today]
-
-
 def archive_session(
     reg: dict[str, Any],
     session_id: str,

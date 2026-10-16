@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -13,18 +12,30 @@ from rich.text import Text
 from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
-from textual.containers import Grid
-from textual.screen import ModalScreen
-from textual.widgets import Footer, Header, Input, Label, ListItem, ListView, OptionList
+from textual.screen import Screen
+from textual.widgets import Footer, Header, Input, Label, OptionList
 
 from .. import overview, refresh, registry, resume
 from ..presence import PresenceClient
 from ..resume import Scope, SessionAction, agent_name, launchable_agents
 from ..tui.keys import nav_bindings
-from ..tui.types import Clock
+from ..tui.modals import AgentChoice, AgentModal, ConfirmModal, agent_row_text
+from ..tui.types import Clock, Presence, Refresher
 
-Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
-Presence = Callable[[], frozenset[tuple[str, str]]]
+__all__ = [
+    "AgentChoice",
+    "AgentModal",
+    "Choice",
+    "ConfirmModal",
+    "PickerApp",
+    "PickerScreen",
+    "agent_row_text",
+    "ask_resume_choice",
+    "empty_hint",
+    "launchable_agents",
+    "live_session_ids",
+    "row_text",
+]
 
 _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
     Scope.CWD: ("ctrl+r for this tree", "ctrl+a for everywhere"),
@@ -39,12 +50,6 @@ class Choice:
     target: str
     threads: tuple[dict[str, Any], ...] = ()
     confirmed: bool = False
-    action: SessionAction = "resume"
-
-
-@dataclass(frozen=True)
-class AgentChoice:
-    target: str
     action: SessionAction = "resume"
 
 
@@ -102,138 +107,49 @@ def row_text(thread: dict[str, Any], now_iso: str, *, running: bool = False) -> 
     return text
 
 
-def agent_row_text(choice: AgentChoice, *, original: bool) -> Text:
-    suffix = "resume existing" if original else "hand off"
-    if choice.action == "fork":
-        suffix = "fork into new session"
-    return Text(f"{agent_name(choice.target):<9} ({suffix})")
+async def ask_resume_choice(
+    screen: Screen[Any],
+    thread: dict[str, Any],
+    *,
+    target: str | None,
+    running: bool,
+    threads: tuple[dict[str, Any], ...],
+) -> Choice | None:
+    choice = (
+        AgentChoice(target) if target else await screen.app.push_screen_wait(AgentModal(thread))
+    )
+    if choice is None:
+        return None
+    handoff = choice.target != resume.source_of(thread)
+    confirmed = False
+    if choice.action == "resume" and not handoff and running:
+        message = Text(resume.label(thread))
+        message.append(" is running right now — resume it anyway? [y/n]")
+        confirmed = await screen.app.push_screen_wait(ConfirmModal(message))
+        if not confirmed:
+            return None
+    return Choice(
+        thread=thread,
+        target=choice.target,
+        action=choice.action,
+        threads=threads,
+        confirmed=confirmed,
+    )
 
 
-class AgentModal(ModalScreen[AgentChoice | None]):
-    """Choose a same-agent resume or fork, or a handoff to another agent."""
-
-    BINDINGS: ClassVar[list[BindingType]] = [
-        *nav_bindings(),
-        Binding("escape", "cancel", "cancel", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    AgentModal {
-        align: center middle;
-    }
-    #agent-box {
-        grid-size: 1;
-        grid-gutter: 1;
-        padding: 1 2;
-        width: 60;
-        height: auto;
-        border: thick $accent;
-        background: $surface;
-    }
-    """
-
-    def __init__(self, thread: dict[str, Any]) -> None:
-        super().__init__()
-        self._source = resume.source_of(thread)
-        agents = launchable_agents()
-        own = (
-            [AgentChoice(self._source), AgentChoice(self._source, "fork")]
-            if self._source in agents
-            else []
-        )
-        self._choices = [*own, *(AgentChoice(a) for a in agents if a != self._source)]
-
-    def compose(self) -> ComposeResult:
-        yield Grid(
-            Label("resume with which agent?"),
-            ListView(
-                *(
-                    ListItem(Label(agent_row_text(choice, original=choice.target == self._source)))
-                    for choice in self._choices
-                ),
-                id="agents",
-            ),
-            id="agent-box",
-        )
-
-    def on_mount(self) -> None:
-        agents = self.query_one("#agents", ListView)
-        agents.index = 0
-        agents.focus()
-
-    def action_cursor_down(self) -> None:
-        self.query_one("#agents", ListView).action_cursor_down()
-
-    def action_cursor_up(self) -> None:
-        self.query_one("#agents", ListView).action_cursor_up()
-
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        index = event.list_view.index
-        if index is None or not (0 <= index < len(self._choices)):
-            return
-        self.dismiss(self._choices[index])
-
-    def action_cancel(self) -> None:
-        self.dismiss(None)
-
-
-class ConfirmModal(ModalScreen[bool]):
-    BINDINGS: ClassVar[list[BindingType]] = [
-        Binding("y", "confirm", "yes", show=False),
-        Binding("n", "cancel", "no", show=False),
-        Binding("escape", "cancel", "cancel", show=False),
-    ]
-
-    DEFAULT_CSS = """
-    ConfirmModal {
-        align: center middle;
-    }
-    #confirm-box {
-        grid-size: 1;
-        grid-gutter: 1;
-        padding: 1 2;
-        width: 60;
-        height: auto;
-        border: thick $accent;
-        background: $surface;
-    }
-    """
-
-    def __init__(self, message: Text) -> None:
-        super().__init__()
-        self._message = message
-
-    def compose(self) -> ComposeResult:
-        yield Grid(Label(self._message, id="confirm-message"), id="confirm-box")
-
-    def action_confirm(self) -> None:
-        self.dismiss(True)
-
-    def action_cancel(self) -> None:
-        self.dismiss(False)
-
-
-class PickerApp(App[Choice | None]):
-    """Pick a dormant session to resume, and the agent that resumes it. Returns the
-    choice; running it is the caller's job, once the terminal is back."""
+class PickerScreen(Screen[Choice | None]):
+    """Pick a dormant session to resume, and the agent that resumes it. Dismisses with
+    the choice; running it is the caller's job, once the terminal is back."""
 
     TITLE = "rl resume"
 
-    _GATED_ACTIONS: ClassVar[tuple[str, ...]] = (
-        "cursor_down",
-        "cursor_up",
-        "scope_all",
-        "scope_recursive",
-        "choose",
-    )
-
     DEFAULT_CSS = """
-    PickerApp #rows {
+    PickerScreen #rows {
         height: 1fr;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
-    PickerApp #empty {
+    PickerScreen #empty {
         width: 100%;
         height: 1fr;
         content-align: center middle;
@@ -249,7 +165,7 @@ class PickerApp(App[Choice | None]):
         Binding("ctrl+a", "scope_all", "everywhere", priority=True),
         Binding("ctrl+r", "scope_recursive", "this tree", priority=True),
         Binding("enter", "choose", "resume", priority=True),
-        Binding("escape", "quit", "quit"),
+        Binding("escape", "leave", "quit"),
     ]
 
     def __init__(  # noqa: PLR0913 -- injection points the suite drives
@@ -263,8 +179,10 @@ class PickerApp(App[Choice | None]):
         refresher: Refresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
+        initial: dict[str, Any] | None = None,
     ) -> None:
         super().__init__()
+        self._initial = initial
         self.registry_path = str(registry_path)
         self.cwd = str(cwd)
         self._scope = scope
@@ -288,15 +206,19 @@ class PickerApp(App[Choice | None]):
     async def on_mount(self) -> None:
         # render from the registry as it stands on disk; a scan over a large store is
         # slow enough that waiting for one would cost the picker its instant open
-        self._reg = registry.load_registry(self.registry_path)
+        self._reg = (
+            self._initial
+            if self._initial is not None
+            else registry.load_registry(self.registry_path)
+        )
         filter_input = self.query_one("#filter", Input)
         filter_input.value = self._query
         filter_input.focus()
-        await self._render()
+        await self._render_rows()
         self._converge()
 
     def _alive(self) -> bool:
-        return self.is_running and not self._exit
+        return self.is_attached and self.app.is_running
 
     @work
     async def _converge(self) -> None:
@@ -312,7 +234,7 @@ class PickerApp(App[Choice | None]):
                     await asyncio.sleep(0.02)
                     continue
                 if result.error:
-                    self.notify(result.error, title="rl resume", severity="warning")
+                    self.app.notify(result.error, title="rl resume", severity="warning")
                 self._adopt(result.reg, result.running, result.note)
                 return
         finally:
@@ -349,8 +271,8 @@ class PickerApp(App[Choice | None]):
         if running is not None:
             self._live_ids = running
         if note:
-            self.notify(note, title="rl resume")
-        self.call_next(self._render)
+            self.app.notify(note, title="rl resume")
+        self.call_next(self._render_rows)
 
     # -- rendering ---------------------------------------------------------
 
@@ -369,7 +291,7 @@ class PickerApp(App[Choice | None]):
             return False
         return (agent_name(resume.source_of(thread)), session_id) in self._live_ids
 
-    async def _render(self) -> None:
+    async def _render_rows(self) -> None:
         # the scan lands on a later tick, by which time the user may already have quit
         if not self._alive():
             return
@@ -399,14 +321,9 @@ class PickerApp(App[Choice | None]):
 
     async def on_input_changed(self, event: Input.Changed) -> None:
         self._query = event.value
-        await self._render()
+        await self._render_rows()
 
     # -- cursor movement ---------------------------------------------------
-
-    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
-        # priority bindings reach run_action even with a modal on the screen stack;
-        # gate them here so the modal keeps its own keys
-        return not (action in self._GATED_ACTIONS and len(self.screen_stack) > 1)
 
     def action_cursor_down(self) -> None:
         rows = self._list_view()
@@ -430,7 +347,7 @@ class PickerApp(App[Choice | None]):
 
     async def _set_scope(self, scope: Scope) -> None:
         self._scope = scope
-        await self._render()
+        await self._render_rows()
 
     # -- choosing ----------------------------------------------------------
 
@@ -445,31 +362,54 @@ class PickerApp(App[Choice | None]):
         thread = self._current()
         if thread is None:
             return
-        choice = (
-            AgentChoice(self._target)
-            if self._target
-            else await self.push_screen_wait(AgentModal(thread))
+        threads = (
+            tuple(cast(list[dict[str, Any]], self._reg.get("threads") or []))
+            if self._scanned
+            else ()
         )
-        if choice is None:
-            return
-        handoff = choice.target != resume.source_of(thread)
-        confirmed = False
-        if choice.action == "resume" and not handoff and self._is_running(thread):
-            message = Text(resume.label(thread))
-            message.append(" is running right now — resume it anyway? [y/n]")
-            confirmed = await self.push_screen_wait(ConfirmModal(message))
-            if not confirmed:
-                return
-        self.exit(
-            Choice(
-                thread=thread,
-                target=choice.target,
-                action=choice.action,
-                threads=(
-                    tuple(cast(list[dict[str, Any]], self._reg.get("threads") or []))
-                    if self._scanned
-                    else ()
-                ),
-                confirmed=confirmed,
-            )
+        choice = await ask_resume_choice(
+            self,
+            thread,
+            target=self._target,
+            running=self._is_running(thread),
+            threads=threads,
         )
+        if choice is not None and self._alive():
+            self.dismiss(choice)
+
+    def action_leave(self) -> None:
+        self.dismiss(None)
+
+
+class PickerApp(App[Choice | None]):
+    TITLE = "rl resume"
+
+    def __init__(  # noqa: PLR0913 -- injection points the suite drives
+        self,
+        registry_path: str | Path,
+        cwd: str | Path,
+        *,
+        scope: Scope = Scope.CWD,
+        query: str = "",
+        target: str | None = None,
+        refresher: Refresher | None = None,
+        presence: Presence | None = None,
+        now: Clock | None = None,
+    ) -> None:
+        super().__init__()
+        self._picker = PickerScreen(
+            registry_path,
+            cwd,
+            scope=scope,
+            query=query,
+            target=target,
+            refresher=refresher,
+            presence=presence,
+            now=now,
+        )
+
+    def on_mount(self) -> None:
+        self.push_screen(self._picker, callback=self._finish)
+
+    def _finish(self, choice: Choice | None) -> None:
+        self.exit(choice)

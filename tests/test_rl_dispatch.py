@@ -142,3 +142,91 @@ def test_every_table_leaf_resolves_to_a_callable():
             checked += 1
             assert callable(value), f"rl {' '.join(path)} is not callable"
     assert checked > 40, f"only {checked} leaves walked — TABLE shape changed?"
+
+
+def test_bare_rl_opens_the_inbox_when_allowed(monkeypatch):
+    from ringleader import cli
+
+    calls = []
+    monkeypatch.setattr(cli, "_opens_inbox", lambda: True)
+    monkeypatch.setitem(cli.TABLE, "inbox", lambda argv: calls.append(argv) or 0)
+    assert main([]) == 0
+    assert calls == [[]]
+
+
+def test_bare_rl_reports_registry_errors_like_rl_inbox(monkeypatch, capsys):
+    from ringleader import cli, registry
+
+    def conflict(argv):
+        raise registry.RegistryConflict("registry changed")
+
+    monkeypatch.setattr(cli, "_opens_inbox", lambda: True)
+    monkeypatch.setitem(cli.TABLE, "inbox", conflict)
+    assert main([]) == 1
+    assert "rl: registry changed" in capsys.readouterr().err
+
+
+def test_bare_rl_prints_usage_when_the_inbox_is_not_allowed(monkeypatch, capsys):
+    from ringleader import cli
+
+    monkeypatch.setattr(cli, "_opens_inbox", lambda: False)
+    assert main([]) == 0
+    assert "bare `rl` in a terminal opens the inbox" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("opens", [True, False])
+@pytest.mark.parametrize("flag", ["-h", "--help", "help"])
+def test_help_prints_usage_either_way(monkeypatch, capsys, opens, flag):
+    from ringleader import cli
+
+    monkeypatch.setattr(cli, "_opens_inbox", lambda: opens)
+    assert main([flag]) == 0
+    assert "bare `rl` in a terminal opens the inbox" in capsys.readouterr().out
+
+
+class _Stream:
+    def __init__(self, tty):
+        self._tty = tty
+
+    def isatty(self):
+        return self._tty
+
+
+def _terminal(monkeypatch, *, stdin=True, stdout=True, term="xterm-256color"):
+    from ringleader import cli, session_env
+
+    monkeypatch.setattr(cli.sys, "stdin", _Stream(stdin))
+    monkeypatch.setattr(cli.sys, "stdout", _Stream(stdout))
+    monkeypatch.setenv("TERM", term)
+    for var in session_env.PROBES.values():
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.delenv("CODEX_SESSION_ID", raising=False)
+
+
+def test_opens_inbox_on_a_plain_terminal(monkeypatch):
+    from ringleader import cli
+
+    _terminal(monkeypatch)
+    assert cli._opens_inbox() is True
+
+
+@pytest.mark.parametrize("kwargs", [{"stdin": False}, {"stdout": False}, {"term": "dumb"}], ids=str)
+def test_does_not_open_inbox_without_a_real_terminal(monkeypatch, kwargs):
+    from ringleader import cli
+
+    _terminal(monkeypatch, **kwargs)
+    assert cli._opens_inbox() is False
+
+
+def test_does_not_open_inbox_inside_an_agent_session(monkeypatch):
+    from ringleader import cli
+
+    _terminal(monkeypatch)
+    monkeypatch.setenv("CLAUDE_CODE_SESSION_ID", "abc")
+    assert cli._opens_inbox() is False
+
+
+def test_stream_without_isatty_is_not_a_terminal():
+    from ringleader import cli
+
+    assert cli._is_tty(object()) is False

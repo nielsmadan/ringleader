@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ Roundup
+ scanned — no changes
+ archive 0 finished sessions (sweep)
+ delete 1 tiny session older than 7 days (prune)
+ purge 0 archived sessions past retention
+ enrich 29 sessions with claude (fake) — about 1 min; 2 active in the last 7 days — about 1 min
+
+ enter run█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█
+          █                                                                              █
+          █  Enrich 29 sessions? about 1 min                                             █
+          █                                                                              █
+          █  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  █
+          █  ▊ Run, enrich all 29 — about 1 min                                       ▎  █
+          █  ▊ Run, enrich the 2 from the last 7 days — about 1 min                   ▎  █
+          █  ▊ Run, skip enrich                                                       ▎  █
+          █  ▊ Cancel                                                                 ▎  █
+          █  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  █
+          █                                                                              █
+          █  enter choose · 1-9 pick · escape cancel                                     █
+          █                                                                              █
+          █▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄█
+
+
+
+
+
+
+
+ esc back  ⏎ run  q quit  u undo  ^r rescan

@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ triage 36 · unclassified 36 · kept 1 · projects 2 · harvests 0 · roundup never run
+
+ Next: Run the roundup (never run)
+   scans, then shows what it would archive, delete and enrich before doing anything
+   enter runs the highlighted step
+
+ Next steps
+1. Run the roundup (never run)  (may delete · uses a model)
+2. Review 1 snoozed session that woke up
+3. Triage 7 sessions from the last 7 days
+4. Triage proj-01 next (18 waiting, oldest 115d)
+ In flight
+codex     6h ago    migrate login refactor 27  unclassified
+droid     2d ago    refactor picker schema 20  unclassified
+claude    2d ago    deploy fix picker 39  unclassified
+codex     3d ago    login flaky docs 2  unclassified
+claude    5d ago    release refactor flaky 5  unclassified
+claude    6d ago    bench refactor schema 33  unclassified
+opencode  6d ago    parser cache schema 22  unclassified
+
+
+
+
+
+
+
+
+ Waking soon: fix export login 29 (in 2d)
+ q quit  u undo  ^r rescan                                                              ▏^p palette

@@ -14,14 +14,18 @@ from ringleader.picker.app import (
     AgentModal,
     ConfirmModal,
     PickerApp,
+    PickerScreen,
     launchable_agents,
     row_text,
 )
 from ringleader.presence import PresenceUnavailable
 from ringleader.resume import Scope
 from ringleader.sources.base import SessionLaunchingSource
+from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Label, ListView, OptionList
+
+from tui_helpers import until
 
 CWD = "/work/repo"
 NOW = "2026-05-05T00:00:00+00:00"
@@ -147,13 +151,17 @@ def _app(tmp_path, threads=None, *, presence=None, refresher=None, **kwargs):
     )
 
 
+def _screen(app):
+    return next(screen for screen in app.screen_stack if isinstance(screen, PickerScreen))
+
+
 async def _settle(app, pilot):
     await app.workers.wait_for_complete()
     await pilot.pause()
 
 
 def _ids(app):
-    return [t["sessionId"] for t in app._rows]
+    return [t["sessionId"] for t in _screen(app)._rows]
 
 
 def _rendered(widget):
@@ -162,12 +170,12 @@ def _rendered(widget):
 
 
 def _row_labels(app):
-    rows = app.query_one("#rows", OptionList)
+    rows = _screen(app).query_one("#rows", OptionList)
     return [rows.render_line(index).text.strip() for index in range(rows.option_count)]
 
 
 def _highlighted_id(app):
-    return app._rows[app.query_one("#rows", OptionList).highlighted]["sessionId"]
+    return _screen(app)._rows[_screen(app).query_one("#rows", OptionList).highlighted]["sessionId"]
 
 
 async def _open_confirm(app, pilot):
@@ -182,7 +190,7 @@ async def test_ctrl_j_and_ctrl_k_move_the_highlight(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        rows = app.query_one("#rows", OptionList)
+        rows = _screen(app).query_one("#rows", OptionList)
         assert rows.highlighted == 0
         await pilot.press("ctrl+j")
         assert rows.highlighted == 1
@@ -194,7 +202,7 @@ async def test_arrow_keys_move_the_highlight(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        rows = app.query_one("#rows", OptionList)
+        rows = _screen(app).query_one("#rows", OptionList)
         await pilot.press("down")
         assert rows.highlighted == 1
         await pilot.press("up")
@@ -209,10 +217,10 @@ async def test_ctrl_k_moves_the_highlight_and_leaves_the_typed_query_intact(tmp_
         await _settle(app, pilot)
         await pilot.press("ctrl+a")
         await pilot.press("a")
-        filter_input = app.query_one("#filter", Input)
-        rows = app.query_one("#rows", OptionList)
+        filter_input = _screen(app).query_one("#filter", Input)
+        rows = _screen(app).query_one("#rows", OptionList)
         assert filter_input.value == "a"
-        assert len(app._rows) > 1
+        assert len(_screen(app)._rows) > 1
         filter_input.cursor_position = 0
         await pilot.press("ctrl+j")
         assert rows.highlighted == 1
@@ -227,10 +235,10 @@ async def test_ctrl_a_switches_to_all_scope_without_moving_the_input_cursor(tmp_
         await _settle(app, pilot)
         assert _ids(app) == ["s0", "s1"]
         await pilot.press("ctrl+a")
-        assert app._scope is Scope.ALL
+        assert _screen(app)._scope is Scope.ALL
         assert _ids(app) == ["s3", "s0", "s1", "s2"]
         await pilot.press("a", "l")
-        filter_input = app.query_one("#filter", Input)
+        filter_input = _screen(app).query_one("#filter", Input)
         assert filter_input.value == "al"
         assert filter_input.cursor_position == 2
         await pilot.press("ctrl+a")
@@ -243,7 +251,7 @@ async def test_ctrl_r_switches_to_recursive_scope_and_picks_up_a_subdirectory(tm
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("ctrl+r")
-        assert app._scope is Scope.RECURSIVE
+        assert _screen(app)._scope is Scope.RECURSIVE
         assert _ids(app) == ["s0", "s1", "s2"]
 
 
@@ -252,7 +260,7 @@ async def test_typing_filters_the_rows_and_the_characters_land_in_the_input(tmp_
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("b", "r", "a")
-        assert app.query_one("#filter", Input).value == "bra"
+        assert _screen(app).query_one("#filter", Input).value == "bra"
         assert _ids(app) == ["s1"]
 
 
@@ -260,7 +268,7 @@ async def test_an_opening_query_filters_the_very_first_render(tmp_path):
     app = _app(tmp_path, query="bra")
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        assert app.query_one("#filter", Input).value == "bra"
+        assert _screen(app).query_one("#filter", Input).value == "bra"
         assert _ids(app) == ["s1"]
 
 
@@ -277,7 +285,7 @@ async def test_every_result_in_a_large_list_is_reachable(tmp_path):
     app = _app(tmp_path, threads, query="session", target="claude-code")
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        rows = app.query_one("#rows", OptionList)
+        rows = _screen(app).query_one("#rows", OptionList)
         assert rows.option_count == 2000
         rows.focus()
         await pilot.press("end")
@@ -312,11 +320,11 @@ async def test_clearing_a_query_restores_results_after_no_matches(tmp_path):
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("z", "q", "x")
-        assert app.query_one("#empty", Label).display
+        assert _screen(app).query_one("#empty", Label).display
         await pilot.press("backspace", "backspace", "backspace")
         assert _ids(app) == ["s0", "s1"]
         assert _highlighted_id(app) == "s0"
-        assert app.query_one("#rows", OptionList).display
+        assert _screen(app).query_one("#rows", OptionList).display
 
 
 async def test_rows_are_ordered_most_recent_first_with_a_blank_query(tmp_path):
@@ -335,7 +343,7 @@ async def test_the_rows_render_from_disk_before_the_background_scan_lands(tmp_pa
     async with app.run_test() as pilot:
         await pilot.pause()
         assert _ids(app) == ["s0", "s1"]
-        assert app.query_one("#rows", OptionList).option_count == 2
+        assert _screen(app).query_one("#rows", OptionList).option_count == 2
         gate.set()
         await _settle(app, pilot)
         assert _ids(app) == ["s0", "s1"]
@@ -345,7 +353,7 @@ async def test_the_scanned_registry_replaces_the_one_read_from_disk(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        assert app._reg["lastScan"] == SCANNED
+        assert _screen(app)._reg["lastScan"] == SCANNED
 
 
 async def test_quitting_while_the_scan_is_still_running_exits_without_a_choice(tmp_path):
@@ -387,7 +395,7 @@ async def test_a_scan_keeps_the_typed_query_and_the_highlighted_session(tmp_path
         held = _highlighted_id(app)
         gate.set()
         await _settle(app, pilot)
-        assert app.query_one("#filter", Input).value == "a"
+        assert _screen(app).query_one("#filter", Input).value == "a"
         assert "s9" in _ids(app)
         assert _highlighted_id(app) == held
 
@@ -402,10 +410,10 @@ async def test_a_scan_preserves_the_agent_when_session_ids_collide(tmp_path):
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("down")
-        assert app._current()["source"] == "codex"
+        assert _screen(app)._current()["source"] == "codex"
         gate.set()
         await _settle(app, pilot)
-        assert app._current()["source"] == "codex"
+        assert _screen(app)._current()["source"] == "codex"
 
 
 async def test_a_scan_that_drops_the_highlighted_session_falls_back_to_the_first_row(tmp_path):
@@ -697,8 +705,8 @@ async def test_a_preset_same_agent_target_still_confirms_a_running_session(tmp_p
 
 
 async def test_two_choices_dispatched_at_once_exit_the_app_once(tmp_path):
-    """With `--to` set no modal is pushed, so `check_action` never sees a second screen
-    and both dispatches would otherwise run all the way to `exit`."""
+    """With `--to` set no modal is pushed, so both dispatches would otherwise run all the
+    way to `exit`."""
 
     class Recording(PickerApp):
         exits: ClassVar[list] = []
@@ -718,8 +726,8 @@ async def test_two_choices_dispatched_at_once_exit_the_app_once(tmp_path):
     )
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        app.action_choose()
-        app.action_choose()
+        _screen(app).action_choose()
+        _screen(app).action_choose()
         await pilot.pause()
         await app.workers.wait_for_complete()
     assert len(app.exits) == 1
@@ -735,9 +743,9 @@ async def test_escape_in_the_agent_modal_returns_to_the_list(tmp_path):
         assert isinstance(app.screen, AgentModal)
         await pilot.press("escape")
         await pilot.pause()
-        assert len(app.screen_stack) == 1
+        assert isinstance(app.screen, PickerScreen)
         assert app.is_running
-        assert app.query_one("#rows", OptionList).highlighted == 0
+        assert _screen(app).query_one("#rows", OptionList).highlighted == 0
 
 
 async def test_the_scope_keys_stay_inert_while_the_agent_modal_is_open(tmp_path):
@@ -750,7 +758,7 @@ async def test_the_scope_keys_stay_inert_while_the_agent_modal_is_open(tmp_path)
         await pilot.press("ctrl+a")
         await pilot.press("ctrl+r")
         await pilot.pause()
-        assert app._scope is Scope.CWD
+        assert _screen(app)._scope is Scope.CWD
         assert _ids(app) == ["s0", "s1"]
         assert isinstance(app.screen, AgentModal)
 
@@ -791,9 +799,9 @@ async def test_declining_the_running_confirmation_returns_to_the_list(tmp_path, 
         assert isinstance(app.screen, ConfirmModal)
         await pilot.press(key)
         await pilot.pause()
-        assert len(app.screen_stack) == 1
+        assert isinstance(app.screen, PickerScreen)
         assert app.is_running
-        assert app.query_one("#rows", OptionList).highlighted == 0
+        assert _screen(app).query_one("#rows", OptionList).highlighted == 0
     assert app.return_value is None
 
 
@@ -908,7 +916,7 @@ async def test_the_empty_state_names_the_key_that_widens_the_search(tmp_path):
     app = _app(tmp_path, [_thread("s9", project="/elsewhere")])
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        empty = app.query_one("#empty", Label)
+        empty = _screen(app).query_one("#empty", Label)
         assert empty.display is True
         assert "ctrl+a" in _rendered(empty)
 
@@ -919,7 +927,7 @@ async def test_the_empty_state_offers_to_clear_the_filter_that_emptied_it(tmp_pa
         await _settle(app, pilot)
         await pilot.press("z", "q", "x")
         await pilot.pause()
-        hint = _rendered(app.query_one("#empty", Label))
+        hint = _rendered(_screen(app).query_one("#empty", Label))
         assert "clear the filter" in hint
         assert "ctrl+a for everywhere" in hint
 
@@ -928,7 +936,7 @@ async def test_the_unfiltered_everywhere_scope_says_there_is_simply_nothing_yet(
     app = _app(tmp_path, [], scope=Scope.ALL)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        hint = _rendered(app.query_one("#empty", Label))
+        hint = _rendered(_screen(app).query_one("#empty", Label))
         assert hint == "nothing here — no sessions on this machine yet"
 
 
@@ -953,3 +961,48 @@ async def test_fork_choice_creates_a_new_session_without_reopening_confirmation(
     assert app.return_value.target == source
     assert app.return_value.action == "fork"
     assert app.return_value.confirmed is False
+
+
+class _Host(App[None]):
+    def __init__(self, picker):
+        super().__init__()
+        self.picker = picker
+        self.results = []
+
+    def on_mount(self):
+        self.push_screen(self.picker, callback=self.results.append)
+
+
+def _hosted(tmp_path, **kwargs):
+    reg_path = _seed(tmp_path, _default_threads())
+    return _Host(
+        PickerScreen(
+            reg_path,
+            CWD,
+            refresher=lambda path, now_iso: (_scanned(path), None),
+            presence=frozenset,
+            **kwargs,
+        )
+    )
+
+
+async def test_a_hosted_picker_dismisses_the_choice_back_to_its_host(tmp_path):
+    app = _hosted(tmp_path, target="codex")
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        await until(pilot, lambda: len(app.results) == 1)
+        assert app.screen is app.default_screen
+        assert app.is_running
+    assert app.results[0].thread["sessionId"] == "s0"
+    assert app.results[0].target == "codex"
+
+
+async def test_escape_on_a_hosted_picker_returns_to_its_host(tmp_path):
+    app = _hosted(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("escape")
+        await until(pilot, lambda: app.results == [None])
+        assert app.screen is app.default_screen
+        assert app.is_running

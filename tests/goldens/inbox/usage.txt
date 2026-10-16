@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ rl usage, then rl usage windows
+ exit 0 · 1.0s
+BODY of usage
+
+BODY of usage windows
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ esc back  r re-run  q quit  u undo  ^r rescan                                          ▏^p palette

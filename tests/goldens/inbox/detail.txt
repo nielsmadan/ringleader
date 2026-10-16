@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ title s1
+ project      /w/x
+ agent        claude
+ status       unclassified
+ what it is   fixing the parser
+ last prompt  fix the parser
+ branch       main
+ session      s1
+ file         …/-w-x/s1.jsonl
+ size         61B
+ messages     3
+ activity     5d ago
+
+ showing the last 200 KB — rl data export s1 writes the whole conversation
+## USER
+
+fix the parser in s1
+
+
+
+
+
+
+
+
+
+
+
+ esc back  q quit  u undo  ^r rescan                                                    ▏^p palette

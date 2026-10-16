@@ -148,10 +148,10 @@ def cmd_prune(argv: list[str]) -> int:
             age = round(overview.age_days(t["mtime"], now))
             print(
                 f"  [{overview.effective_status(t, now)}] {_label(t)} "
-                f"({age}d, {overview._human_size(t.get('sizeBytes'))}, "
+                f"({age}d, {overview.human_size(t.get('sizeBytes'))}, "
                 f"{t.get('messageCount') or 0} msgs)  {t.get('project') or ''}"
             )
-        print(f"\n{len(cands)} sessions, {overview._human_size(total)}")
+        print(f"\n{len(cands)} sessions, {overview.human_size(total)}")
 
     if arch:
         arch.sort(key=lambda ts: ts.get("archivedAt") or "")
@@ -177,7 +177,7 @@ def cmd_prune(argv: list[str]) -> int:
 
     parts = []
     if cands:
-        parts.append(f"delete {len(cands)} sessions ({overview._human_size(total)})")
+        parts.append(f"delete {len(cands)} sessions ({overview.human_size(total)})")
     if arch:
         parts.append(f"purge {len(arch)} archived")
     if stubs:

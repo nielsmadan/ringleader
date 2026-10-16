@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import os
 import sys
 from typing import Any, TextIO
 
-from . import commands, registry
+from . import commands, registry, session_env
 
 TABLE = commands.TABLE
 
@@ -32,9 +33,26 @@ def _leaf_names(node: object, group: str = "") -> str:
     return "  ".join(f"{k} (coming soon)" if f"{group} {k}" in _RESERVED else k for k in node)
 
 
+def _is_tty(stream: TextIO) -> bool:
+    try:
+        return stream.isatty()
+    except (AttributeError, ValueError):
+        return False
+
+
+def _opens_inbox() -> bool:
+    return (
+        _is_tty(sys.stdin)
+        and _is_tty(sys.stdout)
+        and os.environ.get("TERM") != "dumb"
+        and session_env.current_session() is None
+    )
+
+
 def _usage(stream: TextIO | None = None) -> None:
     stream = sys.stdout if stream is None else stream
     print("ringleader — usage: rl <command> [args]\n", file=stream)
+    print("bare `rl` in a terminal opens the inbox\n", file=stream)
     print("commands: " + "  ".join(_FLAT), file=stream)
     for g in _GROUPS:
         node = TABLE.get(g)
@@ -49,6 +67,8 @@ def _group_usage(crumbs: list[str], node: dict[str, Any], stream: TextIO) -> Non
 
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
+    if not argv and _opens_inbox():
+        argv = ["inbox"]
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
