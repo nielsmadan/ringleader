@@ -24,3 +24,11 @@ def test_config_instances_do_not_share_the_filter_list():
     a, b = Config(), Config()
     a.session_filters.append("x")
     assert b.session_filters == []
+
+
+def test_enrich_model_roundtrips(tmp_path):
+    from ringleader.config import Config, load_config, save_config
+
+    p = tmp_path / "c.json"
+    save_config(Config(enrich_model="sonnet"), p)
+    assert load_config(p).enrich_model == "sonnet"

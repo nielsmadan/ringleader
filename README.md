@@ -216,7 +216,8 @@ That directory must contain all three release binaries and `SHA256SUMS`.
 drives an already-installed agent CLI one-shot (`claude`, then `codex`), reusing that CLI's own
 auth. `rl config set ai <claude|codex|llm>` pins a choice; the `llm` engine calls a provider API
 directly with your own key and is not a dependency. With nothing available, both verbs are clean
-no-ops and classifying stays a manual step in the triage skill.
+no-ops and classifying stays a manual step in the triage skill. Enrich defaults to `haiku` on the
+`claude` engine; change it with `rl config set enrich.model <name>` (`default` restores `haiku`).
 
 ## Documentation
 

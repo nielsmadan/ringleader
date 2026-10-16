@@ -2,13 +2,15 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from .base import ModelError
+from ..progress import CancelCheck, never_cancelled
+from . import proc as model_proc
+from .base import CallStats, ModelError
 
 
 def _inject_additional_properties_false(schema: Any) -> Any:
@@ -43,6 +45,8 @@ def _inject_additional_properties_false(schema: Any) -> Any:
 class CodexCliModel:
     name: str = "codex"
     model: str | None = None
+    timeout: float | None = None
+    cancelled: CancelCheck | None = None
 
     def available(self) -> bool:
         # shutil is a single shared module object across backends, so compare the
@@ -50,29 +54,38 @@ class CodexCliModel:
         path = shutil.which("codex")
         return path is not None and Path(path).name == "codex"
 
+    def argv(self, schema: dict[str, Any]) -> list[str]:
+        # --skip-git-repo-check: cwd isn't guaranteed to be a git repo.
+        # --sandbox read-only: this is a completion call, not a file-editing one.
+        cmd = [
+            "codex",
+            "exec",
+            "--ephemeral",
+            "--ignore-rules",
+            "--skip-git-repo-check",
+            "--sandbox",
+            "read-only",
+        ]
+        return [*cmd, "--model", self.model] if self.model else cmd
+
     def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        schema = _inject_additional_properties_false(schema)
+        return self.complete_json_with_stats(prompt, schema)[0]
+
+    def complete_json_with_stats(
+        self, prompt: str, schema: dict[str, Any]
+    ) -> tuple[dict[str, Any], CallStats]:
+        wire_schema = _inject_additional_properties_false(schema)
+        started = time.perf_counter()
         with tempfile.TemporaryDirectory() as td:
             sf = Path(td) / "schema.json"
-            sf.write_text(json.dumps(schema), encoding="utf-8")
-            # --skip-git-repo-check: cwd isn't guaranteed to be a git repo.
-            # --sandbox read-only: this is a completion call, not a file-editing one.
-            cmd = [
-                "codex",
-                "exec",
-                "--skip-git-repo-check",
-                "--sandbox",
-                "read-only",
-                "--output-schema",
-                str(sf),
-            ]
-            if self.model:
-                cmd += ["--model", self.model]
-            cmd.append(prompt)
-            try:
-                proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-            except OSError as e:  # CLI vanished mid-run
-                raise ModelError(f"codex invocation failed: {e}") from e
+            sf.write_text(json.dumps(wire_schema), encoding="utf-8")
+            proc = model_proc.run_model_process(
+                [*self.argv(schema), "--output-schema", str(sf), prompt],
+                stdin_text=None,
+                timeout=self.timeout,
+                cancelled=self.cancelled or never_cancelled,
+            )
+        seconds = time.perf_counter() - started
         if proc.returncode != 0:
             raise ModelError(f"codex exited {proc.returncode}: {proc.stderr.strip()[:200]}")
         try:
@@ -81,4 +94,6 @@ class CodexCliModel:
             raise ModelError(f"codex returned unparseable output: {e}") from e
         if not isinstance(result, dict):
             raise ModelError("codex returned non-object JSON")
-        return result
+        return result, CallStats(
+            seconds=seconds, input_tokens=None, output_tokens=None, cost_usd=None
+        )

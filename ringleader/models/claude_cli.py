@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import shutil
-import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
-from .base import ModelError
+from ..progress import CancelCheck, never_cancelled
+from . import proc as model_proc
+from .base import CallStats, ModelError
 
 
 def _envelope_error(stdout: str) -> str | None:
@@ -25,10 +27,29 @@ def _envelope_error(stdout: str) -> str | None:
     return f"{reason} (api status {status})" if status else reason
 
 
+_INPUT_TOKEN_KEYS = ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+
+
+def _stats(envelope: Any, seconds: float) -> CallStats:
+    usage = envelope.get("usage") if isinstance(envelope, dict) else None
+    usage = usage if isinstance(usage, dict) else {}
+    inputs = [usage[k] for k in _INPUT_TOKEN_KEYS if isinstance(usage.get(k), int)]
+    output = usage.get("output_tokens")
+    cost = envelope.get("total_cost_usd") if isinstance(envelope, dict) else None
+    return CallStats(
+        seconds=seconds,
+        input_tokens=sum(inputs) if inputs else None,
+        output_tokens=output if isinstance(output, int) else None,
+        cost_usd=float(cost) if isinstance(cost, int | float) else None,
+    )
+
+
 @dataclass
 class ClaudeCliModel:
     name: str = "claude"
     model: str | None = None
+    timeout: float | None = None
+    cancelled: CancelCheck | None = None
 
     def available(self) -> bool:
         # shutil is a single shared module object across backends, so compare the
@@ -36,9 +57,7 @@ class ClaudeCliModel:
         path = shutil.which("claude")
         return path is not None and Path(path).name == "claude"
 
-    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
-        # --json-schema takes the schema inline (a JSON string), not a file path.
-        # --tools "" disables tool use so -p returns a pure answer.
+    def argv(self, schema: dict[str, Any]) -> list[str]:
         cmd = [
             "claude",
             "-p",
@@ -48,13 +67,33 @@ class ClaudeCliModel:
             json.dumps(schema),
             "--tools",
             "",
+            "--no-session-persistence",
+            "--strict-mcp-config",
+            "--mcp-config",
+            '{"mcpServers":{}}',
+            "--settings",
+            '{"disableAllHooks":true}',
+            "--setting-sources",
+            "",
+            "--disable-slash-commands",
+            "--no-chrome",
         ]
-        if self.model:
-            cmd += ["--model", self.model]
-        try:
-            proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True, check=False)
-        except OSError as e:  # CLI vanished mid-run
-            raise ModelError(f"claude invocation failed: {e}") from e
+        return [*cmd, "--model", self.model] if self.model else cmd
+
+    def complete_json(self, prompt: str, schema: dict[str, Any]) -> dict[str, Any]:
+        return self.complete_json_with_stats(prompt, schema)[0]
+
+    def complete_json_with_stats(
+        self, prompt: str, schema: dict[str, Any]
+    ) -> tuple[dict[str, Any], CallStats]:
+        started = time.perf_counter()
+        proc = model_proc.run_model_process(
+            self.argv(schema),
+            stdin_text=prompt,
+            timeout=self.timeout,
+            cancelled=self.cancelled or never_cancelled,
+        )
+        seconds = time.perf_counter() - started
         detail = _envelope_error(proc.stdout)
         if detail:
             raise ModelError(f"claude: {detail}")
@@ -64,12 +103,17 @@ class ClaudeCliModel:
             envelope = json.loads(proc.stdout)
             # newer claude also returns the parsed object directly under structured_output
             if isinstance(envelope, dict) and isinstance(envelope.get("structured_output"), dict):
-                return cast(dict[str, Any], envelope["structured_output"])
+                return cast(dict[str, Any], envelope["structured_output"]), _stats(
+                    envelope, seconds
+                )
             result = (
                 envelope["result"]
                 if isinstance(envelope, dict) and "result" in envelope
                 else envelope
             )
-            return cast(dict[str, Any], result if isinstance(result, dict) else json.loads(result))
+            parsed = cast(
+                dict[str, Any], result if isinstance(result, dict) else json.loads(result)
+            )
+            return parsed, _stats(envelope, seconds)
         except (json.JSONDecodeError, KeyError, TypeError) as e:
             raise ModelError(f"claude returned unparseable output: {e}") from e

@@ -46,7 +46,7 @@ def test_claude_complete_json_builds_command_and_parses_result(monkeypatch):
             returncode=0, stdout=json.dumps({"result": json.dumps({"x": "hi"})}), stderr=""
         )
 
-    monkeypatch.setattr("ringleader.models.claude_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
     out = ClaudeCliModel().complete_json("classify this", SCHEMA)
     assert out == {"x": "hi"}
     assert "claude" in seen["cmd"][0] or seen["cmd"][0] == "claude"
@@ -55,7 +55,7 @@ def test_claude_complete_json_builds_command_and_parses_result(monkeypatch):
 
 def test_claude_complete_json_prefers_structured_output(monkeypatch):
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(
             returncode=0,
             # "result" deliberately disagrees with structured_output to prove precedence
@@ -70,7 +70,7 @@ def test_claude_complete_json_prefers_structured_output(monkeypatch):
 
 def test_claude_raises_modelerror_on_nonzero(monkeypatch):
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(returncode=1, stdout="", stderr="boom"),
     )
     with pytest.raises(ModelError):
@@ -80,7 +80,7 @@ def test_claude_raises_modelerror_on_nonzero(monkeypatch):
 def test_claude_surfaces_the_envelope_reason_when_it_exits_nonzero(monkeypatch):
     # the CLI puts the reason in its stdout envelope and leaves stderr empty
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(
             returncode=1,
             stdout=json.dumps(
@@ -100,7 +100,7 @@ def test_claude_surfaces_the_envelope_reason_when_it_exits_nonzero(monkeypatch):
 def test_claude_surfaces_the_envelope_reason_when_it_exits_zero(monkeypatch):
     # an API-side failure still exits 0; only is_error in the envelope marks it
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
@@ -115,7 +115,7 @@ def test_claude_surfaces_the_envelope_reason_when_it_exits_zero(monkeypatch):
 
 def test_claude_reports_api_status_alongside_the_reason(monkeypatch):
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(
             returncode=0,
             stdout=json.dumps(
@@ -130,7 +130,7 @@ def test_claude_reports_api_status_alongside_the_reason(monkeypatch):
 
 def test_claude_falls_back_to_stderr_when_stdout_has_no_envelope(monkeypatch):
     monkeypatch.setattr(
-        "ringleader.models.claude_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(returncode=1, stdout="not json", stderr="boom"),
     )
     with pytest.raises(ModelError, match="boom"):
@@ -139,7 +139,7 @@ def test_claude_falls_back_to_stderr_when_stdout_has_no_envelope(monkeypatch):
 
 def test_codex_complete_json_parses_schema_output(monkeypatch):
     monkeypatch.setattr(
-        "ringleader.models.codex_cli.subprocess.run",
+        "ringleader.models.proc.run_model_process",
         lambda cmd, **kw: types.SimpleNamespace(
             returncode=0, stdout=json.dumps({"x": "yo"}), stderr=""
         ),
@@ -156,7 +156,7 @@ def test_codex_complete_json_builds_command(monkeypatch):
         seen["schema"] = json.loads(Path(schema_path).read_text())
         return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
 
-    monkeypatch.setattr("ringleader.models.codex_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
     CodexCliModel().complete_json("classify this", SCHEMA)
 
     cmd = seen["cmd"]
@@ -177,7 +177,7 @@ def test_codex_injects_additional_properties_recursively(monkeypatch):
         seen["schema"] = json.loads(Path(schema_path).read_text())
         return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
 
-    monkeypatch.setattr("ringleader.models.codex_cli.subprocess.run", fake_run)
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
     CodexCliModel().complete_json("p", NESTED_SCHEMA)
 
     schema = seen["schema"]
@@ -258,3 +258,135 @@ def test_llm_complete_json_wraps_provider_failure(monkeypatch):
     monkeypatch.setattr(LlmModel, "_llm", lambda self: FakeLlm())
     with pytest.raises(ModelError):
         LlmModel().complete_json("p", SCHEMA)
+
+
+def _cfg(**kw):
+    from ringleader.config import Config
+
+    return Config(**kw)
+
+
+@pytest.mark.parametrize(
+    ("cfg", "engine", "task", "expected"),
+    [
+        (_cfg(enrich_model="sonnet", model="opus"), "claude", "enrich", "sonnet"),
+        (_cfg(), "claude", "enrich", "haiku"),
+        (_cfg(model="gpt-x"), "codex", "enrich", "gpt-x"),
+        (_cfg(), "codex", "enrich", None),
+        (_cfg(enrich_model="sonnet", model="opus"), "claude", "harvest", "opus"),
+        (_cfg(enrich_model="sonnet"), "claude", "harvest", None),
+    ],
+)
+def test_model_name_for(cfg, engine, task, expected):
+    assert models.model_name_for(cfg, engine, task) == expected
+
+
+def test_active_model_for_enrich_builds_haiku_with_timeout(monkeypatch):
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: "/bin/claude")
+    m = models.active_model(_cfg(ai="claude"), "enrich")
+    assert m == ClaudeCliModel(model="haiku", timeout=120.0)
+
+
+def test_active_model_defaults_to_harvest_task(monkeypatch):
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: "/bin/claude")
+    m = models.active_model(_cfg(ai="claude", enrich_model="sonnet"))
+    assert m == ClaudeCliModel(model=None, timeout=300.0)
+
+
+def test_autopick_resolves_the_per_candidate_enrich_default(monkeypatch):
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: "/bin/claude")
+    m = models.active_model(_cfg(), "enrich")
+    assert m == ClaudeCliModel(model="haiku", timeout=120.0)
+
+
+def test_autopick_falls_back_to_codex_with_the_global_model(monkeypatch):
+    monkeypatch.setattr(
+        "ringleader.models.codex_cli.shutil.which",
+        lambda n: "/bin/codex" if n == "codex" else None,
+    )
+    m = models.active_model(_cfg(model="gpt-x"), "enrich")
+    assert m == CodexCliModel(model="gpt-x", timeout=120.0)
+
+
+def test_with_cancel_returns_a_copy_carrying_the_check():
+    def check() -> bool:
+        return True
+
+    original = ClaudeCliModel(model="haiku")
+    copy = models.with_cancel(original, check)
+    assert copy.cancelled is check
+    assert original.cancelled is None
+
+
+def test_describe_names_the_model_or_the_default():
+    assert models.describe(ClaudeCliModel(model="haiku")) == "claude (haiku)"
+    assert models.describe(CodexCliModel()) == "codex (default model)"
+
+
+def test_claude_argv_carries_the_trim_flags_and_model():
+    argv = ClaudeCliModel(model="haiku").argv(SCHEMA)
+    assert argv[:4] == ["claude", "-p", "--output-format", "json"]
+    for flag in (
+        "--no-session-persistence",
+        "--strict-mcp-config",
+        "--disable-slash-commands",
+        "--no-chrome",
+    ):
+        assert flag in argv
+    assert argv[argv.index("--settings") + 1] == '{"disableAllHooks":true}'
+    assert argv[argv.index("--setting-sources") + 1] == ""
+    assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    assert argv[argv.index("--model") + 1] == "haiku"
+
+
+def test_claude_call_sends_the_prompt_on_stdin_and_reads_stats(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen.update(kw)
+        envelope = {
+            "structured_output": {"x": "hi"},
+            "usage": {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 5,
+                "cache_creation_input_tokens": 2,
+                "output_tokens": 7,
+            },
+            "total_cost_usd": 0.01,
+        }
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps(envelope), stderr="")
+
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
+    out, stats = ClaudeCliModel(timeout=9.0).complete_json_with_stats("the prompt", SCHEMA)
+    assert out == {"x": "hi"}
+    assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (17, 7, 0.01)
+    assert stats.seconds >= 0
+    assert seen["stdin_text"] == "the prompt"
+    assert seen["timeout"] == 9.0
+
+
+def test_claude_stats_are_none_when_the_envelope_has_no_usage(monkeypatch):
+    monkeypatch.setattr(
+        "ringleader.models.proc.run_model_process",
+        lambda argv, **kw: types.SimpleNamespace(
+            returncode=0, stdout=json.dumps({"result": json.dumps({"x": "hi"})}), stderr=""
+        ),
+    )
+    _, stats = ClaudeCliModel().complete_json_with_stats("p", SCHEMA)
+    assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (None, None, None)
+
+
+def test_codex_call_is_ephemeral_without_stdin(monkeypatch):
+    seen = {}
+
+    def fake_run(argv, **kw):
+        seen["argv"] = argv
+        seen.update(kw)
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
+
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
+    _, stats = CodexCliModel().complete_json_with_stats("p", SCHEMA)
+    assert "--ephemeral" in seen["argv"] and "--ignore-rules" in seen["argv"]
+    assert "--output-schema" not in CodexCliModel().argv(SCHEMA)
+    assert seen["stdin_text"] is None
+    assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (None, None, None)

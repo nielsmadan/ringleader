@@ -45,7 +45,7 @@ def test_enrich_classifies_pending(tmp_path, monkeypatch):
     reg = tmp_path / "registry.json"
     monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1")])
     monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
-    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg: FakeModel())
+    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: FakeModel())
     rc = enrich_mod.cmd_enrich(["--registry", str(reg)])
     assert rc == 0
 
@@ -57,7 +57,7 @@ def test_enrich_no_model_is_noop(tmp_path, monkeypatch, capsys):
     reg = tmp_path / "registry.json"
     monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1")])
     monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
-    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg: None)
+    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: None)
     rc = enrich_mod.cmd_enrich(["--registry", str(reg)])
     assert rc == 0
     assert "no model configured" in capsys.readouterr().out.lower()
@@ -67,7 +67,9 @@ def test_enrich_skips_on_model_error(tmp_path, monkeypatch):
     reg = tmp_path / "registry.json"
     monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kw: [_ns("s1", tail="EXPLODE now")])
     monkeypatch.setattr(enrich_mod.scanner, "active_sources", lambda **_kwargs: [])
-    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg: FakeModel(raise_on={"EXPLODE"}))
+    monkeypatch.setattr(
+        enrich_mod, "active_model", lambda cfg, task: FakeModel(raise_on={"EXPLODE"})
+    )
     rc = enrich_mod.cmd_enrich(["--registry", str(reg)])
     assert rc == 0
 
@@ -107,7 +109,7 @@ def test_enrich_skips_cached_threads_from_an_unavailable_source(tmp_path, monkey
 
     monkeypatch.setattr(enrich_mod.scanner, "active_sources", unavailable_sources)
     monkeypatch.setattr(enrich_mod.scanner, "scan", lambda **kwargs: [])
-    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg: FailIfCalled())
+    monkeypatch.setattr(enrich_mod, "active_model", lambda cfg, task: FailIfCalled())
 
     assert enrich_mod.cmd_enrich(["--registry", str(reg)]) == 0
 

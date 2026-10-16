@@ -144,7 +144,7 @@ def test_enrich_preserves_keep_during_model_call(tmp_path, monkeypatch):
             keep.cmd_keep(["same", "--yes", "--registry", str(path)])
             return {"status": "unfinished", "whatItIs": "work", "suggestedName": "task"}
 
-    monkeypatch.setattr(enrich, "active_model", lambda _: Model())
+    monkeypatch.setattr(enrich, "active_model", lambda _cfg, _task: Model())
     monkeypatch.setattr(enrich, "load_config", Config)
     monkeypatch.setattr(enrich.scanner, "active_sources", lambda **_: [])
     monkeypatch.setattr(enrich.scanner, "scan", lambda **_: [scanned(tmp_path)])

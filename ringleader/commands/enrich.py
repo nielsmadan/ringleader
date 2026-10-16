@@ -48,7 +48,7 @@ def cmd_enrich(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     cfg = load_config()
-    model = active_model(cfg)
+    model = active_model(cfg, "enrich")
     if model is None:
         print(
             "no model configured — set one with `rl config`, or classify via the session-sync skill"

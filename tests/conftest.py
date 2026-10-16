@@ -1,6 +1,7 @@
 import difflib
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from typing import NoReturn
 
 import pytest
 from ringleader.portability import claude
@@ -55,6 +56,14 @@ def golden_checker(
 @pytest.fixture
 def golden(request: pytest.FixtureRequest) -> Callable[..., None]:
     return golden_checker(request)
+
+
+@pytest.fixture(autouse=True)
+def _no_real_model_cli(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(argv: Sequence[str], **_: object) -> NoReturn:
+        raise AssertionError(f"a test reached a real model CLI: {argv[0]}")
+
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", refuse)
 
 
 @pytest.fixture(scope="session")

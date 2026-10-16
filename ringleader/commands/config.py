@@ -5,7 +5,7 @@ from collections.abc import Callable
 
 from .. import namefilter, registry
 from ..config import load_config, save_config
-from ..models import active_model
+from ..models import active_model, describe
 from . import default_registry
 
 _VALID_ENGINES = ("claude", "codex", "llm")
@@ -28,14 +28,15 @@ def _show() -> int:
     cfg = load_config()
     print(f"ai: {cfg.ai}")
     print(f"model: {cfg.model}")
+    print(f"enrich.model: {cfg.enrich_model or 'default'}")
     print(f"llm.provider: {cfg.llm_provider}")
     print(f"archive.retention_days: {cfg.archive_retention_days}")
     print(f"session.filters: {', '.join(cfg.session_filters) or 'none'}")
-    model = active_model(cfg)
-    if model is None:
-        print("active model: none — no model configured/available")
-    else:
-        print(f"active model: {model.name} (available={model.available()})")
+    for task in ("enrich", "harvest"):
+        model = active_model(cfg, task)
+        print(
+            f"{task} model: {describe(model) if model else 'none — no model configured/available'}"
+        )
     return 0
 
 
@@ -56,6 +57,8 @@ def _set(args: list[str]) -> int:
         cfg.ai = value
     elif key == "model":
         cfg.model = value
+    elif key == "enrich.model":
+        cfg.enrich_model = None if value == "default" else value
     elif key == "llm.provider":
         cfg.llm_provider = value
     elif key == "archive.retention_days":

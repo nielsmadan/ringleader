@@ -29,7 +29,7 @@ and `rl config set ai llm` reports the install hint.
 
 ### Resolution
 
-`active_model(cfg)` is the single resolution point:
+`active_model(cfg, task)` is the single resolution point (`task` is `"harvest"` by default, or `"enrich"`):
 
 1. `ai = llm` → build `LlmModel` from `llm_provider` + `model`; return it only if available.
 2. `ai = claude` / `codex` → build that class; return it only if available.
@@ -37,17 +37,23 @@ and `rl config set ai llm` reports the install hint.
    first available one.
 4. Otherwise `None`.
 
+The model name is per task (`model_name_for`): harvest uses `model`; enrich uses `enrich_model`,
+else the engine default in `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`, others none), else `model`.
+CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s). `describe()` renders
+the choice, and `with_cancel()` returns a copy of a CLI adapter bound to a cancel check.
+
 Returning `None` rather than raising is what makes the no-model path a clean no-op: `enrich` and
 `harvest` check for `None` and report that nothing was configured, leaving classification to the
 triage skill.
 
-`rl config show` prints the resolved model and its availability, which is the fastest way to see
+`rl config show` prints the resolved enrich and harvest models, which is the fastest way to see
 what a run would actually use.
 
 ## Key entry points
 
 - `models/__init__.py` — `MODELS` (the auto-pick order) and `active_model()`.
-- `models/base.py` — `Model`, `ModelError`.
+- `models/base.py` — `Model`, `ModelError`, `CallStats`, `ModelTask`.
+- `models/proc.py` — `run_model_process` (the one place a model CLI is spawned) and `kill_all_children`.
 - `commands/config.py` — `_VALID_ENGINES = ("claude", "codex", "llm")`.
 
 ## Gotchas
@@ -57,6 +63,16 @@ what a run would actually use.
   spends the user's API credit would be wrong.
 - **`available()` is checked on every resolution**, so uninstalling an agent CLI silently changes
   which model a run uses when `ai` is unset. Pin it if that matters.
+- **CLI calls are trimmed so they leave nothing behind.** The claude argv adds
+  `--no-session-persistence` (no stray session in the picker), `--strict-mcp-config` with an empty
+  server list, `--settings '{"disableAllHooks":true}'`, `--setting-sources ""`,
+  `--disable-slash-commands` and `--no-chrome`; never `--bare`, which needs `ANTHROPIC_API_KEY`.
+  Codex gets `--ephemeral --ignore-rules` (verified on codex-cli 0.162.1; an older codex fails every call with `unexpected argument`) but keeps the user's config,
+  which carries their model and provider.
+- **Calls run in their own process group in a neutral cwd** (the system temp dir, so no project
+  `AGENTS.md`/`CLAUDE.md` loads). Cancel and timeout kill the whole group (SIGTERM, then SIGKILL
+  after 2 s), so a grandchild cannot outlive the call; `kill_all_children()` does the same for
+  every call still running.
 - **The config stores no secret** — an engine name, a model name, a provider name. Credentials
   belong to the agent CLI or to `llm`.
 

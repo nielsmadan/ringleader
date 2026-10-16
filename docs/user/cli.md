@@ -157,13 +157,14 @@ to the explicit presence command or onboarding skill.
 
 ## `rl config`
 
-`rl config show` prints the current values and the resolved active model.
+`rl config show` prints the current values and the resolved enrich and harvest models.
 `rl config set <key> <value>` accepts:
 
 | Key | Values |
 |---|---|
 | `ai` | `claude` \| `codex` \| `llm` — engine for `enrich`/`harvest` |
 | `model` | model name for the chosen engine |
+| `enrich.model` | model for `enrich`; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
 | `archive.retention_days` | non-negative int; `0` = keep archives forever |
 

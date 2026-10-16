@@ -1,10 +1,21 @@
 from __future__ import annotations
 
-from typing import Any, Protocol, runtime_checkable
+from dataclasses import dataclass
+from typing import Any, Literal, Protocol, runtime_checkable
+
+type ModelTask = Literal["enrich", "harvest"]
 
 
 class ModelError(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class CallStats:
+    seconds: float
+    input_tokens: int | None
+    output_tokens: int | None
+    cost_usd: float | None
 
 
 @runtime_checkable

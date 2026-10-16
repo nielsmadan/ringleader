@@ -167,7 +167,7 @@ def test_persisted_roots_scan_and_lifecycle(environment, scan_command, monkeypat
     elif scan_command == "enrich":
         from ringleader.commands import enrich
 
-        monkeypatch.setattr(enrich, "active_model", lambda _: FakeModel())
+        monkeypatch.setattr(enrich, "active_model", lambda _cfg, _task: FakeModel())
         assert cli.main(["session", "enrich", "--registry", str(path), "--limit", "0"]) == 0
 
     else:

@@ -59,6 +59,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
     assert data == {
         "ai": "llm",
         "model": None,
+        "enrich_model": None,
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
         "archive_retention_days": 0,
@@ -187,3 +188,40 @@ def test_config_filter_requires_a_pattern(tmp_path):
 
     assert r.returncode == 2
     assert "usage: rl config filter add" in r.stderr
+
+
+def test_config_set_enrich_model_persists_and_default_clears(tmp_path):
+    env = _env(tmp_path)
+
+    assert _run("config", "set", "enrich.model", "sonnet", env=env).returncode == 0
+    shown = _run("config", "show", env=env)
+    assert "enrich.model: sonnet" in shown.stdout
+
+    assert _run("config", "set", "enrich.model", "default", env=env).returncode == 0
+    shown = _run("config", "show", env=env)
+    assert "enrich.model: default" in shown.stdout
+
+
+def test_config_show_prints_both_model_lines(tmp_path):
+    env = _env(tmp_path)
+    assert _run("config", "set", "ai", "llm", env=env).returncode == 0
+
+    out = _run("config", "show", env=env).stdout
+
+    assert "enrich model: none" in out
+    assert "harvest model: none" in out
+
+
+def test_config_show_describes_the_resolved_model_per_task(tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "claude"
+    fake.write_text("#!/bin/sh\nexit 0\n")
+    fake.chmod(0o755)
+    env = {**_env(tmp_path), "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}"}
+    assert _run("config", "set", "ai", "claude", env=env).returncode == 0
+
+    out = _run("config", "show", env=env).stdout
+
+    assert "enrich model: claude (haiku)" in out
+    assert "harvest model: claude (default model)" in out
