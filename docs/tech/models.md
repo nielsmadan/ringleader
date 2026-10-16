@@ -39,7 +39,8 @@ and `rl config set ai llm` reports the install hint.
 
 The model name is per task (`model_name_for`): harvest uses `model`; enrich uses `enrich_model`,
 else the engine default in `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`, others none), else `model`.
-CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s). `describe()` renders
+CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s) and the configured
+`ai_command_prefix` as `command_prefix`, which `complete_json` puts in front of the argv. `describe()` renders
 the choice, and `with_cancel()` returns a copy of a CLI adapter bound to a cancel check.
 
 ### Enrich classification
@@ -72,6 +73,13 @@ what a run would actually use.
 - `commands/config.py` — `_VALID_ENGINES = ("claude", "codex", "llm")`.
 
 ## Gotchas
+
+- **`ai.command_prefix` exists for credentials injected by a wrapper.** `rl` spawns the agent
+  binary off `PATH`, so a zsh function that wraps `claude` in a secrets injector never runs and
+  the call fails on auth. A prefix such as `sops-exec` gives only the model call those secrets,
+  not the whole `rl` process tree. `available()` also requires the prefix's first word on `PATH`,
+  and `describe()` appends `via <prefix>`. A prefix cannot help inside a sandbox that denies the
+  injector its secrets store; the call then fails with the injector's own error.
 
 - **`MODELS` is the auto-pick order, not the valid-engine list.** It holds only the two agent
   CLIs; `llm` is reachable only by pinning it explicitly, because auto-picking something that

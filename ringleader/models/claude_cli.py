@@ -50,12 +50,17 @@ class ClaudeCliModel:
     model: str | None = None
     timeout: float | None = None
     cancelled: CancelCheck | None = None
+    command_prefix: tuple[str, ...] = ()
 
     def available(self) -> bool:
         # shutil is a single shared module object across backends, so compare the
         # resolved binary's basename rather than just truthiness of shutil.which.
         path = shutil.which("claude")
-        return path is not None and Path(path).name == "claude"
+        return (
+            path is not None
+            and Path(path).name == "claude"
+            and model_proc.launchable(self.command_prefix)
+        )
 
     def argv(self, schema: dict[str, Any]) -> list[str]:
         cmd = [
@@ -88,7 +93,7 @@ class ClaudeCliModel:
     ) -> tuple[dict[str, Any], CallStats]:
         started = time.perf_counter()
         proc = model_proc.run_model_process(
-            self.argv(schema),
+            [*self.command_prefix, *self.argv(schema)],
             stdin_text=prompt,
             timeout=self.timeout,
             cancelled=self.cancelled or never_cancelled,

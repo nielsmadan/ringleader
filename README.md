@@ -221,7 +221,8 @@ drives an already-installed agent CLI one-shot (`claude`, then `codex`), reusing
 auth. `rl config set ai <claude|codex|llm>` pins a choice; the `llm` engine calls a provider API
 directly with your own key and is not a dependency. With nothing available, both verbs are clean
 no-ops and classifying stays a manual step in the triage skill. Enrich defaults to `haiku` on the
-`claude` engine; change it with `rl config set enrich.model <name>` (`default` restores `haiku`).
+`claude` engine; change it with `rl config set enrich.model <name>` (`default` restores `haiku`). If that CLI gets its
+credentials from a shell wrapper, `rl config set ai.command_prefix sops-exec` launches it through one.
 
 ## Documentation
 

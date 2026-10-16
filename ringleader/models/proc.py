@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import shutil
 import signal
 import subprocess
 import tempfile
@@ -26,6 +27,10 @@ class ProcessResult:
     returncode: int
     stdout: str
     stderr: str
+
+
+def launchable(command_prefix: Sequence[str]) -> bool:
+    return not command_prefix or shutil.which(command_prefix[0]) is not None
 
 
 def neutral_cwd() -> Path:

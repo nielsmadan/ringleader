@@ -23,6 +23,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ringleader import enrichment, overview, paths, registry
+from ringleader.config import load_config
 from ringleader.models import (
     CALL_TIMEOUT_SECONDS,
     ClaudeCliModel,
@@ -155,12 +156,17 @@ def parse_splits(text: str) -> tuple[str, ...]:
     return tuple(name for name in SPLITS if name in names)
 
 
-def build_model(candidate: Candidate, timeout: float) -> Model:
-    if candidate.engine == "claude":
-        return ClaudeCliModel(model=candidate.model, timeout=timeout)
-    if candidate.engine == "codex":
-        return CodexCliModel(model=candidate.model, timeout=timeout)
-    return LlmModel(model=candidate.model)
+def model_builder(command_prefix: Sequence[str]) -> ModelFactory:
+    prefix = tuple(command_prefix)
+
+    def build(candidate: Candidate, timeout: float) -> Model:
+        if candidate.engine == "claude":
+            return ClaudeCliModel(model=candidate.model, timeout=timeout, command_prefix=prefix)
+        if candidate.engine == "codex":
+            return CodexCliModel(model=candidate.model, timeout=timeout, command_prefix=prefix)
+        return LlmModel(model=candidate.model)
+
+    return build
 
 
 def sha(text: str) -> str:
@@ -1302,11 +1308,12 @@ def print_progress(phase: str, done: int, total: int) -> None:
 def main(
     argv: Sequence[str] | None = None,
     *,
-    make_model: ModelFactory = build_model,
+    make_model: ModelFactory | None = None,
     read_tail: TailReader = enrichment.session_tail,
     now: datetime | None = None,
 ) -> int:
     args = parse_args(argv)
+    make_model = make_model or model_builder(load_config().ai_command_prefix)
     work: Path = args.work
     work.mkdir(parents=True, exist_ok=True)
     moment = now or datetime.now(UTC)

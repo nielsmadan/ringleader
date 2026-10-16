@@ -59,6 +59,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
     assert data == {
         "ai": "llm",
         "model": None,
+        "ai_command_prefix": [],
         "enrich_model": None,
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
@@ -225,3 +226,23 @@ def test_config_show_describes_the_resolved_model_per_task(tmp_path):
 
     assert "enrich model: claude (haiku)" in out
     assert "harvest model: claude (default model)" in out
+
+
+def test_config_set_ai_command_prefix_splits_and_none_clears(tmp_path):
+    env = _env(tmp_path)
+
+    assert _run("config", "set", "ai.command_prefix", "env 'A=b c'", env=env).returncode == 0
+    shown = _run("config", "show", env=env).stdout
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert "ai.command_prefix: env 'A=b c'" in shown
+    assert data["ai_command_prefix"] == ["env", "A=b c"]
+
+    assert _run("config", "set", "ai.command_prefix", "none", env=env).returncode == 0
+    assert "ai.command_prefix: none" in _run("config", "show", env=env).stdout
+
+
+def test_config_set_ai_command_prefix_rejects_unbalanced_quotes(tmp_path):
+    r = _run("config", "set", "ai.command_prefix", "sops-exec 'x", env=_env(tmp_path))
+
+    assert r.returncode == 2
+    assert "rl config set ai.command_prefix: No closing quotation" in r.stderr

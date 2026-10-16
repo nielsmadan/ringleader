@@ -26,6 +26,15 @@ def test_config_instances_do_not_share_the_filter_list():
     assert b.session_filters == []
 
 
+def test_ai_command_prefix_roundtrips(tmp_path):
+    from ringleader.config import Config, load_config, save_config
+
+    p = tmp_path / "c.json"
+    assert load_config(p).ai_command_prefix == []
+    save_config(Config(ai_command_prefix=["sops-exec"]), p)
+    assert load_config(p).ai_command_prefix == ["sops-exec"]
+
+
 def test_enrich_model_roundtrips(tmp_path):
     from ringleader.config import Config, load_config, save_config
 

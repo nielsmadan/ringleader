@@ -11,6 +11,7 @@ from .paths import config_path
 class Config:
     ai: str | None = None
     model: str | None = None
+    ai_command_prefix: list[str] = field(default_factory=list)
     enrich_model: str | None = None
     llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
@@ -29,6 +30,7 @@ def load_config(path: Path | None = None) -> Config:
     return Config(
         ai=ai,
         model=data.get("model"),
+        ai_command_prefix=list(data.get("ai_command_prefix", [])),
         enrich_model=data.get("enrich_model"),
         llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),

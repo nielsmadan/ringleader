@@ -390,3 +390,47 @@ def test_codex_call_is_ephemeral_without_stdin(monkeypatch):
     assert "--output-schema" not in CodexCliModel().argv(SCHEMA)
     assert seen["stdin_text"] is None
     assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (None, None, None)
+
+
+@pytest.mark.parametrize("cls", [ClaudeCliModel, CodexCliModel])
+def test_cli_adapters_launch_through_the_command_prefix(monkeypatch, cls):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "hi"}), stderr="")
+
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", fake_run)
+    cls(command_prefix=("sops-exec", "--quiet")).complete_json("p", SCHEMA)
+
+    assert seen["cmd"][:3] == ["sops-exec", "--quiet", cls().name]
+
+
+@pytest.mark.parametrize("cls", [ClaudeCliModel, CodexCliModel])
+def test_cli_adapter_needs_the_prefix_binary_on_path(monkeypatch, cls):
+    binary = cls().name
+    monkeypatch.setattr(
+        "ringleader.models.claude_cli.shutil.which",
+        lambda n: f"/bin/{n}" if n == binary else None,
+    )
+
+    assert cls().available() is True
+    assert cls(command_prefix=("sops-exec",)).available() is False
+
+
+def test_active_model_launches_through_the_configured_prefix(monkeypatch):
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: f"/bin/{n}")
+    cfg = _cfg(ai_command_prefix=["sops-exec"])
+
+    assert models.active_model(cfg, "enrich") == ClaudeCliModel(
+        model="haiku", timeout=120.0, command_prefix=("sops-exec",)
+    )
+    assert models.active_model(_cfg(ai="codex", ai_command_prefix=["sops-exec"])) == (
+        CodexCliModel(timeout=300.0, command_prefix=("sops-exec",))
+    )
+
+
+def test_describe_names_the_command_prefix():
+    model = ClaudeCliModel(model="haiku", command_prefix=("env", "A=b c"))
+
+    assert models.describe(model) == "claude (haiku) via env 'A=b c'"

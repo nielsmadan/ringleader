@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import shlex
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
@@ -54,23 +55,30 @@ def active_model(cfg: Config, task: ModelTask = "harvest") -> Model | None:
         )
         return llm_model if llm_model.available() else None
     timeout = CALL_TIMEOUT_SECONDS[task]
+    prefix = tuple(getattr(cfg, "ai_command_prefix", ()))
     if engine in ("claude", "codex"):
         factories: dict[str, ModelFactory] = {
             "claude": ClaudeCliModel,
             "codex": CodexCliModel,
         }
-        cli_model = factories[engine](model=model_name_for(cfg, engine, task), timeout=timeout)
+        cli_model = factories[engine](
+            model=model_name_for(cfg, engine, task), timeout=timeout, command_prefix=prefix
+        )
         return cli_model if cli_model.available() else None
     # unset -> auto-pick first available agent CLI
     for cls in MODELS:
-        candidate = cls(model=model_name_for(cfg, cls().name, task), timeout=timeout)
+        candidate = cls(
+            model=model_name_for(cfg, cls().name, task), timeout=timeout, command_prefix=prefix
+        )
         if candidate.available():
             return candidate
     return None
 
 
 def describe(model: Model) -> str:
-    return f"{model.name} ({getattr(model, 'model', None) or 'default model'})"
+    label = f"{model.name} ({getattr(model, 'model', None) or 'default model'})"
+    prefix = getattr(model, "command_prefix", ())
+    return f"{label} via {shlex.join(prefix)}" if prefix else label
 
 
 def with_cancel(model: Model, cancelled: CancelCheck) -> Model:

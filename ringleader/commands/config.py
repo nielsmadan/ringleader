@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import sys
 from collections.abc import Callable
 
@@ -28,6 +29,7 @@ def _show() -> int:
     cfg = load_config()
     print(f"ai: {cfg.ai}")
     print(f"model: {cfg.model}")
+    print(f"ai.command_prefix: {shlex.join(cfg.ai_command_prefix) or 'none'}")
     print(f"enrich.model: {cfg.enrich_model or 'default'}")
     print(f"llm.provider: {cfg.llm_provider}")
     print(f"archive.retention_days: {cfg.archive_retention_days}")
@@ -57,6 +59,13 @@ def _set(args: list[str]) -> int:
         cfg.ai = value
     elif key == "model":
         cfg.model = value
+    elif key == "ai.command_prefix":
+        try:
+            words = shlex.split(value)
+        except ValueError as e:
+            print(f"rl config set ai.command_prefix: {e}", file=sys.stderr)
+            return 2
+        cfg.ai_command_prefix = [] if words == ["none"] else words
     elif key == "enrich.model":
         cfg.enrich_model = None if value == "default" else value
     elif key == "llm.provider":

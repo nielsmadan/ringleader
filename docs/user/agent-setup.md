@@ -97,11 +97,17 @@ default it drives an already-installed agent CLI one-shot, reusing that CLI's ow
 rl config show                     # engine, model, and the resolved active model
 rl config set ai claude            # pin one: claude | codex | llm
 rl config set model <name>
+rl config set ai.command_prefix sops-exec   # launch claude/codex through a wrapper; none clears it
 ```
 
 Auto-pick order is `claude`, then `codex`. The `llm` engine calls a provider API directly via
 the [`llm`](https://llm.datasette.io/) library with your own key — it is **not** a dependency,
 so `pip install llm` first; `rl config set ai llm` reports the install hint if it's missing.
+
+`ai.command_prefix` is for an agent CLI whose credentials come from a shell function or alias
+rather than its own login: `rl` starts the binary off `PATH`, so a wrapper that only your
+interactive shell applies never runs. The prefix is the executable that does the same job. It
+stays empty by default, and an engine whose prefix is not on `PATH` counts as unavailable.
 
 With no engine available, `enrich` and `harvest` are clean no-ops and classifying by hand inside
 the triage skill remains the way to do it.

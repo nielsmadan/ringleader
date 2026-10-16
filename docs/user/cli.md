@@ -167,6 +167,7 @@ to the explicit presence command or onboarding skill.
 |---|---|
 | `ai` | `claude` \| `codex` \| `llm` — engine for `enrich`/`harvest` |
 | `model` | model name for the chosen engine |
+| `ai.command_prefix` | command the `claude`/`codex` engines launch through, shell-split (`sops-exec`); `none` clears it |
 | `enrich.model` | model for `enrich`; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
 | `archive.retention_days` | non-negative int; `0` = keep archives forever |

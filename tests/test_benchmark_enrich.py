@@ -643,3 +643,13 @@ def test_main_reuses_an_existing_sample(tmp_path, capsys):
 
     assert (work / "sample.json").read_text(encoding="utf-8") == first
     assert len(json.loads((work / "registry.json").read_text(encoding="utf-8"))["threads"]) == 11
+
+
+def test_model_builder_launches_cli_candidates_through_the_prefix():
+    build = bench.model_builder(["sops-exec"])
+
+    claude = build(bench.Candidate("claude", "haiku"), 30.0)
+    codex = build(bench.Candidate("codex", None), 30.0)
+
+    assert (claude.command_prefix, codex.command_prefix) == (("sops-exec",), ("sops-exec",))
+    assert (claude.model, claude.timeout) == ("haiku", 30.0)

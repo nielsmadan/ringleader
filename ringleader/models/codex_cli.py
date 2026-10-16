@@ -47,12 +47,17 @@ class CodexCliModel:
     model: str | None = None
     timeout: float | None = None
     cancelled: CancelCheck | None = None
+    command_prefix: tuple[str, ...] = ()
 
     def available(self) -> bool:
         # shutil is a single shared module object across backends, so compare the
         # resolved binary's basename rather than just truthiness of shutil.which.
         path = shutil.which("codex")
-        return path is not None and Path(path).name == "codex"
+        return (
+            path is not None
+            and Path(path).name == "codex"
+            and model_proc.launchable(self.command_prefix)
+        )
 
     def argv(self, schema: dict[str, Any]) -> list[str]:
         # --skip-git-repo-check: cwd isn't guaranteed to be a git repo.
@@ -80,7 +85,7 @@ class CodexCliModel:
             sf = Path(td) / "schema.json"
             sf.write_text(json.dumps(wire_schema), encoding="utf-8")
             proc = model_proc.run_model_process(
-                [*self.argv(schema), "--output-schema", str(sf), prompt],
+                [*self.command_prefix, *self.argv(schema), "--output-schema", str(sf), prompt],
                 stdin_text=None,
                 timeout=self.timeout,
                 cancelled=self.cancelled or never_cancelled,
