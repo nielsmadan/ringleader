@@ -28,7 +28,8 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
   when an agent ships, not when we refactor.
   [Cass comparison](reference/coding-agent-session-search.md) covers overlap with an external
   session-search tool and possible complementary uses.
-- [tests/](tests/picker/README.md): repeatable manual measurements and recorded baselines.
+- tests/: repeatable manual measurements and recorded baselines — the
+  [picker](tests/picker/README.md) and the [enrich model benchmark](tests/enrich/README.md).
 
 ## Layering
 

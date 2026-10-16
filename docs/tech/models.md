@@ -42,6 +42,20 @@ else the engine default in `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`, others
 CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s). `describe()` renders
 the choice, and `with_cancel()` returns a copy of a CLI adapter bound to a cancel check.
 
+### Enrich classification
+
+`enrichment.classify` sends `enrich_prompt(thread, tail)` with `ENRICH_SCHEMA`. The prompt is the
+project, branch, last prompt and message count, followed by the last `TAIL_CHARS` (6,000)
+characters of the rendered transcript. `parse_classification` then accepts only one of
+`STATUSES` and non-empty `whatItIs`/`suggestedName`. `ESTIMATED_SECONDS_PER_CALL` (claude 8 s,
+codex 15 s, llm 5 s) sizes the roundup's enrich warning.
+
+The defaults are **provisional**: `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`), `TAIL_CHARS`
+and `ESTIMATED_SECONDS_PER_CALL` stay as they are until the Claude legs of the
+[enrich benchmark](../tests/enrich/README.md) run. A nested `claude -p` cannot authenticate in
+the sandboxed session that built the harness. The benchmark's bar decides the defaults: on
+held-out labelled sessions, status ≥ 90 % and a mean field pass rate ≥ 90 %.
+
 Returning `None` rather than raising is what makes the no-model path a clean no-op: `enrich` and
 `harvest` check for `None` and report that nothing was configured, leaving classification to the
 triage skill.
@@ -54,6 +68,7 @@ what a run would actually use.
 - `models/__init__.py` — `MODELS` (the auto-pick order) and `active_model()`.
 - `models/base.py` — `Model`, `ModelError`, `CallStats`, `ModelTask`.
 - `models/proc.py` — `run_model_process` (the one place a model CLI is spawned) and `kill_all_children`.
+- `enrichment.py` — `enrich_prompt`, `TAIL_CHARS`, `ESTIMATED_SECONDS_PER_CALL`; `scripts/benchmark_enrich.py` measures them.
 - `commands/config.py` — `_VALID_ENGINES = ("claude", "codex", "llm")`.
 
 ## Gotchas
@@ -86,3 +101,4 @@ authenticated agent CLIs sitting on `PATH`.
 
 - [0009: reuse agent CLI auth](../decisions/0009-reuse-agent-cli-auth-and-store-no-secrets.md)
 - [features/harvest-and-publish.md](../features/harvest-and-publish.md)
+- [tests/enrich/](../tests/enrich/README.md) — the enrich model benchmark and its runs
