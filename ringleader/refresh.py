@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from . import registry, scanner
 from .config import load_config
 from .gitinfo import GitProject
-from .sources.base import Source
+from .sources.base import RawRef, Source, in_workspace
 from .sources.claude_code import ClaudeCodeSource
 
 
@@ -80,32 +81,125 @@ def refresh_registry(  # noqa: PLR0913
         claude_projects_dir = projects_root
     reg = registry.load_registry(registry_path)
     before = {registry.identity(t) for t in reg["threads"]}
-    unavailable_sources: set[str] = set()
-    if sources is None:
-        if claude_projects_dir is not None:
-            sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
-        else:
-            sources = scanner.active_sources(
-                unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
-            )
-    scanned = scanner.scan(
+    if sources is None and claude_projects_dir is not None:
+        sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
+    reg, unavailable_sources = _refresh(
+        reg,
+        registry_path,
+        now_iso,
         sources=sources,
+        git_resolver=git_resolver,
+        name_filters=name_filters,
+        persist=persist,
+    )
+    after = {registry.identity(t) for t in reg["threads"]}
+    return Refreshed(reg, delta_note(len(after - before), len(before - after)), unavailable_sources)
+
+
+def scoped_refresh(  # noqa: PLR0913
+    registry_path: str | Path,
+    now_iso: str,
+    *,
+    cwd: str | None,
+    recursive: bool,
+    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    sources: Iterable[Source] | None = None,
+    name_filters: Iterable[str] | None = None,
+    persist: bool = True,
+) -> tuple[dict[str, Any], bool]:
+    """Rescan only what can hold a session in `cwd` (anywhere, with none) changed since each
+    source's last full scan, and fold it in without tombstoning the rest. A source never
+    scanned in full is discovered whole, and a registry with no baseline at all gets the
+    full scan instead. Returns the registry and whether that full scan ran."""
+    reg = registry.load_registry(registry_path)
+    baselines = {
+        name: datetime.fromisoformat(at) for name, at in (reg.get("sourcesScannedAt") or {}).items()
+    }
+    if not baselines:
+        full = auto_refresh(
+            registry_path,
+            now_iso,
+            git_resolver=git_resolver,
+            sources=sources,
+            name_filters=name_filters,
+            persist=persist,
+        )
+        return full[0], True
+    known = _known_files(reg["threads"], cwd, recursive=recursive)
+
+    def refs_of(src: Source) -> Iterable[RawRef]:
+        since = baselines.get(src.name)
+        if since is None:
+            return src.discover()
+        return scanner.scoped_refs(
+            src, cwd, recursive=recursive, since=since, known=known.get(src.name, frozenset())
+        )
+
+    scoped, _ = _refresh(
+        reg,
+        registry_path,
+        now_iso,
+        sources=sources,
+        git_resolver=git_resolver,
+        name_filters=name_filters,
+        persist=persist,
+        refs_of=refs_of,
+    )
+    return scoped, False
+
+
+def _known_files(
+    threads: Iterable[dict[str, Any]], cwd: str | None, *, recursive: bool
+) -> dict[str, frozenset[str]]:
+    by_source: dict[str, set[str]] = {}
+    for t in threads:
+        if t.get("file") and in_workspace(t.get("project"), cwd, recursive=recursive):
+            by_source.setdefault(t.get("source") or "claude-code", set()).add(t["file"])
+    return {name: frozenset(files) for name, files in by_source.items()}
+
+
+def _refresh(  # noqa: PLR0913 -- one keyword per stage of the pipeline both refreshes share
+    reg: dict[str, Any],
+    registry_path: str | Path,
+    now_iso: str,
+    *,
+    sources: Iterable[Source] | None,
+    git_resolver: Callable[[str | None], GitProject | None] | None,
+    name_filters: Iterable[str] | None,
+    persist: bool,
+    refs_of: Callable[[Source], Iterable[RawRef]] | None = None,
+) -> tuple[dict[str, Any], frozenset[str]]:
+    """Scan, reconcile, filter and persist. `refs_of` narrows each source's discovery,
+    which makes the scan partial: what it skipped is kept, and cached sessions keep their
+    git identity rather than costing a git call per cwd."""
+    partial = refs_of is not None
+    unavailable_sources: set[str] = set()
+    active = (
+        list(sources)
+        if sources is not None
+        else scanner.active_sources(
+            unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
+        )
+    )
+    scanned = scanner.scan(
+        sources=active,
         git_resolver=git_resolver,
         cached_threads=reg["threads"],
         unavailable_sources=unavailable_sources,
+        refs_of=refs_of,
+        resolve_cached_git=not partial,
     )
     reg = registry.reconcile(
         reg,
         scanned,
         now_iso,
         unavailable_sources=unavailable_sources,
+        partial=partial,
+        scanned_sources=[src.name for src in active],
     )
-    if name_filters is None:
-        name_filters = load_config().session_filters
-    registry.apply_name_filters(reg, name_filters)
+    registry.apply_name_filters(
+        reg, load_config().session_filters if name_filters is None else name_filters
+    )
     if persist:
         registry.commit_registry(registry_path, reg)
-    after = {registry.identity(t) for t in reg["threads"]}
-    return Refreshed(
-        reg, delta_note(len(after - before), len(before - after)), frozenset(unavailable_sources)
-    )
+    return reg, frozenset(unavailable_sources)

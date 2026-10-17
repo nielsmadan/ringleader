@@ -1,5 +1,6 @@
 from ringleader.registry import (
     apply_name_filters,
+    commit_registry,
     empty_registry,
     load_registry,
     reconcile,
@@ -29,6 +30,42 @@ def _meta(sid, mtime, project="/p", title=None, git_label=None):
 
 
 NOW = "2026-06-07T12:00:00+00:00"
+
+
+EARLIER = "2026-06-01T00:00:00+00:00"
+
+
+def test_a_scan_stamps_each_source_it_scanned():
+    reg = empty_registry() | {"sourcesScannedAt": {"pi": EARLIER}}
+    after = reconcile(reg, [], NOW, scanned_sources=["claude-code", "codex"])
+    assert after["sourcesScannedAt"] == {"pi": EARLIER, "claude-code": NOW, "codex": NOW}
+
+
+def test_an_unavailable_source_keeps_its_own_baseline_while_the_rest_advance():
+    """What the missing source wrote meanwhile was not seen, so it is not yet a baseline."""
+    reg = empty_registry() | {"sourcesScannedAt": {"claude-code": EARLIER, "codex": EARLIER}}
+    after = reconcile(
+        reg, [], NOW, unavailable_sources={"codex"}, scanned_sources=["claude-code", "codex"]
+    )
+    assert after["sourcesScannedAt"] == {"claude-code": NOW, "codex": EARLIER}
+
+
+def test_a_partial_scan_moves_no_clock():
+    reg = empty_registry() | {"lastScan": EARLIER, "sourcesScannedAt": {"codex": EARLIER}}
+    after = reconcile(reg, [], NOW, partial=True, scanned_sources=["codex"])
+    assert (after["lastScan"], after["sourcesScannedAt"]) == (EARLIER, {"codex": EARLIER})
+
+
+def test_committing_a_scan_keeps_the_later_baseline_of_each_source(tmp_path):
+    path = tmp_path / "registry.json"
+    save_registry(path, empty_registry() | {"sourcesScannedAt": {"codex": EARLIER}})
+    snapshot = load_registry(path)
+    concurrent = load_registry(path)
+    commit_registry(path, reconcile(concurrent, [], NOW, scanned_sources=["codex"]))
+
+    commit_registry(path, reconcile(snapshot, [], NOW, scanned_sources=["claude-code"]))
+
+    assert load_registry(path)["sourcesScannedAt"] == {"codex": NOW, "claude-code": NOW}
 
 
 def test_reconcile_adds_new_threads_as_unclassified():

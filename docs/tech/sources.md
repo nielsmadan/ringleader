@@ -61,6 +61,7 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 | `PickerShowingSource` | `shows_in_picker` | `show_in_picker()` |
 | `WorkspaceRelocatingSource` | `relocates_workspace` | `storage_for()`, `relocate_storage()`, `relocate_session()` |
 | `WorkspaceRebindingSource` | `rebinds_workspace` | `rebind_workspace()` |
+| `ScopedDiscoverySource` | `discovers_scoped` | `discover_scoped()` — one workspace's sessions plus the registry's known in-scope files, changed since a time, without discovering everything |
 | `SessionLaunchingSource` | `launches_sessions` | `resume_argv()`, `fork_argv()`, `launch_argv()` |
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.

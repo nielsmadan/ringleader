@@ -1,11 +1,13 @@
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 from ringleader import registry
-from ringleader.scanner import scan
-from ringleader.sources.base import NormalizedSession
+from ringleader.gitinfo import GitProject
+from ringleader.scanner import scan, scoped_refs
+from ringleader.sources.base import NormalizedSession, RawRef
 from ringleader.sources.claude_code import ClaudeCodeSource
 
 
@@ -187,3 +189,48 @@ def test_source_by_name():
 
     assert scanner.source_by_name("codex").name == "codex"
     assert scanner.source_by_name("nope") is None
+
+
+def test_scoped_refs_filters_a_source_without_narrow_discovery_on_mtime():
+    refs = [
+        RawRef(source="fake", file=f"/s/{name}.jsonl", mtime=mtime, size_bytes=1)
+        for name, mtime in (
+            ("old", "2026-07-01T00:00:00+00:00"),
+            ("new", "2026-07-03T00:00:00+00:00"),
+        )
+    ]
+    source = SimpleNamespace(name="fake", capabilities=frozenset(), discover=lambda: iter(refs))
+    since = datetime(2026, 7, 2, tzinfo=UTC)
+
+    found = scoped_refs(source, "/Users/me/proj", recursive=False, since=since, known=frozenset())
+    assert [r.file for r in found] == ["/s/new.jsonl"]
+
+
+def _labelled(cwd: str) -> GitProject:
+    return GitProject(root=cwd, remote=None, key=cwd, label=Path(cwd).name)
+
+
+def test_a_scan_that_spares_cached_git_still_resolves_sessions_it_parses(tmp_path):
+    _session(tmp_path / "-Users-me-proj", "s1", "/Users/me/proj")
+    source = ClaudeCodeSource(projects_dir=tmp_path)
+    reg = registry.reconcile(
+        registry.empty_registry(), scan(sources=[source], git_resolver=_labelled), "now"
+    )
+    _session(tmp_path / "-Users-me-other", "s2", "/Users/me/other")
+    resolved: list[str] = []
+
+    def resolver(cwd: str) -> GitProject | None:
+        resolved.append(cwd)
+        return GitProject(root=cwd, remote=None, key=cwd, label="fresh")
+
+    again = scan(
+        sources=[source],
+        git_resolver=resolver,
+        cached_threads=reg["threads"],
+        resolve_cached_git=False,
+    )
+    assert sorted((s.cwd, s.git_project_label) for s in again) == [
+        ("/Users/me/other", "fresh"),
+        ("/Users/me/proj", "proj"),
+    ]
+    assert resolved == ["/Users/me/other"]

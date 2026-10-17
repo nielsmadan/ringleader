@@ -1,4 +1,6 @@
 import json
+import os
+from datetime import UTC, datetime
 from itertools import zip_longest
 from pathlib import Path
 
@@ -7,6 +9,7 @@ from ringleader.sources.base import (
     NameApplyingSource,
     PickerHidingSource,
     RawRef,
+    ScopedDiscoverySource,
     SessionLaunchingSource,
     Source,
     WorkspaceRebindingSource,
@@ -87,10 +90,12 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, PickerHidingSource)
     assert isinstance(src, WorkspaceRebindingSource)
     assert isinstance(src, SessionLaunchingSource)
+    assert isinstance(src, ScopedDiscoverySource)
     assert src.name == "codex"
     assert src.capabilities == frozenset(
         {
             "applies_names",
+            "discovers_scoped",
             "filesystem_lifecycle",
             "hides_from_picker",
             "shows_in_picker",
@@ -98,6 +103,40 @@ def test_source_satisfies_protocol(tmp_path):
             "launches_sessions",
         }
     )
+
+
+LAST_SCAN = datetime(2026, 7, 1, tzinfo=UTC)
+BEFORE_LAST_SCAN = LAST_SCAN.timestamp() - 1
+
+
+def _scoped(src: CodexSource, cwd: str | None, known: frozenset[str] = frozenset()) -> list:
+    refs = src.discover_scoped(cwd, recursive=False, since=LAST_SCAN, known=known)
+    return [r.source_ref for r in refs]
+
+
+def test_scoped_discovery_skips_rollouts_unchanged_since_the_last_scan(tmp_path):
+    day = tmp_path / "2026" / "07" / "28"
+    stale = _rollout(day, "old", "/Users/me/proj", ["before"])
+    _rollout(day, "new", "/Users/me/proj", ["after"])
+    os.utime(stale, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
+
+    assert _scoped(CodexSource(sessions_dir=tmp_path), None) == ["new"]
+
+
+def test_scoped_discovery_skips_rollouts_recorded_in_another_workspace(tmp_path):
+    day = tmp_path / "2026" / "07" / "28"
+    _rollout(day, "here", "/Users/me/proj", ["mine"])
+    _rollout(day, "there", "/Users/me/other", ["theirs"])
+
+    assert _scoped(CodexSource(sessions_dir=tmp_path), "/Users/me/proj") == ["here"]
+
+
+def test_scoped_discovery_keeps_a_known_rollout_whose_recorded_cwd_moved(tmp_path):
+    """`rl workspace move` rewrites Codex's state db, never the cwd baked into the rollout."""
+    moved = _rollout(tmp_path / "2026" / "07" / "28", "moved", "/Users/me/old", ["hi"])
+    source = CodexSource(sessions_dir=tmp_path)
+
+    assert _scoped(source, "/Users/me/proj", known=frozenset({str(moved)})) == ["moved"]
 
 
 def test_discover_finds_rollouts(tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import Enum
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -38,6 +39,43 @@ def append_jsonl_line(path: Path, line: str) -> None:
             lead = b"" if fh.read(1) == b"\n" else b"\n"
     with path.open("ab") as fh:
         fh.write(lead + line.encode("utf-8") + b"\n")
+
+
+def in_workspace(project: str | None, cwd: str | None, *, recursive: bool) -> bool:
+    """Whether a session recorded at `project` belongs to `cwd` (or lies under it, with
+    `recursive`; anywhere, with no `cwd`)."""
+    if cwd is None:
+        return True
+    if not project:
+        return False
+    project, root = project.rstrip("/"), cwd.rstrip("/")
+    return project == root or (recursive and project.startswith(root + "/"))
+
+
+def workspace_dirs(root: Path, name: str | None, *, recursive: bool) -> list[Path]:
+    """`name`'s storage dir, plus — with `recursive` — every dir whose name extends it,
+    which over-matches siblings sharing a prefix; the caller filters on the parsed cwd.
+    No `name` means every workspace."""
+    if not root.is_dir():
+        return []
+    return sorted(
+        d
+        for d in root.iterdir()
+        if d.is_dir()
+        and (name is None or d.name == name or (recursive and d.name.startswith(name + "-")))
+    )
+
+
+def changed_since(path: Path, since: datetime) -> bool:
+    try:
+        mtime = path.stat().st_mtime
+    except OSError:
+        return True  # let discovery report it rather than drop it silently
+    return datetime.fromtimestamp(mtime, tz=UTC) >= since
+
+
+def existing_files(paths: frozenset[str]) -> set[Path]:
+    return {Path(p) for p in paths if Path(p).is_file()}
 
 
 @dataclass(frozen=True)
@@ -158,6 +196,19 @@ class WorkspaceRelocatingSource(Source, Protocol):
     def storage_for(self, cwd: str) -> Path: ...
     def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]: ...
     def relocate_session(self, file_path: str, new_cwd: str) -> str: ...
+
+
+@runtime_checkable
+class ScopedDiscoverySource(Source, Protocol):
+    """A source that can find what changed in one workspace without discovering every
+    session it holds. The refs cover the sessions launched at `cwd` (or under it, with
+    `recursive`; anywhere, with no `cwd`) plus the files in `known` — the registry's own
+    in-scope transcripts, which a drifted or relocated session is not filed by — that
+    changed after `since`. Extra refs are fine: the caller filters on the parsed project."""
+
+    def discover_scoped(
+        self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
+    ) -> Iterator[RawRef]: ...
 
 
 @runtime_checkable

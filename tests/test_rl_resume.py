@@ -15,6 +15,7 @@ from ringleader.portability.model import Identity
 from ringleader.portability.native_resume import ConversionFailure, NativeResume
 from ringleader.presence import PresenceUnavailable
 from ringleader.resume import Scope
+from ringleader.sources.claude_code import ClaudeCodeSource
 
 TURNS = [
     {"type": "user", "message": {"role": "user", "content": "fix the login bug"}},
@@ -95,6 +96,25 @@ class Rescanner:
         return json.loads(Path(registry_path).read_text(encoding="utf-8")), None
 
 
+class Rescoper:
+    """Stands in for `refresh.scoped_refresh`: `threads` is what the scope rescan finds, and
+    `full` whether it had to scan everything to find it."""
+
+    def __init__(self, threads: list[dict] | None = None, *, full: bool = False) -> None:
+        self.threads = threads
+        self.full = full
+        self.calls: list[tuple[str, str, Scope]] = []
+
+    def __call__(self, registry_path, now_iso, cwd, scope) -> tuple[dict, bool]:
+        self.calls.append((registry_path, cwd, scope))
+        if self.threads is not None:
+            _rewrite(registry_path, self.threads)
+        return json.loads(Path(registry_path).read_text(encoding="utf-8")), self.full
+
+
+UNSTUBBED = object()  # leaves cmd_resume its own scoped refresh
+
+
 def installed(binary: str) -> str:
     return f"/opt/bin/{binary}"
 
@@ -103,13 +123,16 @@ def missing(binary: str) -> None:
     return None
 
 
-def _run(argv, *, runner=None, picker=None, which=installed, refresher=None, presence=None) -> int:
+def _run(  # noqa: PLR0913 -- one keyword per seam cmd_resume exposes
+    argv, *, runner=None, picker=None, which=installed, refresher=None, scoper=None, presence=None
+) -> int:
     return resume_cmd.cmd_resume(
         argv,
         runner=runner or Runner(),
         picker=picker or Picker(),
         which=which,
         refresher=refresher or Rescanner(),
+        scoper=None if scoper is UNSTUBBED else (scoper or Rescoper()),
         presence=presence or frozenset,
     )
 
@@ -924,6 +947,88 @@ def test_last_resumes_the_most_recent_session_without_opening_the_picker(tmp_pat
     assert _run(["--last", "--registry", reg], runner=runner, picker=picker) == 0
     assert runner.argv == ("claude", "--resume", "bbb222")
     assert picker.calls == []
+
+
+def test_last_rescans_its_scope_before_choosing(tmp_path, monkeypatch):
+    known = _session(tmp_path, "aaa111", source="droid", mtime="2026-09-01T00:00:00+00:00")
+    just_left = _session(tmp_path, "bbb222", mtime="2026-09-20T00:00:00+00:00")
+    reg = _registry(tmp_path, known)
+    runner, rescope, rescan = Runner(), Rescoper([known, just_left]), Rescanner()
+    here = tmp_path / "work" / "api"
+    monkeypatch.chdir(here)
+
+    assert _run(["--last", "--registry", reg], runner=runner, scoper=rescope, refresher=rescan) == 0
+    assert runner.argv == ("claude", "--resume", "bbb222")
+    assert rescope.calls == [(reg, str(here), Scope.CWD)]
+    assert rescan.calls == []
+
+
+def test_last_refuses_without_a_second_scan_when_its_rescan_was_already_full(
+    tmp_path, monkeypatch, capsys
+):
+    reg = _registry(tmp_path)
+    rescope, rescan = Rescoper([], full=True), Rescanner()
+    (tmp_path / "work").mkdir()
+    monkeypatch.chdir(tmp_path / "work")
+
+    assert _run(["--last", "--registry", reg], scoper=rescope, refresher=rescan) == 1
+    assert "even after a fresh scan" in capsys.readouterr().err
+    assert rescan.calls == []
+
+
+def test_last_finds_the_session_just_left_before_the_registry_has_seen_it(tmp_path, monkeypatch):
+    """A droid session, then a claude one, in the same directory, then --last before
+    anything had rescanned: it resumed the droid session, the newest the registry knew."""
+    here = tmp_path / "work" / "api"
+    droid = _session(tmp_path, "aaa111", source="droid", project=here)
+    store = ClaudeCodeSource().storage_for(str(here))
+    store.mkdir(parents=True)
+    record = {
+        "sessionId": "bbb222",
+        "cwd": str(here),
+        "type": "user",
+        "message": TURNS[0]["message"],
+    }
+    (store / "bbb222.jsonl").write_text(json.dumps(record) + "\n", encoding="utf-8")
+    reg = _registry(tmp_path, droid)
+    scanned = json.loads(Path(reg).read_text(encoding="utf-8")) | {
+        "sourcesScannedAt": {"claude-code": "2026-09-02T00:00:00+00:00"}
+    }
+    Path(reg).write_text(json.dumps(scanned), encoding="utf-8")
+    runner, rescan = Runner(), Rescanner()
+    monkeypatch.chdir(here)
+
+    rc = _run(["--last", "--registry", reg], runner=runner, refresher=rescan, scoper=UNSTUBBED)
+    assert rc == 0
+    assert runner.argv == ("claude", "--resume", "bbb222")
+    assert rescan.calls == []
+
+
+@pytest.mark.parametrize(
+    ("flags", "rescanned"),
+    [
+        ([], ("here", False, True)),
+        (["--recursive"], ("here", True, True)),
+        (["--all"], (None, False, True)),
+        (["--dry-run"], ("here", False, False)),
+    ],
+)
+def test_last_rescans_the_scope_its_flags_name(tmp_path, monkeypatch, flags, rescanned):
+    here = tmp_path / "work" / "api"
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111", project=here))
+    calls = []
+
+    def fake_scoped_refresh(registry_path, now_iso, *, cwd, recursive, persist=True, **_kw):
+        calls.append((cwd, recursive, persist))
+        return resume_cmd.registry.load_registry(registry_path), False
+
+    monkeypatch.setattr(resume_cmd.refresh, "scoped_refresh", fake_scoped_refresh)
+    monkeypatch.chdir(here)
+
+    rc = _run(["--last", *flags, "--registry", reg], scoper=UNSTUBBED)
+    assert rc == 0
+    cwd, recursive, persist = rescanned
+    assert calls == [(str(here) if cwd else None, recursive, persist)]
 
 
 def test_last_re_enters_whichever_agent_the_session_belonged_to(tmp_path, monkeypatch):

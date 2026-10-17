@@ -103,7 +103,12 @@ because after `execvpe` there is no recovering:
 2. resolve the session — `--last` takes the newest candidate in scope, an exact id or an
    unambiguous prefix of at least four characters skips the picker, and anything else pre-fills
    it. Both non-interactive paths earn one scan on a miss, then refuse; neither falls back to the
-   picker
+   picker. `--last` also rescans its scope *before* choosing, through `refresh.scoped_refresh`
+   (see [scanning and refresh](scanning-and-refresh.md#refresh)): the session just left is the
+   likeliest answer and the one a registry scanned earlier lacks, while a full scan costs ~20s on
+   a large machine. The baseline is each source's entry in `sourcesScannedAt`, not `lastScan`,
+   because memory scans advance `lastScan` without looking at a session. An empty scope earns
+   a full scan only if the rescan was not already one
 3. resolve and verify the launch directory
 4. check the binary is on `PATH` — before the render, so a missing binary costs nothing
 5. **same agent**: select the source’s `resume_argv` or `fork_argv`. Resuming asks if presence
@@ -161,7 +166,7 @@ Cross-agent continuation therefore has two layers: `_native()`'s native conversi
 first; [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md) still governs the
 fallback itself.
 
-`runner`, `picker`, `which`, `refresher` and `presence` are all injectable, so no test execs,
+`runner`, `picker`, `which`, `refresher`, `scoper` and `presence` are all injectable, so no test execs,
 chdirs or prompts the test process.
 
 ## Key entry points

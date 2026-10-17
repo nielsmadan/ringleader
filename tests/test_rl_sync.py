@@ -211,3 +211,27 @@ def test_session_scan_omits_pending_threads_from_an_unavailable_source(
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"pendingCount": 0, "total": 1, "pending": []}
     assert [thread["sessionId"] for thread in json.loads(reg.read_text())["threads"]] == ["ses_1"]
+
+
+def test_session_refresh_stamps_each_source_no_later_than_its_scan_began(
+    tmp_path, monkeypatch, capsys
+):
+    """A transcript written mid-scan has an mtime after the scan began; stamping the end
+    instead would put it behind the baseline every later `rl resume --last` trusts."""
+    (tmp_path / "_claude").mkdir()
+    reg = tmp_path / "registry.json"
+    began: list[str] = []
+    real_scan = sync_mod.scanner.scan
+
+    def timed_scan(*args, **kwargs):
+        began.append(sync_mod._now())
+        time.sleep(0.01)
+        return real_scan(*args, **kwargs)
+
+    monkeypatch.setattr(sync_mod.scanner, "scan", timed_scan)
+
+    sync_mod.cmd_scan(SimpleNamespace(registry=str(reg), project=None))
+    capsys.readouterr()
+
+    stamps = json.loads(reg.read_text())["sourcesScannedAt"]
+    assert stamps["claude-code"] <= began[0]

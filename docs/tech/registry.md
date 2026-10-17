@@ -63,7 +63,8 @@ APIs release the lock on failure. `persist=False` refreshes create no file or lo
 | `conversionLineage` | authoritative operation-keyed source/target conversion and fork relations |
 | `memoryEntries` | the memory track's parallel working set |
 | `projectsCleanedAt` / `memoryProjectsCleanedAt` | per-project "last triaged" stamps |
-| `lastScan` / `lastRoundupAt` | staleness signals, used by `rl inbox` to decide whether to roundup |
+| `lastScan` / `lastRoundupAt` | staleness signals: `lastScan` feeds the overview's staleness banner (memory scans advance it too), `lastRoundupAt` is what `rl inbox` checks before a roundup |
+| `sourcesScannedAt` | per source, when a scan last discovered it in full; each source's baseline for a scoped scan (`rl resume --last`) |
 
 `archived` and `deleted` are deliberately separate lists: an archived transcript still exists
 and is restorable, a deleted one does not. Collapsing them would make `unarchive` unable to
@@ -125,7 +126,8 @@ cached parse for that source at once, which is the intended way to ship a parser
 
 ### Reconcile
 
-`reconcile(reg, scanned, now_iso)` is the one function that merges a scan into the registry:
+`reconcile(reg, scanned, now_iso, *, unavailable_sources, partial)` is the one function that merges
+a scan into the registry:
 
 1. Index existing threads by `(source, sessionId)`.
 2. For each scanned session: refresh the metadata group, conditionally refresh the git group,
@@ -133,9 +135,15 @@ cached parse for that source at once, which is the intended way to ship a parser
 3. **Skip any scanned session whose id is in `archived` but absent from `threads`** — an agent
    that wrote after we archived it recreated the transcript, and re-registering would undo the
    archive ([0005](../decisions/0005-archive-by-moving-not-deleting.md)).
-4. Threads not seen in the scan move to `deleted`, keeping their decision and harvest pointers.
+4. Threads not seen in the scan move to `deleted`, keeping their decision and harvest pointers —
+   unless their source was unavailable, or the scan was `partial` (it looked at only part of each
+   source, so not seeing a thread proves nothing). A partial scan moves no clock. Otherwise each
+   source the caller names in `scanned_sources` gets `now_iso` in `sourcesScannedAt` — except an
+   unavailable one, whose writes meanwhile went unseen.
 
-`now_iso` is passed in rather than read, so reconcile is deterministic and testable.
+`now_iso` is passed in rather than read, so reconcile is deterministic and testable. Callers must
+read it **before** discovery starts: it becomes each source's baseline, and a file written
+mid-scan with an earlier mtime would otherwise be skipped by every later scoped scan.
 
 ## Key entry points
 

@@ -4,7 +4,7 @@ import json
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from itertools import chain
@@ -12,7 +12,14 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from ..slug import droid_slug
-from .base import NormalizedSession, RawRef, stat_fingerprint
+from .base import (
+    NormalizedSession,
+    RawRef,
+    changed_since,
+    existing_files,
+    stat_fingerprint,
+    workspace_dirs,
+)
 
 _SIDECAR_SUFFIXES = (".settings.json", ".settings.json.bak")
 
@@ -125,6 +132,7 @@ class DroidSource:
         default_factory=lambda: frozenset(
             {
                 "companion_files",
+                "discovers_scoped",
                 "filesystem_lifecycle",
                 "relocates_workspace",
                 "launches_sessions",
@@ -181,10 +189,27 @@ class DroidSource:
 
     def discover(self) -> Iterator[RawRef]:
         if not self.sessions_dir.exists():
-            return
-        seen: set[str] = set()
+            return iter(())
         globs = chain(self.sessions_dir.glob("*.jsonl"), self.sessions_dir.glob("*/*.jsonl"))
-        for p in sorted(globs):
+        return self._refs(sorted(globs))
+
+    def discover_scoped(
+        self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
+    ) -> Iterator[RawRef]:
+        if not self.sessions_dir.exists():
+            return iter(())
+        name = self.storage_for(cwd).name if cwd is not None else None
+        dirs = workspace_dirs(self.sessions_dir, name, recursive=recursive)
+        files = {
+            *self.sessions_dir.glob("*.jsonl"),  # a top-level transcript names no workspace
+            *(p for d in dirs for p in d.glob("*.jsonl")),
+            *existing_files(known),
+        }
+        return self._refs(sorted(p for p in files if changed_since(p, since)))
+
+    def _refs(self, files: Iterable[Path]) -> Iterator[RawRef]:
+        seen: set[str] = set()
+        for p in files:
             if p.parent.name == "btw":
                 continue  # a btw fork is its own layout, never re-filed under a slug dir
             try:

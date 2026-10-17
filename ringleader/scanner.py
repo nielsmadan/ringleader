@@ -3,6 +3,7 @@ from __future__ import annotations
 import shutil
 import sys
 from collections.abc import Callable, Iterable
+from datetime import datetime
 from pathlib import Path
 from typing import Any, cast
 
@@ -16,6 +17,7 @@ from .sources.base import (
     PickerHidingSource,
     PickerShowingSource,
     RawRef,
+    ScopedDiscoverySource,
     Source,
     SourceUnavailableError,
     WorkspaceRebindingSource,
@@ -231,16 +233,17 @@ def rebind_workspace(thread: dict[str, Any], file_path: str, new_cwd: str) -> In
 
 def _load_session(
     src: Source, ref: RawRef, threads_by_ref: dict[tuple[str, str], dict[str, Any]]
-) -> NormalizedSession | None:
+) -> tuple[NormalizedSession | None, bool]:
     source_ref = ref.identity
     if not source_ref:
         print(f"skipped {ref.source} ref with no identity", file=sys.stderr)
-        return None
+        return None, False
     thread = threads_by_ref.get((ref.source, source_ref))
     if thread is None and ref.file:
         thread = threads_by_ref.get((ref.source, ref.file))
     parser_version = getattr(src, "parser_version", None)
     session = registry.cached_session(thread, ref, parser_version)
+    cached = session is not None
     if session is None:
         try:
             session = src.parse(ref)
@@ -251,13 +254,13 @@ def _load_session(
                 f"skipped {ref.file or f'{ref.source}:{source_ref}'}: {error}",
                 file=sys.stderr,
             )
-            return None
+            return None, False
         session.cache_version = parser_version
         session.file_fingerprint = ref.fingerprint
     elif isinstance(src, CachedMetadataSource):
         src.refresh_cached_metadata(session)
     session.source_ref = source_ref
-    return session
+    return session, cached
 
 
 def _attach_git(
@@ -280,12 +283,32 @@ def _attach_git(
     session.git_resolved = True
 
 
+def scoped_refs(
+    src: Source,
+    cwd: str | None,
+    *,
+    recursive: bool,
+    since: datetime,
+    known: frozenset[str],
+) -> Iterable[RawRef]:
+    """What may hold a session in `cwd` (anywhere, with none) changed after `since`: the
+    source's own narrow discovery where it has one, else everything it discovers,
+    filtered on mtime. `known` is the registry's in-scope files for this source."""
+    if supports(src, "discovers_scoped", ScopedDiscoverySource):
+        return cast(ScopedDiscoverySource, src).discover_scoped(
+            cwd, recursive=recursive, since=since, known=known
+        )
+    return (ref for ref in src.discover() if datetime.fromisoformat(ref.mtime) >= since)
+
+
 def scan(
     sources: Iterable[Source] | None = None,
     git_resolver: Callable[[str], GitProject | None] | None = None,
     cached_threads: Iterable[dict[str, Any]] | None = None,
     *,
     unavailable_sources: set[str] | None = None,
+    refs_of: Callable[[Source], Iterable[RawRef]] | None = None,
+    resolve_cached_git: bool = True,
 ) -> list[NormalizedSession]:
     if sources is None:
         sources = SOURCES
@@ -301,11 +324,12 @@ def scan(
     out: list[NormalizedSession] = []
     for src in sources:
         try:
-            for ref in src.discover():
-                session = _load_session(src, ref, threads_by_ref)
+            for ref in refs_of(src) if refs_of is not None else src.discover():
+                session, cached = _load_session(src, ref, threads_by_ref)
                 if session is None:
                     continue
-                _attach_git(session, cache, git_resolver)
+                if resolve_cached_git or not cached:
+                    _attach_git(session, cache, git_resolver)
                 out.append(session)
         except SourceUnavailableError as error:
             if unavailable_sources is not None:

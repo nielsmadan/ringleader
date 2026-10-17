@@ -1,7 +1,9 @@
 import json
 import os
+from datetime import UTC, datetime
 
-from ringleader import refresh
+import pytest
+from ringleader import refresh, registry
 from ringleader.gitinfo import GitProject
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.sources.codex import CodexSource
@@ -502,3 +504,165 @@ def test_refresh_registry_reports_unavailable_sources(tmp_path, monkeypatch):
     assert refreshed.unavailable_sources == frozenset({"opencode"})
     assert refreshed.note is None
     assert refreshed.reg["threads"] == []
+
+
+def _claude_session(root, cwd, sid, *, filed_under=None):
+    store = ClaudeCodeSource(projects_dir=root).storage_for(filed_under or cwd)
+    store.mkdir(parents=True, exist_ok=True)
+    path = store / f"{sid}.jsonl"
+    path.write_text(json.dumps({"sessionId": sid, "cwd": cwd, "type": "user"}) + "\n")
+    return path
+
+
+def _scoped(reg_path, root, cwd, *, recursive=False, persist=True, sources=None):
+    return refresh.scoped_refresh(
+        reg_path,
+        "2026-07-20T00:00:00+00:00",
+        cwd=cwd,
+        recursive=recursive,
+        sources=sources or [ClaudeCodeSource(projects_dir=root)],
+        git_resolver=lambda cwd: None,
+        name_filters=[],
+        persist=persist,
+    )
+
+
+def _fully_scanned(tmp_path, root, *, sources=None):
+    reg_path = _registry(tmp_path, [])
+    refresh.auto_refresh(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        sources=sources or [ClaudeCodeSource(projects_dir=root)],
+        git_resolver=lambda cwd: None,
+        name_filters=[],
+    )
+    return reg_path
+
+
+def _rollout(sessions, sid, cwd):
+    sessions.mkdir(parents=True, exist_ok=True)
+    meta = {"type": "session_meta", "payload": {"session_id": sid, "cwd": cwd}}
+    (sessions / f"{sid}.jsonl").write_text(json.dumps(meta) + "\n", encoding="utf-8")
+    return sessions
+
+
+def _identities(reg):
+    return sorted(registry.identity(t) for t in reg["threads"])
+
+
+def test_scoped_refresh_registers_a_new_session_and_keeps_what_it_did_not_look_at(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    gone_elsewhere = _claude_session(root, "/Users/me/other", "s2")
+    reg_path = _fully_scanned(tmp_path, root)
+    gone_elsewhere.unlink()
+    _claude_session(root, "/Users/me/proj", "s3")
+
+    reg, _ = _scoped(reg_path, root, "/Users/me/proj")
+
+    assert sorted(t["sessionId"] for t in reg["threads"]) == ["s1", "s2", "s3"]
+    saved = json.loads(reg_path.read_text())
+    assert sorted(t["sessionId"] for t in saved["threads"]) == ["s1", "s2", "s3"]
+    assert saved["deleted"] == []
+    assert saved["lastScan"] == "2026-07-19T00:00:00+00:00"
+    assert saved["sourcesScannedAt"] == {"claude-code": "2026-07-19T00:00:00+00:00"}
+
+
+def test_scoped_refresh_measures_change_from_the_last_session_scan_not_a_memory_scan(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    reg_path = _fully_scanned(tmp_path, root)
+    _claude_session(root, "/Users/me/proj", "s2")
+    reg = registry.load_registry(reg_path)
+    registry.commit_registry(
+        reg_path, registry.reconcile_memory(reg, [], "2099-01-01T00:00:00+00:00")
+    )
+
+    reg, _ = _scoped(reg_path, root, "/Users/me/proj")
+
+    assert sorted(t["sessionId"] for t in reg["threads"]) == ["s1", "s2"]
+
+
+def test_scoped_refresh_without_persist_leaves_the_registry_file_as_it_was(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    reg_path = _fully_scanned(tmp_path, root)
+    _claude_session(root, "/Users/me/proj", "s2")
+
+    reg, _ = _scoped(reg_path, root, "/Users/me/proj", persist=False)
+
+    assert sorted(t["sessionId"] for t in reg["threads"]) == ["s1", "s2"]
+    saved = json.loads(reg_path.read_text())
+    assert [t["sessionId"] for t in saved["threads"]] == ["s1"]
+
+
+def test_scoped_refresh_reaches_below_its_directory_only_when_recursive(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    reg_path = _fully_scanned(tmp_path, root)
+    _claude_session(root, "/Users/me/proj/sub", "s2")
+
+    flat, _ = _scoped(reg_path, root, "/Users/me/proj")
+    assert [t["sessionId"] for t in flat["threads"]] == ["s1"]
+
+    deep, _ = _scoped(reg_path, root, "/Users/me/proj", recursive=True)
+    assert sorted(t["sessionId"] for t in deep["threads"]) == ["s1", "s2"]
+
+
+@pytest.mark.parametrize("last_scan", [None, "2099-01-01T00:00:00+00:00"])
+def test_scoped_refresh_scans_everything_when_no_source_has_a_baseline(tmp_path, last_scan):
+    """A registry from before per-source baselines has a `lastScan` a memory scan may have
+    moved, which says nothing about what the sessions' sources last saw."""
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    _claude_session(root, "/Users/me/other", "s2")
+    reg_path = _registry(tmp_path, [])
+    reg_path.write_text(json.dumps(json.loads(reg_path.read_text()) | {"lastScan": last_scan}))
+
+    reg, full = _scoped(reg_path, root, "/Users/me/proj")
+
+    assert full
+    assert sorted(t["sessionId"] for t in reg["threads"]) == ["s1", "s2"]
+    assert reg["sourcesScannedAt"] == {"claude-code": "2026-07-20T00:00:00+00:00"}
+
+
+def test_scoped_refresh_follows_a_registered_session_filed_under_another_workspace(tmp_path):
+    root = tmp_path / "projects"
+    drifted = _claude_session(root, "/Users/me/proj/wt", "s1", filed_under="/Users/me/proj")
+    reg_path = _fully_scanned(tmp_path, root)
+    with drifted.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"sessionId": "s1", "cwd": "/Users/me/proj/wt", "type": "user"}))
+    written = datetime(2026, 8, 1, tzinfo=UTC)
+    os.utime(drifted, (written.timestamp(), written.timestamp()))
+
+    reg, full = _scoped(reg_path, root, "/Users/me/proj/wt")
+
+    assert not full
+    assert [t["mtime"] for t in reg["threads"]] == [written.isoformat()]
+
+
+def test_scoped_refresh_hands_each_source_only_its_own_known_files(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    codex = _rollout(tmp_path / "codex", "c1", "/Users/me/proj")
+
+    def sources():
+        return [ClaudeCodeSource(projects_dir=root), CodexSource(sessions_dir=codex)]
+
+    reg_path = _fully_scanned(tmp_path, root, sources=sources())
+
+    reg, _ = _scoped(reg_path, root, "/Users/me/proj", sources=sources())
+
+    assert _identities(reg) == [("claude-code", "s1"), ("codex", "c1")]
+
+
+def test_scoped_refresh_discovers_a_source_with_no_baseline_whole(tmp_path):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    reg_path = _fully_scanned(tmp_path, root)
+    codex = _rollout(tmp_path / "codex", "c1", "/Users/me/elsewhere")
+    sources = [ClaudeCodeSource(projects_dir=root), CodexSource(sessions_dir=codex)]
+
+    reg, _ = _scoped(reg_path, root, "/Users/me/proj", sources=sources)
+
+    assert _identities(reg) == [("claude-code", "s1"), ("codex", "c1")]

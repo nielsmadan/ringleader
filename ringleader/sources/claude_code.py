@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -12,7 +12,15 @@ from typing import ClassVar
 from ..naming import title_line
 from ..slug import normalize, slugify
 from ..transcript import parse_transcript
-from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
+from .base import (
+    NormalizedSession,
+    RawRef,
+    append_jsonl_line,
+    changed_since,
+    existing_files,
+    stat_fingerprint,
+    workspace_dirs,
+)
 
 
 def default_projects_dir() -> Path:
@@ -49,6 +57,7 @@ class ClaudeCodeSource:
             {
                 "applies_names",
                 "companion_files",
+                "discovers_scoped",
                 "filesystem_lifecycle",
                 "relocates_workspace",
                 "launches_sessions",
@@ -107,7 +116,18 @@ class ClaudeCodeSource:
         return str(dst)
 
     def discover(self) -> Iterator[RawRef]:
-        for p in _iter_session_files(self.projects_dir):
+        return self._refs(_iter_session_files(self.projects_dir))
+
+    def discover_scoped(
+        self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
+    ) -> Iterator[RawRef]:
+        name = self.storage_for(cwd).name if cwd is not None else None
+        dirs = workspace_dirs(self.projects_dir, name, recursive=recursive)
+        files = {p for d in dirs for p in d.glob("*.jsonl")} | existing_files(known)
+        return self._refs(sorted(p for p in files if changed_since(p, since)))
+
+    def _refs(self, files: Iterable[Path]) -> Iterator[RawRef]:
+        for p in files:
             try:
                 st = p.stat()
             except OSError as e:

@@ -1,4 +1,6 @@
 import json
+import os
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -6,6 +8,7 @@ from ringleader.slug import droid_slug
 from ringleader.sources.base import (
     CompanionFileSource,
     RawRef,
+    ScopedDiscoverySource,
     SessionLaunchingSource,
     Source,
     WorkspaceRelocatingSource,
@@ -71,16 +74,81 @@ def test_source_satisfies_the_protocols_it_declares(tmp_path):
     assert isinstance(source, Source)
     assert isinstance(source, WorkspaceRelocatingSource)
     assert isinstance(source, SessionLaunchingSource)
+    assert isinstance(source, ScopedDiscoverySource)
     assert source.name == "droid"
     assert isinstance(source, CompanionFileSource)
     assert source.capabilities == frozenset(
         {
             "companion_files",
+            "discovers_scoped",
             "filesystem_lifecycle",
             "relocates_workspace",
             "launches_sessions",
         }
     )
+
+
+LAST_SCAN = datetime(2026, 7, 1, tzinfo=UTC)
+BEFORE_LAST_SCAN = LAST_SCAN.timestamp() - 1
+OTHER_ID = "5d8c1f3e-2b7a-4c9e-8f60-1a2b3c4d5e6f"
+
+
+def _scoped(sessions_dir: Path, cwd: str, *, recursive=False, known=frozenset()) -> list:
+    source = DroidSource(sessions_dir=sessions_dir)
+    refs = source.discover_scoped(cwd, recursive=recursive, since=LAST_SCAN, known=known)
+    return [r.file for r in refs]
+
+
+def test_scoped_discovery_reads_only_the_workspace_storage(tmp_path):
+    here = _session(tmp_path, [_start()])
+    _session(
+        tmp_path,
+        [_start(id=CALLER_ID, cwd="/Users/me/other")],
+        cwd="/Users/me/other",
+        session_id=CALLER_ID,
+    )
+
+    assert _scoped(tmp_path, CWD) == [str(here)]
+
+
+def test_scoped_discovery_reaches_child_workspaces_only_when_recursive(tmp_path):
+    here = _session(tmp_path, [_start()])
+    child_cwd = CWD + "/sub"
+    child = _session(
+        tmp_path, [_start(id=CALLER_ID, cwd=child_cwd)], cwd=child_cwd, session_id=CALLER_ID
+    )
+
+    assert _scoped(tmp_path, CWD) == [str(here)]
+    assert sorted(_scoped(tmp_path, CWD, recursive=True)) == sorted([str(here), str(child)])
+
+
+def test_scoped_discovery_skips_transcripts_unchanged_since_the_last_scan(tmp_path):
+    stale = _session(tmp_path, [_start()])
+    fresh = _session(tmp_path, [_start(id=CALLER_ID)], session_id=CALLER_ID)
+    os.utime(stale, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
+
+    assert _scoped(tmp_path, CWD) == [str(fresh)]
+
+
+def test_scoped_discovery_includes_fresh_top_level_transcripts(tmp_path):
+    fresh = tmp_path / f"{CALLER_ID}.jsonl"
+    stale = tmp_path / f"{OTHER_ID}.jsonl"
+    fresh.write_text(json.dumps(_start(id=CALLER_ID)) + "\n", encoding="utf-8")
+    stale.write_text(json.dumps(_start(id=OTHER_ID)) + "\n", encoding="utf-8")
+    os.utime(stale, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
+
+    assert _scoped(tmp_path, CWD) == [str(fresh)]
+
+
+def test_scoped_discovery_includes_a_known_transcript_filed_elsewhere(tmp_path):
+    drifted = _session(
+        tmp_path,
+        [_start(id=CALLER_ID, cwd=CWD)],
+        cwd="/Users/me/launched-here",
+        session_id=CALLER_ID,
+    )
+
+    assert _scoped(tmp_path, CWD, known=frozenset({str(drifted)})) == [str(drifted)]
 
 
 def test_discover_finds_transcripts_and_ignores_sidecars_and_favorites(tmp_path):

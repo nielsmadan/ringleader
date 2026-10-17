@@ -14,17 +14,19 @@ before rendering.
 
 ### The scan loop
 
-`scan(sources, git_resolver, cached_threads)`:
+`scan(sources, git_resolver, cached_threads, *, refs_of, resolve_cached_git)`:
 
 1. Index `cached_threads` by `(source, sourceRef)`, falling back to `file` for registries written
    before `sourceRef` existed.
-2. For each source, for each `discover()` ref: ask `registry.cached_session()` whether the cache
+2. For each source, for each `discover()` ref — or `refs_of(source)`, when a caller narrows
+   discovery: ask `registry.cached_session()` whether the cache
    is valid. On a hit, skip `parse()` entirely; on a miss, parse and stamp the result with the
    source's `parser_version` and the ref's fingerprint.
 3. On a cache hit, a `CachedMetadataSource` still gets `refresh_cached_metadata()` — display
    fields that changed without the transcript changing.
 4. Resolve git identity for the session's cwd, **memoized per cwd** in a local dict, so a repo
-   with forty sessions shells out to git once.
+   with forty sessions shells out to git once. `resolve_cached_git=False` skips it for cache hits,
+   which keep the identity the registry already holds.
 5. A read failure on one transcript or source-owned row prints to stderr and skips it — one
    unreadable session store must not abort scans of unrelated sources. If an active store is
    temporarily unavailable, reconciliation retains its cached sessions instead of marking them
@@ -71,6 +73,20 @@ The rest of the module is path arithmetic that must match what the agent recorde
 the one-line summary (`+3 new, -1 gone`) or `None` when nothing moved. Counts are refreshed on
 every view so they are never stale; classification and naming stay separate, agentic steps.
 
+`scoped_refresh(cwd, recursive)` is the cheap variant `rl resume --last` uses, where a full scan
+(~20s on a large machine) would dominate. It rescans only what changed since each source's entry
+in `sourcesScannedAt` and could belong to `cwd`, through `scanner.scoped_refs()`:
+
+- a `ScopedDiscoverySource` narrows itself — Claude Code and droid read the workspace's storage
+  dir, Codex drops rollouts recorded elsewhere before parsing them — and also takes the
+  registry's own in-scope files (`known`), which is how a drifted or relocated session is found;
+- any other source discovers everything and is filtered on mtime.
+
+It reconciles with `partial=True`, so nothing it skipped is tombstoned and no clock moves, and
+skips git for cache hits. A source with no baseline yet is discovered whole; a registry where no
+source has one gets the full scan instead, and says so in its return value so `rl resume --last`
+does not scan everything twice. Both refreshes share one private `_refresh()` pipeline.
+
 ### Roundup
 
 `roundup.py` is the roundup as a function API, so the CLI and the inbox share one
@@ -104,6 +120,7 @@ and holds the roundup lock through all of them.
 
 - `scanner.scan()` — the loop above.
 - `refresh.auto_refresh()` — scan + reconcile + persist; what `--no-scan` skips.
+- `refresh.scoped_refresh()` / `scanner.scoped_refs()` — the scoped rescan behind `--last`.
 - `roundup.plan_roundup()` / `run_phases()` / `run_roundup()` — the roundup API;
   `revalidate.py` — the per-item checks it runs before touching a session.
 - `gitinfo.resolve_git_project()` — cwd → `GitProject`.

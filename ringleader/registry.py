@@ -52,6 +52,7 @@ def empty_registry() -> dict[str, Any]:
     return {
         "version": REGISTRY_VERSION,
         "lastScan": None,
+        "sourcesScannedAt": {},
         "lastRoundupAt": None,
         "threads": [],
         "archived": [],
@@ -69,6 +70,7 @@ def load_registry(path: str | Path) -> dict[str, Any]:
     data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("lastScan", None)
+    data.setdefault("sourcesScannedAt", {})
     data.setdefault("lastRoundupAt", None)
     data.setdefault("threads", [])
     data.setdefault("archived", [])
@@ -275,7 +277,7 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
         _merge_sessions(reg.baseline, reg, current, scan=reg.scanned)
         _merge_memory(reg.baseline, reg, current, scan=reg.scanned)
         clocks = {"lastScan", "lastRoundupAt"}
-        excluded = {*_SESSION_BUCKETS, "memoryEntries", *clocks}
+        excluded = {*_SESSION_BUCKETS, "memoryEntries", "sourcesScannedAt", *clocks}
 
         def other(data: dict[str, Any]) -> dict[str, Any]:
             return {key: value for key, value in data.items() if key not in excluded}
@@ -286,11 +288,23 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
                 current[clock] = max(
                     filter(None, (reg.get(clock), current.get(clock))), default=None
                 )
+        current["sourcesScannedAt"] = _merge_scan_times(
+            reg.baseline.get("sourcesScannedAt") or {},
+            reg.get("sourcesScannedAt") or {},
+            current.get("sourcesScannedAt") or {},
+        )
         for key in other(reg.baseline).keys() - other(reg).keys():
             if current.get(key) == reg.baseline[key]:
                 current.pop(key, None)
         _write_registry(Path(path), current)
     reg.replace(current)
+
+
+def _merge_scan_times(
+    before: dict[str, str], after: dict[str, str], current: dict[str, str]
+) -> dict[str, str]:
+    changed = {name: at for name, at in after.items() if before.get(name) != at}
+    return current | {name: max(at, current.get(name) or at) for name, at in changed.items()}
 
 
 def identity(record: dict[str, Any]) -> tuple[str, str]:
@@ -477,7 +491,13 @@ def reconcile(  # noqa: PLR0912
     now_iso: str,
     *,
     unavailable_sources: set[str] | frozenset[str] = frozenset(),
+    partial: bool = False,
+    scanned_sources: Iterable[str] = (),
 ) -> dict[str, Any]:
+    """Fold a scan into the registry. A `partial` scan looked at only part of each source,
+    so a thread it did not see is kept rather than tombstoned and no clock moves. Otherwise
+    each available source in `scanned_sources` gets `now_iso` in `sourcesScannedAt`, the
+    baseline a later partial scan trusts, so `now_iso` must be read before discovery."""
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
     for tombstone in reg.get("deleted", []):
@@ -522,7 +542,7 @@ def reconcile(  # noqa: PLR0912
         key = _key(t)
         if key in seen or key in gone:
             continue
-        if key[0] in unavailable_sources:
+        if partial or key[0] in unavailable_sources:
             threads.append(dict(t))
             continue
         deleted.append(
@@ -539,7 +559,13 @@ def reconcile(  # noqa: PLR0912
     result = deepcopy(reg)
     result.update(
         version=REGISTRY_VERSION,
-        lastScan=now_iso,
+        lastScan=reg.get("lastScan") if partial else now_iso,
+        sourcesScannedAt=(reg.get("sourcesScannedAt") or {})
+        | (
+            {}
+            if partial
+            else {name: now_iso for name in scanned_sources if name not in unavailable_sources}
+        ),
         threads=threads,
         archived=archived,
         deleted=deleted,

@@ -16,20 +16,20 @@ def _now() -> str:
 
 
 def cmd_scan(args: argparse.Namespace) -> None:
+    now = _now()
     reg = registry.load_registry(args.registry)
     unavailable_sources: set[str] = set()
-    scanned = scanner.scan(
-        sources=scanner.active_sources(
-            unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
-        ),
-        unavailable_sources=unavailable_sources,
+    sources = scanner.active_sources(
+        unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
     )
+    scanned = scanner.scan(sources=sources, unavailable_sources=unavailable_sources)
     tails = {(ns.source, ns.session_id): ns.tail_text for ns in scanned}
     reg = registry.reconcile(
         reg,
         scanned,
-        _now(),
+        now,
         unavailable_sources=unavailable_sources,
+        scanned_sources=[src.name for src in sources],
     )
     registry.apply_name_filters(reg, load_config().session_filters)
     registry.commit_registry(args.registry, reg)

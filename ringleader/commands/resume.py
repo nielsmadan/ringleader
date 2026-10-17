@@ -27,6 +27,7 @@ if TYPE_CHECKING:
 Runner = Callable[[Sequence[str], str], int]
 Picker = Callable[[str, str, Scope, str, "str | None"], "Choice | None"]
 Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
+ScopedRefresher = Callable[[str, str, str, Scope], tuple[dict[str, Any], bool]]
 Which = Callable[[str], str | None]
 Presence = Callable[[], frozenset[tuple[str, str]]]
 NativeResumer = Callable[..., "NativeResume"]
@@ -251,24 +252,24 @@ def _for_query(
 
 def _for_last(
     args: argparse.Namespace,
-    reg: dict[str, Any],
     scope: Scope,
     cwd: str,
+    scoper: ScopedRefresher,
     refresher: Refresher,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """The most recent session in scope, and the registry it came from. Like a query, an
-    empty scope earns one scan before it is refused — never a picker, since --last asked
-    not to be asked."""
-    for attempt in (reg, None):
-        current = (
-            attempt
-            if attempt is not None
-            else refresher(args.registry, datetime.now(UTC).isoformat())[0]
-        )
+    """The most recent session in scope, and the registry it came from. The session just
+    left is both the likeliest answer and the one a registry scanned earlier lacks, so the
+    scope is always rescanned; one still empty earns a full scan, unless the rescan was
+    one, before it is refused — never a picker, since --last asked not to be asked."""
+    now_iso = datetime.now(UTC).isoformat()
+    current, complete = scoper(args.registry, now_iso, cwd, scope)
+    rows = resume.candidates(current, scope=scope, cwd=cwd)
+    if not rows and not complete:
+        current = refresher(args.registry, now_iso)[0]
         rows = resume.candidates(current, scope=scope, cwd=cwd)
-        if rows:
-            return rows[0], current
-    raise _Abort(f"no sessions {_where(scope, cwd)}, even after a fresh scan{_WIDEN[scope]}")
+    if not rows:
+        raise _Abort(f"no sessions {_where(scope, cwd)}, even after a fresh scan{_WIDEN[scope]}")
+    return rows[0], current
 
 
 def _choose(
@@ -276,12 +277,13 @@ def _choose(
     reg: dict[str, Any],
     cwd: str,
     picker: Picker,
-    refresher: Refresher,
+    refreshers: tuple[ScopedRefresher, Refresher],
     target: str | None,
 ) -> _Pick | None:
     scope = _scope(args)
+    scoper, refresher = refreshers
     if args.last:
-        thread, reg = _for_last(args, reg, scope, cwd, refresher)
+        thread, reg = _for_last(args, scope, cwd, scoper, refresher)
         return _Pick(thread, _eligible(reg), None)
     if args.query:
         direct, reg = _for_query(args, reg, scope, cwd, refresher)
@@ -534,11 +536,13 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
     return 0
 
 
-def _resolve(args: argparse.Namespace, picker: Picker, refresher: Refresher) -> _Plan | None:
+def _resolve(
+    args: argparse.Namespace, picker: Picker, refreshers: tuple[ScopedRefresher, Refresher]
+) -> _Plan | None:
     requested = _requested_target(args.to)
     reg = registry.load_registry(args.registry)
     cwd = os.getcwd()
-    pick = _choose(args, reg, cwd, picker, refresher, requested)
+    pick = _choose(args, reg, cwd, picker, refreshers, requested)
     if pick is None:
         return None
     return _plan(pick, requested or pick.target or resume.source_of(pick.thread))
@@ -551,6 +555,7 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     picker: Picker | None = None,
     which: Which | None = None,
     refresher: Refresher | None = None,
+    scoper: ScopedRefresher | None = None,
     presence: Presence | None = None,
     native: NativeResumer | None = None,
     launch: Launch | None = None,
@@ -562,8 +567,16 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     def _scan(registry_path: str, now_iso: str) -> tuple[dict[str, Any], str | None]:
         return refresh.auto_refresh(registry_path, now_iso, persist=not args.dry_run)
 
+    def _scan_scope(
+        registry_path: str, now_iso: str, cwd: str, scope: Scope
+    ) -> tuple[dict[str, Any], bool]:
+        root, recursive = resume.bounds(scope, cwd)
+        return refresh.scoped_refresh(
+            registry_path, now_iso, cwd=root, recursive=recursive, persist=not args.dry_run
+        )
+
     try:
-        plan = _resolve(args, picker or _run_picker, refresher or _scan)
+        plan = _resolve(args, picker or _run_picker, (scoper or _scan_scope, refresher or _scan))
         if plan is None:
             return 0
         binary = plan.argv[0]

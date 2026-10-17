@@ -32,8 +32,9 @@ boundary: if the last thing you touched here was a Codex session, `claude -c` ca
 `--last` re-enters whichever agent the session actually belonged to, which is the only reason it
 earns its place.
 
-It refuses rather than falling back to the picker — `--last` asked not to be asked. An empty
-scope earns one scan before it gives up, and `--last` cannot be combined with a query.
+It rescans its scope first, so a session you only just quit counts even if nothing has scanned
+since. It refuses rather than falling back to the picker — `--last` asked not to be asked. An
+empty scope earns one full scan before it gives up, and `--last` cannot be combined with a query.
 
 ## Scopes
 

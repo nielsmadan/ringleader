@@ -5,12 +5,12 @@ from enum import Enum
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Any, Literal
 
 from . import namefilter, overview, scanner, search
 from .agents import canonical_agent, display_agent
 from .search import _BLURB_FIELDS
-from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource
+from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource, in_workspace
 
 SessionAction = Literal["resume", "fork"]
 
@@ -39,16 +39,14 @@ class Scope(Enum):
     ALL = "all"
 
 
+def bounds(scope: Scope, cwd: str) -> tuple[str | None, bool]:
+    """The workspace a scope covers — `None` for everywhere — and whether it reaches below."""
+    return (None if scope is Scope.ALL else cwd), scope is Scope.RECURSIVE
+
+
 def in_scope(thread: dict[str, Any], scope: Scope, cwd: str) -> bool:
-    if scope is Scope.ALL:
-        return True
-    raw = thread.get("project")
-    if not raw:
-        return False
-    project, root = cast(str, raw.rstrip("/")), cwd.rstrip("/")
-    if scope is Scope.CWD:
-        return project == root
-    return project == root or project.startswith(root + "/")
+    root, recursive = bounds(scope, cwd)
+    return in_workspace(thread.get("project"), root, recursive=recursive)
 
 
 def eligible(thread: dict[str, Any]) -> bool:

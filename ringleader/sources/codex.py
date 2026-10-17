@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +15,8 @@ from .base import (
     NormalizedSession,
     RawRef,
     append_jsonl_line,
+    changed_since,
+    in_workspace,
     stat_fingerprint,
 )
 
@@ -147,6 +149,7 @@ class CodexSource:
         default_factory=lambda: frozenset(
             {
                 "applies_names",
+                "discovers_scoped",
                 "filesystem_lifecycle",
                 "hides_from_picker",
                 "shows_in_picker",
@@ -183,14 +186,32 @@ class CodexSource:
         return self.session_index_file
 
     def discover(self) -> Iterator[RawRef]:
+        return self._refs(lambda _: True, lambda _p, _meta: True)
+
+    def discover_scoped(
+        self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
+    ) -> Iterator[RawRef]:
+        def in_scope(p: Path, meta: dict[str, Any]) -> bool:
+            return str(p) in known or in_workspace(meta.get("cwd"), cwd, recursive=recursive)
+
+        # rollouts are filed by date: mtime first, since it skips the oversized meta read
+        return self._refs(lambda p: changed_since(p, since), in_scope)
+
+    def _refs(
+        self,
+        wanted: Callable[[Path], bool],
+        wanted_meta: Callable[[Path, dict[str, Any]], bool],
+    ) -> Iterator[RawRef]:
         self._names_by_id = None
         if not self.sessions_dir.exists():
             return
         for p in sorted(self.sessions_dir.glob("**/*.jsonl")):
+            if not wanted(p):
+                continue
             try:
                 st = p.stat()
                 meta = _meta(p)
-                if not _is_interactive(meta):
+                if not _is_interactive(meta) or not wanted_meta(p, meta):
                     continue
             except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
