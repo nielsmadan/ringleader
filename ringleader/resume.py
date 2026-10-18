@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from dataclasses import dataclass
 from enum import Enum
 from functools import cache
 from itertools import pairwise
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from . import namefilter, overview, scanner, search
 from .agents import canonical_agent, display_agent
@@ -16,9 +17,11 @@ SessionAction = Literal["resume", "fork"]
 
 _UNKNOWN = "(unknown)"
 
-_NAME_TIER = 0
-_ID_TIER = 1
-_BLURB_TIER = 2
+_BLURB_TIER = 0
+_FUZZY_TIER = 1
+_NAME_SUBSTRING_TIER = 2
+_NAME_PREFIX_TIER = 3
+_NAME_EXACT_TIER = 4
 
 _CONSECUTIVE_WEIGHT = 3000
 _BOUNDARY_WEIGHT = 2000
@@ -31,6 +34,30 @@ _MAX_SCORE = _CONSECUTIVE_WEIGHT + _BOUNDARY_WEIGHT + _START_WEIGHT + _LENGTH_WE
 
 # one tier step outruns every score inside a tier, so a blurb hit never beats a name hit
 _TIER_BONUS = _MAX_SCORE + 1
+
+
+@dataclass(frozen=True)
+class Haystack:
+    name: str
+    sid: str
+    project: str
+    blurbs: tuple[tuple[str, str], ...]
+
+    def __post_init__(self) -> None:
+        texts = (self.name, self.sid, self.project, *(text for _, text in self.blurbs))
+        if any(text != text.lower() for text in texts):
+            raise ValueError("Haystack text must be lowercased; build it with Haystack.of")
+
+    @classmethod
+    def of(
+        cls, *, name: str, sid: str, project: str, blurbs: Iterable[tuple[str, str]]
+    ) -> Haystack:
+        return cls(
+            name=name.lower(),
+            sid=sid.lower(),
+            project=project.lower(),
+            blurbs=tuple((field, text.lower()) for field, text in blurbs),
+        )
 
 
 class Scope(Enum):
@@ -96,57 +123,118 @@ def _rate(q: str, t: str, idxs: list[int]) -> int:
     )
 
 
-def score(query: str, text: str) -> int | None:
-    if not query:
-        return 0
-    q, t = query.lower(), text.lower()
+def _score_lowered(q: str, t: str) -> int | None:
     # either end alone has a blind spot: a run is invisible to the scan that starts away
     # from it, so take the better of the two alignments
     rated = [_rate(q, t, idxs) for idxs in (_align_left(q, t), _align_right(q, t)) if idxs]
     return max(rated) if rated else None
 
 
-def _fields(thread: dict[str, Any]) -> Iterator[tuple[str, str, int]]:
-    name = label(thread)
-    if name != _UNKNOWN:
-        yield "name", name, _NAME_TIER
-    sid = search.clean(thread.get("sessionId"))
-    if sid:
-        yield "id", sid, _ID_TIER
-    for field in _BLURB_FIELDS:
-        value = search.clean(thread.get(field))
-        if value:
-            yield field, value, _BLURB_TIER
+def score(query: str, text: str) -> int | None:
+    if not query:
+        return 0
+    return _score_lowered(query.lower(), text.lower())
 
 
-def match(thread: dict[str, Any], query: str) -> tuple[int, str] | None:
-    best: tuple[int, str] | None = None
-    for field, value, tier in _fields(thread):
-        raw = score(query, value)
-        if raw is None:
-            continue
-        total = raw + (_BLURB_TIER - tier) * _TIER_BONUS
-        if best is None or total > best[0]:
-            best = (total, field)
-    return best
+def _lowered(value: str | None) -> str:
+    return (search.clean(value) or "").lower()
 
 
-def rank(threads: list[dict[str, Any]], query: str) -> list[dict[str, Any]]:
+def _name(thread: dict[str, Any]) -> str | None:
+    return search.clean(namefilter.display_name(thread)) or search.clean(thread.get("aiTitle"))
+
+
+def _project_label(thread: dict[str, Any]) -> str:
+    label_ = thread.get("gitProjectLabel")
+    if label_:
+        return _lowered(label_)
+    project = thread.get("project")
+    return _lowered(Path(project).name) if isinstance(project, str) else ""
+
+
+def haystack_of(thread: dict[str, Any]) -> Haystack:
+    blurbs = ((field, _lowered(thread.get(field))) for field in _BLURB_FIELDS)
+    return Haystack.of(
+        name=_name(thread) or "",
+        sid=_lowered(thread.get("sessionId")),
+        project=_project_label(thread),
+        blurbs=((field, text) for field, text in blurbs if text),
+    )
+
+
+def _name_match(q: str, tokens: list[str], name: str) -> tuple[int, str] | None:
+    if not name:
+        return None
+    if name == q:
+        return _NAME_EXACT_TIER * _TIER_BONUS, "name"
+    if name.startswith(q):
+        return _NAME_PREFIX_TIER * _TIER_BONUS, "name"
+    if all(token in name for token in tokens):
+        return _NAME_SUBSTRING_TIER * _TIER_BONUS + (_score_lowered(q, name) or 0), "name"
+    return None
+
+
+def _fuzzy_match(compact: str, haystack: Haystack) -> tuple[int, str] | None:
+    scored = [
+        (raw, field)
+        for field, raw in (
+            ("name", _score_lowered(compact, haystack.name) if haystack.name else None),
+            (
+                "id",
+                _score_lowered(compact, haystack.sid) if haystack.sid.startswith(compact) else None,
+            ),
+            ("project", _score_lowered(compact, haystack.project) if haystack.project else None),
+        )
+        if raw is not None
+    ]
+    if not scored:
+        return None
+    raw, field = max(scored, key=lambda pair: pair[0])
+    return _FUZZY_TIER * _TIER_BONUS + raw, field
+
+
+def _blurb_match(tokens: list[str], haystack: Haystack) -> tuple[int, str] | None:
+    fields = (("name", haystack.name), ("project", haystack.project), *haystack.blurbs)
+    if not all(any(token in text for _, text in fields) for token in tokens):
+        return None
+    whole = next((f for f, text in haystack.blurbs if all(t in text for t in tokens)), None)
+    field = whole or next(f for f, text in fields if tokens[0] in text)
+    return _BLURB_TIER * _TIER_BONUS, field
+
+
+def match(
+    thread: dict[str, Any], query: str, haystack: Haystack | None = None
+) -> tuple[int, str] | None:
+    """Fuzzy over the short identifying fields only; a long blurb matches by substring,
+    or a short query would find its letters scattered through nearly every summary."""
+    tokens = query.lower().split()
+    if not tokens:
+        return None
+    q, compact = " ".join(tokens), "".join(tokens)
+    found = haystack or haystack_of(thread)
+    return (
+        _name_match(q, tokens, found.name)
+        or _fuzzy_match(compact, found)
+        or _blurb_match(tokens, found)
+    )
+
+
+def rank(
+    threads: list[dict[str, Any]],
+    query: str,
+    haystack_of: Callable[[dict[str, Any]], Haystack] = haystack_of,
+) -> list[dict[str, Any]]:
     q = (query or "").strip()
     if not q:
         return _by_recency(threads)
-    scored = [(m[0], t) for t in threads if (m := match(t, q)) is not None]
+    scored = [(m[0], t) for t in threads if (m := match(t, q, haystack_of(t))) is not None]
     scored.sort(key=lambda pair: pair[1].get("mtime") or "", reverse=True)
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [t for _, t in scored]
 
 
 def label(thread: dict[str, Any]) -> str:
-    for value in (namefilter.display_name(thread), thread.get("aiTitle")):
-        cleaned = search.clean(value)
-        if cleaned:
-            return cleaned
-    return (search.clean(thread.get("sessionId")) or "")[:8] or _UNKNOWN
+    return _name(thread) or (search.clean(thread.get("sessionId")) or "")[:8] or _UNKNOWN
 
 
 def _status(thread: dict[str, Any], now_iso: str) -> str | None:
@@ -158,7 +246,11 @@ def _status(thread: dict[str, Any], now_iso: str) -> str | None:
     return overview.effective_status(thread, now_iso)
 
 
-def badges(thread: dict[str, Any], now_iso: str) -> list[str]:
+def badges(
+    thread: dict[str, Any],
+    now_iso: str,
+    sources: Mapping[str, WorkspaceRelocatingSource] | None = None,
+) -> list[str]:
     out = []
     if overview.is_filtered(thread):
         out.append("filtered")
@@ -171,7 +263,7 @@ def badges(thread: dict[str, Any], now_iso: str) -> list[str]:
     status = _status(thread, now_iso)
     if status in ("harvested", "abandoned"):
         out.append(status)
-    if drifted(thread):
+    if drifted(thread, sources):
         out.append("drifted")
     return out
 
@@ -204,14 +296,16 @@ def _slug_keyed_sources() -> frozenset[str]:
     )
 
 
-def _in_source_root(name: str, file: str) -> bool:
-    source = scanner.source_by_name(name)
-    # `root` is not part of the Source protocol, so read it off the concrete source
-    root: Path | None = getattr(source, "root", None)
-    return source is not None and root is not None and Path(file).parent == root
+def slug_sources() -> dict[str, WorkspaceRelocatingSource]:
+    return {
+        name: cast(WorkspaceRelocatingSource, scanner.source_by_name(name))
+        for name in _slug_keyed_sources()
+    }
 
 
-def drifted(thread: dict[str, Any]) -> bool:
+def drifted(
+    thread: dict[str, Any], sources: Mapping[str, WorkspaceRelocatingSource] | None = None
+) -> bool:
     # the transcript is filed under the *launch* dir's slug; a different slug means it cd'd
     name = source_of(thread)
     if name not in _slug_keyed_sources():
@@ -219,9 +313,13 @@ def drifted(thread: dict[str, Any]) -> bool:
     file, project = thread.get("file"), thread.get("project")
     if not file or not project:
         return False
-    if _in_source_root(name, file):
+    source = sources[name] if sources else scanner.source_by_name(name)
+    parent = Path(file).parent
+    # `root` is not part of the Source protocol, so read it off the concrete source
+    root: Path | None = getattr(source, "root", None)
+    if root is not None and parent == root:
         return False  # droid's global-root layout: no slug dir to compare against
-    return not scanner.stored_under(file, project, name)
+    return parent.name != source.storage_for(project).name
 
 
 def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -> str | None:

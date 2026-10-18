@@ -3,13 +3,14 @@ import subprocess
 import sys
 import textwrap
 import threading
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from ringleader import scanner
+from ringleader import resume, scanner
 from ringleader.picker.app import (
+    PREVIEW_CHARS,
     AgentChoice,
     AgentModal,
     ConfirmModal,
@@ -160,6 +161,12 @@ async def _settle(app, pilot):
     await pilot.pause()
 
 
+async def _filtered(app, pilot):
+    screen = _screen(app)
+    filter_input = screen.query_one("#filter", Input)
+    await until(pilot, lambda: screen._filter_timer is None and screen._query == filter_input.value)
+
+
 def _ids(app):
     return [t["sessionId"] for t in _screen(app)._rows]
 
@@ -217,6 +224,7 @@ async def test_ctrl_k_moves_the_highlight_and_leaves_the_typed_query_intact(tmp_
         await _settle(app, pilot)
         await pilot.press("ctrl+a")
         await pilot.press("a")
+        await _filtered(app, pilot)
         filter_input = _screen(app).query_one("#filter", Input)
         rows = _screen(app).query_one("#rows", OptionList)
         assert filter_input.value == "a"
@@ -260,6 +268,7 @@ async def test_typing_filters_the_rows_and_the_characters_land_in_the_input(tmp_
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("b", "r", "a")
+        await _filtered(app, pilot)
         assert _screen(app).query_one("#filter", Input).value == "bra"
         assert _ids(app) == ["s1"]
 
@@ -278,6 +287,149 @@ async def test_typing_then_enter_chooses_the_latest_match(tmp_path):
         await _settle(app, pilot)
         await pilot.press("b", "r", "a", "enter")
     assert app.return_value.thread["sessionId"] == "s1"
+
+
+async def test_enter_before_the_filter_settles_chooses_from_the_typed_query(tmp_path):
+    app = _app(tmp_path, target="codex", filter_delay=60)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("b", "r", "a")
+        assert _highlighted_id(app) == "s0"
+        await pilot.press("enter")
+    assert app.return_value.thread["sessionId"] == "s1"
+
+
+async def test_a_burst_of_keystrokes_filters_once_on_the_final_query(tmp_path, monkeypatch):
+    queries = []
+    rank = resume.rank
+
+    def recording(threads, query, *args):
+        queries.append(query)
+        return rank(threads, query, *args)
+
+    monkeypatch.setattr(resume, "rank", recording)
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        queries.clear()
+        await pilot.press("b", "r", "a")
+        await _filtered(app, pilot)
+        assert queries == ["bra"]
+        assert _ids(app) == ["s1"]
+
+
+async def test_a_keystroke_that_keeps_the_same_results_leaves_the_rows_alone(tmp_path, monkeypatch):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        rows = _screen(app).query_one("#rows", OptionList)
+        cleared = []
+        clear_options = rows.clear_options
+
+        def counting():
+            cleared.append(_screen(app)._query)
+            return clear_options()
+
+        monkeypatch.setattr(rows, "clear_options", counting)
+        await pilot.press("a")
+        await _filtered(app, pilot)
+        await pilot.press("l")
+        await _filtered(app, pilot)
+        assert _ids(app) == ["s0"]
+        assert cleared == ["al"]
+
+
+async def test_a_row_built_for_one_query_is_reused_by_the_next(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        rows = _screen(app).query_one("#rows", OptionList)
+        before = rows.get_option_at_index(0)
+        await pilot.press("a", "l")
+        await _filtered(app, pilot)
+        assert _ids(app) == ["s0"]
+        assert rows.get_option_at_index(0) is before
+
+
+async def test_each_thread_is_cleaned_for_matching_once_across_keystrokes(tmp_path, monkeypatch):
+    built = []
+    haystack = resume.haystack_of
+
+    def counting(thread):
+        built.append(thread["sessionId"])
+        return haystack(thread)
+
+    monkeypatch.setattr(resume, "haystack_of", counting)
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        for key in "alph":
+            await pilot.press(key)
+            await _filtered(app, pilot)
+        assert _ids(app) == ["s0"]
+        assert sorted(built) == ["s0", "s1"]
+
+
+async def test_a_render_resolves_each_agents_storage_layout_once(tmp_path, monkeypatch):
+    made, passes = [], []
+    source_by_name, slug_sources = scanner.source_by_name, resume.slug_sources
+    fixed = datetime(2026, 5, 5, tzinfo=UTC)
+
+    def counting_sources(name):
+        made.append(name)
+        return source_by_name(name)
+
+    def counting_passes():
+        passes.append(True)
+        return slug_sources()
+
+    monkeypatch.setattr(scanner, "source_by_name", counting_sources)
+    monkeypatch.setattr(resume, "slug_sources", counting_passes)
+    threads = [_thread(f"s{index}", title=f"session {index}") for index in range(50)]
+    app = _app(tmp_path, threads, scope=Scope.ALL, now=lambda: fixed)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert len(_ids(app)) == 50
+    assert len(passes) == 1
+    assert sorted(made) == sorted(slug_sources())
+
+
+async def test_row_ages_advance_with_the_clock_while_the_row_set_holds(tmp_path):
+    clock = [datetime(2026, 5, 5, 0, 0, tzinfo=UTC)]
+    app = _app(tmp_path, now=lambda: clock[0])
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        screen = _screen(app)
+        rows = screen.query_one("#rows", OptionList)
+        before = str(rows.get_option_at_index(0).prompt)
+        clock[0] += timedelta(days=30)
+        await screen._render_rows()
+        after = str(rows.get_option_at_index(0).prompt)
+    assert before != after
+
+
+async def test_a_rescan_returning_the_same_threads_keeps_the_row_cache(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        screen = _screen(app)
+        cache = screen._cache
+        screen._adopt(_scanned(screen.registry_path), None, None)
+        await pilot.pause()
+        assert screen._cache is cache
+
+
+async def test_a_rescan_returning_different_threads_replaces_the_row_cache(tmp_path):
+    app = _app(tmp_path)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        screen = _screen(app)
+        cache = screen._cache
+        later = [_thread("s9", title="zulu")]
+        screen._adopt(_scanned(screen.registry_path, later), None, None)
+        await pilot.pause()
+        assert screen._cache is not cache
+        assert _ids(app) == ["s9"]
 
 
 async def test_every_result_in_a_large_list_is_reachable(tmp_path):
@@ -320,8 +472,10 @@ async def test_clearing_a_query_restores_results_after_no_matches(tmp_path):
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("z", "q", "x")
+        await _filtered(app, pilot)
         assert _screen(app).query_one("#empty", Label).display
         await pilot.press("backspace", "backspace", "backspace")
+        await _filtered(app, pilot)
         assert _ids(app) == ["s0", "s1"]
         assert _highlighted_id(app) == "s0"
         assert _screen(app).query_one("#rows", OptionList).display
@@ -390,7 +544,7 @@ async def test_a_scan_keeps_the_typed_query_and_the_highlighted_session(tmp_path
     async with app.run_test() as pilot:
         await pilot.pause()
         await pilot.press("a")
-        await pilot.pause()
+        await _filtered(app, pilot)
         await pilot.press("ctrl+j")
         held = _highlighted_id(app)
         gate.set()
@@ -867,6 +1021,15 @@ async def test_a_preview_too_long_for_the_row_ends_in_an_ellipsis(tmp_path):
         assert label.endswith("…")
 
 
+def test_a_row_carries_at_most_a_terminal_width_of_preview():
+    thread = _thread("s0", title="alpha") | {"lastPrompt": "x" * 5000}
+
+    text = row_text(thread, "2026-10-17T00:00:00+00:00").plain
+
+    assert text.endswith("x" * PREVIEW_CHARS)
+    assert len(text) < PREVIEW_CHARS + 100
+
+
 async def test_a_wide_terminal_shows_the_whole_preview_the_row_has_space_for(tmp_path):
     preview = "verbose " * 15
     thread = _thread("s0", title="alpha") | {"lastPrompt": preview}
@@ -926,7 +1089,7 @@ async def test_the_empty_state_offers_to_clear_the_filter_that_emptied_it(tmp_pa
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("z", "q", "x")
-        await pilot.pause()
+        await _filtered(app, pilot)
         hint = _rendered(_screen(app).query_one("#empty", Label))
         assert "clear the filter" in hint
         assert "ctrl+a for everywhere" in hint

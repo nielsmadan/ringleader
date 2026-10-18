@@ -291,3 +291,22 @@ def test_interrupt_after_the_stamp_exits_zero(tmp_path, monkeypatch):
 
     assert roundup_cmd.cmd_roundup(["--registry", str(path), "--yes"]) == 0
     assert _saved(path)["lastRoundupAt"]
+
+
+def test_report_counts_purged_handoff_exports(capsys):
+    phases = roundup_api.PhasesResult(
+        swept=0,
+        deleted=0,
+        purged=1,
+        skipped=(),
+        errors=0,
+        cancelled=False,
+        warnings=(),
+        handoffs_purged=3,
+    )
+
+    roundup_cmd._report(roundup_api.RoundupResult(phases=phases, enrich=None, stamped=True))
+
+    assert capsys.readouterr().out.strip() == (
+        "swept 0, pruned 0, purged 1 (+3 handoff exports), enriched 0 (0 failed, 0 stale)"
+    )

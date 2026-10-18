@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -18,7 +19,6 @@ from ...roundup import RoundupProgress
 from ...tui.keys import nav_bindings
 from ...tui.modals import ConfirmModal
 from ...tui.rows import highlighted_key, set_rows
-from .. import overlay
 from ..base import InboxScreen
 from ..state import plural, project_label
 from ..writer import Finished
@@ -117,6 +117,7 @@ class PruneScreen(InboxScreen):
         self._ticket: int | None = None
         self._progress: RoundupProgress | None = None
         self._result: PruneResult | None = None
+        self._basis: tuple[int, datetime] | None = None
 
     @property
     def result(self) -> PruneResult | None:
@@ -141,9 +142,16 @@ class PruneScreen(InboxScreen):
         if not self.query("#prune-rows"):
             return
         inbox = self.inbox
-        now_iso = inbox.now_iso()
-        view = overlay.visible(inbox.state.snapshot.reg, inbox.state.overlay)
-        self._rows = prune_rows(view, now_iso, inbox.now_epoch())
+        basis = inbox.render_basis()
+        shown = (basis.view, basis.minute)
+        if shown != self._basis:
+            self._basis = shown
+            self._render_rows(inbox.view(), basis.now)
+        self._render_status()
+
+    def _render_rows(self, view: dict[str, Any], now: datetime) -> None:
+        now_iso = now.isoformat()
+        self._rows = prune_rows(view, now_iso, now.timestamp())
         self.query_one("#prune-title", Static).update(Text(prune_title(len(self._rows))))
         purge = self.query_one("#prune-purge", Static)
         purging = (
@@ -161,7 +169,6 @@ class PruneScreen(InboxScreen):
         )
         rows.display = bool(self._rows)
         self.query_one("#prune-empty", Static).display = not self._rows
-        self._render_status()
 
     def _render_status(self) -> None:
         status = self.query_one("#prune-status", Static)

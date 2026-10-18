@@ -41,7 +41,7 @@ go deeper, per subsystem.
 
 `sources/*.discover()` (source-owned refs and fingerprints) → `scanner.scan()` — which consults
 `registry.cached_session()` and calls `parse()` only on a fingerprint miss, then attaches git
-identity from `gitinfo.resolve_git_project()`, memoized per cwd → `registry.reconcile()` merges
+identity from `gitinfo.resolve_git_project()`, reused per cwd for `GIT_RECHECK_AFTER` (24 h) → `registry.reconcile()` merges
 into `registry.json` → `overview.py` / `commands/triage.py` / `prune.py` read and render.
 
 `refresh.auto_refresh()` is the scan+reconcile+persist wrapper the views call; `--no-scan` skips

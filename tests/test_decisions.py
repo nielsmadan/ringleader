@@ -1,10 +1,11 @@
+import fcntl
 import json
 import os
 import time
 from pathlib import Path
 
 import pytest
-from ringleader import decisions, harvests, overview, registry, revalidate, stateio
+from ringleader import batch, decisions, harvests, overview, registry, revalidate, stateio
 from ringleader.decisions import (
     ArchiveOp,
     ClassifyOp,
@@ -426,14 +427,18 @@ def _conflicting_commit(monkeypatch):
     monkeypatch.setattr(registry, "commit_registry", commit)
 
 
-def test_an_archive_whose_commit_conflicts_reports_the_move(tmp_path, monkeypatch):
+def test_an_archive_whose_registry_write_fails_reports_the_move(tmp_path, monkeypatch):
     thread = _thread(tmp_path)
     path = _write(tmp_path, [thread])
-    _conflicting_commit(monkeypatch)
+
+    def failing_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(registry, "_write_registry", failing_write)
     outcome = decisions.execute(ArchiveOp(_seen(thread)), _ctx(path, tmp_path))
     assert (outcome.ok, outcome.wrote) == (False, True)
     assert outcome.message == (
-        "archived s1-title on disk, but the registry was not updated: changed concurrently"
+        "archived s1-title on disk, but the registry was not updated: disk full"
     )
     assert outcome.path == str(tmp_path / "archive" / "x" / "s1.jsonl")
     assert (tmp_path / "archive" / "x" / "s1.jsonl").exists()
@@ -486,3 +491,241 @@ def test_a_programming_error_in_a_bulk_op_is_not_mapped_to_a_refusal(tmp_path, m
     monkeypatch.setattr(decisions.roundup, "prune_planned", broken)
     with pytest.raises(KeyError):
         decisions.execute(PruneOp(()), _ctx(path, tmp_path))
+
+
+def _counting_writes(monkeypatch):
+    write = registry.atomic_write_text
+    writes = []
+
+    def counted(target, text, **options):
+        writes.append(target)
+        write(target, text, **options)
+
+    monkeypatch.setattr(registry, "atomic_write_text", counted)
+    return writes
+
+
+def _counting_presence(ctx):
+    probes = []
+
+    def probe():
+        probes.append(1)
+        return frozenset()
+
+    return OpContext(**{**ctx.__dict__, "presence": probe}), probes
+
+
+def test_a_mark_group_applies_each_op_in_one_registry_write(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2", "s3")]
+    path = _write(tmp_path, threads[:2])
+    writes = _counting_writes(monkeypatch)
+    ops = [
+        KeepOp(_seen(threads[0])),
+        SnoozeOp(_seen(threads[1]), UNTIL),
+        KeepGoingOp(_seen(threads[2])),
+    ]
+
+    results = decisions.execute_group(ops, _ctx(path, tmp_path))
+
+    assert [(r.ok, r.message) for r in results] == [
+        (True, "kept long-term: s1-title"),
+        (True, "snoozed s2-title until 2026-07-07"),
+        (False, "s3-title: no longer in the registry"),
+    ]
+    assert len(writes) == 1
+    saved = {t["sessionId"]: t for t in _load(path)["threads"]}
+    assert (saved["s1"]["decision"], saved["s2"]["snoozedUntil"]) == ("keep", UNTIL)
+
+
+def test_a_delete_group_probes_presence_once_and_rechecks_each_session(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2", "s3")]
+    path = _write(tmp_path, threads)
+    ops = [DeleteOp(_seen(thread)) for thread in threads]
+    _append(threads[1])
+    writes = _counting_writes(monkeypatch)
+    ctx, probes = _counting_presence(_ctx(path, tmp_path))
+
+    results = decisions.execute_group(ops, ctx)
+
+    assert [r.message for r in results] == [
+        "deleted s1-title — nothing harvested",
+        "s2-title: changed since you looked",
+        "deleted s3-title — nothing harvested",
+    ]
+    assert (len(probes), len(writes)) == (1, 1)
+    assert [t["sessionId"] for t in _load(path)["threads"]] == ["s2"]
+    assert sorted(d["reason"] for d in _load(path)["deleted"]) == ["deleted", "deleted"]
+    assert Path(threads[1]["file"]).exists()
+
+
+def test_a_delete_group_whose_registry_write_fails_reports_each_unlink(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+
+    def failing_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(registry, "_write_registry", failing_write)
+    results = decisions.execute_group([DeleteOp(_seen(t)) for t in threads], _ctx(path, tmp_path))
+
+    assert [(r.ok, r.wrote, r.message) for r in results] == [
+        (False, True, "deleted s1-title on disk, but the registry was not updated: disk full"),
+        (False, True, "deleted s2-title on disk, but the registry was not updated: disk full"),
+    ]
+
+
+def test_an_archive_group_probes_presence_once_and_writes_once(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    writes = _counting_writes(monkeypatch)
+    ctx, probes = _counting_presence(_ctx(path, tmp_path))
+
+    results = decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], ctx)
+
+    assert [(r.ok, r.message) for r in results] == [
+        (True, "archived s1-title"),
+        (True, "archived s2-title"),
+    ]
+    assert (len(probes), len(writes)) == (1, 1)
+    assert sorted(a["sessionId"] for a in _load(path)["archived"]) == ["s1", "s2"]
+
+
+def test_an_archive_group_refuses_a_running_session_and_archives_the_rest(tmp_path):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    ctx = _ctx(path, tmp_path, live=frozenset({("claude", "s1")}))
+
+    results = decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], ctx)
+
+    assert [r.ok for r in results] == [False, True]
+    assert results[0].refused[0][1].startswith("s1-title is running")
+    assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
+
+
+def test_an_archive_group_whose_registry_write_fails_reports_each_move(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+
+    def failing_write(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(registry, "_write_registry", failing_write)
+    results = decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], _ctx(path, tmp_path))
+
+    assert [(r.wrote, r.message) for r in results] == [
+        (True, "archived s1-title on disk, but the registry was not updated: disk full"),
+        (True, "archived s2-title on disk, but the registry was not updated: disk full"),
+    ]
+    assert results[0].path == str(tmp_path / "archive" / "x" / "s1.jsonl")
+
+
+def test_a_programming_error_in_a_group_is_returned_for_that_op_only(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    keep = registry.keep_thread
+
+    def broken(reg, session_id, when):
+        if session_id.endswith("s1"):
+            raise ZeroDivisionError("bug")
+        return keep(reg, session_id, when)
+
+    monkeypatch.setattr(registry, "keep_thread", broken)
+    first, second = decisions.execute_group(
+        [KeepOp(_seen(t)) for t in threads], _ctx(path, tmp_path)
+    )
+
+    assert isinstance(first, ZeroDivisionError)
+    assert second.message == "kept long-term: s2-title"
+
+
+def test_group_keys_split_marks_archives_and_deletes(tmp_path):
+    seen = _seen(_thread(tmp_path))
+    assert [
+        decisions.group_key(op)
+        for op in (
+            KeepOp(seen),
+            SnoozeOp(seen, UNTIL),
+            KeepGoingOp(seen),
+            ArchiveOp(seen),
+            DeleteOp(seen),
+            HarvestSaveOp(seen, None),
+            PruneOp(()),
+        )
+    ] == ["mark", "mark", "mark", "archive", "delete", None, None]
+
+
+def _registry_locked(path):
+    with open(f"{path}.lock", "a+b") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
+def test_an_interrupted_delete_group_records_the_deletes_it_already_made(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2", "s3")]
+    path = _write(tmp_path, threads)
+    prune_session = registry.prune_session
+
+    def interrupted(reg, session_id, when, **options):
+        if session_id.endswith("s2"):
+            raise KeyboardInterrupt
+        return prune_session(reg, session_id, when, **options)
+
+    monkeypatch.setattr(registry, "prune_session", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        decisions.execute_group([DeleteOp(_seen(t)) for t in threads], _ctx(path, tmp_path))
+
+    saved = _load(path)
+    assert [d["sessionId"] for d in saved["deleted"]] == ["s1"]
+    assert [t["sessionId"] for t in saved["threads"]] == ["s2", "s3"]
+    assert Path(threads[2]["file"]).exists()
+
+
+def test_an_interrupted_archive_group_records_the_moves_it_already_made(tmp_path, monkeypatch):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    archive = decisions.archive_cmd.archive_thread
+
+    def interrupted(reg, thread, **options):
+        if thread["sessionId"] == "s2":
+            raise KeyboardInterrupt
+        return archive(reg, thread, **options)
+
+    monkeypatch.setattr(decisions.archive_cmd, "archive_thread", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], _ctx(path, tmp_path))
+
+    assert [a["sessionId"] for a in _load(path)["archived"]] == ["s1"]
+
+
+def test_a_group_probes_presence_under_the_registry_lock(tmp_path):
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    held = []
+
+    def presence():
+        held.append(_registry_locked(path))
+        return frozenset()
+
+    ctx = OpContext(**{**_ctx(path, tmp_path).__dict__, "presence": presence})
+    decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], ctx)
+
+    assert held == [True]
+
+
+def test_a_group_reprobes_presence_once_the_reading_is_too_old(tmp_path, monkeypatch):
+    monkeypatch.setattr(batch, "PRESENCE_MAX_AGE", -1.0)
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
+    path = _write(tmp_path, threads)
+    readings = iter([frozenset(), frozenset({("claude", "s2")})])
+    ctx = OpContext(**{**_ctx(path, tmp_path).__dict__, "presence": lambda: next(readings)})
+
+    first, second = decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], ctx)
+
+    assert (first.ok, second.ok) == (True, False)
+    assert second.message.startswith("s2-title is running")

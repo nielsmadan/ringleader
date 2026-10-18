@@ -4,9 +4,11 @@ import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
-from . import enrichment, overview, prune, registry, stateio
+from . import enrichment, overview, paths, prune, registry, stateio
+from .batch import Txn, run_batch
 from .commands import archive as archive_cmd
 from .commands import sweep as sweep_cmd
 from .enrichment import EnrichOutcome
@@ -29,7 +31,7 @@ type RoundupStep = Literal["enrich", "stamp", "cancelled"]
 
 ENRICH_WARN_THRESHOLD = 25
 RECENT_DAYS = 7
-PRUNE_BATCH = 25
+PRUNE_BATCH = prune.DELETE_BATCH
 
 _HOURS_PER_DAY = 24
 _SECONDS_PER_MINUTE = 60
@@ -57,6 +59,8 @@ class RoundupPlan:
     concurrency: int
     retention_days: int = 0
     read_only: bool = False
+    handoffs_dir: str | None = None
+    handoff_paths: tuple[str, ...] = ()
 
     @property
     def enrich_warning(self) -> bool:
@@ -88,6 +92,7 @@ class PhasesResult:
     errors: int
     cancelled: bool
     warnings: tuple[str, ...]
+    handoffs_purged: int = 0
 
 
 @dataclass(frozen=True)
@@ -123,7 +128,9 @@ def plan_roundup(  # noqa: PLR0913 -- injection points the suite drives
     concurrency: int | None = None,
     unavailable_sources: frozenset[str] = frozenset(),
     read_only_model: Model | None = None,
+    handoffs_dir: Path | None = None,
 ) -> RoundupPlan:
+    handoffs = handoffs_dir if handoffs_dir is not None else paths.handoffs_dir()
     sweeping = sweep_cmd.due(reg, now_epoch)
     swept_ids = _identities(sweeping)
     pruning = [
@@ -159,14 +166,14 @@ def plan_roundup(  # noqa: PLR0913 -- injection points the suite drives
         concurrency=(concurrency or enrichment.default_concurrency(model)) if model else 1,
         retention_days=retention_days,
         read_only=read_only_model is not None and model is None,
+        handoffs_dir=str(handoffs),
+        handoff_paths=tuple(
+            str(path)
+            for path in prune.handoff_purge_candidates(
+                handoffs, now_epoch, retention_days=retention_days
+            )
+        ),
     )
-
-
-def _lookup(reg: dict[str, Any], identity: Identity) -> dict[str, Any] | None:
-    try:
-        return registry.find_session(reg, ":".join(identity))
-    except registry.AmbiguousSession:
-        return None
 
 
 def _still_planned(thread: dict[str, Any], item: Seen) -> bool:
@@ -175,10 +182,8 @@ def _still_planned(thread: dict[str, Any], item: Seen) -> bool:
     ) == item.fingerprint
 
 
-def _running_guard(
-    live: frozenset[Identity] | None, unknown: UnknownPresence
-) -> Callable[[dict[str, Any]], str | None]:
-    return lambda thread: running_reason(thread, live, unknown)
+def _running_guard(unknown: UnknownPresence) -> prune.Guard:
+    return lambda thread, live: running_reason(thread, live(), unknown)
 
 
 def _collect_skips(
@@ -188,6 +193,19 @@ def _collect_skips(
         out.append((found[registry.identity(thread)], reason))
 
     return collect
+
+
+def _revalidate_batch(
+    registry_path: str, batch: Sequence[Seen], now_iso: str
+) -> tuple[registry.Registry, list[tuple[Seen, dict[str, Any]]], list[tuple[Seen, str]]]:
+    loaded = registry.load_registry(registry_path)
+    assert isinstance(loaded, registry.Registry)
+    current = {registry.identity(t): t for t in prune.prune_candidates(loaded, now_iso)}
+    planned = [(item, current.get(item.identity)) for item in batch]
+    fresh = [(item, thread) for item, thread in planned if thread and _still_planned(thread, item)]
+    kept = {item.identity for item, _ in fresh}
+    changed = [(item, "changed since the plan") for item in batch if item.identity not in kept]
+    return loaded, fresh, changed
 
 
 def prune_planned(  # noqa: PLR0913 -- injection points the suite drives
@@ -207,30 +225,18 @@ def prune_planned(  # noqa: PLR0913 -- injection points the suite drives
         if cancelled():
             break
         batch = items[start : start + PRUNE_BATCH]
-        live = presence()
-        loaded = registry.load_registry(registry_path)
-        current = {registry.identity(t): t for t in prune.prune_candidates(loaded, now_iso)}
-        fresh = [
-            (item, current[item.identity])
-            for item in batch
-            if item.identity in current and _still_planned(current[item.identity], item)
-        ]
-        fresh_ids = {item.identity for item, _ in fresh}
-        skipped += [
-            (item, "changed since the plan") for item in batch if item.identity not in fresh_ids
-        ]
-        by_identity = {item.identity: item for item, _ in fresh}
-        batch_skips: list[tuple[Seen, str]] = []
+        loaded, fresh, changed = _revalidate_batch(registry_path, batch, now_iso)
+        skipped += changed
         deleted += prune.delete_sessions(
             loaded,
-            [t for _, t in fresh],
+            [thread for _, thread in fresh],
             now_iso,
             report=report,
-            guard=_running_guard(live, unknown),
+            guard=_running_guard(unknown),
+            presence=presence,
             batch_size=PRUNE_BATCH,
-            on_skip=_collect_skips(by_identity, batch_skips),
+            on_skip=_collect_skips({item.identity: item for item, _ in fresh}, skipped),
         )
-        skipped += batch_skips
         done += len(batch)
         progress(done, len(items))
     return deleted, tuple(skipped)
@@ -243,33 +249,76 @@ class _SweepOutcome:
     error: str | None = None
 
 
-def _sweep_one(
-    registry_path: str,
+def _sweep_item(
+    txn: Txn,
     item: Seen,
     *,
-    presence: PresenceProbe,
     unknown: UnknownPresence,
     archive_root_path: str,
     now_epoch: float,
 ) -> _SweepOutcome:
     try:
-        with stateio.publish_lock():
-            reg = registry.load_registry(registry_path)
-            thread = _lookup(reg, item.identity)
-            if thread is None:
-                return _SweepOutcome(False, skipped="no longer in the registry")
-            if not thread.get("finishOnExit"):
-                return _SweepOutcome(False, skipped="no longer marked finished")
-            reason = quiet_reason(thread, now_epoch, sweep_cmd.GRACE_SECONDS) or running_reason(
-                thread, presence(), unknown
-            )
-            if reason:
-                return _SweepOutcome(False, skipped=reason)
-            archive_cmd.archive_thread(reg, thread, archive_root_path=archive_root_path)
-            registry.commit_registry(registry_path, reg)
+        thread = txn.index.find(":".join(item.identity))
+    except registry.AmbiguousSession:
+        thread = None
+    if thread is None:
+        return _SweepOutcome(False, skipped="no longer in the registry")
+    if not thread.get("finishOnExit"):
+        return _SweepOutcome(False, skipped="no longer marked finished")
+    reason = quiet_reason(thread, now_epoch, sweep_cmd.GRACE_SECONDS) or running_reason(
+        thread, txn.live(), unknown
+    )
+    if reason:
+        return _SweepOutcome(False, skipped=reason)
+    try:
+        archive_cmd.archive_thread(
+            txn.reg, thread, archive_root_path=archive_root_path, index=txn.index
+        )
     except (RuntimeError, OSError) as error:
         return _SweepOutcome(False, error=f"sweep {item.label}: {error}")
     return _SweepOutcome(True)
+
+
+def _sweep_unrecorded(item: Seen, outcome: _SweepOutcome, error: Exception) -> _SweepOutcome:
+    return _SweepOutcome(
+        False,
+        error=f"sweep {item.label}: archived on disk, but the registry was not updated: {error}",
+    )
+
+
+def _sweep_failed(item: Seen, error: Exception) -> _SweepOutcome:
+    return _SweepOutcome(False, error=f"sweep {item.label}: {error}")
+
+
+def _sweep_batch(  # noqa: PLR0913 -- injection points the suite drives
+    registry_path: str,
+    batch: Sequence[Seen],
+    *,
+    presence: PresenceProbe,
+    unknown: UnknownPresence,
+    archive_root_path: str,
+    now_epoch: Callable[[], float],
+    cancelled: CancelCheck,
+) -> list[tuple[Seen, _SweepOutcome]]:
+    def sweep(txn: Txn, item: Seen) -> _SweepOutcome:
+        return _sweep_item(
+            txn,
+            item,
+            unknown=unknown,
+            archive_root_path=archive_root_path,
+            now_epoch=now_epoch(),
+        )
+
+    run = run_batch(
+        registry_path, batch, sweep, presence=presence, cancelled=cancelled, publish=True
+    )
+    settled = run.settled(
+        wrote=lambda outcome: outcome.swept, unrecorded=_sweep_unrecorded, failed=_sweep_failed
+    )
+    return [
+        (item, _sweep_failed(item, result) if isinstance(result, Exception) else result)
+        for item, result in settled
+    ]
 
 
 def _purge(plan: RoundupPlan, archive_root_path: str, report: Callable[[str], None]) -> int:
@@ -306,24 +355,27 @@ def _run_locked(  # noqa: PLR0913 -- injection points the suite drives
 
     sweep_total = len(plan.sweep_items)
     progress(RoundupProgress("sweep", 0, sweep_total))
-    for index, item in enumerate(plan.sweep_items, start=1):
+    done = 0
+    for start in range(0, sweep_total, PRUNE_BATCH):
         if cancelled():
             break
-        outcome = _sweep_one(
+        for item, outcome in _sweep_batch(
             plan.registry_path,
-            item,
+            plan.sweep_items[start : start + PRUNE_BATCH],
             presence=presence,
             unknown=unknown,
             archive_root_path=archive_root_path,
-            now_epoch=now_epoch(),
-        )
-        swept += outcome.swept
-        if outcome.skipped is not None:
-            skipped.append((item, outcome.skipped))
-        if outcome.error is not None:
-            errors += 1
-            warnings.append(outcome.error)
-        progress(RoundupProgress("sweep", index, sweep_total, item.label))
+            now_epoch=now_epoch,
+            cancelled=cancelled,
+        ):
+            swept += outcome.swept
+            if outcome.skipped is not None:
+                skipped.append((item, outcome.skipped))
+            if outcome.error is not None:
+                errors += 1
+                warnings.append(outcome.error)
+            done += 1
+            progress(RoundupProgress("sweep", done, sweep_total, item.label))
     progress(RoundupProgress("sweep", sweep_total, sweep_total, "done"))
 
     prune_total = len(plan.prune_items)
@@ -356,6 +408,16 @@ def _run_locked(  # noqa: PLR0913 -- injection points the suite drives
             warnings.append(f"purge: {error}")
         progress(RoundupProgress("purge", purged, purge_total, "done"))
 
+    handoffs_purged = 0
+    if plan.handoff_paths and plan.handoffs_dir is not None and not cancelled():
+        handoffs_purged = prune.purge_handoffs(
+            Path(plan.handoffs_dir),
+            [Path(path) for path in plan.handoff_paths],
+            now_epoch(),
+            retention_days=plan.retention_days,
+            report=warnings.append,
+        )
+
     return PhasesResult(
         swept=swept,
         deleted=deleted,
@@ -364,6 +426,7 @@ def _run_locked(  # noqa: PLR0913 -- injection points the suite drives
         errors=errors,
         cancelled=cancelled(),
         warnings=tuple(warnings),
+        handoffs_purged=handoffs_purged,
     )
 
 
@@ -506,6 +569,13 @@ def _enrich_line(plan: RoundupPlan) -> str:
     )
 
 
+def _purge_line(plan: RoundupPlan) -> str:
+    line = f"purge {_plural(len(plan.purge_ids), 'archived session')} past retention"
+    if not plan.handoff_paths:
+        return line
+    return f"{line}, and {_plural(len(plan.handoff_paths), 'handoff export')}"
+
+
 def describe_plan(plan: RoundupPlan) -> list[str]:
     return [
         _scan_line(plan.scan_note),
@@ -514,6 +584,6 @@ def describe_plan(plan: RoundupPlan) -> list[str]:
             f"delete {_plural(len(plan.prune_items), 'tiny session')} older than "
             f"{prune.DEFAULT_OLDER_THAN_DAYS} days (prune)"
         ),
-        f"purge {_plural(len(plan.purge_ids), 'archived session')} past retention",
+        _purge_line(plan),
         _enrich_line(plan),
     ]

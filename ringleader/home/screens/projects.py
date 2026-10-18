@@ -11,7 +11,7 @@ from ... import overview
 from ...tui.keys import nav_bindings
 from ...tui.rows import highlighted_key, set_rows
 from ..base import InboxScreen
-from ..state import ProjectRef, ProjectScope, plural, project_queue
+from ..state import HomeState, ProjectRef, ProjectScope, plural
 from .triage import TriageScreen
 
 LABEL_WIDTH = 36
@@ -61,6 +61,7 @@ class ProjectsScreen(InboxScreen):
     """
 
     _projects: tuple[ProjectRef, ...] = ()
+    _shown: HomeState | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -76,8 +77,12 @@ class ProjectsScreen(InboxScreen):
     def render_data(self) -> None:
         if not self.query("#projects"):
             return
-        now_iso = self.inbox.now_iso()
-        self._projects = project_queue(self.inbox.view_threads(), now_iso)
+        state = self.inbox.home_state()
+        if state is self._shown:
+            return
+        self._shown = state
+        now_iso = state.now_iso
+        self._projects = state.projects
         self.query_one("#projects-title", Static).update(Text(projects_title(self._projects)))
         projects = self.query_one("#projects", OptionList)
         set_rows(

@@ -23,7 +23,12 @@ After bounded edits, `commit_registry()` locks `<registry>.lock`, reloads the fi
 applies the changes relative to that baseline. Session rows match by `(source, sessionId)`,
 memory rows by path, and nested mappings by field. Unrelated concurrent edits survive;
 conflicting edits to the same field raise `RegistryConflict` before any registry write.
-A successful commit refreshes the caller's snapshot and baseline. `save_registry()` is
+A successful commit refreshes the caller's snapshot and baseline. A commit or
+`mutate_registry` whose result equals what it loaded from disk skips the write and its two
+fsyncs. A load parses the file once; the baseline is parsed from the same text only when
+something first reads it (a commit, or a mutation's unchanged check), and after a write it is
+parsed lazily from the text just written. A second parse is the cheaper independent copy: on a
+~4.7 MB registry a parse is about 17 ms against about 20 ms for a `deepcopy`. `save_registry()` is
 for initial plain-dict fixtures; production writers use the explicit commit API.
 Session merges use ordered identity maps, keeping bulk scan updates linear in the
 number of rows. Loading removes stale deleted tombstones for identities that also
@@ -46,6 +51,19 @@ over an earlier candidate list. The inbox's delete carries the `mtime` and `file
 into this check, so intervening activity or relocation cancels its deletion. Filesystem
 operations are not atomic with the registry; archive retries continue using the existing
 archive destination if the registry write failed.
+
+Batched destructive work holds the registry lock across each batch of up to 25
+(`prune.DELETE_BATCH`, the one bound): `rl prune --delete`, the roundup's prune and sweep,
+and the inbox writer's archives, deletes and marks all go through `batch.run_batch`, which
+loads once, runs each item's act against that state right before acting, and writes once. A
+single inbox decision is a batch of one, so grouped and ungrouped ops share one transaction
+shape. Presence is probed lazily inside the transaction, after the publish and registry locks
+are taken, and re-probed before an item once the reading is older than
+`batch.PRESENCE_MAX_AGE` (1 s), so a slow move cannot stretch one reading across the batch.
+An item that raises is recorded as that item's failure and the batch carries on. A
+`KeyboardInterrupt` or `SystemExit` stops the batch after the current item, commits what the
+earlier items did, then re-raises. A failed write after a file moved or was unlinked reports
+each such item as "on disk, but the registry was not updated" (`BatchRun.settled`).
 
 Lock order is **publish or operation lock, then registry lock**. Never acquire an outer
 lock or call another registry transaction inside a registry callback. Both transaction
@@ -82,7 +100,8 @@ editing:
   `None`. Stamped on every scan like the metadata fields, and read by the views to hide the
   session ([Filtering noisy sessions](../features/views-and-triage.md#filtering-noisy-sessions)).
 - **`_GIT_PROJECT_FIELDS`** — `gitProjectKey`, `gitProjectLabel`, `gitRoot`, `gitRemote`,
-  `gitCloneUrl`. These need the **live filesystem**, so a vanished cwd resolves to `None`.
+  `gitCloneUrl`, and `gitCheckedAt`, the time the cwd was last checked, which the scanner uses
+  to skip `git` for a day. These need the **live filesystem**, so a vanished cwd resolves to `None`.
   Reconcile refreshes them **only when the new scan actually resolved a value**, otherwise the
   cached one survives — without that rule, unplugging an external disk would blank the git
   identity of every session on it.
@@ -105,6 +124,11 @@ A new thread starts at `status: "unclassified"` with the judgment fields empty.
 older tombstones can recover it from their embedded thread. A missing source defaults to
 `claude-code` so v1 records keep working. Selectors accept `AGENT:ID` (`claude` aliases
 `claude-code`). A bare ID must be unambiguous across live, archived and deleted records.
+`SessionIndex(reg)` builds a `sessionId` map once and answers `find`/`session_identity`;
+`find_session` is the same lookup over an index of just the selector's `sessionId`, so the
+ambiguity rules have one implementation. Loops over many ids share one index, and the bucket
+moves (`archive_session`, `prune_session`, `purge_archived_session`) take `index=` and keep it
+current themselves; `archive_thread` passes a batch's index through to `archive_session`.
 New harvest frontmatter uses a qualified selector in its `sessionId` field; legacy bare
 references still work when unambiguous. Native registry `sessionId` values stay unchanged. The session id is the registry's key, which is why
 [workspace moves refuse rather than merge](../features/workspace-portability.md) — a merge

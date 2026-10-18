@@ -9,6 +9,7 @@ from ringleader import decisions, harvests, registry
 from ringleader.decisions import ReloadOp
 from ringleader.home.app import NOTHING_TO_HARVEST, InboxApp
 from ringleader.home.intents import ResumeIntent
+from ringleader.home.screens import triage as triage_screen
 from ringleader.home.screens.detail import DetailScreen
 from ringleader.home.screens.home import HomeScreen
 from ringleader.home.screens.projects import ProjectsScreen
@@ -766,3 +767,91 @@ async def test_undo_after_an_archive_applied_points_at_unarchive(tmp_path):
             ),
         )
         assert "1 decided this session" in screen_text(app)
+
+
+def _counted(monkeypatch, name):
+    calls = []
+    original = getattr(triage_screen, name)
+
+    def counted(*args, **kwargs):
+        calls.append(name)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(triage_screen, name, counted)
+    return calls
+
+
+async def test_keep_going_rebuilds_the_rows_only_when_the_view_changes(tmp_path, monkeypatch):
+    path = _write(tmp_path / "registry.json", *(_thread(f"s{n}", days=5 - n) for n in range(3)))
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await until(pilot, lambda: app.idle)
+        built = _counted(monkeypatch, "scope_rows")
+        await pilot.press("g")
+        await until(pilot, lambda: app.idle)
+        assert (_ids(app), len(built)) == (["claude-code:s1", "claude-code:s2"], 2)
+
+
+async def test_space_redraws_only_the_marked_row(tmp_path, monkeypatch):
+    path = _write(tmp_path / "registry.json", *(_thread(f"s{n}", days=5 - n) for n in range(3)))
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await until(pilot, lambda: app.idle)
+        drawn = _counted(monkeypatch, "triage_row")
+        await pilot.press("down", "space")
+        await pilot.pause()
+        prompts = [str(option.prompt)[:2] for option in _rows(app).options]
+        assert (prompts, len(drawn)) == (["  ", "● ", "  "], 1)
+
+
+async def test_down_scrolls_a_long_conversation_a_line_at_a_time(tmp_path):
+    thread = _thread("s1", days=5)
+    lines = "\n".join(f'{{"type":"user","message":{{"content":"line {n}"}}}}' for n in range(80))
+    Path(thread["file"]).write_text(lines + "\n", encoding="utf-8")
+    path = _write(tmp_path / "registry.json", thread)
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("enter")
+        await until(pilot, lambda: isinstance(app.screen, DetailScreen))
+        await until(pilot, lambda: "line 79" in app.screen.query_one("#conversation").text)
+        await pilot.press("down", "down")
+        await pilot.pause()
+        assert app.screen.query_one("#conversation").scroll_y == 2
+
+
+async def test_triage_rows_rebuild_on_a_new_minute_or_presence_not_a_new_second(
+    tmp_path, monkeypatch
+):
+    path = _write(tmp_path / "registry.json", _thread("s1", days=5), _thread("s2", days=4))
+    clock = [NOW_DT]
+    app = InboxApp(
+        path,
+        refresher=_reload,
+        presence=frozenset,
+        now=lambda: clock[0],
+        models=lambda task: None,
+        execute=GatedExecute(),
+        cwd=tmp_path,
+        strict=True,
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await until(pilot, lambda: app.idle)
+        built = _counted(monkeypatch, "scope_rows")
+
+        async def rerender():
+            app._set()
+            app._rerender()
+            await until(pilot, lambda: app.idle)
+            return len(built)
+
+        clock[0] = NOW_DT + timedelta(seconds=30)
+        same_minute = await rerender()
+        clock[0] = NOW_DT + timedelta(minutes=1)
+        next_minute = await rerender()
+        app._set(live_ids=frozenset({("claude-code", "s1")}))
+        live = await rerender()
+        assert (same_minute, next_minute, live) == (0, 1, 2)

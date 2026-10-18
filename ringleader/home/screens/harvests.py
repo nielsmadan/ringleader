@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from typing import ClassVar
 
 from rich.text import Text
@@ -113,6 +114,8 @@ class HarvestsScreen(InboxScreen):
     def __init__(self) -> None:
         super().__init__()
         self._groups: tuple[HarvestGroup, ...] = ()
+        self._grouped: tuple[Harvest, ...] | None = None
+        self._listed: tuple[tuple[HarvestGroup, ...], datetime] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -131,7 +134,9 @@ class HarvestsScreen(InboxScreen):
             return
         state = self.inbox.state
         items = state.harvests
-        self._groups = harvest_groups(items) if items else ()
+        if items != self._grouped:
+            self._grouped = items
+            self._groups = harvest_groups(items) if items else ()
         count = len(items or ())
         self.query_one("#harvests-title", Static).update(
             Text(
@@ -142,16 +147,24 @@ class HarvestsScreen(InboxScreen):
         problems = self.query_one("#harvests-problems", Static)
         problems.update(Text(problems_line(state.harvest_problems)))
         problems.display = state.harvest_problems > 0
+        basis = self.inbox.render_basis()
+        listed = (self._groups, basis.minute)
+        shown = self._listed
+        if shown is None or shown[0] is not listed[0] or shown[1] != listed[1]:
+            self._listed = listed
+            self._render_rows(basis.now.isoformat())
+        empty = self.query_one("#harvests-empty", Static)
+        empty.update(Text("Loading harvests…" if items is None else "No pending harvests."))
+        empty.display = not self._groups
+
+    def _render_rows(self, now_iso: str) -> None:
         rows = self.query_one("#harvest-rows", OptionList)
-        options = harvest_options(self._groups, self.inbox.now_iso())
+        options = harvest_options(self._groups, now_iso)
         keep = highlighted_key(rows)
         rows.set_options(options)
         rows.highlighted = None
         rows.highlighted = self._target(options, keep)
         rows.display = bool(options)
-        empty = self.query_one("#harvests-empty", Static)
-        empty.update(Text("Loading harvests…" if items is None else "No pending harvests."))
-        empty.display = not options
 
     @staticmethod
     def _target(options: list[Option], keep: str | None) -> int | None:

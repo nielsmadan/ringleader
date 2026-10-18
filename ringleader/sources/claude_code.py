@@ -5,7 +5,7 @@ import shutil
 import sys
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from pathlib import Path
 from typing import ClassVar
 
@@ -18,6 +18,7 @@ from .base import (
     append_jsonl_line,
     changed_since,
     existing_files,
+    iso_mtime,
     stat_fingerprint,
     workspace_dirs,
 )
@@ -40,10 +41,6 @@ def _iter_session_files(root: Path) -> Iterator[Path]:
         if "subagents" in p.parts:
             continue
         yield p
-
-
-def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
 @dataclass
@@ -137,7 +134,7 @@ class ClaudeCodeSource:
                 source=self.name,
                 source_ref=p.stem,
                 file=str(p),
-                mtime=_iso_mtime(p),
+                mtime=iso_mtime(st),
                 size_bytes=st.st_size,
                 fingerprint=stat_fingerprint(st),
             )
@@ -157,7 +154,7 @@ class ClaudeCodeSource:
             file=ref.file,
             ai_title=info.ai_title,
             message_count=info.message_count,
-            tail_text=info.tail_text,
+            tail_text=info.tail_text[:6000],
             git_branch=info.git_branch,
         )
 

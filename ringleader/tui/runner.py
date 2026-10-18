@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import codecs
+import io
 import os
+import select
 import signal
 import subprocess
 import sys
 import threading
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 
@@ -15,6 +18,7 @@ from ..progress import CancelCheck
 POLL_SECONDS = 0.05
 TERM_GRACE_SECONDS = 2.0
 READER_JOIN_SECONDS = 2.0
+READ_BYTES = 65536
 TIMEOUT_SECONDS = 600.0
 MAX_OUTPUT_CHARS = 2_000_000
 
@@ -27,7 +31,7 @@ class CommandRun:
     seconds: float
 
 
-def _stop_group(process: subprocess.Popen[str]) -> None:
+def _stop_group(process: subprocess.Popen[bytes]) -> None:
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGTERM)
     with suppress(subprocess.TimeoutExpired):
@@ -35,6 +39,21 @@ def _stop_group(process: subprocess.Popen[str]) -> None:
     with suppress(ProcessLookupError):
         os.killpg(process.pid, signal.SIGKILL)
     process.wait()
+
+
+def _drain(fd: int, stop: threading.Event, sink: Callable[[str], None]) -> None:
+    decoder = io.IncrementalNewlineDecoder(
+        codecs.getincrementaldecoder("utf-8")(errors="replace"), translate=True
+    )
+    while not stop.is_set():
+        ready, _, _ = select.select([fd], [], [], POLL_SECONDS)
+        if not ready:
+            continue
+        data = os.read(fd, READ_BYTES)
+        if not data:
+            break
+        sink(decoder.decode(data))
+    sink(decoder.decode(b"", final=True))
 
 
 def run_rl(
@@ -53,48 +72,55 @@ def run_rl(
         "TERM": "dumb",
         "COLUMNS": str(columns),
     }
-    process = subprocess.Popen(
-        [python or sys.executable, "-P", "-m", "ringleader", *argv],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        stdin=subprocess.DEVNULL,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        start_new_session=True,
-        env=child_env,
-    )
+    read_fd, write_fd = os.pipe()
+    try:
+        process = subprocess.Popen(
+            [python or sys.executable, "-P", "-m", "ringleader", *argv],
+            stdout=write_fd,
+            stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+            env=child_env,
+        )
+    except BaseException:
+        os.close(read_fd)
+        raise
+    finally:
+        os.close(write_fd)
     chunks: list[str] = []
+    kept = 0
     truncated = threading.Event()
-    stream = process.stdout
+    stop = threading.Event()
 
-    def read() -> None:
-        kept = 0
-        max_chars = MAX_OUTPUT_CHARS
-        for chunk in stream or ():
-            if kept >= max_chars:
-                truncated.set()
-                continue
-            chunks.append(chunk[: max_chars - kept])
+    def keep(chunk: str) -> None:
+        nonlocal kept
+        room = max(0, MAX_OUTPUT_CHARS - kept)
+        if len(chunk) > room:
+            truncated.set()
+        if room and chunk:
+            chunks.append(chunk[:room])
             kept += len(chunks[-1])
-            if len(chunks[-1]) < len(chunk):
-                truncated.set()
 
-    reader = threading.Thread(target=read, name="rl-run-reader", daemon=True)
+    reader = threading.Thread(
+        target=_drain, args=(read_fd, stop, keep), name="rl-run-reader", daemon=True
+    )
     reader.start()
     was_cancelled = False
     timed_out = False
-    while process.poll() is None:
-        timed_out = time.monotonic() - started >= timeout
-        if cancelled() or timed_out:
-            was_cancelled = True
-            _stop_group(process)
-            break
-        time.sleep(POLL_SECONDS)
-    process.wait()
-    reader.join(READER_JOIN_SECONDS)
-    if stream is not None and not reader.is_alive():
-        stream.close()
+    try:
+        while process.poll() is None:
+            timed_out = time.monotonic() - started >= timeout
+            if cancelled() or timed_out:
+                was_cancelled = True
+                _stop_group(process)
+                break
+            time.sleep(POLL_SECONDS)
+        process.wait()
+        reader.join(READER_JOIN_SECONDS)
+    finally:
+        stop.set()
+        reader.join()
+        os.close(read_fd)
     notes = [
         *(["[output truncated]"] if truncated.is_set() else []),
         *([f"[timed out after {timeout:.0f}s]"] if timed_out else []),

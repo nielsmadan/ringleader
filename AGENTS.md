@@ -33,8 +33,9 @@ pruning them before the GC clock deletes them.
   **native conversion** first — a fresh session in the target agent that genuinely continues the
   source, via `rl session convert`/`fork` under the hood — and only on refusal asks before
   falling back to the old **seeded handoff** (a Markdown export of the old session, written under
-  `~/.local/share/ringleader/handoffs/` — nothing prunes that directory, and the target starts a
-  NEW session that has only read it). `--markdown` skips the native attempt and goes straight to
+  `~/.local/share/ringleader/handoffs/` — only aged out by `rl prune --delete`/`rl roundup` once
+  `archive.retention_days` > 0, default off — and the target starts a NEW session that has only
+  read it). `--markdown` skips the native attempt and goes straight to
   the seeded handoff. Either way the source session is never modified. A target agent whose
   installed version was never self-verified on this machine triggers a one-time
   `rl doctor --verify-conversion <agent>` pass first (interactive sessions only; `--dry-run` just

@@ -347,3 +347,27 @@ def test_locked_store_preserves_cached_sessions_during_auto_refresh(tmp_path, mo
     assert [thread["sessionId"] for thread in reg["threads"]] == ["ses_live"]
     assert reg["deleted"] == []
     assert note is None
+
+
+def test_discover_sizes_sessions_in_payload_bytes_and_sees_a_new_message(tmp_path):
+    db = _create_db(tmp_path / "opencode.db")
+    _session(db)
+    _message(db, "ses_live", "msg_1", "user", 1770998200000, "placeholder")
+    connection = sqlite3.connect(db)
+    connection.execute(
+        "UPDATE part SET data = ? WHERE id = 'part_msg_1'",
+        (json.dumps({"type": "text", "text": "é" * 100}, ensure_ascii=False),),
+    )
+    connection.commit()
+    source = OpenCodeSource(db_path=db)
+    before = next(source.discover())
+    payloads = connection.execute(
+        "SELECT data FROM message UNION ALL SELECT data FROM part"
+    ).fetchall()
+    connection.close()
+    _message(db, "ses_live", "msg_2", "user", 1770998200000, "again")
+
+    after = next(source.discover())
+
+    assert before.size_bytes == sum(len(data.encode()) for (data,) in payloads)
+    assert after.fingerprint != before.fingerprint

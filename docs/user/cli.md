@@ -34,13 +34,13 @@ rl
 
 | Command | Does | Key flags |
 |---|---|---|
-| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, fuzzy-filtered as you type. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent, or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
+| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+r` widens to this tree, `ctrl+a` to everywhere, `enter` picks, `escape` quits. A `<query>` that is an unambiguous session-id prefix skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent, or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
 | `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape` back, `q` quit, `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry` |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl prune` | Delete tiny + stale sessions. **Previews unless `--delete`.** | `--delete`, `--older-than` (7), `--max-turns` (12), `--project` |
-| `rl usage` | Token usage from local transcript files and agent databases. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until`, `--all`, `--archived`, `--limit`, `--merge`, `--json` |
+| `rl usage` | Token usage from local transcript files and agent databases. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until` (`YYYY-MM-DD`), `--all`, `--archived`, `--limit`, `--merge`, `--json` |
 | `rl usage session <id>` | One session's spend: turns, split, cache rate, top turns. | `--json` |
 | `rl usage windows` | 5h/weekly windows. Codex from disk; Claude needs `rl install statusline`. | |
 | `rl usage export` | Write usage records out, to `--merge` elsewhere. | `--out` |
@@ -170,7 +170,7 @@ to the explicit presence command or onboarding skill.
 | `ai.command_prefix` | command the `claude`/`codex` engines launch through, shell-split (`sops-exec`); `none` clears it |
 | `enrich.model` | model for `enrich`; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
-| `archive.retention_days` | non-negative int; `0` = keep archives forever |
+| `archive.retention_days` | non-negative int; `0` = keep archives and handoff exports forever. Above `0`, `prune --delete` and `roundup` also remove `handoffs/*.md` exports older than this many days (an unscoped `prune` only) |
 
 `roundup_stale_hours` (default 8) is read from the same file but **cannot be set with
 `rl config set`** — edit `config.json` under the state dir to change it.

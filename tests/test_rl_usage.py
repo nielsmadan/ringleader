@@ -39,7 +39,7 @@ def _rec(  # noqa: PLR0913, PLR0917 -- test data-builder helper, one arg per fix
 @pytest.fixture
 def fake_records(monkeypatch):
     recs = []
-    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: list(recs))
+    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None, **_: list(recs))
     return recs
 
 
@@ -84,10 +84,30 @@ def test_window_filters_by_day(fake_records, capsys):
     assert out["rows"][0]["records"] == 1
 
 
+def test_until_bounds_the_window_and_is_echoed_as_a_day(fake_records, capsys):
+    fake_records += [_rec(ts="2026-08-01T10:00:00Z", inp=1), _rec(ts="2026-08-17T10:00:00Z")]
+
+    usage_cmd.cmd_usage(["--until", "2026-08-10", "--json"])
+
+    out = json.loads(capsys.readouterr().out)
+    assert (out["since"], out["until"]) == (None, "2026-08-10")
+    assert out["per_day"] == {"2026-08-01": 571}
+
+
+@pytest.mark.parametrize("flag", ["--since", "--until"])
+@pytest.mark.parametrize("value", ["2026-13-01", "2026-8-1", "last-week", "2026-08-10T00:00"])
+def test_a_malformed_window_day_is_a_usage_error(fake_records, capsys, flag, value):
+    with pytest.raises(SystemExit) as exit_info:
+        usage_cmd.cmd_usage([flag, value, "--json"])
+
+    assert exit_info.value.code == 2
+    assert f"argument {flag}: {value!r} is not a YYYY-MM-DD date" in capsys.readouterr().err
+
+
 def test_source_filter_is_passed_through(monkeypatch, capsys):
     seen = {}
 
-    def fake_collect(sources, dirs=None):
+    def fake_collect(sources, dirs=None, **_):
         seen["sources"] = sources
         return [_rec()]
 
@@ -167,7 +187,9 @@ def test_text_total_says_the_cost_is_partial(fake_records, capsys):
 
 def test_archived_flag_adds_the_archive_records(monkeypatch, capsys):
     monkeypatch.setattr(
-        usage_cmd, "collect", lambda sources, dirs=None: [_rec(session="s-live", project="live")]
+        usage_cmd,
+        "collect",
+        lambda sources, dirs=None, **_: [_rec(session="s-live", project="live")],
     )
     monkeypatch.setattr(
         usage_cmd,
@@ -211,7 +233,7 @@ def test_archived_dedupes_a_session_present_in_both_trees(monkeypatch, tmp_path,
     from ringleader.usage.claude import ClaudeUsageReader
 
     live_records = list(ClaudeUsageReader(projects_dir=live_dir).records())
-    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: list(live_records))
+    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None, **_: list(live_records))
     monkeypatch.setattr(usage_cmd, "archive_root", lambda: archive_dir)
 
     usage_cmd.cmd_usage(["--all", "--archived", "--json"])
@@ -222,7 +244,9 @@ def test_archived_dedupes_a_session_present_in_both_trees(monkeypatch, tmp_path,
 
 
 def test_archive_is_left_out_unless_asked_for(monkeypatch, capsys):
-    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: [_rec(project="live")])
+    monkeypatch.setattr(
+        usage_cmd, "collect", lambda sources, dirs=None, **_: [_rec(project="live")]
+    )
     monkeypatch.setattr(
         usage_cmd, "collect_archived", lambda sources=None: [_rec(project="archived")]
     )
@@ -392,7 +416,7 @@ def test_archived_merges_claude_and_codex_without_double_counting(monkeypatch, t
         out=5,
     )
     monkeypatch.setattr(usage_cmd, "archive_root", lambda: tmp_path)
-    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None: [])
+    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None, **_: [])
 
     usage_cmd.cmd_usage(["--all", "--archived", "--by", "source", "--json"])
 
@@ -407,7 +431,7 @@ def test_ambiguous_session_prefix_refuses_instead_of_merging(monkeypatch, capsys
     monkeypatch.setattr(
         usage_cmd,
         "collect",
-        lambda sources, dirs=None: [_rec(session="ab111"), _rec(session="ab222")],
+        lambda sources, dirs=None, **_: [_rec(session="ab111"), _rec(session="ab222")],
     )
 
     rc = usage_cmd.cmd_usage(["session", "ab"])
@@ -422,7 +446,7 @@ def test_unambiguous_session_prefix_still_reports(monkeypatch, capsys):
     monkeypatch.setattr(
         usage_cmd,
         "collect",
-        lambda sources, dirs=None: [_rec(session="ab111"), _rec(session="ab111")],
+        lambda sources, dirs=None, **_: [_rec(session="ab111"), _rec(session="ab111")],
     )
 
     rc = usage_cmd.cmd_usage(["session", "ab"])

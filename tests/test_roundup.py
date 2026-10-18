@@ -1,3 +1,4 @@
+import fcntl
 import os
 import threading
 import time
@@ -292,27 +293,53 @@ def test_run_phases_with_unknown_presence_and_refuse_deletes_nothing(tmp_path):
     assert _live_sids(path) == ["big-new", "big-old", "done", "fin", "tiny"]
 
 
-def test_run_phases_commits_each_sweep_archive_separately(tmp_path, monkeypatch):
+def test_run_phases_sweeps_a_batch_with_one_presence_probe_and_one_registry_write(
+    tmp_path, monkeypatch
+):
+    path = _write(
+        tmp_path,
+        [_thread(tmp_path, f"fin-{i}", finish=True) for i in range(3)],
+    )
+    plan = _plan(path)
+    probes = []
+    write = registry.atomic_write_text
+    writes = []
+
+    def counted(target, text, **options):
+        writes.append(target)
+        write(target, text, **options)
+
+    monkeypatch.setattr(registry, "atomic_write_text", counted)
+
+    result = _phases(plan, presence=lambda: probes.append(1) or frozenset())
+
+    assert (result.swept, len(probes), len(writes)) == (3, 1, 1)
+    assert sorted(a["sessionId"] for a in registry.load_registry(path)["archived"]) == [
+        "fin-0",
+        "fin-1",
+        "fin-2",
+    ]
+
+
+def test_run_phases_reports_a_sweep_batch_whose_registry_write_failed(tmp_path, monkeypatch):
     path = _write(
         tmp_path,
         [_thread(tmp_path, "fin-a", finish=True), _thread(tmp_path, "fin-b", finish=True)],
     )
     plan = _plan(path)
-    commit = registry.commit_registry
-    commits = []
 
-    def flaky(target, reg):
-        commits.append(target)
-        if len(commits) == 2:
-            raise registry.RegistryConflict("concurrent write")
-        commit(target, reg)
+    def failing(target, text, **options):
+        raise OSError("disk full")
 
-    monkeypatch.setattr(registry, "commit_registry", flaky)
+    monkeypatch.setattr(registry, "atomic_write_text", failing)
 
     result = _phases(plan)
 
-    assert (result.swept, result.errors) == (1, 1)
-    assert [a["sessionId"] for a in registry.load_registry(path)["archived"]] == ["fin-a"]
+    assert (result.swept, result.errors) == (0, 2)
+    assert result.warnings == (
+        "sweep fin-a-title: archived on disk, but the registry was not updated: disk full",
+        "sweep fin-b-title: archived on disk, but the registry was not updated: disk full",
+    )
 
 
 def test_run_phases_refuses_while_another_roundup_holds_the_lock(tmp_path):
@@ -510,8 +537,8 @@ def test_interrupt_mid_batch_still_tombstones_the_unlinked_sessions(tmp_path, mo
     real = prune.registry.prune_session
     calls = []
 
-    def interrupting(reg, qualified, now_iso):
-        real(reg, qualified, now_iso)
+    def interrupting(reg, qualified, now_iso, **options):
+        real(reg, qualified, now_iso, **options)
         calls.append(qualified)
         if len(calls) == 2:
             raise KeyboardInterrupt
@@ -523,3 +550,109 @@ def test_interrupt_mid_batch_still_tombstones_the_unlinked_sessions(tmp_path, mo
 
     saved = registry.load_registry(path)
     assert len(saved["deleted"]) == 2
+
+
+def _handoff(directory, name, age_days):
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / name
+    path.write_text("# handoff\n")
+    when = time.time() - age_days * 86_400
+    os.utime(path, (when, when))
+    return path
+
+
+def test_roundup_plans_and_purges_handoff_exports_past_retention(tmp_path):
+    handoffs = tmp_path / "handoffs"
+    old = _handoff(handoffs, "old.md", 40)
+    fresh = _handoff(handoffs, "fresh.md", 1)
+    path = _write(tmp_path, [])
+    plan = roundup_api.plan_roundup(
+        path,
+        registry.load_registry(path),
+        NOW,
+        scan_note=None,
+        model=None,
+        now_epoch=time.time(),
+        retention_days=30,
+        handoffs_dir=handoffs,
+    )
+
+    assert plan.handoff_paths == (str(old),)
+    assert roundup_api.describe_plan(plan)[3] == (
+        "purge 0 archived sessions past retention, and 1 handoff export"
+    )
+    result = _phases(plan)
+    assert result.handoffs_purged == 1
+    assert sorted(p.name for p in handoffs.iterdir()) == [fresh.name]
+
+
+def test_roundup_keeps_handoff_exports_when_retention_is_off(tmp_path):
+    handoffs = tmp_path / "handoffs"
+    old = _handoff(handoffs, "old.md", 400)
+    path = _write(tmp_path, [])
+    plan = roundup_api.plan_roundup(
+        path,
+        registry.load_registry(path),
+        NOW,
+        scan_note=None,
+        model=None,
+        now_epoch=time.time(),
+        retention_days=0,
+        handoffs_dir=handoffs,
+    )
+
+    assert (plan.handoff_paths, _phases(plan).handoffs_purged) == ((), 0)
+    assert old.exists()
+
+
+def _registry_locked(path):
+    with open(f"{path}.lock", "a+b") as handle:
+        try:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return True
+        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        return False
+
+
+def test_a_sweep_batch_skips_a_running_middle_session_and_archives_the_others(tmp_path):
+    path = _write(tmp_path, [_thread(tmp_path, f"fin-{i}", finish=True) for i in range(3)])
+    plan = _plan(path)
+    held = []
+
+    def presence():
+        held.append(_registry_locked(path))
+        return frozenset({("claude", "fin-1")})
+
+    result = _phases(plan, presence=presence, unknown="refuse")
+
+    assert (result.swept, result.errors) == (2, 0)
+    assert [(item.identity[1], reason) for item, reason in result.skipped] == [
+        ("fin-1", "fin-1-title is running — finish it from inside with the ringleader-finish skill")
+    ]
+    assert sorted(a["sessionId"] for a in registry.load_registry(path)["archived"]) == [
+        "fin-0",
+        "fin-2",
+    ]
+    assert held == [True]
+
+
+def test_an_interrupted_sweep_batch_records_what_it_already_archived(tmp_path, monkeypatch):
+    path = _write(tmp_path, [_thread(tmp_path, f"fin-{i}", finish=True) for i in range(3)])
+    plan = _plan(path)
+    archive = roundup_api.archive_cmd.archive_thread
+
+    def interrupted(reg, thread, **options):
+        if thread["sessionId"] == "fin-1":
+            raise KeyboardInterrupt
+        return archive(reg, thread, **options)
+
+    monkeypatch.setattr(roundup_api.archive_cmd, "archive_thread", interrupted)
+
+    with pytest.raises(KeyboardInterrupt):
+        _phases(plan)
+
+    saved = registry.load_registry(path)
+    assert [a["sessionId"] for a in saved["archived"]] == ["fin-0"]
+    assert sorted(t["sessionId"] for t in saved["threads"]) == ["fin-1", "fin-2"]
+    assert not os.path.exists(tmp_path / "projects" / "fin-0.jsonl")

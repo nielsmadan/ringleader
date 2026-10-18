@@ -72,6 +72,7 @@ class OutputScreen(InboxScreen):
         self._runs: tuple[runner.CommandRun, ...] | None = None
         self._error: str | None = None
         self._cancelled = False
+        self._shown: tuple[int, bool, bool] | None = None
 
     def commands(self) -> Sequence[Sequence[str]]:
         return [self.argv]
@@ -124,8 +125,10 @@ class OutputScreen(InboxScreen):
             self.render_data()
 
     def render_data(self) -> None:
-        if not self.query("#output-log"):
+        shown = (self._generation, self.running, self._cancelled)
+        if not self.query("#output-log") or shown == self._shown:
             return
+        self._shown = shown
         log = self.query_one("#output-log", Log)
         status = self.query_one("#output-status", Static)
         log.clear()
@@ -159,3 +162,7 @@ class OutputScreen(InboxScreen):
     def action_back(self) -> None:
         self.action_cancel()
         self.app.pop_screen()
+
+    def on_unmount(self) -> None:
+        if self._token is not None:
+            self._token.cancel()

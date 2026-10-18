@@ -1,5 +1,7 @@
+import gc
 import threading
 import time
+import weakref
 
 import pytest
 from ringleader import enrichment, registry
@@ -297,3 +299,28 @@ def test_default_concurrency_and_estimate():
     assert enrichment.default_concurrency(FakeModel()) == 4
     assert enrichment.estimate_seconds(9, "claude", 4) == 3 * 8.0
     assert enrichment.estimate_seconds(2, None, 0) == 2 * 15.0
+
+
+def test_enrich_sessions_releases_the_loaded_registry_before_calling_the_model(
+    tmp_path, monkeypatch
+):
+    path = _registry(tmp_path, [_thread("s0")])
+    load = registry.load_registry
+    loaded = []
+
+    def tracked(target):
+        reg = load(target)
+        loaded.append(weakref.ref(reg))
+        return reg
+
+    monkeypatch.setattr(registry, "load_registry", tracked)
+    released = []
+
+    def respond(prompt):
+        gc.collect()
+        released.append(loaded[0]() is None)
+        return GOOD
+
+    _run(path, _ids(1), FakeModel(respond), concurrency=1)
+
+    assert released == [True]

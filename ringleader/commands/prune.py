@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, cast
 
 from .. import overview, projects, prune, registry, scanner
 from ..config import load_config
-from ..paths import archive_root
+from ..paths import archive_root, handoffs_dir
 from ..sources.base import NormalizedSession
 from . import default_registry
 
@@ -93,6 +95,40 @@ def _delete_stubs(stubs: list[NormalizedSession]) -> int:
     return removed
 
 
+def _report_candidates(cands: list[dict[str, Any]], now: str, total: int) -> None:
+    cands.sort(key=lambda t: overview.age_days(t["mtime"], now), reverse=True)
+    for t in cands:
+        age = round(overview.age_days(t["mtime"], now))
+        print(
+            f"  [{overview.effective_status(t, now)}] {_label(t)} "
+            f"({age}d, {overview.human_size(t.get('sizeBytes'))}, "
+            f"{t.get('messageCount') or 0} msgs)  {t.get('project') or ''}"
+        )
+    print(f"\n{len(cands)} sessions, {overview.human_size(total)}")
+
+
+def _report_archived(arch: list[dict[str, Any]], now: str, retention: int) -> None:
+    arch.sort(key=lambda ts: ts.get("archivedAt") or "")
+    for ts in arch:
+        archived_at = ts.get("archivedAt")
+        if not isinstance(archived_at, str):
+            continue
+        age = round(overview.age_days(archived_at, now))
+        print(
+            f"  archived {archived_at[:10]}  {ts.get('project') or '(unknown)'}"
+            f"  {ts['sessionId'][:8]}  ({age}d, past {retention}d retention)"
+        )
+    print(f"\n{len(arch)} archived session(s) past retention (archive.retention_days={retention})")
+
+
+def _report_handoffs(handoffs: list[Path], retention: int) -> None:
+    for path in handoffs:
+        print(f"  handoff {path.name}")
+    print(
+        f"\n{len(handoffs)} handoff export(s) past retention (archive.retention_days={retention})"
+    )
+
+
 def cmd_prune(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl prune")
     ap.add_argument("--registry", default=str(default_registry()))
@@ -136,40 +172,25 @@ def cmd_prune(argv: list[str]) -> int:
         arch = projects.filter_by_projects(arch, args.project)
 
     stubs = _find_stubs(reg, args.project)
+    handoffs = (
+        []
+        if args.project
+        else prune.handoff_purge_candidates(handoffs_dir(), time.time(), retention_days=retention)
+    )
 
-    if not cands and not arch and not stubs:
+    if not cands and not arch and not stubs and not handoffs:
         print("nothing to prune")
         return 0
 
     total = sum(t.get("sizeBytes") or 0 for t in cands)
     if cands:
-        cands.sort(key=lambda t: overview.age_days(t["mtime"], now), reverse=True)
-        for t in cands:
-            age = round(overview.age_days(t["mtime"], now))
-            print(
-                f"  [{overview.effective_status(t, now)}] {_label(t)} "
-                f"({age}d, {overview.human_size(t.get('sizeBytes'))}, "
-                f"{t.get('messageCount') or 0} msgs)  {t.get('project') or ''}"
-            )
-        print(f"\n{len(cands)} sessions, {overview.human_size(total)}")
-
+        _report_candidates(cands, now, total)
     if arch:
-        arch.sort(key=lambda ts: ts.get("archivedAt") or "")
-        for ts in arch:
-            archived_at = ts.get("archivedAt")
-            if not isinstance(archived_at, str):
-                continue
-            age = round(overview.age_days(archived_at, now))
-            print(
-                f"  archived {archived_at[:10]}  {ts.get('project') or '(unknown)'}"
-                f"  {ts['sessionId'][:8]}  ({age}d, past {retention}d retention)"
-            )
-        print(
-            f"\n{len(arch)} archived session(s) past retention (archive.retention_days={retention})"
-        )
-
+        _report_archived(arch, now, retention)
     if stubs:
         _report_stubs(stubs)
+    if handoffs:
+        _report_handoffs(handoffs, retention)
 
     if not args.delete:
         print("(preview — re-run with --delete to remove these)")
@@ -182,6 +203,8 @@ def cmd_prune(argv: list[str]) -> int:
         parts.append(f"purge {len(arch)} archived")
     if stubs:
         parts.append(f"remove {len(stubs)} resurrected archived transcript(s)")
+    if handoffs:
+        parts.append(f"remove {len(handoffs)} handoff export(s)")
     try:
         resp = input(f"Proceed to {' and '.join(parts)}? [y/N] ").strip().lower()
     except EOFError:
@@ -193,10 +216,14 @@ def cmd_prune(argv: list[str]) -> int:
     deleted = prune.delete_sessions(reg, cands, now)
     purged = prune.purge_archived(reg, arch, now, archive_root_path=str(archive_root()))
     removed_stubs = _delete_stubs(stubs)
+    removed_handoffs = prune.purge_handoffs(
+        handoffs_dir(), handoffs, time.time(), retention_days=retention
+    )
     skipped = len(cands) - deleted
     registry.commit_registry(args.registry, reg)
-    print(
+    summary = (
         f"deleted {deleted} sessions, skipped {skipped}, purged {purged} archived, "
         f"removed {removed_stubs} resurrected"
     )
+    print(f"{summary}, {removed_handoffs} handoff export(s)" if handoffs else summary)
     return 0

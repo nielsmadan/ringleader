@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
@@ -536,3 +537,72 @@ def test_stub_deletion_skips_a_transcript_whose_picker_entry_survives(
     assert "picker index is read-only" in captured.err
     assert "removed 0 resurrected" in captured.out
     assert stub.exists()
+
+
+def test_delete_writes_the_registry_once_per_batch(tmp_path, monkeypatch, capsys):
+    from ringleader import prune as prune_api
+    from ringleader import registry
+
+    threads = [_thread(tmp_path, f"s{i:02d}", size_bytes=10) for i in range(30)]
+    reg = _write_registry(tmp_path, threads)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "y")
+    write = registry.atomic_write_text
+    writes = []
+
+    def counted(target, text, **options):
+        writes.append(target)
+        write(target, text, **options)
+
+    monkeypatch.setattr(registry, "atomic_write_text", counted)
+
+    assert prune.cmd_prune(["--registry", str(reg), "--delete"]) == 0
+
+    assert "deleted 30 sessions, skipped 0" in capsys.readouterr().out
+    assert len(writes) == -(-30 // prune_api.DELETE_BATCH)
+    assert json.loads(reg.read_text())["threads"] == []
+
+
+def _handoffs(tmp_path):
+    d = tmp_path / "xdg" / "ringleader" / "handoffs"
+    d.mkdir(parents=True, exist_ok=True)
+    old = d / "old-session-20260101T000000000000Z.md"
+    old.write_text("# old", encoding="utf-8")
+    stale = datetime.now(UTC) - timedelta(days=40)
+    os.utime(old, (stale.timestamp(), stale.timestamp()))
+    fresh = d / "fresh-session-20260901T000000000000Z.md"
+    fresh.write_text("# fresh", encoding="utf-8")
+    return old, fresh
+
+
+def test_handoff_exports_past_retention_are_previewed_and_kept(tmp_path):
+    _write_config(tmp_path, 30)
+    old, fresh = _handoffs(tmp_path)
+    reg = _write_reg_full(tmp_path, [], [])
+
+    r = _run(reg)
+
+    assert r.returncode == 0
+    assert f"handoff {old.name}" in r.stdout
+    assert "1 handoff export(s) past retention" in r.stdout
+    assert (old.exists(), fresh.exists()) == (True, True)
+
+
+def test_delete_removes_handoff_exports_past_retention(tmp_path):
+    _write_config(tmp_path, 30)
+    old, fresh = _handoffs(tmp_path)
+    reg = _write_reg_full(tmp_path, [], [])
+
+    r = _run(reg, "--delete", stdin="y\n")
+
+    assert "removed 0 resurrected, 1 handoff export(s)" in r.stdout
+    assert (old.exists(), fresh.exists()) == (False, True)
+
+
+def test_handoff_exports_stay_when_retention_is_off(tmp_path):
+    old, _ = _handoffs(tmp_path)
+    reg = _write_reg_full(tmp_path, [], [])
+
+    r = _run(reg, "--delete", stdin="y\n")
+
+    assert "nothing to prune" in r.stdout
+    assert old.exists()

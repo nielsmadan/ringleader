@@ -573,10 +573,11 @@ def _remaining_items_after(receipt: PublishReceipt) -> tuple[Harvest, ...]:
 def _paths_by_session(
     reg: dict[str, Any], remaining: Sequence[Harvest], affected_items: Sequence[ReceiptItem]
 ) -> dict[str, list[str]]:
-    affected_sessions = {registry.session_identity(reg, item.session_id) for item in affected_items}
+    index = registry.SessionIndex(reg)
+    affected_sessions = {index.session_identity(item.session_id) for item in affected_items}
     paths: dict[str, list[str]] = {":".join(key): [] for key in affected_sessions}
     for item in remaining:
-        key = registry.session_identity(reg, item.session_id)
+        key = index.session_identity(item.session_id)
         if key in affected_sessions:
             paths[":".join(key)].append(str(item.path.absolute()))
     return paths

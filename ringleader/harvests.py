@@ -5,7 +5,8 @@ import os
 import re
 import stat
 import uuid
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from .gitinfo import normalize_remote
@@ -56,10 +57,14 @@ class HarvestProblem:
     message: str
 
 
+type Stamp = tuple[int, int]
+
+
 @dataclass(frozen=True)
 class HarvestSnapshot:
     items: tuple[Harvest, ...]
     problems: tuple[HarvestProblem, ...]
+    stamps: Mapping[Path, Stamp] = field(default_factory=dict, compare=False)
 
 
 def _slug(name: str, session_id: str) -> str:
@@ -100,33 +105,59 @@ def _parse_harvest(path: Path, raw: bytes) -> Harvest:
     )
 
 
-def load_harvest_path(path: Path) -> Harvest:
+def _load_stamped(path: Path) -> tuple[Harvest, Stamp]:
     flags = os.O_RDONLY | os.O_NONBLOCK | getattr(os, "O_NOFOLLOW", 0)
     fd = os.open(path, flags)
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
             raise ValueError("harvest is not a regular file")
         with os.fdopen(fd, "rb") as handle:
             fd = -1
-            return _parse_harvest(path, handle.read())
+            return _parse_harvest(path, handle.read()), (info.st_mtime_ns, info.st_size)
     finally:
         if fd >= 0:
             os.close(fd)
 
 
-def snapshot_harvests() -> HarvestSnapshot:
+def load_harvest_path(path: Path) -> Harvest:
+    return _load_stamped(path)[0]
+
+
+def _unchanged(
+    path: Path, known: Mapping[Path, Harvest], stamps: Mapping[Path, Stamp]
+) -> tuple[Harvest, Stamp] | None:
+    item = known.get(path)
+    stamp = stamps.get(path)
+    if item is None or stamp is None:
+        return None
+    try:
+        info = os.lstat(path)
+    except OSError:
+        return None
+    current = (info.st_mtime_ns, info.st_size)
+    return (item, current) if stat.S_ISREG(info.st_mode) and current == stamp else None
+
+
+def snapshot_harvests(previous: HarvestSnapshot | None = None) -> HarvestSnapshot:
     d = harvests_dir()
     if not d.exists():
         return HarvestSnapshot(items=(), problems=())
+    known = {item.path: item for item in previous.items} if previous is not None else {}
+    previous_stamps = previous.stamps if previous is not None else {}
     items: list[Harvest] = []
     problems: list[HarvestProblem] = []
+    stamps: dict[Path, Stamp] = {}
     for path in sorted(d.glob("*.md")):
         try:
-            items.append(load_harvest_path(path))
+            item, stamp = _unchanged(path, known, previous_stamps) or _load_stamped(path)
         except (OSError, UnicodeDecodeError, ValueError) as error:
             problems.append(HarvestProblem(path=path, message=str(error)))
+            continue
+        items.append(item)
+        stamps[path] = stamp
     items.sort(key=lambda harvest: harvest.harvested_at or "", reverse=True)
-    return HarvestSnapshot(items=tuple(items), problems=tuple(problems))
+    return HarvestSnapshot(items=tuple(items), problems=tuple(problems), stamps=stamps)
 
 
 def _write_harvest_unlocked(  # noqa: PLR0913
@@ -139,7 +170,7 @@ def _write_harvest_unlocked(  # noqa: PLR0913
     content: str,
     clone_url: str | None = None,
 ) -> Path:
-    for field, value in (
+    for key, value in (
         ("session_id", session_id),
         ("name", name),
         ("folder_path", folder_path),
@@ -147,7 +178,7 @@ def _write_harvest_unlocked(  # noqa: PLR0913
         ("clone_url", clone_url),
         ("harvested_at", harvested_at),
     ):
-        _validate_frontmatter_value(field, value)
+        _validate_frontmatter_value(key, value)
     harvest_id = uuid.uuid4().hex
     fields = [
         "---",

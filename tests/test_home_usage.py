@@ -9,6 +9,7 @@ from ringleader.tui.background import CancelToken
 from ringleader.tui.runner import CommandRun
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_fixture import build_fixture
+from textual.widgets import Log
 
 from tui_helpers import until
 
@@ -138,3 +139,49 @@ def test_run_commands_hands_the_child_the_app_environment_and_registry_argv(tmp_
         str(tmp_path / "xdg"),
         "-P -m ringleader doctor --registry /r.json",
     ]
+
+
+async def test_jumping_home_mid_run_cancels_the_child(tmp_path, monkeypatch):
+    gate = threading.Event()
+    fake = FakeRun(gate)
+    monkeypatch.setattr("ringleader.tui.runner.run_rl", fake)
+    app = _app(build_fixture(tmp_path, threads=5, now=NOW_DT).registry_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        try:
+            await until(pilot, lambda: app.idle)
+            await pilot.press("7")
+            await until(pilot, lambda: len(fake.calls) == 1)
+            await pilot.press("1")
+            await until(pilot, lambda: fake.results == [None])
+        finally:
+            gate.set()
+    assert fake.calls == [("usage",)]
+
+
+class LongRun:
+    def __call__(self, argv, *, cancelled, columns, python=None, env=None):
+        body = "".join(f"line {n}\n" for n in range(100))
+        return CommandRun(tuple(argv), 0, body, 0.5)
+
+
+async def test_a_state_change_does_not_rewrite_the_output(tmp_path, monkeypatch):
+    monkeypatch.setattr("ringleader.tui.runner.run_rl", LongRun())
+    cleared = []
+    original = Log.clear
+
+    def counted(self):
+        cleared.append(self.id)
+        return original(self)
+
+    monkeypatch.setattr(Log, "clear", counted)
+    app = _app(build_fixture(tmp_path, threads=5, now=NOW_DT).registry_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("7")
+        await until(pilot, lambda: "exit 0" in screen_text(app))
+        before = len(cleared)
+        app._set()
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        lines = app.screen.query_one("#output-log", Log).line_count
+        assert (len(cleared), lines) == (before, 201)

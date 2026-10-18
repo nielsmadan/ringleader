@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from functools import partial
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from . import enrichment, export, registry, revalidate, roundup, scanner, stateio
+from .batch import Txn, run_batch
 from .commands import archive as archive_cmd
 from .commands import harvest as harvest_cmd
 from .enrichment import Classified
@@ -74,7 +76,8 @@ class ReloadOp:
     pass
 
 
-type SingleOp = ArchiveOp | DeleteOp | KeepGoingOp | SnoozeOp | KeepOp | HarvestSaveOp
+type MarkOp = KeepGoingOp | SnoozeOp | KeepOp
+type SingleOp = ArchiveOp | DeleteOp | MarkOp | HarvestSaveOp
 type Op = SingleOp | PruneOp | RoundupPhasesOp | ClassifyOp | StampRoundupOp | ReloadOp
 
 
@@ -136,29 +139,31 @@ def _selector(seen: Seen) -> str:
     return ":".join(seen.identity)
 
 
-def _find(reg: dict[str, Any], seen: Seen) -> dict[str, Any] | None:
-    return registry.find_session(reg, _selector(seen))
-
-
 def _refused(seen: Seen, reason: str, message: str) -> Outcome:
     return Outcome(ok=False, message=message, wrote=False, refused=((seen, reason),))
 
 
 def _revalidated(
-    reg: dict[str, Any],
+    thread: dict[str, Any] | None,
     seen: Seen,
-    live: frozenset[Identity] | None,
+    live: PresenceProbe,
     unknown: UnknownPresence,
     *,
     require_stamp: bool = False,
 ) -> dict[str, Any] | Outcome:
-    thread = _find(reg, seen)
     changed = revalidate.changed_reason(thread, seen, require_stamp=require_stamp)
     if thread is None or changed is not None:
         reason = changed or "no longer in the registry"
         return _refused(seen, reason, f"{seen.label}: {reason}")
-    running = revalidate.running_reason(thread, live, unknown)
+    running = revalidate.running_reason(thread, live(), unknown)
     return thread if running is None else _refused(seen, running, running)
+
+
+def _revalidated_in(
+    txn: Txn, seen: Seen, unknown: UnknownPresence, *, require_stamp: bool = False
+) -> dict[str, Any] | Outcome:
+    thread = txn.index.find(_selector(seen))
+    return _revalidated(thread, seen, txn.live, unknown, require_stamp=require_stamp)
 
 
 def _moved_unrecorded(seen: Seen, dest: str, error: BaseException) -> Outcome:
@@ -170,25 +175,23 @@ def _moved_unrecorded(seen: Seen, dest: str, error: BaseException) -> Outcome:
     )
 
 
-def _archive(op: ArchiveOp, ctx: OpContext) -> Outcome:
-    live = ctx.presence()
-    with stateio.publish_lock():
-        reg = registry.load_registry(ctx.registry_path)
-        thread = _revalidated(reg, op.seen, live, ctx.unknown)
-        if isinstance(thread, Outcome):
-            return thread
-        dest = archive_cmd.archive_thread(reg, thread, archive_root_path=ctx.archive_root_path)
-        try:
-            registry.commit_registry(ctx.registry_path, reg)
-        except (RuntimeError, OSError) as error:
-            return _moved_unrecorded(op.seen, dest, error)
+def _archive_in(txn: Txn, op: ArchiveOp, ctx: OpContext) -> Outcome:
+    thread = _revalidated_in(txn, op.seen, ctx.unknown)
+    if isinstance(thread, Outcome):
+        return thread
+    dest = archive_cmd.archive_thread(
+        txn.reg, thread, archive_root_path=ctx.archive_root_path, index=txn.index
+    )
     return Outcome(ok=True, message=f"archived {op.seen.label}", wrote=True, path=dest)
 
 
-def _delete_from(
-    reg: dict[str, Any], seen: Seen, live: frozenset[Identity] | None, ctx: OpContext
-) -> Outcome:
-    thread = _revalidated(reg, seen, live, ctx.unknown, require_stamp=True)
+def _archive_unrecorded(op: ArchiveOp, outcome: Outcome, error: Exception) -> Outcome:
+    return _moved_unrecorded(op.seen, outcome.path or "", error)
+
+
+def _delete_in(txn: Txn, op: DeleteOp, ctx: OpContext) -> Outcome:
+    seen = op.seen
+    thread = _revalidated_in(txn, seen, ctx.unknown, require_stamp=True)
     if isinstance(thread, Outcome):
         return thread
     try:
@@ -203,7 +206,9 @@ def _delete_from(
         scanner.remove_companions(companions)
     except OSError as error:
         warnings = (f"{seen.label}: {error}",)
-    registry.prune_session(reg, registry.qualified_id(thread), ctx.now_iso(), reason="deleted")
+    registry.prune_session(
+        txn.reg, registry.qualified_id(thread), ctx.now_iso(), reason="deleted", index=txn.index
+    )
     return Outcome(
         ok=True,
         message=f"deleted {seen.label} — nothing harvested",
@@ -212,45 +217,29 @@ def _delete_from(
     )
 
 
-def _delete(op: DeleteOp, ctx: OpContext) -> Outcome:
-    live = ctx.presence()
-    outcomes: list[Outcome] = []
-    try:
-        registry.mutate_registry(
-            ctx.registry_path, lambda reg: outcomes.append(_delete_from(reg, op.seen, live, ctx))
-        )
-    except (RuntimeError, OSError) as error:
-        if outcomes and outcomes[0].wrote:
-            message = f"deleted {op.seen.label} on disk, but the registry was not updated: {error}"
-            return replace(outcomes[0], ok=False, message=message)
-        raise
-    return outcomes[0]
+def _delete_unrecorded(op: DeleteOp, outcome: Outcome, error: Exception) -> Outcome:
+    message = f"deleted {op.seen.label} on disk, but the registry was not updated: {error}"
+    return replace(outcome, ok=False, message=message)
 
 
-def _mark(seen: Seen, ctx: OpContext, apply: Callable[[dict[str, Any], str], object]) -> None:
-    registry.mutate_registry(ctx.registry_path, lambda reg: apply(reg, _selector(seen)))
-
-
-def _keep_going(op: KeepGoingOp, ctx: OpContext) -> Outcome:
-    _mark(op.seen, ctx, lambda reg, sid: registry.mark_reviewed(reg, sid, mtime=op.seen.mtime))
-    return Outcome(ok=True, message=f"kept going: {op.seen.label}", wrote=True)
-
-
-def _snooze(op: SnoozeOp, ctx: OpContext) -> Outcome:
-    when = ctx.now_iso()
-    _mark(op.seen, ctx, lambda reg, sid: registry.snooze_thread(reg, sid, when, until=op.until))
-    return Outcome(ok=True, message=f"snoozed {op.seen.label} until {op.until[:10]}", wrote=True)
-
-
-def _keep(op: KeepOp, ctx: OpContext) -> Outcome:
-    when = ctx.now_iso()
-    _mark(op.seen, ctx, lambda reg, sid: registry.keep_thread(reg, sid, when))
-    return Outcome(ok=True, message=f"kept long-term: {op.seen.label}", wrote=True)
+def _apply_mark(reg: dict[str, Any], op: MarkOp, ctx: OpContext) -> Outcome:
+    selector = _selector(op.seen)
+    match op:
+        case KeepGoingOp():
+            registry.mark_reviewed(reg, selector, mtime=op.seen.mtime)
+            return Outcome(ok=True, message=f"kept going: {op.seen.label}", wrote=True)
+        case SnoozeOp():
+            registry.snooze_thread(reg, selector, ctx.now_iso(), until=op.until)
+            message = f"snoozed {op.seen.label} until {op.until[:10]}"
+            return Outcome(ok=True, message=message, wrote=True)
+        case KeepOp():
+            registry.keep_thread(reg, selector, ctx.now_iso())
+            return Outcome(ok=True, message=f"kept long-term: {op.seen.label}", wrote=True)
 
 
 def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> Outcome:
     reg = registry.load_registry(ctx.registry_path)
-    thread = _find(reg, op.seen)
+    thread = registry.find_session(reg, _selector(op.seen))
     wrote = saved is not None
     if thread is None or thread.get("decision") != "harvested":
         reason = "no longer in the registry" if thread is None else "the harvest was not recorded"
@@ -274,10 +263,11 @@ def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> 
 
 
 def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
-    live = ctx.presence()
     with stateio.publish_lock():
         reg = registry.load_registry(ctx.registry_path)
-        thread = _revalidated(reg, op.seen, live, ctx.unknown)
+        thread = _revalidated(
+            registry.find_session(reg, _selector(op.seen)), op.seen, ctx.presence, ctx.unknown
+        )
         if isinstance(thread, Outcome):
             return thread
         saved: str | None = None
@@ -381,18 +371,10 @@ def _label(op: Op) -> str:
             return "reload"
 
 
-def _dispatch(op: Op, ctx: OpContext) -> Outcome:  # noqa: PLR0911 -- one arm per op type
+def _dispatch(op: Op, ctx: OpContext) -> Outcome:
     match op:
-        case ArchiveOp():
-            return _archive(op, ctx)
-        case DeleteOp():
-            return _delete(op, ctx)
-        case KeepGoingOp():
-            return _keep_going(op, ctx)
-        case SnoozeOp():
-            return _snooze(op, ctx)
-        case KeepOp():
-            return _keep(op, ctx)
+        case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp():
+            return _one(op, ctx)
         case HarvestSaveOp():
             return _harvest_save(op, ctx)
         case PruneOp():
@@ -418,6 +400,155 @@ def execute(op: Op, ctx: OpContext) -> Outcome:
         raise
     except _EXPECTED as error:
         return Outcome(ok=False, message=f"{_label(op)}: {error}", wrote=False)
+
+
+type GroupResult = Outcome | Exception
+type Claim = Callable[[int], bool]
+
+
+@runtime_checkable
+class Executor(Protocol):
+    def execute(self, op: Op, ctx: OpContext) -> Outcome: ...
+
+    def execute_group(
+        self, ops: Sequence[Op], ctx: OpContext, claim: Claim
+    ) -> Sequence[GroupResult | None]: ...
+
+
+def group_key(op: Op) -> str | None:
+    match op:
+        case KeepGoingOp() | SnoozeOp() | KeepOp():
+            return "mark"
+        case ArchiveOp():
+            return "archive"
+        case DeleteOp():
+            return "delete"
+        case _:
+            return None
+
+
+def _contained(op: Op, run: Callable[[], Outcome]) -> GroupResult:
+    try:
+        return run()
+    except KeyError:
+        return Outcome(ok=False, message=f"{_label(op)}: no longer in the registry", wrote=False)
+    except (NotImplementedError, RecursionError) as error:
+        return error
+    except _EXPECTED as error:
+        return Outcome(ok=False, message=f"{_label(op)}: {error}", wrote=False)
+    except Exception as error:  # noqa: BLE001 -- the writer reports it as this op's internal error
+        return error
+
+
+def _failed(op: Op, error: Exception) -> Outcome:
+    return Outcome(ok=False, message=f"{_label(op)}: {error}", wrote=False)
+
+
+def _wrote(result: GroupResult | None) -> bool:
+    return isinstance(result, Outcome) and result.wrote
+
+
+def _in_one_transaction[O: Op](
+    ops: Sequence[O],
+    ctx: OpContext,
+    claim: Claim,
+    act: Callable[[Txn, O, OpContext], Outcome],
+    unrecorded: Callable[[O, Outcome, Exception], Outcome],
+    *,
+    publish: bool = False,
+) -> list[GroupResult | None]:
+    def run(txn: Txn, item: tuple[int, O]) -> GroupResult | None:
+        position, op = item
+        return _contained(op, partial(act, txn, op, ctx)) if claim(position) else None
+
+    def on_disk(item: tuple[int, O], result: GroupResult | None, error: Exception) -> Outcome:
+        assert isinstance(result, Outcome)
+        return unrecorded(item[1], result, error)
+
+    batch = run_batch(
+        ctx.registry_path, list(enumerate(ops)), run, presence=ctx.presence, publish=publish
+    )
+    settled = dict(
+        batch.settled(
+            wrote=_wrote, unrecorded=on_disk, failed=lambda item, error: _failed(item[1], error)
+        )
+    )
+    return [settled.get((position, op)) for position, op in enumerate(ops)]
+
+
+def _mark_in(txn: Txn, op: MarkOp, ctx: OpContext) -> Outcome:
+    return _apply_mark(txn.reg, op, ctx)
+
+
+def _mark_unrecorded(op: MarkOp, outcome: Outcome, error: Exception) -> Outcome:
+    return _failed(op, error)
+
+
+def _claim_any(position: int) -> bool:
+    return True
+
+
+def execute_group(
+    ops: Sequence[Op], ctx: OpContext, claim: Claim = _claim_any
+) -> list[GroupResult | None]:
+    marks = [op for op in ops if isinstance(op, KeepGoingOp | SnoozeOp | KeepOp)]
+    archives = [op for op in ops if isinstance(op, ArchiveOp)]
+    deletes = [op for op in ops if isinstance(op, DeleteOp)]
+    if len(marks) == len(ops):
+        return _in_one_transaction(marks, ctx, claim, _mark_in, _mark_unrecorded)
+    if len(archives) == len(ops):
+        return _in_one_transaction(
+            archives, ctx, claim, _archive_in, _archive_unrecorded, publish=True
+        )
+    if len(deletes) == len(ops):
+        return _in_one_transaction(deletes, ctx, claim, _delete_in, _delete_unrecorded)
+    results: list[GroupResult | None] = []
+    for position, op in enumerate(ops):
+        results.append(_contained(op, partial(_dispatch, op, ctx)) if claim(position) else None)
+    return results
+
+
+def _one(op: SingleOp, ctx: OpContext) -> Outcome:
+    [result] = execute_group([op], ctx)
+    if isinstance(result, Exception):
+        raise result
+    assert result is not None
+    return result
+
+
+class _Decisions:
+    def execute(self, op: Op, ctx: OpContext) -> Outcome:
+        return execute(op, ctx)
+
+    def execute_group(
+        self, ops: Sequence[Op], ctx: OpContext, claim: Claim
+    ) -> list[GroupResult | None]:
+        return execute_group(ops, ctx, claim)
+
+
+EXECUTOR: Executor = _Decisions()
+
+
+@dataclass(frozen=True)
+class OneByOne:
+    run: Callable[[Op, OpContext], Outcome]
+
+    def execute(self, op: Op, ctx: OpContext) -> Outcome:
+        return self.run(op, ctx)
+
+    def execute_group(
+        self, ops: Sequence[Op], ctx: OpContext, claim: Claim
+    ) -> list[GroupResult | None]:
+        results: list[GroupResult | None] = []
+        for position, op in enumerate(ops):
+            results.append(self.run(op, ctx) if claim(position) else None)
+        return results
+
+
+def as_executor(execute: Callable[[Op, OpContext], Outcome] | Executor | None) -> Executor:
+    if execute is None:
+        return EXECUTOR
+    return execute if isinstance(execute, Executor) else OneByOne(execute)
 
 
 def _worth_keeping(data: dict[str, Any]) -> bool:

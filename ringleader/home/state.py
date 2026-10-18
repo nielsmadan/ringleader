@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import UTC, datetime
+from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any, Literal
 
 from .. import overview, registry, resume, roundup
+from ..revalidate import Identity
 
 type StepKind = Literal["roundup", "woke", "recent", "publish", "project", "resume"]
 
@@ -52,6 +53,18 @@ class HomeState:
 
 
 @dataclass(frozen=True)
+class RenderBasis:
+    view: int
+    minute: datetime
+    live_ids: frozenset[Identity] | None
+    now: datetime = field(compare=False)
+
+    @classmethod
+    def at(cls, view: int, now: datetime, live_ids: frozenset[Identity] | None) -> RenderBasis:
+        return cls(view, now.replace(second=0, microsecond=0), live_ids, now)
+
+
+@dataclass(frozen=True)
 class ProjectScope:
     project: ProjectRef
 
@@ -77,13 +90,8 @@ def plural(count: int, noun: str) -> str:
     return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
 
 
-def _instant(iso: str) -> datetime:
-    parsed = datetime.fromisoformat(iso)
-    return parsed if parsed.tzinfo is not None else parsed.replace(tzinfo=UTC)
-
-
 def _by_mtime(threads: list[dict[str, Any]], *, newest_first: bool) -> list[dict[str, Any]]:
-    return sorted(threads, key=lambda t: _instant(t["mtime"]), reverse=newest_first)
+    return sorted(threads, key=lambda t: overview.parse_instant(t["mtime"]), reverse=newest_first)
 
 
 def visible_threads(reg: dict[str, Any]) -> list[dict[str, Any]]:
@@ -133,7 +141,9 @@ def project_queue(threads: list[dict[str, Any]], now_iso: str) -> tuple[ProjectR
     for thread in overview.triage_inbox(threads, now_iso):
         groups[overview.group_key(thread)].append(thread)
     refs = [_project_ref(key, members) for key, members in groups.items()]
-    return tuple(sorted(refs, key=lambda ref: (_instant(ref.oldest_mtime), ref.label.lower())))
+    return tuple(
+        sorted(refs, key=lambda ref: (overview.parse_instant(ref.oldest_mtime), ref.label.lower()))
+    )
 
 
 def _within_days(thread: dict[str, Any], now_iso: str, days: int) -> bool:
@@ -169,7 +179,7 @@ def build_home_state(
     woke = [t for t in visible if is_woke(t, now_iso)]
     soon = sorted(
         (t for t in visible if _waking_soon(t, now_iso)),
-        key=lambda t: _instant(t["snoozedUntil"]),
+        key=lambda t: overview.parse_instant(t["snoozedUntil"]),
     )
     flying = [t for t in visible if _in_flight(t, now_iso)]
     return HomeState(

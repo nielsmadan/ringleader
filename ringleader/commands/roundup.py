@@ -117,8 +117,9 @@ def _report(result: roundup_api.RoundupResult) -> None:
     classified, failed, stale = (
         (enriched.classified, enriched.failed, enriched.stale) if enriched else (0, 0, 0)
     )
+    handoffs = f" (+{phases.handoffs_purged} handoff exports)" if phases.handoffs_purged else ""
     print(
-        f"swept {phases.swept}, pruned {phases.deleted}, purged {phases.purged}, "
+        f"swept {phases.swept}, pruned {phases.deleted}, purged {phases.purged}{handoffs}, "
         f"enriched {classified} ({failed} failed, {stale} stale)"
     )
 

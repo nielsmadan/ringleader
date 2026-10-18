@@ -24,9 +24,14 @@ before rendering.
    source's `parser_version` and the ref's fingerprint.
 3. On a cache hit, a `CachedMetadataSource` still gets `refresh_cached_metadata()` — display
    fields that changed without the transcript changing.
-4. Resolve git identity for the session's cwd, **memoized per cwd** in a local dict, so a repo
-   with forty sessions shells out to git once. `resolve_cached_git=False` skips it for cache hits,
-   which keep the identity the registry already holds.
+4. Resolve git identity for the session's cwd, **once per cwd and reused across scans**
+   (`gitinfo.git_identities()`). A cached thread with the same cwd and a `gitCheckedAt` under
+   `GIT_RECHECK_AFTER` (24 h) old keeps its git fields, provided the check still describes the
+   directory: the recorded repo root's `.git` has not changed since (its ctime is not newer
+   than the check, which also catches a re-clone), or, for a check that found no repo, no
+   `.git` has appeared in the cwd or above it. A future, naive or unparseable `gitCheckedAt`
+   never counts. Every other cwd is looked up in a thread pool. `resolve_cached_git=False`
+   skips it for cache hits, which keep the identity the registry already holds.
 5. A read failure on one transcript or source-owned row prints to stderr and skips it — one
    unreadable session store must not abort scans of unrelated sources. If an active store is
    temporarily unavailable, reconciliation retains its cached sessions instead of marking them
@@ -37,10 +42,28 @@ real store.
 
 ### Git identity
 
-`gitinfo.resolve_git_project(cwd)` returns a `GitProject` (`key`, `label`, `root`, `remote`,
-`clone_url`) or `None`. The **key** is what collapses worktrees, clones and monorepo subdirs of
-the same repo into one row in the overview: a normalized remote when there is one, else the repo
-root path. `normalize_remote()` reduces both SSH and HTTPS forms to `host/org/repo`.
+`gitinfo.lookup_git_project(cwd)` returns a `GitProject` (`key`, `label`, `root`, `remote`,
+`clone_url`), `None` when git says the cwd is not in a repository (or the cwd is gone), and
+raises `GitLookupFailedError` when git gave no definite answer: it timed out (3 s), could not
+run, or failed for any other reason. `resolve_git_project()` is the forgiving wrapper for
+one-off callers and answers `None` for a failure too. The **key** is what collapses worktrees,
+clones and monorepo subdirs of the same repo into one row in the overview: a normalized remote
+when there is one, else the repo root path. `normalize_remote()` reduces both SSH and HTTPS
+forms to `host/org/repo`. Git runs with `LC_ALL=C`, because "not a git repository" is matched in
+its stderr.
+
+What a scan records follows from those three outcomes:
+
+| lookup | git fields | `gitCheckedAt` |
+|---|---|---|
+| a project | replaced | stamped |
+| definitely not a repo, cwd exists | cleared | stamped |
+| cwd gone | kept | unchanged |
+| failed or timed out | kept | unchanged, so the next scan retries |
+
+A timed-out `remote.origin.url` read is a failure, not "no remote", so it can never replace a
+remote-keyed identity with a path-keyed one. `rl mem refresh` and the other memory scans reuse the
+same recorded checks when their caller passes `recorded_threads`.
 
 Sessions with no resolvable git project fall back to grouping by cwd.
 
@@ -99,9 +122,11 @@ registry `mtime` and `fileFingerprint` at planning time.
 
 `run_phases()` holds the non-blocking `stateio.roundup_lock()` (`RoundupBusy` when another
 roundup has it) and executes only what the plan named, rechecking each item first via
-`revalidate.py`. Sweep archives one session per `publish_lock` and commits each separately, so
-a later conflict cannot undo an earlier archive; it skips a session no longer marked
-`finishOnExit`, one written within `sweep.GRACE_SECONDS`, or one presence reports running.
+`revalidate.py`. Sweep works in batches of `PRUNE_BATCH`, taking one `publish_lock` and one registry
+transaction per batch and rechecking each item inside the lock; it skips a session no longer
+marked `finishOnExit`, one written within `sweep.GRACE_SECONDS`, or one presence reports
+running. If the batch's registry write fails, the files are already moved and the failure is
+reported as "archived on disk, but the registry was not updated".
 Prune (`prune_planned`) works in batches of `PRUNE_BATCH`, probing presence once per batch and
 skipping any session whose registry `mtime`/`fileFingerprint` moved since the plan;
 `prune._delete_candidate` adds the transcript `(size, mtime_ns)` check, which `rl prune
@@ -123,7 +148,8 @@ and holds the roundup lock through all of them.
 - `refresh.scoped_refresh()` / `scanner.scoped_refs()` — the scoped rescan behind `--last`.
 - `roundup.plan_roundup()` / `run_phases()` / `run_roundup()` — the roundup API;
   `revalidate.py` — the per-item checks it runs before touching a session.
-- `gitinfo.resolve_git_project()` — cwd → `GitProject`.
+- `gitinfo.lookup_git_project()` — cwd → `GitProject`; `gitinfo.git_identities()` — the
+  per-scan reuse rule above.
 - `projects.matches()` — the selector contract.
 - `slug.slugify()` — cwd → Claude Code's directory name.
 
@@ -143,9 +169,8 @@ and holds the roundup lock through all of them.
 Two-phase discover/parse plus a source-owned fingerprint avoids reparsing unchanged sessions.
 For JSONL that costs one `stat()` per transcript; OpenCode derives per-session generations from
 row counts, byte sizes and update timestamps, then reads conversation payloads only on cache
-misses. Memoizing git per cwd matters more than it looks: `resolve_git_project` shells out,
-and a machine with hundreds of sessions across a dozen repos would otherwise pay hundreds of
-subprocess spawns per view.
+misses. Reusing git identity matters more than it looks: `lookup_git_project` shells out twice per
+cwd, and before the reuse a registry with ~170 existing cwds paid about 10 s of `git` per scan.
 
 ## Related
 

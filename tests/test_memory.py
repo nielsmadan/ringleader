@@ -128,3 +128,50 @@ def test_scan_memory_ignores_index_file(tmp_path):
     (d / "x.md").write_text("real entry\n")
     entries = memory.scan_memory(tmp_path, git_resolver=lambda c: None)
     assert [e.path.split("/")[-1] for e in entries] == ["x.md"]
+
+
+def test_scan_memory_resolves_each_project_cwd_concurrently(tmp_path):
+    import threading
+
+    from ringleader.gitinfo import GitProject
+
+    barrier = threading.Barrier(2, timeout=5)
+    for name in ("one", "two"):
+        cwd = tmp_path / name
+        cwd.mkdir()
+        _transcript(tmp_path / "projects", f"-{name}", str(cwd))
+        _memory_file(tmp_path / "projects", f"-{name}", f"{name}-fact", "some fact")
+
+    def resolver(c):
+        barrier.wait()
+        return GitProject(root=c, remote=None, key=c, label=Path(c).name)
+
+    entries = memory.scan_memory(tmp_path / "projects", git_resolver=resolver)
+
+    assert sorted(e.git_project_label for e in entries) == ["one", "two"]
+
+
+def test_scan_memory_reuses_a_git_identity_a_session_thread_checked_recently(tmp_path):
+    from datetime import UTC, datetime, timedelta
+
+    cwd = tmp_path / "proj"
+    (cwd / ".git").mkdir(parents=True)
+    now = datetime.fromtimestamp((cwd / ".git").stat().st_ctime, UTC) + timedelta(hours=3)
+    _transcript(tmp_path / "projects", "-proj", str(cwd))
+    _memory_file(tmp_path / "projects", "-proj", "fact", "some fact")
+    thread = {
+        "sessionId": "s",
+        "project": str(cwd),
+        "gitProjectKey": "github.com/me/recorded",
+        "gitProjectLabel": "recorded",
+        "gitRoot": str(cwd),
+        "gitCheckedAt": (now - timedelta(hours=1)).isoformat(),
+    }
+    calls = []
+
+    entries = memory.scan_memory(
+        tmp_path / "projects", git_resolver=calls.append, recorded_threads=[thread], now=now
+    )
+
+    assert calls == []
+    assert entries[0].git_project_label == "recorded"

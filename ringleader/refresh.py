@@ -2,15 +2,20 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 from . import registry, scanner
 from .config import load_config
-from .gitinfo import GitProject
+from .gitinfo import GitResolver
 from .sources.base import RawRef, Source, in_workspace
 from .sources.claude_code import ClaudeCodeSource
+
+
+def _aware(now_iso: str) -> datetime:
+    moment = datetime.fromisoformat(now_iso)
+    return moment if moment.tzinfo is not None else moment.replace(tzinfo=UTC)
 
 
 def delta_note(added: int, removed: int) -> str | None:
@@ -39,10 +44,11 @@ def auto_refresh(  # noqa: PLR0913
     tail: int = 30,
     claude_projects_dir: Path | None = None,
     projects_root: Path | None = None,
-    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    git_resolver: GitResolver | None = None,
     sources: Iterable[Source] | None = None,
     name_filters: Iterable[str] | None = None,
     persist: bool = True,
+    pool: scanner.SourcePool | None = None,
 ) -> tuple[dict[str, Any], str | None]:
     refreshed = refresh_registry(
         registry_path,
@@ -54,6 +60,7 @@ def auto_refresh(  # noqa: PLR0913
         sources=sources,
         name_filters=name_filters,
         persist=persist,
+        pool=pool,
     )
     return refreshed.reg, refreshed.note
 
@@ -65,16 +72,19 @@ def refresh_registry(  # noqa: PLR0913
     tail: int = 30,
     claude_projects_dir: Path | None = None,
     projects_root: Path | None = None,
-    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    git_resolver: GitResolver | None = None,
     sources: Iterable[Source] | None = None,
     name_filters: Iterable[str] | None = None,
     persist: bool = True,
+    pool: scanner.SourcePool | None = None,
 ) -> Refreshed:
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. Read commands run this before rendering; an unavailable source
     retains its cached sessions. Classification and naming remain separate agentic steps.
 
-    `persist=False` scans into memory only, for a preview that must leave no trace."""
+    `persist=False` scans into memory only, for a preview that must leave no trace.
+    A long-lived caller passes the same `pool` to every refresh so the sources keep
+    what they learned about unchanged files between scans."""
     if projects_root is not None:
         if claude_projects_dir is not None:
             raise ValueError("pass claude_projects_dir, not both")
@@ -91,6 +101,7 @@ def refresh_registry(  # noqa: PLR0913
         git_resolver=git_resolver,
         name_filters=name_filters,
         persist=persist,
+        pool=pool,
     )
     after = {registry.identity(t) for t in reg["threads"]}
     return Refreshed(reg, delta_note(len(after - before), len(before - after)), unavailable_sources)
@@ -102,7 +113,7 @@ def scoped_refresh(  # noqa: PLR0913
     *,
     cwd: str | None,
     recursive: bool,
-    git_resolver: Callable[[str | None], GitProject | None] | None = None,
+    git_resolver: GitResolver | None = None,
     sources: Iterable[Source] | None = None,
     name_filters: Iterable[str] | None = None,
     persist: bool = True,
@@ -164,22 +175,22 @@ def _refresh(  # noqa: PLR0913 -- one keyword per stage of the pipeline both ref
     now_iso: str,
     *,
     sources: Iterable[Source] | None,
-    git_resolver: Callable[[str | None], GitProject | None] | None,
+    git_resolver: GitResolver | None,
     name_filters: Iterable[str] | None,
     persist: bool,
     refs_of: Callable[[Source], Iterable[RawRef]] | None = None,
+    pool: scanner.SourcePool | None = None,
 ) -> tuple[dict[str, Any], frozenset[str]]:
     """Scan, reconcile, filter and persist. `refs_of` narrows each source's discovery,
     which makes the scan partial: what it skipped is kept, and cached sessions keep their
     git identity rather than costing a git call per cwd."""
     partial = refs_of is not None
     unavailable_sources: set[str] = set()
+    discover = pool.active if pool is not None else scanner.active_sources
     active = (
         list(sources)
         if sources is not None
-        else scanner.active_sources(
-            unavailable_sources=unavailable_sources, recorded_threads=reg["threads"]
-        )
+        else discover(unavailable_sources=unavailable_sources, recorded_threads=reg["threads"])
     )
     scanned = scanner.scan(
         sources=active,
@@ -188,6 +199,7 @@ def _refresh(  # noqa: PLR0913 -- one keyword per stage of the pipeline both ref
         unavailable_sources=unavailable_sources,
         refs_of=refs_of,
         resolve_cached_git=not partial,
+        now=_aware(now_iso),
     )
     reg = registry.reconcile(
         reg,

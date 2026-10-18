@@ -26,6 +26,10 @@ Once set, `rl prune` / `rl roundup` purges archived sessions past the cutoff. **
 permanent** — after it, neither `rl session unarchive` nor a hand restore can bring the session
 back, and the record moves to `deleted` with reason `purged`.
 
+The setting also covers the Markdown handoff exports that `rl resume --to` writes under
+`handoffs/`. At `0` nothing removes them; above `0`, an unscoped `rl prune --delete` and
+`rl roundup` delete those older than that many days.
+
 Pending harvest-queue files survive an archive purge only until they're published; afterward the
 durable knowledge lives in the repository docs and the handled queue items are deleted.
 

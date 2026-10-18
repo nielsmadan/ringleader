@@ -4,11 +4,11 @@ import os
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Protocol, runtime_checkable
 
 from rich.text import Text
 from textual import events, work
@@ -51,7 +51,7 @@ from ..models import Model, ModelTask, active_model, proc
 from ..picker.app import Choice, PickerScreen, ask_resume_choice, live_session_ids
 from ..progress import CancelCheck
 from ..resume import Scope
-from ..revalidate import Seen
+from ..revalidate import Identity, Seen
 from ..roundup import EnrichScope, RoundupPlan, RoundupProgress
 from ..tui.background import CancelToken, Done, Failed, Job
 from ..tui.modals import AgentPickModal, ConfirmModal
@@ -88,6 +88,7 @@ from .state import (
     ProjectRef,
     ProjectScope,
     RecentScope,
+    RenderBasis,
     TriageScope,
     WokeScope,
     build_home_state,
@@ -112,6 +113,26 @@ type ModelResolver = Callable[[ModelTask], Model | None]
 
 SUBTITLE_REFRESH_SECONDS = 30.0
 PICKER_SCAN_WAIT_SECONDS = 60.0
+
+
+@runtime_checkable
+class LiveStatus(Protocol):
+    def render_status(self) -> None: ...
+
+
+@dataclass(frozen=True)
+class _ViewMemo:
+    serial: int
+    snapshot: Snapshot
+    hidden: frozenset[Identity]
+    reg: dict[str, Any]
+    threads: list[dict[str, Any]]
+
+
+@dataclass(frozen=True)
+class _HomeMemo:
+    key: tuple[int, datetime, int | None]
+    state: HomeState
 
 
 class WriterMessage(Message):
@@ -225,8 +246,9 @@ class InboxApp(App[ExitIntent | None]):
         self._models: ModelResolver = models or _default_models
         self._cwd = str(cwd) if cwd is not None else os.getcwd()
         self._stale_hours = load_config().roundup_stale_hours
-        default_refresher: Refresher = (
-            partial(refresh.auto_refresh, persist=False) if read_only else refresh.auto_refresh
+        pool = scanner.SourcePool()
+        default_refresher: Refresher = partial(
+            refresh.auto_refresh, persist=not read_only, pool=pool
         )
         self._state = AppState(
             snapshot=Snapshot(registry.empty_registry(), 0, False, time.monotonic())
@@ -235,7 +257,6 @@ class InboxApp(App[ExitIntent | None]):
         self._undelivered_lock = threading.Lock()
         self._scanned_at: datetime | None = None
         self._scan_failed = False
-        self._running_ticket: int | None = None
         self._batch_labels: dict[int, tuple[str, int]] = {}
         self._decided = 0
         self._last_archived: str | None = None
@@ -243,6 +264,9 @@ class InboxApp(App[ExitIntent | None]):
         self._leaving = False
         self._leave_intent: ExitIntent | None = None
         self._render_pending = False
+        self._synced: tuple[InboxScreen, int] | None = None
+        self._view_memo: _ViewMemo | None = None
+        self._home_memo: _HomeMemo | None = None
         self.jobs = JobBook(self._post)
         self.roundups = RoundupDriver(
             read_only=read_only,
@@ -261,7 +285,7 @@ class InboxApp(App[ExitIntent | None]):
         )
         self.writer = Writer(
             self.registry_path,
-            execute=execute or decisions.execute,
+            executor=decisions.as_executor(execute),
             make_context=self._make_context,
             deliver=lambda event: self._post(WriterMessage(event)),
             delete_grace=delete_grace,
@@ -272,7 +296,7 @@ class InboxApp(App[ExitIntent | None]):
             refresher=refresher or default_refresher,
             full_refresher=None
             if refresher
-            else partial(refresh.refresh_registry, persist=not read_only),
+            else partial(refresh.refresh_registry, persist=not read_only, pool=pool),
             presence=self._presence,
             models=self._models,
             clock=self._now,
@@ -307,8 +331,25 @@ class InboxApp(App[ExitIntent | None]):
     def harvesting(self) -> tuple[str, ...]:
         return self.jobs.harvesting
 
+    def _view(self) -> _ViewMemo:
+        snapshot = self._state.snapshot
+        hidden = frozenset(self._state.overlay)
+        memo = self._view_memo
+        if memo is None or memo.snapshot is not snapshot or memo.hidden != hidden:
+            reg = overlay.visible(snapshot.reg, self._state.overlay)
+            serial = memo.serial + 1 if memo is not None else 1
+            memo = _ViewMemo(serial, snapshot, hidden, reg, visible_threads(reg))
+            self._view_memo = memo
+        return memo
+
+    def render_basis(self) -> RenderBasis:
+        return RenderBasis.at(self._view().serial, self._now(), self._state.live_ids)
+
+    def view(self) -> dict[str, Any]:
+        return self._view().reg
+
     def view_threads(self) -> list[dict[str, Any]]:
-        return visible_threads(overlay.visible(self._state.snapshot.reg, self._state.overlay))
+        return self._view().threads
 
     def clock(self) -> datetime:
         return self._now()
@@ -326,13 +367,21 @@ class InboxApp(App[ExitIntent | None]):
         return self._models(task)
 
     def home_state(self) -> HomeState:
+        basis = self.render_basis()
         harvests = self._state.harvests
-        return build_home_state(
-            overlay.visible(self._state.snapshot.reg, self._state.overlay),
-            self.now_iso(),
-            pending_harvests=None if harvests is None else len(harvests),
-            stale_hours=self._stale_hours,
-        )
+        pending = None if harvests is None else len(harvests)
+        key = (basis.view, basis.minute, pending)
+        memo = self._home_memo
+        if memo is None or memo.key != key:
+            state = build_home_state(
+                self.view(),
+                basis.now.isoformat(),
+                pending_harvests=pending,
+                stale_hours=self._stale_hours,
+            )
+            memo = _HomeMemo(key, state)
+            self._home_memo = memo
+        return memo.state
 
     def home_steps(self, state: HomeState) -> tuple[NextStep, ...]:
         return next_steps(state)
@@ -343,7 +392,7 @@ class InboxApp(App[ExitIntent | None]):
         return live is not None and key in live
 
     def status_line(self) -> str:
-        pending = self.writer.pending + self.jobs.harvest_count
+        pending = self.writer.unfinished + self.jobs.harvest_count
         parts = [
             *([f"{plural(pending, 'change')} pending"] if pending else []),
             *(["roundup running"] if self.roundup_active else []),
@@ -366,7 +415,13 @@ class InboxApp(App[ExitIntent | None]):
             return
         screen = self.screen
         if isinstance(screen, InboxScreen):
-            screen.sync()
+            version = self._state.version
+            synced = self._synced
+            if synced is None or synced[0] is not screen or synced[1] != version:
+                screen.sync()
+                self._synced = (screen, version)
+            elif isinstance(screen, LiveStatus):
+                screen.render_status()
             self.show_leaving(screen)
 
     def _update_subtitle(self) -> None:
@@ -423,7 +478,6 @@ class InboxApp(App[ExitIntent | None]):
         event = message.event
         match event:
             case Started():
-                self._running_ticket = event.ticket
                 self._set(overlay=overlay.started(self._state.overlay, event.ticket))
                 self._rerender()
             case OpProgress():
@@ -437,7 +491,6 @@ class InboxApp(App[ExitIntent | None]):
                 self._leave_if_settled()
 
     def _finished(self, event: Finished) -> None:
-        self._running_ticket = None
         self._batch_labels.pop(event.ticket, None)
         outcome = event.outcome
         if not outcome.ok and not outcome.wrote and isinstance(event.op, _DECISION_OPS):
@@ -879,7 +932,7 @@ class InboxApp(App[ExitIntent | None]):
             self.exit(self._leave_intent)
 
     def _not_started(self) -> int:
-        return self.writer.pending - (self._running_ticket is not None) + self.jobs.harvest_count
+        return self.writer.waiting + self.jobs.harvest_count
 
     def show_leaving(self, screen: Screen[Any]) -> None:
         banner = next(iter(screen.query("#leaving").results(Static)), None)
@@ -887,7 +940,7 @@ class InboxApp(App[ExitIntent | None]):
             return
         banner.display = self._leaving
         if self._leaving:
-            pending = self.writer.pending + self.jobs.harvest_count + self.roundups.enriching
+            pending = self.writer.unfinished + self.jobs.harvest_count + self.roundups.enriching
             banner.update(
                 Text(
                     f"finishing {plural(pending, 'change')}… — q again to discard what has not "

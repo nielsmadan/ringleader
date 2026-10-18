@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from rich.text import Text
 from ringleader import cli, registry
+from ringleader.home import app as app_module
 from ringleader.home.app import InboxApp
 from ringleader.home.base import ScreenTarget
 from ringleader.home.palette import PALETTE_EXCLUDED, PALETTE_VERBS, Entry, InboxCommands, verb_argv
@@ -245,3 +246,22 @@ async def test_help_with_brackets_is_escaped_for_literal_rendering(tmp_path, mon
         await until(pilot, lambda: app.idle)
         hits = [hit async for hit in InboxCommands(app.screen).discover()]
     assert [Content.from_markup(hit.help).plain for hit in hits] == ["wipes [bold]all[/bold] of it"]
+
+
+async def test_typing_in_the_palette_reuses_the_home_state(tmp_path, monkeypatch):
+    builds = []
+    original = app_module.build_home_state
+
+    def counted(*args, **kwargs):
+        builds.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(app_module, "build_home_state", counted)
+    path = _write(tmp_path / "registry.json", _thread("a", days=2))
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        built = len(builds)
+        await _type(pilot, app, "next tri")
+        await until(pilot, lambda: "Next: Triage 1 session" in screen_text(app))
+        assert len(builds) == built

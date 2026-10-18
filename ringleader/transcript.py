@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -31,10 +32,11 @@ def _text_blocks(message: dict[str, Any]) -> str:
     return ""
 
 
-def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo:  # noqa: PLR0912 -- faithfully-ported, tested parser; branch-per-message-type isn't worth splitting up
+def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo:
     path = Path(path)
     info = TranscriptInfo(session_id=path.stem)
-    turns: list[tuple[str, str]] = []
+    turns: deque[tuple[str, str]] = deque(maxlen=tail_turns if tail_turns > 0 else None)
+    last_user: str | None = None
 
     with path.open(encoding="utf-8", errors="replace") as fh:
         for raw_line in fh:
@@ -65,18 +67,27 @@ def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo: 
                 txt = _text_blocks(o.get("message", {})).strip()
                 if txt:
                     turns.append(("USER", txt))
+                    last_user = txt
             elif t == "assistant":
                 info.message_count += 1
                 txt = _text_blocks(o.get("message", {})).strip()
                 if txt:
                     turns.append(("ASSISTANT", txt))
 
-    if not info.last_prompt:
-        for speaker, txt in reversed(turns):
-            if speaker == "USER":
-                info.last_prompt = txt[:500]
-                break
+    if not info.last_prompt and last_user:
+        info.last_prompt = last_user[:500]
 
-    tail = turns[-tail_turns:]
-    info.tail_text = "\n".join(f"{s}: {x}" for s, x in tail)
+    info.tail_text = "\n".join(f"{s}: {x}" for s, x in turns)
     return info
+
+
+def first_cwd(path: str | Path) -> str | None:
+    with Path(path).open(encoding="utf-8", errors="replace") as fh:
+        for raw_line in fh:
+            try:
+                o = json.loads(raw_line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(o, dict) and isinstance(cwd := o.get("cwd"), str) and cwd:
+                return cwd
+    return None

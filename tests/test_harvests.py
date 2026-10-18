@@ -174,3 +174,46 @@ def test_write_preserves_line_boundaries_inside_markdown_content(tmp_path, monke
     )
 
     assert harvests.load_harvest_path(path).content == content
+
+
+def _write_one(session_id, content="## Summary\n\nfirst\n"):
+    return harvests.write_harvest(
+        session_id=session_id,
+        name=session_id,
+        folder_path=None,
+        repo_url=None,
+        harvested_at=f"2026-01-0{session_id[-1]}T00:00:00+00:00",
+        content=content,
+    )
+
+
+def test_a_snapshot_reuses_unchanged_files_and_rereads_changed_ones(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    kept = _write_one("s1")
+    edited = _write_one("s2")
+    gone = _write_one("s3")
+    first = harvests.snapshot_harvests()
+    edited.write_text(edited.read_text().replace("first", "second, longer"))
+    gone.unlink()
+    added = _write_one("s4")
+    second = harvests.snapshot_harvests(first)
+    before = {item.path: item for item in first.items}
+    after = {item.path: item for item in second.items}
+    assert (after[kept] is before[kept], after[edited] is before[edited]) == (True, False)
+    assert ("second, longer" in after[edited].content, sorted(after)) == (
+        True,
+        sorted([kept, edited, added]),
+    )
+    assert after[edited].digest == harvests.load_harvest_path(edited).digest
+
+
+def test_a_file_replaced_by_a_symlink_is_reread_and_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    path = _write_one("s1")
+    first = harvests.snapshot_harvests()
+    target = tmp_path / "elsewhere.md"
+    target.write_bytes(path.read_bytes())
+    path.unlink()
+    path.symlink_to(target)
+    second = harvests.snapshot_harvests(first)
+    assert ([p.path for p in second.problems], second.items) == ([path], ())

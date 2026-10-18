@@ -8,7 +8,7 @@
 Two independent deletion paths:
 
 - **`rl prune`** — remove live sessions that are both **tiny** and **stale**.
-- **Archive purge** — permanently delete archived sessions once `archive.retention_days` elapses.
+- **Archive purge** — permanently delete archived sessions and handoff exports once `archive.retention_days` elapses.
 
 ```sh
 rl prune                       # preview only
@@ -51,6 +51,11 @@ rl config set archive.retention_days 90    # 0 (the default) = keep forever
 Once set, `rl prune` / `rl roundup` purges archived sessions past the cutoff. That purge is
 **permanent** — after it, `rl session unarchive` cannot bring the session back, and neither can
 a human moving files by hand.
+
+The same setting covers handoff exports (`handoffs/*.md`, written by `rl resume --to`). At `0`
+nothing removes them; above `0`, an unscoped `rl prune --delete` and `rl roundup` delete those
+older than the cutoff. Each is rechecked at delete time: a regular file, not a symlink,
+directly inside `handoffs/`, and still aged.
 
 ## Tombstones
 

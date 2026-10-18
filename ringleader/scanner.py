@@ -3,12 +3,13 @@ from __future__ import annotations
 import shutil
 import sys
 from collections.abc import Callable, Iterable
-from datetime import datetime
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
 
 from . import registry
-from .gitinfo import GitProject, resolve_git_project
+from .gitinfo import GitIdentity, GitResolver, git_identities, lookup_git_project
 from .sources.base import (
     CachedMetadataSource,
     CompanionFileSource,
@@ -91,6 +92,29 @@ def active_sources(
     return active
 
 
+@dataclass
+class SourcePool:
+    """Keeps the active sources across scans. A source equal to one the last scan used
+    is that same instance, so what it memoised about unchanged files survives."""
+
+    held: list[Source] = field(default_factory=list)
+
+    def active(
+        self,
+        *,
+        unavailable_sources: set[str] | None = None,
+        recorded_threads: Iterable[dict[str, Any]] = (),
+    ) -> list[Source]:
+        current = [
+            next((held for held in self.held if held == source), source)
+            for source in active_sources(
+                unavailable_sources=unavailable_sources, recorded_threads=recorded_threads
+            )
+        ]
+        self.held = current
+        return current
+
+
 def source_by_name(name: str) -> Any:
     source_type = next((st for st in SOURCE_TYPES if st.name == name), None)
     return source_type() if source_type else None
@@ -102,10 +126,6 @@ def storage_slug(name: str, cwd: str) -> str:
     if not supports(source, "relocates_workspace", WorkspaceRelocatingSource):
         raise ValueError(f"{name} does not file sessions under a workspace directory")
     return cast(WorkspaceRelocatingSource, source).storage_for(cwd).name
-
-
-def stored_under(file: str | Path, cwd: str, name: str) -> bool:
-    return Path(file).parent.name == storage_slug(name, cwd)
 
 
 def source_for_thread(thread: dict[str, Any]) -> Source | None:
@@ -263,16 +283,10 @@ def _load_session(
     return session, cached
 
 
-def _attach_git(
-    session: NormalizedSession,
-    cache: dict[str, GitProject | None],
-    git_resolver: Callable[[str], GitProject | None],
-) -> None:
-    if session.cwd is None:
-        return
-    if session.cwd not in cache:
-        cache[session.cwd] = git_resolver(session.cwd)
-    project = cache[session.cwd]
+def _attach_git(session: NormalizedSession, identity: GitIdentity) -> None:
+    session.git_checked_at = identity.checked_at
+    session.git_resolved = identity.replaces_recorded
+    project = identity.project
     if project is None:
         return
     session.git_project_key = project.key
@@ -280,7 +294,6 @@ def _attach_git(
     session.git_root = project.root
     session.git_remote = project.remote
     session.git_clone_url = project.clone_url
-    session.git_resolved = True
 
 
 def scoped_refs(
@@ -301,38 +314,47 @@ def scoped_refs(
     return (ref for ref in src.discover() if datetime.fromisoformat(ref.mtime) >= since)
 
 
-def scan(
+def scan(  # noqa: PLR0913
     sources: Iterable[Source] | None = None,
-    git_resolver: Callable[[str], GitProject | None] | None = None,
+    git_resolver: GitResolver | None = None,
     cached_threads: Iterable[dict[str, Any]] | None = None,
     *,
     unavailable_sources: set[str] | None = None,
     refs_of: Callable[[Source], Iterable[RawRef]] | None = None,
     resolve_cached_git: bool = True,
+    now: datetime | None = None,
 ) -> list[NormalizedSession]:
     if sources is None:
         sources = SOURCES
     if git_resolver is None:
-        git_resolver = resolve_git_project
+        git_resolver = lookup_git_project
+    if now is None:
+        now = datetime.now(UTC)
+    threads = list(cached_threads or [])
     threads_by_ref: dict[tuple[str, str], dict[str, Any]] = {}
-    for thread in cached_threads or []:
+    for thread in threads:
         source_name = thread.get("source") or "claude-code"
         for source_ref in (thread.get("sourceRef"), thread.get("file")):
             if source_ref:
                 threads_by_ref[(source_name, source_ref)] = thread
-    cache: dict[str, GitProject | None] = {}  # resolved once per cwd
     out: list[NormalizedSession] = []
+    resolve: list[NormalizedSession] = []
     for src in sources:
         try:
             for ref in refs_of(src) if refs_of is not None else src.discover():
                 session, cached = _load_session(src, ref, threads_by_ref)
                 if session is None:
                     continue
-                if resolve_cached_git or not cached:
-                    _attach_git(session, cache, git_resolver)
                 out.append(session)
+                if resolve_cached_git or not cached:
+                    resolve.append(session)
         except SourceUnavailableError as error:
             if unavailable_sources is not None:
                 unavailable_sources.add(src.name)
             print(f"skipped {src.name} source: {error}", file=sys.stderr)
+    cwds = [s.cwd for s in resolve if s.cwd is not None]
+    identities = git_identities(cwds, threads, git_resolver, now)
+    for session in resolve:
+        if session.cwd is not None:
+            _attach_git(session, identities[session.cwd])
     return out

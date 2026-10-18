@@ -8,7 +8,6 @@ import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
@@ -113,6 +112,11 @@ class Capture:
 
 @contextmanager
 def loopback(error: dict[str, Any]) -> Iterator[Capture]:
+    from http.server import (  # noqa: PLC0415 -- heavy; verify-only
+        BaseHTTPRequestHandler,
+        ThreadingHTTPServer,
+    )
+
     requests: queue.Queue[tuple[str, dict[str, str], bytes]] = queue.Queue()
     response = json.dumps(error).encode()
 

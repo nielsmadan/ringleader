@@ -17,9 +17,9 @@ from ..policy import CONFIRM_BULK, CONFIRM_EACH_DELETE
 from ..state import (
     ProjectRef,
     ProjectScope,
+    RenderBasis,
     TriageScope,
     project_label,
-    project_queue,
     scope_rows,
     scope_title,
 )
@@ -135,6 +135,8 @@ class TriageScreen(InboxScreen):
         self._marks: frozenset[str] = frozenset()
         self._following: ProjectRef | None = None
         self._stale = False
+        self._now_iso = ""
+        self._basis: RenderBasis | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -156,14 +158,48 @@ class TriageScreen(InboxScreen):
         if not self.query("#rows"):
             return
         inbox = self.inbox
-        now_iso = inbox.now_iso()
-        view = inbox.view_threads()
-        self._rows = scope_rows(self.scope, view, now_iso)
-        ids = {registry.qualified_id(t) for t in self._rows}
-        shown = highlighted_key(self.query_one("#rows", OptionList))
+        basis = inbox.render_basis()
+        if basis != self._basis:
+            self._basis = basis
+            self._now_iso = basis.now.isoformat()
+            self._render_rows(scope_rows(self.scope, inbox.view_threads(), self._now_iso))
+        self._render_subtitle()
+
+    def _row_text(self, thread: dict[str, Any]) -> Text:
+        return triage_row(
+            thread,
+            self._now_iso,
+            marked=registry.qualified_id(thread) in self._marks,
+            running=self.inbox.session_running(thread),
+        )
+
+    def _render_rows(self, threads: list[dict[str, Any]]) -> None:
+        self._rows = threads
+        ids = {registry.qualified_id(t) for t in threads}
+        rows = self.query_one("#rows", OptionList)
+        shown = highlighted_key(rows)
         if (self._marks - ids) or (shown is not None and shown not in ids):
             self._stale = True
         self._marks = self._marks & ids
+        set_rows(
+            rows,
+            [(registry.qualified_id(t), self._row_text(t)) for t in threads],
+            keep=shown,
+        )
+        empty = not threads
+        self._following = (
+            next_project(self.scope, self.inbox.home_state().projects) if empty else None
+        )
+        done = self.query_one("#done", Static)
+        done.update(done_text(self.scope, self._following) if empty else Text(""))
+        done.display = empty
+        was_hidden = not rows.display
+        rows.display = not empty
+        if not empty and was_hidden:
+            rows.focus()
+
+    def _render_subtitle(self) -> None:
+        inbox = self.inbox
         self.query_one("#subtitle", Static).update(
             Text(
                 subtitle(
@@ -174,32 +210,14 @@ class TriageScreen(InboxScreen):
                 )
             )
         )
+
+    def _set_marks(self, marks: frozenset[str]) -> None:
+        flipped = self._marks ^ marks
+        self._marks = marks
         rows = self.query_one("#rows", OptionList)
-        set_rows(
-            rows,
-            [
-                (
-                    registry.qualified_id(t),
-                    triage_row(
-                        t,
-                        now_iso,
-                        marked=registry.qualified_id(t) in self._marks,
-                        running=inbox.session_running(t),
-                    ),
-                )
-                for t in self._rows
-            ],
-            keep=highlighted_key(rows),
-        )
-        empty = not self._rows
-        self._following = next_project(self.scope, project_queue(view, now_iso)) if empty else None
-        done = self.query_one("#done", Static)
-        done.update(done_text(self.scope, self._following) if empty else Text(""))
-        done.display = empty
-        was_hidden = not rows.display
-        rows.display = not empty
-        if not empty and was_hidden:
-            rows.focus()
+        for index, thread in enumerate(self._rows):
+            if registry.qualified_id(thread) in flipped:
+                rows.replace_option_prompt_at_index(index, self._row_text(thread))
 
     def _highlighted(self) -> dict[str, Any] | None:
         index = self.query_one("#rows", OptionList).highlighted
@@ -222,8 +240,8 @@ class TriageScreen(InboxScreen):
         self, decision: Decision, targets: list[dict[str, Any]], until: str | None = None
     ) -> None:
         if self.inbox.decide(decision, targets, until=until):
-            self._marks = frozenset()
-        self.render_data()
+            self._set_marks(frozenset())
+            self.sync()
         self._stale = False
 
     def _confirm_then(self, decision: Decision, targets: list[dict[str, Any]], prompt: str) -> None:
@@ -291,13 +309,11 @@ class TriageScreen(InboxScreen):
             return
         key = registry.qualified_id(highlighted)
         self._stale = False
-        self._marks = self._marks - {key} if key in self._marks else self._marks | {key}
-        self.render_data()
+        self._set_marks(self._marks ^ {key})
 
     def action_mark_all(self) -> None:
         ids = frozenset(registry.qualified_id(t) for t in self._rows)
-        self._marks = frozenset() if ids and ids <= self._marks else ids
-        self.render_data()
+        self._set_marks(frozenset() if ids and ids <= self._marks else ids)
 
     def action_open(self) -> None:
         if self._rows:
@@ -324,6 +340,6 @@ class TriageScreen(InboxScreen):
         if highlighted is None:
             return
         key = overview.group_key(highlighted)
-        projects = project_queue(self.inbox.view_threads(), self.inbox.now_iso())
+        projects = self.inbox.home_state().projects
         project = next((p for p in projects if p.key == key), None)
         self.inbox.start_triage_handoff(project or thread_project(highlighted))

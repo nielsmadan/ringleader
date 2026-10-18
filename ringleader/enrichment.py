@@ -112,8 +112,8 @@ def classify(model: Model, thread: dict[str, Any], tail: str) -> Classification:
     return parse_classification(model.complete_json(enrich_prompt(thread, tail), ENRICH_SCHEMA))
 
 
-def _fresh_thread(reg: dict[str, Any], result: Classified) -> dict[str, Any] | None:
-    thread = _lookup(reg, result.identity)
+def _fresh_thread(index: registry.SessionIndex, result: Classified) -> dict[str, Any] | None:
+    thread = _lookup(index, result.identity)
     if (
         thread is None
         or thread.get("mtime") != result.observed_mtime
@@ -125,8 +125,9 @@ def _fresh_thread(reg: dict[str, Any], result: Classified) -> dict[str, Any] | N
 
 def apply_classifications(reg: dict[str, Any], results: Sequence[Classified]) -> ApplyCounts:
     applied = 0
+    index = registry.SessionIndex(reg)
     for result in results:
-        thread = _fresh_thread(reg, result)
+        thread = _fresh_thread(index, result)
         if thread is None:
             continue
         thread["status"] = result.classification.status
@@ -156,11 +157,18 @@ def estimate_seconds(count: int, engine: str | None, concurrency: int) -> float:
     return math.ceil(count / max(concurrency, 1)) * per_call
 
 
-def _lookup(reg: dict[str, Any], identity: Identity) -> dict[str, Any] | None:
+def _lookup(index: registry.SessionIndex, identity: Identity) -> dict[str, Any] | None:
     try:
-        return registry.find_session(reg, ":".join(identity))
+        return index.find(":".join(identity))
     except registry.AmbiguousSession:
         return None
+
+
+def _resolve(
+    registry_path: str, ids: Sequence[Identity]
+) -> list[tuple[Identity, dict[str, Any] | None]]:
+    index = registry.SessionIndex(registry.load_registry(registry_path))
+    return [(identity, _lookup(index, identity)) for identity in ids]
 
 
 class _Breaker:
@@ -224,8 +232,7 @@ def enrich_sessions(  # noqa: PLR0913 -- injection points the suite drives
     total = len(ids)
     if not total:
         return EnrichOutcome(0, 0, 0, cancelled=False, aborted=None, errors=())
-    reg = registry.load_registry(registry_path)
-    resolved = [(identity, _lookup(reg, identity)) for identity in ids]
+    resolved = _resolve(registry_path, ids)
     errors = [f"{identity[1]}: no longer in the registry" for identity, t in resolved if t is None]
     jobs: queue.SimpleQueue[tuple[Identity, dict[str, Any]]] = queue.SimpleQueue()
     for identity, thread in resolved:

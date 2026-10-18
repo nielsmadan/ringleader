@@ -108,7 +108,8 @@ and only happens interactively.
 Native conversion can refuse — an unsupported native shape, a missing or incompatible native
 store. On refusal, `rl resume` asks before falling back to the original *seeded handoff*: the
 session rendered to Markdown, written under `~/.local/share/ringleader/handoffs/`, and the
-target agent launched fresh with a prompt pointing at that file. The target has read the old
+target agent launched fresh with a prompt pointing at that file. Those exports stay until
+`archive.retention_days` (default 0, keep forever) ages them out. The target has read the old
 session; it is not continuing it. `--markdown` skips the native attempt and goes straight to
 this fallback. See [ADR 0011](../decisions/0011-seeded-handoff-over-native-conversion.md) for why
 the fallback exists, and [ADR 0013](../decisions/0013-native-conversion-behind-resume.md) for why

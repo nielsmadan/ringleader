@@ -114,3 +114,15 @@ def test_scoped_discovery_includes_a_known_transcript_filed_under_another_worksp
 
     known = frozenset({str(drifted)})
     assert _scoped(tmp_path, "/Users/me/proj/wt", known) == ["drift"]
+
+
+def test_parse_caps_the_tail_text_like_the_other_sources(tmp_path: Path):
+    proj = tmp_path / "-proj"
+    proj.mkdir()
+    f = proj / "bbbbbbbb-0000-0000-0000-000000000000.jsonl"
+    f.write_text(json.dumps({"type": "user", "message": {"content": "x" * 10000}}) + "\n")
+    src = ClaudeCodeSource(projects_dir=tmp_path)
+
+    ns = src.parse(next(src.discover()))
+
+    assert ns.tail_text == "USER: " + "x" * 5994

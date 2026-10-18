@@ -4,13 +4,14 @@ import json
 import os
 import secrets
 import sys
+from collections import deque
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .base import NormalizedSession, RawRef, append_jsonl_line, stat_fingerprint
+from .base import NormalizedSession, RawRef, append_jsonl_line, iso_mtime, stat_fingerprint
 
 
 def default_sessions_dir() -> Path:
@@ -20,10 +21,6 @@ def default_sessions_dir() -> Path:
         if env
         else Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".pi/agent") / "sessions"
     )
-
-
-def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
 def _session_id(path: Path) -> str:
@@ -48,7 +45,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     cwd: str | None = None
     session_id: str | None = None
     custom_title: str | None = None
-    turns: list[tuple[str, str]] = []
+    turns: deque[tuple[str, str]] = deque(maxlen=max(tail_turns, 0))
     last_prompt: str | None = None
     message_count = 0
 
@@ -93,8 +90,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
                 else:
                     turns.append(("ASSISTANT", text))
 
-    tail = turns[-tail_turns:] if tail_turns else []
-    tail_text = "\n".join(f"{s}: {x}" for s, x in tail)
+    tail_text = "\n".join(f"{s}: {x}" for s, x in turns)
 
     return {
         "cwd": cwd,
@@ -149,7 +145,7 @@ class PiSource:
                 source=self.name,
                 source_ref=_session_id(p),
                 file=str(p),
-                mtime=_iso_mtime(p),
+                mtime=iso_mtime(st),
                 size_bytes=st.st_size,
                 fingerprint=stat_fingerprint(st),
             )

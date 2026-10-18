@@ -46,7 +46,14 @@ FROM session
 WHERE parent_id IS NULL AND time_archived IS NULL
 """
 
-_SESSION_STATES = """
+# octet_length() sizes a value from its record header without loading the payload
+_PAYLOAD_BYTES = (
+    "octet_length(data)"
+    if sqlite3.sqlite_version_info >= (3, 43, 0)
+    else "length(CAST(data AS BLOB))"
+)
+
+_SESSION_STATES = f"""
 WITH message_state AS (
     SELECT
         session_id,
@@ -55,7 +62,7 @@ WITH message_state AS (
         SUM(time_updated) AS message_updated_sum,
         MAX(CASE WHEN time_updated > time_created THEN time_updated ELSE time_created END)
             AS message_updated,
-        SUM(length(CAST(data AS BLOB))) AS message_bytes
+        SUM({_PAYLOAD_BYTES}) AS message_bytes
     FROM message
     GROUP BY session_id
 ),
@@ -67,7 +74,7 @@ part_state AS (
         SUM(time_updated) AS part_updated_sum,
         MAX(CASE WHEN time_updated > time_created THEN time_updated ELSE time_created END)
             AS part_updated,
-        SUM(length(CAST(data AS BLOB))) AS part_bytes
+        SUM({_PAYLOAD_BYTES}) AS part_bytes
     FROM part
     GROUP BY session_id
 )

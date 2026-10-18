@@ -14,6 +14,7 @@ from ringleader.home.app import InboxApp, ScanFailedMessage
 from ringleader.home.harvest_view import harvest_groups
 from ringleader.home.intents import AgentHandoffIntent, ResumeIntent
 from ringleader.home.screens.home import HomeScreen
+from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.roundup import RoundupScreen
 from ringleader.picker.app import Choice, PickerScreen
 from ringleader.resume import launchable_agents
@@ -21,7 +22,7 @@ from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_fixture import build_fixture
 from scripts.tui_shot import settle_inbox
-from textual.widgets import OptionList
+from textual.widgets import OptionList, Static
 
 from tui_helpers import until
 
@@ -279,7 +280,7 @@ async def test_a_second_q_offers_to_discard_what_has_not_started(tmp_path):
             await until(pilot, lambda: isinstance(app.screen, ConfirmModal))
             assert "Discard 1 queued change that have not started?" in screen_text(app)
             await pilot.press("y")
-            await until(pilot, lambda: app.writer.pending == 1)
+            await until(pilot, lambda: app.writer.unfinished == 1)
         finally:
             execute.gate.set()
         await until(pilot, lambda: _exited(app))
@@ -562,3 +563,77 @@ async def test_enter_on_a_next_step_and_ctrl_r_while_scanning(tmp_path):
             gate.release.set()
         await until(pilot, lambda: app.idle)
         assert "presence unknown" not in screen_text(app)
+
+
+def _counting(monkeypatch, cls, name):
+    calls = []
+    original = getattr(cls, name)
+
+    def counted(self, *args, **kwargs):
+        calls.append(name)
+        return original(self, *args, **kwargs)
+
+    monkeypatch.setattr(cls, name, counted)
+    return calls
+
+
+async def test_a_rerender_resyncs_the_screen_only_after_the_state_changed(tmp_path, monkeypatch):
+    path = _write(tmp_path / "registry.json", _thread("s1"))
+    synced = _counting(monkeypatch, ProjectsScreen, "render_data")
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("2")
+        await until(pilot, lambda: isinstance(app.screen, ProjectsScreen))
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        before = len(synced)
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        unchanged = len(synced)
+        app._set()
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        assert (unchanged, len(synced)) == (before, before + 1)
+
+
+async def test_home_state_is_reused_until_the_view_or_the_minute_changes(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("s1"), _thread("s2"))
+    clock = [NOW_DT]
+    app = InboxApp(
+        path,
+        refresher=_reload,
+        presence=frozenset,
+        now=lambda: clock[0],
+        models=lambda task: None,
+        execute=FakeExecute(),
+        cwd=tmp_path,
+        strict=True,
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        first = app.home_state()
+        clock[0] = NOW_DT + timedelta(seconds=30)
+        within_the_minute = app.home_state()
+        clock[0] = NOW_DT + timedelta(minutes=1)
+        next_minute = app.home_state()
+        app.decide("keep", [app.view_threads()[0]])
+        decided = app.home_state()
+        assert (within_the_minute is first, next_minute is first, decided is next_minute) == (
+            True,
+            False,
+            False,
+        )
+        assert decided.triage_total == next_minute.triage_total - 1
+
+
+async def test_a_resize_rewraps_the_counts_without_rebuilding_home(tmp_path, monkeypatch):
+    path = _write(tmp_path / "registry.json", _thread("s1"), _thread("s2", status="blocked"))
+    rebuilt = _counting(monkeypatch, HomeScreen, "render_data")
+    app = _app(path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        before = len(rebuilt)
+        await pilot.resize_terminal(30, 30)
+        await until(pilot, lambda: "\n" in str(app.screen.query_one("#counts", Static).content))
+        assert len(rebuilt) == before

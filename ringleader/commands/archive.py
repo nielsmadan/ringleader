@@ -45,6 +45,7 @@ def archive_thread(
     *,
     archive_root_path: str | Path,
     summary_file: str | None = None,
+    index: registry.SessionIndex | None = None,
 ) -> str:
     """Move the transcript (+ sidecar/summary) into archive_root and record the tombstone.
 
@@ -100,6 +101,7 @@ def archive_thread(
         _now(),
         summary=summary,
         project=thread.get("gitProjectLabel") or thread.get("project"),
+        index=index,
     )
     return str(dest)
 

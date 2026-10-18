@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Mapping
 from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
 from pathlib import Path
 from queue import Empty, SimpleQueue
@@ -13,11 +15,14 @@ from textual import work
 from textual.app import App, ComposeResult
 from textual.binding import Binding, BindingType
 from textual.screen import Screen
+from textual.timer import Timer
 from textual.widgets import Footer, Header, Input, Label, OptionList
+from textual.widgets.option_list import Option
 
 from .. import overview, refresh, registry, resume
 from ..presence import PresenceClient
-from ..resume import Scope, SessionAction, agent_name, launchable_agents
+from ..resume import Haystack, Scope, SessionAction, agent_name, launchable_agents
+from ..sources.base import WorkspaceRelocatingSource
 from ..tui.keys import nav_bindings
 from ..tui.modals import AgentChoice, AgentModal, ConfirmModal, agent_row_text
 from ..tui.types import Clock, Presence, Refresher
@@ -36,6 +41,8 @@ __all__ = [
     "live_session_ids",
     "row_text",
 ]
+
+FILTER_DELAY = 0.12
 
 _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
     Scope.CWD: ("ctrl+r for this tree", "ctrl+a for everywhere"),
@@ -61,6 +68,29 @@ class RefreshResult:
     error: str | None
 
 
+@dataclass
+class _RowCache:
+    haystacks: dict[tuple[str, str], Haystack] = dataclass_field(default_factory=dict)
+    options: dict[tuple[tuple[str, str], bool], Option] = dataclass_field(default_factory=dict)
+    minute: str | None = None
+    shown: tuple[object, ...] | None = None
+
+    def advance(
+        self, minute: str, live_ids: frozenset[tuple[str, str]], rows: list[dict[str, Any]]
+    ) -> bool:
+        shown = (minute, live_ids, *(registry.identity(t) for t in rows))
+        if shown == self.shown:
+            return False
+        self.shown = shown
+        # a row's age reads in minutes at its finest, so a row built this minute still holds
+        if minute != self.minute:
+            self.options, self.minute = {}, minute
+        return True
+
+
+PREVIEW_CHARS = 500
+
+
 def live_session_ids() -> frozenset[tuple[str, str]]:
     return PresenceClient().require_running_session_ids()
 
@@ -78,7 +108,7 @@ def _preview(thread: dict[str, Any]) -> str:
         if isinstance(value, str):
             collapsed = " ".join(value.split())
             if collapsed:
-                return collapsed
+                return collapsed[:PREVIEW_CHARS]
     return ""
 
 
@@ -91,8 +121,14 @@ def _age(mtime: object, now_iso: str) -> str:
         return "?"
 
 
-def row_text(thread: dict[str, Any], now_iso: str, *, running: bool = False) -> Text:
-    marks = resume.badges(thread, now_iso)
+def row_text(
+    thread: dict[str, Any],
+    now_iso: str,
+    *,
+    running: bool = False,
+    sources: Mapping[str, WorkspaceRelocatingSource] | None = None,
+) -> Text:
+    marks = resume.badges(thread, now_iso, sources)
     if running:
         marks = [*marks, "running"]
     text = Text()
@@ -180,9 +216,13 @@ class PickerScreen(Screen[Choice | None]):
         presence: Presence | None = None,
         now: Clock | None = None,
         initial: dict[str, Any] | None = None,
+        filter_delay: float = FILTER_DELAY,
     ) -> None:
         super().__init__()
         self._initial = initial
+        self._filter_delay = filter_delay
+        self._filter_timer: Timer | None = None
+        self._cache = _RowCache()
         self.registry_path = str(registry_path)
         self.cwd = str(cwd)
         self._scope = scope
@@ -266,6 +306,8 @@ class PickerScreen(Screen[Choice | None]):
         if not self._alive():
             return
         if reg is not None:
+            if reg.get("threads") != self._reg.get("threads"):
+                self._cache = _RowCache()
             self._reg = reg
             self._scanned = True
         if running is not None:
@@ -291,23 +333,47 @@ class PickerScreen(Screen[Choice | None]):
             return False
         return (agent_name(resume.source_of(thread)), session_id) in self._live_ids
 
+    def _haystack(self, thread: dict[str, Any]) -> Haystack:
+        key = registry.identity(thread)
+        found = self._cache.haystacks.get(key)
+        if found is None:
+            found = self._cache.haystacks[key] = resume.haystack_of(thread)
+        return found
+
+    def _option(
+        self,
+        thread: dict[str, Any],
+        now_iso: str,
+        sources: Mapping[str, WorkspaceRelocatingSource],
+    ) -> Option:
+        running = self._is_running(thread)
+        key = (registry.identity(thread), running)
+        found = self._cache.options.get(key)
+        if found is None:
+            text = row_text(thread, now_iso, running=running, sources=sources)
+            found = self._cache.options[key] = Option(text)
+        return found
+
     async def _render_rows(self) -> None:
         # the scan lands on a later tick, by which time the user may already have quit
         if not self._alive():
             return
         keep = self._highlighted_id()
-        now = self._now().isoformat()
         in_scope = resume.candidates(self._reg, scope=self._scope, cwd=self.cwd)
-        self._rows = resume.rank(in_scope, self._query)
+        self._rows = resume.rank(in_scope, self._query, self._haystack)
+        self.sub_title = f"[{self._scope.value}] ({len(self._rows)})"
+        self._render_empty()
+        now = self._now().isoformat()
+        if not self._cache.advance(now[:16], self._live_ids, self._rows):
+            return
+        sources = resume.slug_sources()
         list_view = self._list_view()
         list_view.clear_options()
-        list_view.add_options(row_text(t, now, running=self._is_running(t)) for t in self._rows)
+        list_view.add_options(self._option(t, now, sources) for t in self._rows)
         if self._rows:
             list_view.highlighted = next(
                 (i for i, t in enumerate(self._rows) if registry.identity(t) == keep), 0
             )
-        self.sub_title = f"[{self._scope.value}] ({len(self._rows)})"
-        self._render_empty()
 
     def _render_empty(self) -> None:
         empty = self.query_one("#empty", Label)
@@ -319,8 +385,21 @@ class PickerScreen(Screen[Choice | None]):
 
     # -- filtering ---------------------------------------------------------
 
-    async def on_input_changed(self, event: Input.Changed) -> None:
-        self._query = event.value
+    def on_input_changed(self, event: Input.Changed) -> None:
+        self._cancel_filter()
+        self._filter_timer = self.set_timer(self._filter_delay, self._filter_due)
+
+    def _filter_due(self) -> None:
+        self.call_later(self._apply_filter)
+
+    def _cancel_filter(self) -> None:
+        if self._filter_timer is not None:
+            self._filter_timer.stop()
+            self._filter_timer = None
+
+    async def _apply_filter(self) -> None:
+        self._cancel_filter()
+        self._query = self.query_one("#filter", Input).value
         await self._render_rows()
 
     # -- cursor movement ---------------------------------------------------
@@ -347,7 +426,7 @@ class PickerScreen(Screen[Choice | None]):
 
     async def _set_scope(self, scope: Scope) -> None:
         self._scope = scope
-        await self._render_rows()
+        await self._apply_filter()
 
     # -- choosing ----------------------------------------------------------
 
@@ -359,6 +438,7 @@ class PickerScreen(Screen[Choice | None]):
 
     @work(exclusive=True, group="choose")
     async def action_choose(self) -> None:
+        await self._apply_filter()
         thread = self._current()
         if thread is None:
             return
@@ -395,6 +475,7 @@ class PickerApp(App[Choice | None]):
         refresher: Refresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
+        filter_delay: float = FILTER_DELAY,
     ) -> None:
         super().__init__()
         self._picker = PickerScreen(
@@ -406,6 +487,7 @@ class PickerApp(App[Choice | None]):
             refresher=refresher,
             presence=presence,
             now=now,
+            filter_delay=filter_delay,
         )
 
     def on_mount(self) -> None:

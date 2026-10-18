@@ -75,7 +75,8 @@ the transcript back and drops the tombstone, and a human can move the files by h
 of the registry record (README → "Restoring an archived session").
 
 That holds until `archive.retention_days` elapses (default `0` = keep forever), after which
-`rl prune` / `rl roundup` purges the archived files permanently.
+`rl prune` / `rl roundup` purges the archived files permanently. Handoff exports share the same
+setting.
 
 ## Key entry points
 

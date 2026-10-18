@@ -1,5 +1,7 @@
-from ringleader.usage.aggregate import Bucket, day_of, in_window, rollup
-from ringleader.usage.base import UsageRecord
+from datetime import date
+
+from ringleader.usage.aggregate import Bucket, in_window, rollup
+from ringleader.usage.base import UsageRecord, record_day
 from ringleader.usage.pricing import estimate, model_family
 
 
@@ -83,12 +85,13 @@ def test_rollup_groups_by_key():
     assert out["a"].records == 2
 
 
-def test_day_of_and_in_window():
+def test_record_day_and_in_window():
     r = _rec(ts="2026-08-17T10:00:00Z")
-    assert day_of(r) == "2026-08-17"
-    assert in_window(r, "2026-08-10", None) is True
-    assert in_window(r, "2026-08-18", None) is False
-    assert in_window(r, None, "2026-08-16") is False
+    assert record_day(r) == "2026-08-17"
+    assert in_window(r, date(2026, 8, 10), None) is True
+    assert in_window(r, date(2026, 8, 17), date(2026, 8, 17)) is True
+    assert in_window(r, date(2026, 8, 18), None) is False
+    assert in_window(r, None, date(2026, 8, 16)) is False
 
 
 def test_model_family_keeps_the_mythos_alias_for_fable():

@@ -1,10 +1,11 @@
 import json
 import os
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from functools import partial
 
 import pytest
-from ringleader import refresh, registry
-from ringleader.gitinfo import GitProject
+from ringleader import refresh, registry, scanner
+from ringleader.gitinfo import GitProject, GitRun, lookup_git_project
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.sources.codex import CodexSource
 
@@ -666,3 +667,161 @@ def test_scoped_refresh_discovers_a_source_with_no_baseline_whole(tmp_path):
     reg, _ = _scoped(reg_path, root, "/Users/me/proj", sources=sources)
 
     assert _identities(reg) == [("claude-code", "s1"), ("codex", "c1")]
+
+
+def _repo_and_clock(cwd):
+    (cwd / ".git").mkdir(parents=True)
+    after = datetime.fromtimestamp((cwd / ".git").stat().st_ctime, UTC) + timedelta(minutes=1)
+    return lambda hours: (after + timedelta(hours=hours)).isoformat()
+
+
+def test_a_rescan_reuses_the_git_identity_the_last_refresh_recorded(tmp_path):
+    cwd = tmp_path / "proj"
+    at = _repo_and_clock(cwd)
+    proj = tmp_path / "projects" / "-proj"
+    proj.mkdir(parents=True)
+    (proj / "s1.jsonl").write_text(
+        json.dumps({"sessionId": "s1", "cwd": str(cwd), "type": "user"}) + "\n", encoding="utf-8"
+    )
+    reg_path = _registry(tmp_path, [])
+    calls = []
+
+    def resolver(path):
+        calls.append(path)
+        return GitProject(root=path, remote=None, key=path, label="proj", clone_url=None)
+
+    for now_iso in (at(0), at(1)):
+        refresh.refresh_registry(
+            reg_path, now_iso, projects_root=tmp_path / "projects", git_resolver=resolver
+        )
+
+    saved = json.loads(reg_path.read_text())["threads"][0]
+    assert calls == [str(cwd)]
+    assert (saved["gitProjectLabel"], saved["gitCheckedAt"]) == ("proj", at(0))
+
+
+def _one_session_in(tmp_path, cwd, recorded):
+    proj = tmp_path / "projects" / "-proj"
+    proj.mkdir(parents=True)
+    (proj / "s1.jsonl").write_text(
+        json.dumps({"sessionId": "s1", "cwd": str(cwd), "type": "user"}) + "\n", encoding="utf-8"
+    )
+    thread = {
+        "sessionId": "s1",
+        "source": "claude-code",
+        "project": str(cwd),
+        "gitProjectKey": "github.com/me/proj",
+        "gitProjectLabel": "proj",
+        "gitRoot": str(cwd),
+        "gitRemote": "github.com/me/proj",
+        "gitCloneUrl": "git@github.com:me/proj.git",
+        "gitCheckedAt": recorded,
+    }
+    return _registry(tmp_path, [thread])
+
+
+def _git(answers):
+    def run(cmd):
+        return answers[tuple(cmd[3:])]
+
+    return partial(lookup_git_project, runner=run)
+
+
+def test_a_timed_out_remote_lookup_keeps_the_recorded_remote_identity(tmp_path):
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    reg_path = _one_session_in(tmp_path, cwd, "2026-07-17T00:00:00+00:00")
+    flaky = _git(
+        {
+            ("rev-parse", "--show-toplevel"): GitRun(0, f"{cwd}\n"),
+            ("config", "--get", "remote.origin.url"): GitRun(None),
+        }
+    )
+
+    refresh.refresh_registry(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        projects_root=tmp_path / "projects",
+        git_resolver=flaky,
+    )
+
+    saved = json.loads(reg_path.read_text())["threads"][0]
+    assert (saved["gitProjectKey"], saved["gitCheckedAt"]) == (
+        "github.com/me/proj",
+        "2026-07-17T00:00:00+00:00",
+    )
+
+
+def test_a_timed_out_toplevel_lookup_is_not_recorded_as_a_check(tmp_path):
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    reg_path = _one_session_in(tmp_path, cwd, None)
+    calls = []
+
+    def run(cmd):
+        calls.append(cmd)
+        return GitRun(None)
+
+    for now_iso in ("2026-07-19T00:00:00+00:00", "2026-07-19T01:00:00+00:00"):
+        refresh.refresh_registry(
+            reg_path,
+            now_iso,
+            projects_root=tmp_path / "projects",
+            git_resolver=partial(lookup_git_project, runner=run),
+        )
+
+    saved = json.loads(reg_path.read_text())["threads"][0]
+    assert (saved["gitProjectKey"], saved["gitCheckedAt"]) == ("github.com/me/proj", None)
+    assert len(calls) == 2
+
+
+def test_a_directory_that_is_no_longer_a_repo_clears_the_recorded_identity(tmp_path):
+    cwd = tmp_path / "proj"
+    cwd.mkdir()
+    reg_path = _one_session_in(tmp_path, cwd, "2026-07-18T23:00:00+00:00")
+    not_a_repo = _git(
+        {("rev-parse", "--show-toplevel"): GitRun(128, stderr="fatal: not a git repository")}
+    )
+
+    refresh.refresh_registry(
+        reg_path,
+        "2026-07-19T00:00:00+00:00",
+        projects_root=tmp_path / "projects",
+        git_resolver=not_a_repo,
+    )
+
+    saved = json.loads(reg_path.read_text())["threads"][0]
+    assert [saved[k] for k in ("gitProjectKey", "gitRoot", "gitRemote", "gitCheckedAt")] == [
+        None,
+        None,
+        None,
+        "2026-07-19T00:00:00+00:00",
+    ]
+
+
+def test_refreshes_sharing_a_pool_reread_only_the_codex_headers_that_changed(tmp_path, monkeypatch):
+    from ringleader.sources import codex
+
+    sessions = _codex_sessions_dir(tmp_path, "c1")
+    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(sessions))
+    reg_path = _registry(tmp_path, [])
+    reads = []
+    real_header = codex._header
+
+    def counting_header(path):
+        reads.append(path.name)
+        return real_header(path)
+
+    monkeypatch.setattr(codex, "_header", counting_header)
+    pool = scanner.SourcePool()
+
+    for minute in (0, 1):
+        refresh.refresh_registry(
+            reg_path,
+            f"2026-07-19T00:0{minute}:00+00:00",
+            git_resolver=lambda cwd: None,
+            name_filters=[],
+            pool=pool,
+        )
+
+    assert reads == ["c1.jsonl"]

@@ -11,12 +11,15 @@ from pathlib import Path
 from typing import Any, ClassVar, cast
 
 from .base import (
+    FingerprintMemo,
     IndexUpdate,
     NormalizedSession,
     RawRef,
     append_jsonl_line,
     changed_since,
     in_workspace,
+    iso_mtime,
+    memo_by_fingerprint,
     stat_fingerprint,
 )
 
@@ -56,10 +59,6 @@ def default_codex_dir() -> Path:
     )
 
 
-def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
-
-
 def _is_preamble(text: str) -> bool:
     t = text.lstrip()
     return t.startswith("# AGENTS.md") or "<INSTRUCTIONS>" in text
@@ -72,40 +71,42 @@ def _message_stats(path: Path) -> tuple[str | None, str | None, int]:
     comparable to Claude's turn count (which counts both roles) rather than
     only counting the human side of the conversation.
     """
-    prompts: list[str] = []
+    first: str | None = None
+    last: str | None = None
+    message_count = 0
     first_seen = False
-    assistant_count = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
-        if not line.strip():
-            continue
-        try:
-            o = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if o.get("type") != "response_item":
-            continue
-        p = o.get("payload", {})
-        if p.get("type") != "message":
-            continue
-        role = p.get("role")
-        if role == "assistant":
-            assistant_count += 1
-            continue
-        if role != "user":
-            continue
-        text = " ".join(
-            c.get("text", "") for c in p.get("content", []) if isinstance(c, dict)
-        ).strip()
-        if not text:
-            continue
-        if not first_seen:
-            first_seen = True
-            if _is_preamble(text):
-                continue  # drop only the injected first-message preamble
-        prompts.append(text)
-    first = prompts[0] if prompts else None
-    last = prompts[-1] if prompts else None
-    return first, last, len(prompts) + assistant_count
+    with path.open(encoding="utf-8") as fh:
+        for line in fh:
+            if not line.strip():
+                continue
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if o.get("type") != "response_item":
+                continue
+            p = o.get("payload", {})
+            if p.get("type") != "message":
+                continue
+            role = p.get("role")
+            if role == "assistant":
+                message_count += 1
+                continue
+            if role != "user":
+                continue
+            text = " ".join(
+                c.get("text", "") for c in p.get("content", []) if isinstance(c, dict)
+            ).strip()
+            if not text:
+                continue
+            if not first_seen:
+                first_seen = True
+                if _is_preamble(text):
+                    continue  # drop only the injected first-message preamble
+            message_count += 1
+            first = first if first is not None else text
+            last = text
+    return first, last, message_count
 
 
 def _meta(path: Path) -> dict[str, Any]:
@@ -138,6 +139,11 @@ def _is_interactive(meta: dict[str, Any]) -> bool:
     return source is None or source == "cli"
 
 
+def _header(path: Path) -> tuple[str, bool, str | None]:
+    meta = _meta(path)
+    return _thread_id(meta, path), _is_interactive(meta), meta.get("cwd")
+
+
 @dataclass
 class CodexSource:
     parser_version: ClassVar[int] = 1
@@ -158,7 +164,12 @@ class CodexSource:
             }
         )
     )
-    _names_by_id: dict[str, str | None] | None = field(default=None, init=False, repr=False)
+    _names_by_id: dict[str, str | None] | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
+    _headers: FingerprintMemo[tuple[str, bool, str | None]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self.sessions_dir = Path(self.sessions_dir)
@@ -186,13 +197,13 @@ class CodexSource:
         return self.session_index_file
 
     def discover(self) -> Iterator[RawRef]:
-        return self._refs(lambda _: True, lambda _p, _meta: True)
+        return self._refs(lambda _: True, lambda _p, _cwd: True)
 
     def discover_scoped(
         self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
     ) -> Iterator[RawRef]:
-        def in_scope(p: Path, meta: dict[str, Any]) -> bool:
-            return str(p) in known or in_workspace(meta.get("cwd"), cwd, recursive=recursive)
+        def in_scope(p: Path, session_cwd: str | None) -> bool:
+            return str(p) in known or in_workspace(session_cwd, cwd, recursive=recursive)
 
         # rollouts are filed by date: mtime first, since it skips the oversized meta read
         return self._refs(lambda p: changed_since(p, since), in_scope)
@@ -200,30 +211,38 @@ class CodexSource:
     def _refs(
         self,
         wanted: Callable[[Path], bool],
-        wanted_meta: Callable[[Path, dict[str, Any]], bool],
+        wanted_meta: Callable[[Path, str | None], bool],
     ) -> Iterator[RawRef]:
         self._names_by_id = None
         if not self.sessions_dir.exists():
             return
+        headers: FingerprintMemo[tuple[str, bool, str | None]] = {}
         for p in sorted(self.sessions_dir.glob("**/*.jsonl")):
             if not wanted(p):
+                if str(p) in self._headers:
+                    headers[str(p)] = self._headers[str(p)]
                 continue
             try:
                 st = p.stat()
-                meta = _meta(p)
-                if not _is_interactive(meta) or not wanted_meta(p, meta):
-                    continue
+                fingerprint = stat_fingerprint(st)
+                headers[str(p)] = entry = memo_by_fingerprint(
+                    self._headers, p, fingerprint, _header
+                )
             except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
+            thread_id, interactive, session_cwd = entry[1]
+            if not interactive or not wanted_meta(p, session_cwd):
+                continue
             yield RawRef(
                 source=self.name,
-                source_ref=_thread_id(meta, p),
+                source_ref=thread_id,
                 file=str(p),
-                mtime=_iso_mtime(p),
+                mtime=iso_mtime(st),
                 size_bytes=st.st_size,
-                fingerprint=stat_fingerprint(st),
+                fingerprint=fingerprint,
             )
+        self._headers = headers
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = ref.file_path()

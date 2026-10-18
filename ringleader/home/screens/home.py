@@ -9,6 +9,7 @@ from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, Label, OptionList, Static
 
 from ... import overview, registry, resume
+from ...revalidate import Identity
 from ...tui.keys import nav_bindings
 from ...tui.rows import highlighted_key, set_rows
 from ..base import InboxScreen
@@ -135,6 +136,7 @@ class HomeScreen(InboxScreen):
 
     _steps: tuple[NextStep, ...] = ()
     _in_flight: tuple[dict[str, Any], ...] = ()
+    _shown: tuple[HomeState, frozenset[Identity] | None] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -157,16 +159,14 @@ class HomeScreen(InboxScreen):
             return
         inbox = self.inbox
         state = inbox.home_state()
+        shown = (state, inbox.state.live_ids)
+        self.render_status()
+        if self._shown is not None and self._shown[0] is state and self._shown[1] == shown[1]:
+            return
+        self._shown = shown
         self._steps = inbox.home_steps(state)
         self._in_flight = state.in_flight
-        self.query_one("#counts", Static).update(Text(counts_line(state, self.size.width or 80)))
-        status = inbox.status_line()
-        status_widget = self.query_one("#status", Static)
-        status_widget.update(Text(status))
-        status_widget.display = bool(status)
-        self.query_one("#recommended", Static).update(
-            recommended_text(self._steps, self.size.width or 80)
-        )
+        self._render_width(state)
         steps = self.query_one("#steps", OptionList)
         set_rows(
             steps,
@@ -194,8 +194,22 @@ class HomeScreen(InboxScreen):
             Text(waking_line(state.waking_soon, state.now_iso))
         )
 
+    def _render_width(self, state: HomeState) -> None:
+        width = self.size.width or 80
+        self.query_one("#counts", Static).update(Text(counts_line(state, width)))
+        self.query_one("#recommended", Static).update(recommended_text(self._steps, width))
+
+    def render_status(self) -> None:
+        if not self.query("#status"):
+            return
+        status = self.inbox.status_line()
+        status_widget = self.query_one("#status", Static)
+        status_widget.update(Text(status))
+        status_widget.display = bool(status)
+
     def on_resize(self) -> None:
-        self.render_data()
+        if self._shown is not None:
+            self._render_width(self._shown[0])
 
     def action_cursor_down(self) -> None:
         if isinstance(self.focused, OptionList):

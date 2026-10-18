@@ -4,12 +4,15 @@ import json
 import sys
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import date
+from functools import cached_property
 from itertools import chain
 from pathlib import Path
 from typing import Any
 
-from ..sources.droid import _iso_mtime, _session_start, default_sessions_dir
-from .base import UsageRecord, as_dict, as_int, total_of
+from ..sources.base import iso_mtime
+from ..sources.droid import _session_start, default_sessions_dir
+from .base import UsageRecord, as_dict, as_int, record_day, total_of
 
 _SIDECAR_SUFFIX = ".settings.json"
 
@@ -87,12 +90,22 @@ class DroidUsageReader:
     def available(self) -> bool:
         return self.sessions_dir.exists()
 
-    def records(self) -> Iterator[UsageRecord]:
-        for thread in self._threads():
+    def records(
+        self, since: date | None = None, session_prefix: str | None = None
+    ) -> Iterator[UsageRecord]:
+        start = since.isoformat() if since else ""
+        prefix = session_prefix or ""
+        for thread in self._threads:
+            if thread.timestamp[:10] < start or not thread.session_id.startswith(prefix):
+                continue
             usage = as_dict(thread.settings.get("tokenUsage"))
             if usage:
                 yield _record(thread, usage)
 
+    def latest_day(self) -> str | None:
+        return max((record_day(r) for r in self.records()), default=None) or None
+
+    @cached_property
     def _threads(self) -> list[_Thread]:
         if not self.available():
             return []
@@ -103,7 +116,7 @@ class DroidUsageReader:
             if f.parent.name == "btw":
                 continue  # a btw fork is its own layout, never re-filed under a slug dir
             try:
-                thread = _Thread(f, _iso_mtime(f), _session_start(f), _sidecar(f))
+                thread = _Thread(f, iso_mtime(f.stat()), _session_start(f), _sidecar(f))
             except (OSError, json.JSONDecodeError):
                 continue
             if not thread.session_id or thread.session_id in seen:

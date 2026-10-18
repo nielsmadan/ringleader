@@ -2,18 +2,19 @@ from __future__ import annotations
 
 import re
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from .gitinfo import GitProject, resolve_git_project
+from .gitinfo import GitResolver, git_identities, lookup_git_project
 
 # Claude Code only: per-project memory/*.md files have no Codex equivalent (Codex's
 # memories_1.sqlite is out of scope).
+from .sources.base import iso_mtime
 from .sources.claude_code import default_projects_dir
-from .transcript import parse_transcript
+from .transcript import first_cwd
 
 # Explicit re-export: callers use memory.projects_dir().
 projects_dir = default_projects_dir
@@ -130,41 +131,39 @@ def iter_memory_dirs(root: str | Path) -> Iterator[Path]:
             yield d
 
 
-def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
-
-
 def _resolve_cwd(project_dir: Path) -> str | None:
     for tp in sorted(project_dir.glob("*.jsonl")):
         try:
-            info = parse_transcript(tp, tail_turns=1)
+            cwd = first_cwd(tp)
         except OSError:
             continue
-        if info.cwd:
-            return info.cwd
+        if cwd:
+            return cwd
     return None
 
 
 def scan_memory(
-    root: str | Path, git_resolver: Callable[[str | None], GitProject | None] | None = None
+    root: str | Path,
+    git_resolver: GitResolver | None = None,
+    *,
+    recorded_threads: Iterable[dict[str, Any]] = (),
+    now: datetime | None = None,
 ) -> list[MemoryEntry]:
-    if git_resolver is None:
-        git_resolver = resolve_git_project
-    root = Path(root)
-    cwd_cache: dict[str, str | None] = {}
-    git_cache: dict[str, object] = {}
+    """`recorded_threads` are the registry's session threads: a cwd one of them
+    checked recently reuses that git identity instead of running git again."""
+    mem_dirs = list(iter_memory_dirs(root))
+    cwds = {mem_dir: _resolve_cwd(mem_dir.parent) for mem_dir in mem_dirs}
+    identities = git_identities(
+        (cwd for cwd in cwds.values() if cwd is not None),
+        recorded_threads,
+        git_resolver or lookup_git_project,
+        now or datetime.now(UTC),
+    )
     out: list[MemoryEntry] = []
-    for mem_dir in iter_memory_dirs(root):
-        project_dir = mem_dir.parent
-        encoded = project_dir.name
-        if encoded not in cwd_cache:
-            cwd_cache[encoded] = _resolve_cwd(project_dir)
-        cwd = cwd_cache[encoded]
-        gp = None
-        if cwd is not None:
-            if cwd not in git_cache:
-                git_cache[cwd] = git_resolver(cwd)
-            gp = git_cache[cwd]
+    for mem_dir in mem_dirs:
+        encoded = mem_dir.parent.name
+        cwd = cwds[mem_dir]
+        gp = identities[cwd].project if cwd is not None else None
         repo_gone = False
         if cwd:
             repo_gone = not Path(cwd).exists()
@@ -190,7 +189,7 @@ def scan_memory(
                     path=str(f),
                     encoded_dir=encoded,
                     project=cwd,
-                    mtime=_iso_mtime(f),
+                    mtime=iso_mtime(f.stat()),
                     name=meta.get("name"),
                     description=meta.get("description"),
                     mem_type=md.get("type"),

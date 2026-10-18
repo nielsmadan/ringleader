@@ -7,6 +7,7 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
+from functools import lru_cache
 from typing import Any, cast
 
 from .agents import display_agent
@@ -61,7 +62,8 @@ def _wrap(s: str, w: int = PROJECT_W) -> list[str]:
     return lines
 
 
-def _parse(iso: str) -> datetime:
+@lru_cache(maxsize=16384)
+def parse_instant(iso: str) -> datetime:
     dt = datetime.fromisoformat(iso)
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=UTC)
@@ -69,7 +71,7 @@ def _parse(iso: str) -> datetime:
 
 
 def age_days(mtime_iso: str, now_iso: str) -> float:
-    return (_parse(now_iso) - _parse(mtime_iso)).total_seconds() / 86400.0
+    return (parse_instant(now_iso) - parse_instant(mtime_iso)).total_seconds() / 86400.0
 
 
 def is_filtered(thread: dict[str, Any]) -> bool:
@@ -318,7 +320,7 @@ def registry_age_minutes(reg: dict[str, Any], now_iso: str) -> float | None:
     ls = reg.get("lastScan")
     if not ls:
         return None
-    return (_parse(now_iso) - _parse(ls)).total_seconds() / 60.0
+    return (parse_instant(now_iso) - parse_instant(ls)).total_seconds() / 60.0
 
 
 def is_stale(reg: dict[str, Any], now_iso: str, max_age_minutes: float = 60) -> bool:
@@ -328,7 +330,7 @@ def is_stale(reg: dict[str, Any], now_iso: str, max_age_minutes: float = 60) -> 
 
 def newer_than(mtime_iso: str, ref_iso: str) -> bool:
     """True if mtime is strictly after ref (both ISO 8601)."""
-    return _parse(mtime_iso) > _parse(ref_iso)
+    return parse_instant(mtime_iso) > parse_instant(ref_iso)
 
 
 _MINUTES_PER_HOUR = 60
@@ -338,7 +340,7 @@ _MINUTES_PER_DAY = 1440
 def age_human(iso: str | None, now_iso: str) -> str:
     if not iso:
         return "never"
-    mins = (_parse(now_iso) - _parse(iso)).total_seconds() / 60.0
+    mins = (parse_instant(now_iso) - parse_instant(iso)).total_seconds() / 60.0
     if mins < 1:
         return "just now"
     if mins < _MINUTES_PER_HOUR:

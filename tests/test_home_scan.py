@@ -1,7 +1,7 @@
 import threading
 from datetime import UTC, datetime
 
-from ringleader import registry
+from ringleader import harvests, registry
 from ringleader.home.scan import ScanService
 from ringleader.presence import PresenceUnavailable
 from ringleader.refresh import Refreshed
@@ -217,3 +217,25 @@ def test_the_full_refresher_reports_which_sources_were_unavailable():
         frozenset({"droid"}),
         True,
     )
+
+
+def test_a_rescan_reuses_the_harvests_it_already_read(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    harvests.write_harvest(
+        session_id="s1",
+        name="one",
+        folder_path=None,
+        repo_url=None,
+        harvested_at="2026-01-01T00:00:00+00:00",
+        content="## Summary\n\nkept\n",
+    )
+    refresher = GatedRefresher()
+    refresher.gate.set()
+    service = _service(refresher)
+    service.request()
+    first = service.wait(5)
+    service.request()
+    second = service.wait(5)
+    assert first is not None and second is not None
+    assert first.harvests is not None and second.harvests is not None
+    assert second.harvests.items[0] is first.harvests.items[0]

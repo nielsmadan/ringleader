@@ -37,8 +37,10 @@ its reader, and is the authority for `--source`'s valid values.
 ### Aggregation
 
 `rollup(records, key)` buckets a record stream by any key function into `Bucket` totals;
-`day_of()` and the `_KEYS` map in `commands/usage.py` supply the `--by day|model|project|
-session|source` options. `in_window()` applies `--since` / `--until`.
+`base.record_day()` and the `_KEYS` map in `commands/usage.py` supply the `--by day|model|project|
+session|source` options. `in_window()` applies `--since` / `--until`, which argparse parses into
+`date`s at the CLI edge (anything but `YYYY-MM-DD` exits 2); readers' `records(since=...)` take
+that `date`, never a string.
 
 `pricing.py` maps a model string to a family (`model_family()`) and estimates cost
 (`estimate()`). Prices are a hardcoded table — deliberately, so the tool needs no network — and
@@ -118,8 +120,26 @@ twice. `rl usage --merge <dir>` is the consumer.
 - **A percentage over 1000 is an epoch**, not a percentage — see `_EPOCH_LEAK_FLOOR`.
 - **`PRICES` is a static table.** Cost figures are estimates and drift with provider pricing.
 - **`--days` defaults to 7**, so a bare `rl usage` is a week, not all time. `--all` widens it.
-- **Reading walks local session stores**, so usage over a large history is I/O-bound in the same
-  way a scan is.
+- **Reading walks local session stores**, so `--all` over a large history is I/O-bound in the
+  same way a scan is. The default window is not: `latest_day()` finds the newest record by
+  reading files newest-mtime first (`base.newest_first()` yields each file with the latest
+  instant a record in it can carry), and `records(since=...)` on the same reader then skips every
+  transcript last written more than a day before the window start (a file holds no record newer
+  than its last write). The window is resolved once, from `latest_day()`; only `--archived` and
+  `--merge` anchor on the pooled records instead, and they still read everything, because
+  deduping needs the full set. OpenCode filters on `time_created` in SQL. Droid reads every
+  transcript header and sidecar once per reader, because its per-session dedupe keeps the first
+  path in sorted order and an mtime prefilter would hand a twice-filed session to its newer copy.
+- **`rl usage session <id>` must agree with `--by session`.** Claude records are deduped by
+  (message id, requestId), first file in sorted path order wins, and a resumed or forked session
+  copies its parent's lines with the same ids. So for Claude the command reads every transcript in
+  the target's own project directory (where resumes and forks land) up to the target, and keeps
+  only the target's records. A copy filed under a different project directory is not seen. The
+  other readers open only files whose name carries the id prefix.
+- **`rl usage windows` reads Codex rollouts newest first.** It stops once both windows have their
+  latest snapshot, or, while one kind is still missing, once the files are more than a week older
+  than the newest snapshot found. A kind last seen over a week before the newest snapshot is
+  therefore not reported, even as expired.
 - **Droid records are never priced**, and `rl usage windows` does not cover droid. Factory bills
   credits, and its window state is API-only — deliberately deferred, not overlooked.
 - **The droid reader skips `sessions/btw/`**, droid's fork layout, exactly as the Source does. A

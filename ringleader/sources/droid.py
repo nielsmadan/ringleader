@@ -4,19 +4,23 @@ import json
 import os
 import shutil
 import sys
+from collections import deque
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime
 from itertools import chain
 from pathlib import Path
 from typing import Any, ClassVar
 
 from ..slug import droid_slug
 from .base import (
+    FingerprintMemo,
     NormalizedSession,
     RawRef,
     changed_since,
     existing_files,
+    iso_mtime,
+    memo_by_fingerprint,
     stat_fingerprint,
     workspace_dirs,
 )
@@ -28,10 +32,6 @@ def default_sessions_dir() -> Path:
     # FACTORY_HOME_OVERRIDE replaces HOME, not the .factory dir
     home = os.environ.get("FACTORY_HOME_OVERRIDE")
     return (Path(home) if home else Path.home()) / ".factory" / "sessions"
-
-
-def _iso_mtime(p: Path) -> str:
-    return datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
 
 
 def _session_start(path: Path) -> dict[str, Any]:
@@ -53,6 +53,11 @@ def _is_own_session(start: dict[str, Any]) -> bool:
     return bool(start) and start.get("callingSessionId") is None
 
 
+def _header(path: Path) -> tuple[bool, object]:
+    start = _session_start(path)
+    return _is_own_session(start), start.get("id")
+
+
 def _text_from_content(content: object) -> str:
     if isinstance(content, str):
         return content.strip()
@@ -70,7 +75,7 @@ def _text_from_content(content: object) -> str:
 
 def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     start: dict[str, Any] = {}
-    turns: list[tuple[str, str]] = []
+    turns: deque[tuple[str, str]] = deque(maxlen=max(tail_turns, 0))
     last_prompt: str | None = None
     message_count = 0
 
@@ -108,7 +113,6 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
                 else:
                     turns.append(("ASSISTANT", text))
 
-    tail = turns[-tail_turns:] if tail_turns else []
     title = start.get("title")
     manual = bool(start.get("isSessionTitleManuallySet"))
     return {
@@ -118,7 +122,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
         "ai_title": None if manual else title,
         "last_prompt": last_prompt,
         "message_count": message_count,
-        "tail_text": "\n".join(f"{s}: {x}" for s, x in tail),
+        "tail_text": "\n".join(f"{s}: {x}" for s, x in turns),
     }
 
 
@@ -138,6 +142,9 @@ class DroidSource:
                 "launches_sessions",
             }
         )
+    )
+    _headers: FingerprintMemo[tuple[bool, object]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
     )
 
     def __post_init__(self) -> None:
@@ -191,7 +198,7 @@ class DroidSource:
         if not self.sessions_dir.exists():
             return iter(())
         globs = chain(self.sessions_dir.glob("*.jsonl"), self.sessions_dir.glob("*/*.jsonl"))
-        return self._refs(sorted(globs))
+        return self._refs(sorted(globs), complete=True)
 
     def discover_scoped(
         self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
@@ -205,22 +212,26 @@ class DroidSource:
             *(p for d in dirs for p in d.glob("*.jsonl")),
             *existing_files(known),
         }
-        return self._refs(sorted(p for p in files if changed_since(p, since)))
+        return self._refs(sorted(p for p in files if changed_since(p, since)), complete=False)
 
-    def _refs(self, files: Iterable[Path]) -> Iterator[RawRef]:
+    def _refs(self, files: Iterable[Path], *, complete: bool) -> Iterator[RawRef]:
         seen: set[str] = set()
+        headers: FingerprintMemo[tuple[bool, object]] = {}
         for p in files:
             if p.parent.name == "btw":
                 continue  # a btw fork is its own layout, never re-filed under a slug dir
             try:
                 st = p.stat()
-                start = _session_start(p)
+                fingerprint = stat_fingerprint(st)
+                headers[str(p)] = entry = memo_by_fingerprint(
+                    self._headers, p, fingerprint, _header
+                )
             except (OSError, json.JSONDecodeError) as e:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
-            if not _is_own_session(start):
+            own, session_id = entry[1]
+            if not own:
                 continue
-            session_id = start.get("id")
             if not isinstance(session_id, str) or not session_id:
                 print(f"skipped {p}: session_start has no usable id", file=sys.stderr)
                 continue
@@ -231,10 +242,11 @@ class DroidSource:
                 source=self.name,
                 source_ref=session_id,
                 file=str(p),
-                mtime=_iso_mtime(p),
+                mtime=iso_mtime(st),
                 size_bytes=st.st_size,
-                fingerprint=stat_fingerprint(st),
+                fingerprint=fingerprint,
             )
+        self._headers = headers if complete else {**self._headers, **headers}
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = ref.file_path()

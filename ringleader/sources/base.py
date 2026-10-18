@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -124,6 +124,7 @@ class NormalizedSession:
     cache_version: int | None = None
     file_fingerprint: str | None = None
     git_resolved: bool = False
+    git_checked_at: str | None = None
     source_ref: str | None = None
 
 
@@ -140,6 +141,24 @@ def stat_fingerprint(st: os.stat_result) -> str:
     return ":".join(
         str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
     )
+
+
+def iso_mtime(st: os.stat_result) -> str:
+    return datetime.fromtimestamp(st.st_mtime, tz=UTC).isoformat()
+
+
+type FingerprintMemo[T] = dict[str, tuple[str, T]]
+
+
+def memo_by_fingerprint[T](
+    previous: FingerprintMemo[T], path: Path, fingerprint: str, read: Callable[[Path], T]
+) -> tuple[str, T]:
+    """The memo entry for `path`: the previous pass's entry while the file's stat
+    fingerprint is unchanged, otherwise a fresh `read(path)`."""
+    hit = previous.get(str(path))
+    if hit is not None and hit[0] == fingerprint:
+        return hit
+    return fingerprint, read(path)
 
 
 @runtime_checkable

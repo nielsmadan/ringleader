@@ -7,10 +7,17 @@ from pathlib import Path
 from ringleader import decisions, registry, stateio
 from ringleader.decisions import KeepOp, RoundupPhasesOp
 from ringleader.home.app import InboxApp
+from ringleader.home.base import RoundupRun
 from ringleader.home.screens.home import HomeScreen
-from ringleader.home.screens.roundup import RoundupScreen
+from ringleader.home.screens.roundup import (
+    RoundupScreen,
+    confirm_text,
+    purged_text,
+    stage_lines,
+    warning_title,
+)
 from ringleader.presence import PresenceUnavailable
-from ringleader.roundup import RoundupProgress
+from ringleader.roundup import PhasesResult, RoundupPlan, RoundupProgress
 from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ChoiceModal, ConfirmModal
 from ringleader.tui.snapshot import screen_text
@@ -423,7 +430,7 @@ async def test_c_on_a_queued_roundup_drops_it_before_anything_is_deleted(tmp_pat
         try:
             await until(pilot, lambda: app.idle)
             app.decide("keep", [registry.load_registry(path)["threads"][1]])
-            await until(pilot, lambda: app._running_ticket is not None)
+            await until(pilot, lambda: app.writer.waiting == 0 and not app.writer.idle)
             await _start_few(app, pilot, settled=False)
             assert app.roundup.stage == "phases"
             await pilot.press("c")
@@ -554,3 +561,52 @@ async def test_a_session_changed_during_enrich_is_reported_as_stale_not_enriched
         await until(pilot, lambda: app.idle)
         assert app.roundup.enrich.stale == 1
         assert "enriched 4 of 5 (0 failed, 1 changed meanwhile)" in screen_text(app)
+
+
+def test_purged_text_counts_handoff_exports():
+    phases = PhasesResult(
+        swept=0,
+        deleted=0,
+        purged=2,
+        skipped=(),
+        errors=0,
+        cancelled=False,
+        warnings=(),
+        handoffs_purged=4,
+    )
+
+    assert purged_text(phases) == "purged 2 (+4 handoff exports)"
+
+
+def _handoff_plan(handoffs):
+    return RoundupPlan(
+        "r",
+        NOW,
+        None,
+        (),
+        (),
+        (("claude-code", "a"), ("claude-code", "b")),
+        (),
+        (),
+        None,
+        None,
+        1,
+        handoff_paths=tuple(f"/h/{k}.md" for k in range(handoffs)),
+    )
+
+
+def test_the_roundup_confirmation_counts_the_handoff_exports_it_deletes():
+    plan = _handoff_plan(3)
+
+    assert "purges 2 and 3 handoff exports," in confirm_text(plan, "none")
+    assert "purges 2 and 3 handoff exports," in warning_title(plan)
+
+
+def test_the_planned_purge_stage_names_the_handoff_exports():
+    run = RoundupRun(_handoff_plan(1), "none", "phases", None, None, None)
+
+    assert "purge   purge 2 archived sessions, and 1 handoff export" in stage_lines(run)[2]
+
+
+def test_the_roundup_confirmation_without_handoffs_counts_only_sessions():
+    assert "purges 2, archives" in confirm_text(_handoff_plan(0), "none")

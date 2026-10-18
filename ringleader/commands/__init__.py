@@ -1,56 +1,41 @@
 from __future__ import annotations
 
+import importlib
+import pkgutil
 import sys as _sys
 from collections.abc import Callable
+from dataclasses import dataclass
+from types import ModuleType
 from typing import Any
 
 from ..paths import default_registry as default_registry
-from . import (
-    archive,
-    cleaned,
-    complete,
-    config,
-    conversion,
-    delete,
-    doctor,
-    enrich,
-    export,
-    finish,
-    harvest,
-    inbox,
-    keep,
-    mark_harvested,
-    mark_mem_reviewed,
-    mark_reviewed,
-    mem_cleaned,
-    mem_prune,
-    mem_scan,
-    migrate,
-    move_workspace,
-    name,
-    overview,
-    presence,
-    prune,
-    relocate,
-    resume,
-    roundup,
-    search,
-    setup,
-    snooze,
-    sweep,
-    sync,
-    tokens,
-    transactions,
-    triage,
-    unarchive,
-    usage,
-    wake,
-    whoami,
-)
-from . import harvests as harvests_cmd
 
 # A leaf runs a command; a group is a nested dict of them. `cli.main` walks this.
 CommandFn = Callable[[list[str]], int]
+
+
+@dataclass(frozen=True)
+class Lazy:
+    module: str
+    attr: str
+
+    def resolve(self) -> CommandFn:
+        fn: CommandFn = getattr(importlib.import_module(f".{self.module}", __name__), self.attr)
+        return fn
+
+    def __call__(self, argv: list[str]) -> int:
+        return self.resolve()(argv)
+
+
+def __getattr__(name: str) -> ModuleType:
+    if name not in {module.name for module in pkgutil.iter_modules(__path__)}:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    try:
+        return importlib.import_module(f".{name}", __name__)
+    except ModuleNotFoundError as error:
+        if error.name != f"{__name__}.{name}":
+            raise
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from None
 
 
 def _reserved(label: str) -> CommandFn:
@@ -62,104 +47,108 @@ def _reserved(label: str) -> CommandFn:
 
 
 _SESSION = {
-    "convert": conversion.cmd_convert,
-    "fork": conversion.cmd_fork,
-    "handoff": conversion.cmd_handoff,
-    "resume": conversion.cmd_resume,
-    "lineage": conversion.cmd_lineage,
-    "refresh": sync.cmd_refresh,
-    "set": sync.cmd_set,
-    "enrich": enrich.cmd_enrich,
-    "harvest": harvest.cmd_harvest,
-    "finish": finish.cmd_finish,
-    "sweep": sweep.cmd_sweep,
-    "archive": archive.cmd_archive,
-    "unarchive": unarchive.cmd_unarchive,
-    "delete": delete.cmd_delete,
-    "complete": complete.cmd_complete,
-    "snooze": snooze.cmd_snooze,
-    "wake": wake.cmd_wake,
-    "keep": keep.cmd_keep,
-    "unkeep": keep.cmd_unkeep,
-    "name": name.cmd_name,
-    "search": search.cmd_search,
-    "relocate": relocate.cmd_relocate,
-    "whoami": whoami.cmd_whoami,
+    "convert": Lazy("conversion", "cmd_convert"),
+    "fork": Lazy("conversion", "cmd_fork"),
+    "handoff": Lazy("conversion", "cmd_handoff"),
+    "resume": Lazy("conversion", "cmd_resume"),
+    "lineage": Lazy("conversion", "cmd_lineage"),
+    "refresh": Lazy("sync", "cmd_refresh"),
+    "set": Lazy("sync", "cmd_set"),
+    "enrich": Lazy("enrich", "cmd_enrich"),
+    "harvest": Lazy("harvest", "cmd_harvest"),
+    "finish": Lazy("finish", "cmd_finish"),
+    "sweep": Lazy("sweep", "cmd_sweep"),
+    "archive": Lazy("archive", "cmd_archive"),
+    "unarchive": Lazy("unarchive", "cmd_unarchive"),
+    "delete": Lazy("delete", "cmd_delete"),
+    "complete": Lazy("complete", "cmd_complete"),
+    "snooze": Lazy("snooze", "cmd_snooze"),
+    "wake": Lazy("wake", "cmd_wake"),
+    "keep": Lazy("keep", "cmd_keep"),
+    "unkeep": Lazy("keep", "cmd_unkeep"),
+    "name": Lazy("name", "cmd_name"),
+    "search": Lazy("search", "cmd_search"),
+    "relocate": Lazy("relocate", "cmd_relocate"),
+    "whoami": Lazy("whoami", "cmd_whoami"),
     "mark": {
-        "harvested": mark_harvested.cmd_mark_harvested,
-        "reviewed": mark_reviewed.cmd_mark_reviewed,
-        "cleaned": cleaned.cmd_cleaned,
+        "harvested": Lazy("mark_harvested", "cmd_mark_harvested"),
+        "reviewed": Lazy("mark_reviewed", "cmd_mark_reviewed"),
+        "cleaned": Lazy("cleaned", "cmd_cleaned"),
     },
 }
 _MEM = {
-    "refresh": mem_scan.cmd_mem_scan,
-    "prune": mem_prune.cmd_mem_prune,
-    "triage": triage.cmd_mem_triage,
-    "overview": overview.cmd_mem_overview,
+    "refresh": Lazy("mem_scan", "cmd_mem_scan"),
+    "prune": Lazy("mem_prune", "cmd_mem_prune"),
+    "triage": Lazy("triage", "cmd_mem_triage"),
+    "overview": Lazy("overview", "cmd_mem_overview"),
     "mark": {
-        "cleaned": mem_cleaned.cmd_mem_cleaned,
-        "reviewed": mark_mem_reviewed.cmd_mark_mem_reviewed,
+        "cleaned": Lazy("mem_cleaned", "cmd_mem_cleaned"),
+        "reviewed": Lazy("mark_mem_reviewed", "cmd_mark_mem_reviewed"),
     },
 }
 _DATA = {
     "transaction": {
-        "list": transactions.cmd_list,
-        "resume": transactions.cmd_resume,
-        "rollback": transactions.cmd_rollback,
+        "list": Lazy("transactions", "cmd_list"),
+        "resume": Lazy("transactions", "cmd_resume"),
+        "rollback": Lazy("transactions", "cmd_rollback"),
     },
-    "export": export.cmd_export,
-    "tokens": tokens.cmd_tokens,
-    "migrate": migrate.cmd_migrate,
+    "export": Lazy("export", "cmd_export"),
+    "tokens": Lazy("tokens", "cmd_tokens"),
+    "migrate": Lazy("migrate", "cmd_migrate"),
     "presence": {
-        "install": presence.cmd_install,
-        "status": presence.cmd_status,
-        "uninstall": presence.cmd_uninstall,
+        "install": Lazy("presence", "cmd_install"),
+        "status": Lazy("presence", "cmd_status"),
+        "uninstall": Lazy("presence", "cmd_uninstall"),
     },
 }
 _WORKSPACE = {
-    "move": move_workspace.cmd_move,
-    "retarget": move_workspace.cmd_retarget,
+    "move": Lazy("move_workspace", "cmd_move"),
+    "retarget": Lazy("move_workspace", "cmd_retarget"),
 }
 
 TABLE: dict[str, CommandFn | dict[str, Any]] = {
     # flat daily verbs
-    "overview": overview.cmd_overview,
-    "triage": triage.cmd_triage,
-    "prune": prune.cmd_prune,
-    "roundup": roundup.cmd_roundup,
-    "usage": usage.cmd_usage,
-    "doctor": doctor.cmd_doctor,
-    "harvests": harvests_cmd.cmd_harvests,
-    "resume": resume.cmd_resume,
-    "inbox": inbox.cmd_inbox,
-    "install": setup.cmd_install,
-    "update": setup.cmd_update,
-    "uninstall": setup.cmd_uninstall,
+    "overview": Lazy("overview", "cmd_overview"),
+    "triage": Lazy("triage", "cmd_triage"),
+    "prune": Lazy("prune", "cmd_prune"),
+    "roundup": Lazy("roundup", "cmd_roundup"),
+    "usage": Lazy("usage", "cmd_usage"),
+    "doctor": Lazy("doctor", "cmd_doctor"),
+    "harvests": Lazy("harvests", "cmd_harvests"),
+    "resume": Lazy("resume", "cmd_resume"),
+    "inbox": Lazy("inbox", "cmd_inbox"),
+    "install": Lazy("setup", "cmd_install"),
+    "update": Lazy("setup", "cmd_update"),
+    "uninstall": Lazy("setup", "cmd_uninstall"),
     # namespaces
     "workspace": _WORKSPACE,
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
-    "config": config.cmd_config,
+    "config": Lazy("config", "cmd_config"),
 }
 
 
 # Leaves that parse their own sub-verb instead of nesting in TABLE. Declared by the
 # module that dispatches them, so a new subcommand cannot hide from `command_paths()`.
-_LEAF_SUBCOMMANDS: dict[str, tuple[str, ...]] = {
-    "config": config.SUBCOMMANDS,
-    "usage": usage.SUBCOMMANDS,
-    "harvests": harvests_cmd.SUBCOMMANDS,
-    "install": setup.nouns_for("install"),
-    "update": setup.nouns_for("update"),
-    "uninstall": setup.nouns_for("uninstall"),
-}
+def _leaf_subcommands() -> dict[str, tuple[str, ...]]:
+    from . import config, harvests, setup, usage  # noqa: PLC0415 -- keeps CLI startup light
+
+    return {
+        "config": config.SUBCOMMANDS,
+        "usage": usage.SUBCOMMANDS,
+        "harvests": harvests.SUBCOMMANDS,
+        "install": setup.nouns_for("install"),
+        "update": setup.nouns_for("update"),
+        "uninstall": setup.nouns_for("uninstall"),
+    }
 
 
 def command_paths() -> set[str]:
     """Every command a user can type, space-joined. Walking TABLE alone under-reports:
     six of its leaves parse a further sub-verb themselves."""
     out: set[str] = set()
+    leaf_subcommands = _leaf_subcommands()
 
     def walk(node: dict[str, Any], prefix: str = "") -> None:
         for key, value in node.items():
@@ -168,7 +157,7 @@ def command_paths() -> set[str]:
                 walk(value, path + " ")
                 continue
             out.add(path)
-            out.update(f"{path} {sub}" for sub in _LEAF_SUBCOMMANDS.get(path, ()))
+            out.update(f"{path} {sub}" for sub in leaf_subcommands.get(path, ()))
 
     walk(TABLE)
     return out

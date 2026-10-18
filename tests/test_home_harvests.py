@@ -3,6 +3,7 @@ from datetime import UTC, datetime, timedelta
 from ringleader import harvests, registry
 from ringleader.home.app import InboxApp
 from ringleader.home.intents import AgentHandoffIntent
+from ringleader.home.screens import harvests as harvests_screen
 from ringleader.home.screens.harvests import HarvestContentScreen, HarvestsScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal
@@ -150,3 +151,24 @@ async def test_golden_harvests(tmp_path, golden):
     async with app.run_test(size=(100, 30)) as pilot:
         await _open(app, pilot)
         golden("inbox/harvests", screen_text(app), replace={str(tmp_path): "<root>"})
+
+
+async def test_a_rerender_with_the_same_harvests_does_not_regroup_them(tmp_path, monkeypatch):
+    grouped = []
+    original = harvests_screen.harvest_groups
+
+    def counted(items):
+        grouped.append(items)
+        return original(items)
+
+    monkeypatch.setattr(harvests_screen, "harvest_groups", counted)
+    _harvest("a1", None)
+    app = _app(_fixture(tmp_path))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open(app, pilot)
+        await until(pilot, lambda: "name-a1" in screen_text(app))
+        before = len(grouped)
+        app._set()
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        assert (len(grouped), "name-a1" in screen_text(app)) == (before, True)

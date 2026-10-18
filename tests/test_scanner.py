@@ -1,11 +1,13 @@
 import json
-from datetime import UTC, datetime
+import threading
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
 from ringleader import registry
-from ringleader.gitinfo import GitProject
+from ringleader.gitinfo import GitLookupFailedError, GitProject
 from ringleader.scanner import scan, scoped_refs
 from ringleader.sources.base import NormalizedSession, RawRef
 from ringleader.sources.claude_code import ClaudeCodeSource
@@ -95,8 +97,6 @@ def test_scan_skips_oserror_file(tmp_path):
 
 
 def test_scan_attaches_injected_git_project(tmp_path):
-    from ringleader.gitinfo import GitProject
-
     proj = tmp_path / "-Users-me-proj"
     _session(proj, "cccccccc-0000-0000-0000-000000000009", "/Users/me/proj")
 
@@ -234,3 +234,286 @@ def test_a_scan_that_spares_cached_git_still_resolves_sessions_it_parses(tmp_pat
         ("/Users/me/proj", "proj"),
     ]
     assert resolved == ["/Users/me/other"]
+
+
+NOW = datetime(2026, 10, 16, 12, 0, tzinfo=UTC)
+
+
+def _project(cwd: str, key: str = "github.com/me/proj") -> GitProject:
+    return GitProject(root=cwd, remote=key, key=key, label=key.rsplit("/", 1)[-1])
+
+
+def _cached_thread(cwd: str, checked_at: str | None, **extra):
+    return {
+        "source": "claude-code",
+        "sessionId": "cached",
+        "project": cwd,
+        "gitProjectKey": "github.com/me/cached",
+        "gitProjectLabel": "cached",
+        "gitRoot": cwd,
+        "gitRemote": "github.com/me/cached",
+        "gitCloneUrl": "git@github.com:me/cached.git",
+        "gitCheckedAt": checked_at,
+        **extra,
+    }
+
+
+def _repo(cwd: Path) -> datetime:
+    """Make `cwd` look like a repository root; returns a scan time 3 h after its
+    `.git` last changed, so a check stamped up to 3 h earlier still post-dates it."""
+    (cwd / ".git").mkdir(parents=True)
+    return datetime.fromtimestamp((cwd / ".git").stat().st_ctime, UTC) + timedelta(hours=3)
+
+
+def _scan_repo(tmp_path, cached, resolver, now):
+    return scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=resolver,
+        cached_threads=cached,
+        now=now,
+    )
+
+
+def test_scan_reuses_a_recently_checked_git_identity_for_the_same_cwd(tmp_path):
+    cwd = tmp_path / "repo"
+    now = _repo(cwd)
+    _session(tmp_path / "projects" / "-repo", "new-session", str(cwd))
+    calls = []
+
+    def resolver(c):
+        calls.append(c)
+        return _project(c)
+
+    checked = (now - timedelta(hours=2)).isoformat()
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=resolver,
+        cached_threads=[_cached_thread(str(cwd), checked)],
+        now=now,
+    )
+
+    assert calls == []
+    assert scanned[0].git_project_key == "github.com/me/cached"
+    assert scanned[0].git_clone_url == "git@github.com:me/cached.git"
+    assert scanned[0].git_checked_at == checked
+
+
+def test_scan_re_resolves_a_git_identity_checked_more_than_a_day_ago(tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=lambda c: _project(c, "github.com/me/moved"),
+        cached_threads=[_cached_thread(str(cwd), (NOW - timedelta(hours=25)).isoformat())],
+        now=NOW,
+    )
+
+    assert scanned[0].git_project_key == "github.com/me/moved"
+    assert scanned[0].git_resolved is True
+    assert scanned[0].git_checked_at == NOW.isoformat()
+
+
+def test_scan_re_resolves_when_the_recorded_cwd_no_longer_exists(tmp_path):
+    gone = str(tmp_path / "gone")
+    _session(tmp_path / "projects" / "-gone", "s", gone)
+    calls = []
+
+    def resolver(c):
+        calls.append(c)
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=resolver,
+        cached_threads=[_cached_thread(gone, (NOW - timedelta(hours=1)).isoformat())],
+        now=NOW,
+    )
+
+    assert calls == [gone]
+    assert scanned[0].git_checked_at is None
+
+
+def test_scan_records_a_check_for_an_existing_cwd_that_is_not_a_repo(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _session(tmp_path / "projects" / "-plain", "s", str(plain))
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=lambda c: None,
+        now=NOW,
+    )
+
+    assert scanned[0].git_checked_at == NOW.isoformat()
+    assert scanned[0].git_resolved is True
+
+
+def test_scan_ignores_the_git_check_of_a_location_pinned_thread(tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+    pinned = _cached_thread(str(cwd), (NOW - timedelta(hours=1)).isoformat(), locationPinned=True)
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=lambda c: _project(c, "github.com/me/live"),
+        cached_threads=[pinned],
+        now=NOW,
+    )
+
+    assert scanned[0].git_project_key == "github.com/me/live"
+
+
+def test_scan_resolves_distinct_cwds_concurrently_and_keeps_discovery_order(tmp_path):
+    cwds = [str(tmp_path / f"cwd{i}") for i in range(4)]
+    for i, cwd in enumerate(cwds):
+        _session(tmp_path / "projects" / f"-p{i}", f"s{i}", cwd)
+    barrier = threading.Barrier(len(cwds), timeout=5)
+
+    def resolver(c):
+        barrier.wait()
+        return _project(c, f"github.com/me/{Path(c).name}")
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=resolver,
+        now=NOW,
+    )
+
+    assert [s.session_id for s in scanned] == ["s0", "s1", "s2", "s3"]
+    assert [s.git_project_label for s in scanned] == ["cwd0", "cwd1", "cwd2", "cwd3"]
+
+
+def test_scan_reuses_a_recent_check_that_found_no_repo(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    _session(tmp_path / "projects" / "-plain", "s", str(plain))
+    checked = (NOW - timedelta(hours=3)).isoformat()
+    cached = {
+        "source": "claude-code",
+        "sessionId": "c",
+        "project": str(plain),
+        "gitCheckedAt": checked,
+    }
+    calls = []
+
+    scanned = scan(
+        sources=[ClaudeCodeSource(projects_dir=tmp_path / "projects")],
+        git_resolver=calls.append,
+        cached_threads=[cached],
+        now=NOW,
+    )
+
+    assert calls == []
+    assert scanned[0].git_checked_at == checked
+    assert scanned[0].git_resolved is False
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        lambda now: (now + timedelta(hours=1)).isoformat(),
+        lambda now: (now - timedelta(hours=2)).replace(tzinfo=None).isoformat(),
+        lambda now: "yesterday-ish",
+    ],
+    ids=["future", "naive", "unparseable"],
+)
+def test_scan_re_resolves_a_git_check_it_cannot_trust(tmp_path, stamp):
+    cwd = tmp_path / "repo"
+    now = _repo(cwd)
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+
+    scanned = _scan_repo(
+        tmp_path,
+        [_cached_thread(str(cwd), stamp(now))],
+        lambda c: _project(c, "github.com/me/live"),
+        now,
+    )
+
+    assert scanned[0].git_project_key == "github.com/me/live"
+    assert scanned[0].git_checked_at == now.isoformat()
+
+
+def test_scan_reuses_the_most_recent_of_several_checks_for_one_cwd(tmp_path):
+    cwd = tmp_path / "repo"
+    now = _repo(cwd)
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+    newer = {
+        **_cached_thread(str(cwd), (now - timedelta(hours=2)).isoformat()),
+        "sessionId": "newer",
+        "gitProjectKey": "github.com/me/newer",
+    }
+    older = {
+        **_cached_thread(str(cwd), (now - timedelta(hours=20)).isoformat()),
+        "sessionId": "older",
+        "gitProjectKey": "github.com/me/older",
+    }
+
+    for cached in ([newer, older], [older, newer]):
+        scanned = _scan_repo(tmp_path, cached, lambda c: None, now)
+        assert scanned[0].git_project_key == "github.com/me/newer"
+
+
+def test_a_failed_git_lookup_leaves_the_recorded_identity_alone(tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+
+    def flaky(c):
+        raise GitLookupFailedError(c)
+
+    scanned = _scan_repo(
+        tmp_path, [_cached_thread(str(cwd), (NOW - timedelta(hours=30)).isoformat())], flaky, NOW
+    )
+
+    assert (scanned[0].git_resolved, scanned[0].git_checked_at) == (False, None)
+
+
+def test_a_repository_recreated_since_the_check_is_resolved_again(tmp_path):
+    cwd = tmp_path / "repo"
+    now = _repo(cwd)
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+    before_reclone = (now - timedelta(hours=4)).isoformat()
+
+    scanned = _scan_repo(
+        tmp_path,
+        [_cached_thread(str(cwd), before_reclone)],
+        lambda c: _project(c, "github.com/me/recloned"),
+        now,
+    )
+
+    assert scanned[0].git_project_key == "github.com/me/recloned"
+    assert scanned[0].git_resolved is True
+
+
+def test_a_repository_whose_git_dir_is_gone_is_resolved_again(tmp_path):
+    cwd = tmp_path / "repo"
+    cwd.mkdir()
+    _session(tmp_path / "projects" / "-repo", "s", str(cwd))
+
+    scanned = _scan_repo(
+        tmp_path,
+        [_cached_thread(str(cwd), (NOW - timedelta(hours=2)).isoformat())],
+        lambda c: None,
+        NOW,
+    )
+
+    assert (scanned[0].git_resolved, scanned[0].git_checked_at) == (True, NOW.isoformat())
+
+
+def test_a_recorded_no_repo_check_is_dropped_once_a_repository_appears(tmp_path):
+    cwd = tmp_path / "plain"
+    cwd.mkdir()
+    _session(tmp_path / "projects" / "-plain", "s", str(cwd))
+    no_repo = {
+        "source": "claude-code",
+        "sessionId": "c",
+        "project": str(cwd),
+        "gitCheckedAt": (NOW - timedelta(hours=2)).isoformat(),
+    }
+    (tmp_path / ".git").mkdir()
+
+    scanned = _scan_repo(tmp_path, [no_repo], lambda c: _project(c, "github.com/me/new"), NOW)
+
+    assert scanned[0].git_project_key == "github.com/me/new"

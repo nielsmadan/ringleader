@@ -4,6 +4,7 @@ from ringleader import registry
 from ringleader.home.state import (
     ProjectScope,
     RecentScope,
+    RenderBasis,
     WokeScope,
     build_home_state,
     is_woke,
@@ -190,3 +191,15 @@ def test_a_bare_cwd_project_is_labelled_by_its_last_path_components():
     assert project_label(_thread("a", project="/var/folders/x/work/proj-01")) == "…/work/proj-01"
     assert project_label(_thread("a", project="/w/a")) == "/w/a"
     assert project_label(_thread("a", gitProjectLabel="juggler")) == "juggler"
+
+
+def test_a_render_basis_changes_with_the_minute_the_view_or_presence_not_the_second():
+    basis = RenderBasis.at(1, NOW_DT, None)
+    later = RenderBasis.at(1, NOW_DT + timedelta(seconds=59), None)
+    variants = [
+        RenderBasis.at(1, NOW_DT + timedelta(minutes=1), None),
+        RenderBasis.at(2, NOW_DT, None),
+        RenderBasis.at(1, NOW_DT, frozenset({("claude-code", "s1")})),
+    ]
+    assert (later == basis, later.now) == (True, NOW_DT + timedelta(seconds=59))
+    assert [variant != basis for variant in variants] == [True, True, True]

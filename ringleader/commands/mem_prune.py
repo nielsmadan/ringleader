@@ -22,7 +22,7 @@ def cmd_mem_prune(argv: list[str]) -> int:
     args = ap.parse_args(argv)
 
     reg = registry.load_registry(args.registry)
-    scanned = memory.scan_memory(memory.projects_dir())
+    scanned = memory.scan_memory(memory.projects_dir(), recorded_threads=reg["threads"])
     reg = registry.reconcile_memory(reg, scanned, _now())
     registry.commit_registry(args.registry, reg)
 

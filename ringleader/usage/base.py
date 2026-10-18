@@ -1,9 +1,12 @@
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
+
+_SKEW_SECONDS = 86400
 
 
 @dataclass
@@ -77,9 +80,71 @@ def as_float_or_none(value: object) -> float | None:
     return float(value)
 
 
+def record_day(rec: UsageRecord) -> str:
+    return (rec.timestamp or "")[:10]
+
+
+def mtime_cutoff(since: date | None) -> float | None:
+    if since is None:
+        return None
+    midnight = datetime(since.year, since.month, since.day, tzinfo=UTC)
+    return (midnight - timedelta(seconds=_SKEW_SECONDS)).timestamp()
+
+
+def mtime_of(path: Path) -> float | None:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return None
+
+
+def files_since(files: Iterable[Path], since: date | None) -> list[Path]:
+    cutoff = mtime_cutoff(since)
+    if cutoff is None:
+        return sorted(files)
+    return sorted(f for f in files if (m := mtime_of(f)) is not None and m >= cutoff)
+
+
+def session_files(
+    files: Iterable[Path],
+    since: date | None,
+    session_prefix: str | None,
+    session_of: Callable[[Path], str],
+) -> list[Path]:
+    return [
+        f
+        for f in files_since(files, since)
+        if not session_prefix or session_of(f).startswith(session_prefix)
+    ]
+
+
+def newest_first(files: Iterable[Path]) -> Iterator[tuple[datetime, Path]]:
+    stamped = sorted(
+        ((m, f) for f in files if (m := mtime_of(f)) is not None),
+        key=lambda t: (-t[0], str(t[1])),
+    )
+    for mtime, f in stamped:
+        yield datetime.fromtimestamp(mtime + _SKEW_SECONDS, UTC), f
+
+
+def latest_day_of(
+    files: Iterable[Path], records_in: Callable[[Path], Iterable[UsageRecord]]
+) -> str | None:
+    best = ""
+    for ceiling, f in newest_first(files):
+        floor = parse_iso(best)
+        if floor is not None and ceiling < floor:
+            break
+        best = max([best, *(record_day(r) for r in records_in(f))])
+    return best or None
+
+
 @runtime_checkable
 class UsageReader(Protocol):
     name: str
 
     def available(self) -> bool: ...
-    def records(self) -> Iterator[UsageRecord]: ...
+    def records(
+        self, since: date | None = None, session_prefix: str | None = None
+    ) -> Iterator[UsageRecord]: ...
+    def latest_day(self) -> str | None: ...

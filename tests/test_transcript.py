@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from ringleader.transcript import TranscriptInfo, parse_transcript
+from ringleader.transcript import TranscriptInfo, first_cwd, parse_transcript
 
 
 def _write(path: Path, records):
@@ -87,3 +87,35 @@ def test_skips_malformed_lines_and_missing_fields(tmp_path):
     # falls back to last user turn when no lastPrompt value present
     assert info.last_prompt == "hi"
     assert info.cwd is None
+
+
+def test_last_prompt_falls_back_to_a_user_turn_older_than_the_tail(tmp_path):
+    f = tmp_path / "44444444-4444-4444-4444-444444444444.jsonl"
+    recs = [{"type": "user", "message": {"role": "user", "content": "the question"}}] + [
+        {"type": "assistant", "message": {"role": "assistant", "content": f"answer {i}"}}
+        for i in range(5)
+    ]
+    _write(f, recs)
+
+    info = parse_transcript(f, tail_turns=2)
+
+    assert info.last_prompt == "the question"
+    assert info.tail_text == "ASSISTANT: answer 3\nASSISTANT: answer 4"
+
+
+def test_first_cwd_returns_the_first_recorded_cwd(tmp_path):
+    f = tmp_path / "s.jsonl"
+    f.write_text(
+        "not json\n"
+        + json.dumps(["a", "list"])
+        + "\n"
+        + json.dumps({"type": "summary"})
+        + "\n"
+        + json.dumps({"type": "user", "cwd": "/first"})
+        + "\n"
+        + json.dumps({"type": "user", "cwd": "/second"})
+        + "\n",
+        encoding="utf-8",
+    )
+
+    assert first_cwd(f) == "/first"

@@ -292,3 +292,66 @@ def test_unreadable_session_index_aborts_scan(tmp_path):
 
     with pytest.raises(CodexSessionIndexError):
         src.parse(next(iter(src.discover())))
+
+
+def test_parse_keeps_a_prompt_containing_a_raw_unicode_line_separator(tmp_path):
+    path = _rollout(tmp_path, "sid-sep", "/repo", ["first", "split\N{LINE SEPARATOR}here", "last"])
+    raw = path.read_text(encoding="utf-8").replace("\\u2028", "\N{LINE SEPARATOR}")
+    path.write_text(raw, encoding="utf-8")
+    src = CodexSource(sessions_dir=tmp_path)
+
+    parsed = src.parse(next(src.discover()))
+
+    assert parsed.message_count == 3
+    assert parsed.last_prompt == "last"
+
+
+def test_discover_reads_an_unchanged_rollout_header_once_per_source(tmp_path, monkeypatch):
+    from ringleader.sources import codex
+
+    path = _rollout(tmp_path, "sid-memo", "/repo", ["hi"])
+    src = CodexSource(sessions_dir=tmp_path)
+    reads = []
+    real_meta = codex._meta
+
+    def counting_meta(p):
+        reads.append(p)
+        return real_meta(p)
+
+    monkeypatch.setattr(codex, "_meta", counting_meta)
+    first = [ref.source_ref for ref in src.discover()]
+    second = [ref.source_ref for ref in src.discover()]
+    _rollout(tmp_path, "sid-changed", "/repo", ["hi", "again"])
+    path.unlink()
+    (tmp_path / "rollout-2026-07-28T19-19-45-sid-changed.jsonl").rename(path)
+    third = [ref.source_ref for ref in src.discover()]
+
+    assert first == second == ["sid-memo"]
+    assert third == ["sid-changed"]
+    assert reads == [path, path]
+
+
+def test_discover_forgets_a_rollout_header_whose_file_is_gone(tmp_path):
+    kept = _rollout(tmp_path, "sid-kept", "/repo", ["hi"])
+    gone = _rollout(tmp_path / "sub", "sid-gone", "/repo", ["hi"])
+    src = CodexSource(sessions_dir=tmp_path)
+    list(src.discover())
+    gone.unlink()
+
+    list(src.discover())
+
+    assert list(src._headers) == [str(kept)]
+
+
+def test_a_new_codex_source_reads_headers_afresh(tmp_path, monkeypatch):
+    from ringleader.sources import codex
+
+    _rollout(tmp_path, "sid", "/repo", ["hi"])
+    reads = []
+    real_header = codex._header
+    monkeypatch.setattr(codex, "_header", lambda p: reads.append(p) or real_header(p))
+
+    for _ in range(2):
+        list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert len(reads) == 2

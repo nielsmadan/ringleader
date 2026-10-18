@@ -83,6 +83,11 @@ until the benchmark's Claude legs run; see [the enrich record](../tests/enrich/R
   recorded, not budgeted.
 - The `selectedForDay` registry field is no longer read; new sessions still get it as `null`.
 
+*Amended 2026-10-17:* the writer no longer runs every op alone. Consecutive ready ops of one kind
+run as a group of up to 25 under one locked registry transaction, and each item is still
+rechecked individually. Presence is read fresh under the lock before a group's destructive ops,
+not once per op. See [inbox.md](../tech/inbox.md#the-writer-and-its-ops).
+
 ## Alternatives considered
 
 **Fix the old inbox in place.** The freeze came from the structure, not one call: synchronous work

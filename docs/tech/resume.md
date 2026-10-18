@@ -22,8 +22,10 @@ terminal, so the app returns a decision and the command carries it out.
 ### Selection (`resume.py`)
 
 `candidates(reg, scope=, cwd=)` filters `reg["threads"]` by `eligible` (a non-empty `sessionId` —
-deliberately permissive) and `in_scope`, then sorts by `mtime` descending. `rank(threads, query)`
-applies the scorer; a blank query is recency order.
+deliberately permissive) and `in_scope`, then sorts by `mtime` descending. `rank(threads, query,
+haystack_of)` keeps the matches, best tier first and most recent first within equal scores; a blank
+query is recency order. `haystack_of` maps a thread to its `Haystack` — the cleaned, lowercased text
+`match()` reads, which `Haystack.of` lowercases and the constructor refuses to accept unlowered — and defaults to building one per call; the picker passes a cache instead.
 
 `Scope` is `CWD` / `RECURSIVE` / `ALL`, compared as paths with directory-boundary awareness.
 Deliberately **not** `projects.matches()`, which also matches git labels and roots — see
@@ -36,15 +38,33 @@ run at the other end, which ranked an exact substring below a scattered match.
 
 Four weighted ratios — consecutive run, word boundary, earlier first match, shorter text — sum to
 at most `_MAX_SCORE`. That bound is load-bearing: `match()` adds `_TIER_BONUS = _MAX_SCORE + 1`
-per tier, which is what guarantees a blurb hit can never outrank a name hit regardless of query
-length. Tiers mirror `search.py`: name, then id, then blurb fields.
+per tier, which is what guarantees a lower tier can never outrank a higher one regardless of query
+length. From best to worst:
+
+1. the name (title, suggested name, else AI title) equals the query;
+2. the name starts with it;
+3. every whitespace-separated query word is a substring of the name;
+4. fuzzy: the query, spaces removed, is a subsequence of the name or of the project label
+   (`gitProjectLabel`, else the project directory's basename), or a prefix of the session id;
+5. blurb: every query word is a substring somewhere in the name, project label, AI title,
+   `whatItIs`, `summary` or `lastPrompt`.
+
+Subsequence matching stops at the short identifying fields on purpose. Run over a several-hundred
+character summary, almost any three letters appear in order — on a real 1,935-session registry
+`gvw` matched 731 sessions — so blurbs match by substring only. This deliberately reverses the earlier rule of "subsequence over
+every field, permissive by design" in `docs/plans/2026-09-21-rl-resume-ledger.md`; do not restore it.
+
+The picker's ranking is deliberately not `rl session search`'s (`search.py`: name, id, blurb tiers,
+literal substring or glob). The picker is an interactive fuzzy filter that re-ranks on every
+keystroke and tolerates typos and abbreviations; search is a scripted lookup that must return
+only literal hits. Sharing a matcher would make one of them worse, so they stay separate.
 
 `badges(thread, now_iso)` reports `filtered`, `snoozed`, `kept`, `finishing`, `harvested`,
 `abandoned`, `drifted`, in that order.
 
 `launch_cwd(thread, threads)` answers "which directory must the agent start in". Usually the
-recorded `project`. For a `claude-code` session where `scanner.stored_under(file, project, source)` is false
-— the transcript is filed under a different directory's slug — it scans `threads` for an undrifted
+recorded `project`. For a session whose agent files transcripts by launch directory, where
+`drifted()` finds the transcript under a different directory's slug, it scans `threads` for an undrifted
 sibling filed in the same place and uses that sibling's cwd. **Pass the full thread list**, or
 recovery silently falls through to the drifted directory.
 
@@ -59,8 +79,13 @@ to notify, push modals and check that the app is running. Its row renderer is `_
 so tests reach the picker through the `PickerScreen` on `app.screen_stack`.
 The result list holds Rich text options, avoiding a widget per match. It keeps every result,
 clips long rows with an ellipsis, and preserves the highlighted `(source, sessionId)` across
-filtering, scope changes and refreshes. Filtering updates immediately on each input change.
-The [picker benchmark](../tests/picker/README.md) measures result replacement on a fixed workload.
+filtering, scope changes and refreshes. Filtering is debounced: each input change restarts a
+`FILTER_DELAY` (120 ms) timer and only the last one renders, while `enter` and the scope keys
+apply the input's current text first, so a choice never lands on the previous query's rows. A
+render reuses three things: each thread's `Haystack` and each row's `Option` (its rendered text, per wall-clock minute) until a scan returns different threads (an identical rescan keeps them), held in one `_RowCache`, and one instance
+of each slug-keyed source from `resume.slug_sources()` for the whole drift check. When the ranked
+`(source, sessionId)` list, presence and the wall-clock minute are all unchanged, the option list is left
+alone. `scripts/benchmark_picker.py` measures result replacement on a fixed workload.
 
 The screen's `on_mount` renders **synchronously from the registry**, then starts an async Textual worker
 which receives the scan and presence result through a queue from a daemon thread. It always
@@ -199,7 +224,9 @@ chdirs or prompts the test process.
   fallback for a `Choice` that carries no list, not the answer.
 - **`--dry-run` writes nothing**, including the handoff transcript. It still renders, so render
   failures are still reported, and prints the path as `would write:`.
-- **Nothing prunes `handoffs/`.** Unlike `archive_root()`, it has no retention clock. Files are
+- **`handoffs/` shares the archive retention clock.** With `archive.retention_days` above 0, an
+  unscoped `rl prune --delete` and `rl roundup` remove `handoffs/*.md` older than that; at the
+  default 0 nothing removes them. Files are
   written `0o600` and the directory is created `0o700`, because they are full conversations and
   its listing alone names which sessions were handed off and when.
 - **Self-verification only runs interactively.** `--to <agent>` on an unverified target version

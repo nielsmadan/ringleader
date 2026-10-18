@@ -11,7 +11,7 @@ from textual.widgets import Footer, Header, ProgressBar, Static
 
 from ... import roundup
 from ...config import load_config
-from ...roundup import EnrichScope, RoundupPhase, RoundupPlan, duration
+from ...roundup import EnrichScope, PhasesResult, RoundupPhase, RoundupPlan, duration
 from ...tui.background import CancelToken, Done, Failed
 from ...tui.modals import ChoiceModal, ChoiceOption, ConfirmModal
 from .. import overlay
@@ -35,16 +35,22 @@ def run_scope(plan: RoundupPlan) -> EnrichScope:
     return "all" if plan.engine is not None else "none"
 
 
+def _purges(plan: RoundupPlan) -> str:
+    count = len(plan.purge_ids)
+    handoffs = len(plan.handoff_paths)
+    return f"{count} and {plural(handoffs, 'handoff export')}" if handoffs else str(count)
+
+
 def confirm_text(plan: RoundupPlan, scope: EnrichScope) -> str:
     return (
-        f"Run the roundup? deletes {len(plan.prune_items)}, purges {len(plan.purge_ids)}, "
+        f"Run the roundup? deletes {len(plan.prune_items)}, purges {_purges(plan)}, "
         f"archives {len(plan.sweep_items)}, enriches {len(plan.enrich_ids(scope))}. [y/n]"
     )
 
 
 def warning_title(plan: RoundupPlan) -> str:
     return (
-        f"Run the roundup? deletes {len(plan.prune_items)}, purges {len(plan.purge_ids)}, "
+        f"Run the roundup? deletes {len(plan.prune_items)}, purges {_purges(plan)}, "
         f"archives {len(plan.sweep_items)}.\n"
         f"Enrich {len(plan.enrich_all_ids)} sessions? "
         f"about {duration(plan.estimated_seconds('all'))}"
@@ -68,6 +74,11 @@ def scope_options(plan: RoundupPlan) -> list[ChoiceOption[ScopeChoice]]:
     ]
 
 
+def purged_text(phases: PhasesResult) -> str:
+    handoffs = phases.handoffs_purged
+    return f"purged {phases.purged}" + (f" (+{handoffs} handoff exports)" if handoffs else "")
+
+
 def _planned(run: RoundupRun, stage: RoundupPhase) -> str:
     plan = run.plan
     match stage:
@@ -76,7 +87,9 @@ def _planned(run: RoundupRun, stage: RoundupPhase) -> str:
         case "prune":
             return f"delete {plural(len(plan.prune_items), 'tiny session')}"
         case "purge":
-            return f"purge {plural(len(plan.purge_ids), 'archived session')}"
+            line = f"purge {plural(len(plan.purge_ids), 'archived session')}"
+            handoffs = len(plan.handoff_paths)
+            return f"{line}, and {plural(handoffs, 'handoff export')}" if handoffs else line
         case "enrich":
             ids = plan.enrich_ids(run.scope)
             if not ids or plan.engine is None:
@@ -94,7 +107,7 @@ def _result(run: RoundupRun, stage: RoundupPhase) -> str | None:
         else {
             "sweep": f"archived {phases.swept}",
             "prune": f"deleted {phases.deleted}",
-            "purge": f"purged {phases.purged}",
+            "purge": purged_text(phases),
         }
     )
     if stage == "enrich" and run.enrich is not None:
@@ -163,7 +176,7 @@ def summary_lines(run: RoundupRun, error: str | None) -> list[str]:
     }.get(run.stage, "")
     phases = run.phases
     counts = (
-        [f"archived {phases.swept}, deleted {phases.deleted}, purged {phases.purged}"]
+        [f"archived {phases.swept}, deleted {phases.deleted}, {purged_text(phases)}"]
         if phases is not None
         else []
     )
@@ -244,6 +257,9 @@ class RoundupScreen(InboxScreen):
             return
         self._advance()
         self._render_plan()
+
+    def render_status(self) -> None:
+        self.render_data()
 
     def _show(self, lines: list[str], hint: str) -> None:
         self.query_one("#roundup-body", Static).update(Text("\n".join(lines)))

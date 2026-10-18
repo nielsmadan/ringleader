@@ -45,6 +45,7 @@ _GIT_PROJECT_FIELDS = {
     "gitRoot": "git_root",
     "gitRemote": "git_remote",
     "gitCloneUrl": "git_clone_url",
+    "gitCheckedAt": "git_checked_at",
 }
 
 
@@ -63,11 +64,7 @@ def empty_registry() -> dict[str, Any]:
     }
 
 
-def load_registry(path: str | Path) -> dict[str, Any]:
-    p = Path(path)
-    if not p.exists():
-        return Registry(empty_registry(), path=p)
-    data: dict[str, Any] = json.loads(p.read_text(encoding="utf-8"))
+def _normalized(data: dict[str, Any]) -> dict[str, Any]:
     data.setdefault("version", REGISTRY_VERSION)
     data.setdefault("lastScan", None)
     data.setdefault("sourcesScannedAt", {})
@@ -80,7 +77,19 @@ def load_registry(path: str | Path) -> dict[str, Any]:
     data.setdefault("memoryProjectsCleanedAt", {})
     current_ids = {identity(row) for bucket in ("threads", "archived") for row in data[bucket]}
     data["deleted"] = [row for row in data["deleted"] if identity(row) not in current_ids]
-    return Registry(data, path=p)
+    return data
+
+
+def load_registry(path: str | Path) -> dict[str, Any]:
+    return _load(path)
+
+
+def _load(path: str | Path) -> Registry:
+    p = Path(path)
+    if not p.exists():
+        return Registry(empty_registry(), path=p)
+    text = p.read_text(encoding="utf-8")
+    return Registry(_normalized(json.loads(text)), path=p, baseline_text=text)
 
 
 class RegistryConflict(RuntimeError):
@@ -92,21 +101,54 @@ class AmbiguousSession(ValueError):
 
 
 class Registry(dict[str, Any]):
-    def __init__(self, data: dict[str, Any], *, path: Path | None = None) -> None:
+    def __init__(
+        self,
+        data: dict[str, Any],
+        *,
+        path: Path | None = None,
+        baseline: dict[str, Any] | None = None,
+        baseline_text: str | None = None,
+    ) -> None:
         super().__init__(data)
         self.path = path if path is not None else getattr(data, "path", None)
-        self.baseline = deepcopy(dict(data))
+        self._set_baseline(data, baseline, baseline_text)
         self.scanned = False
 
-    def replace(self, current: dict[str, Any]) -> None:
+    def _set_baseline(
+        self, data: dict[str, Any], baseline: dict[str, Any] | None, text: str | None
+    ) -> None:
+        self._baseline_text = text if baseline is None else None
+        self._baseline = (
+            baseline if baseline is not None or text is not None else deepcopy(dict(data))
+        )
+
+    @property
+    def baseline(self) -> dict[str, Any]:
+        if self._baseline is None:
+            assert self._baseline_text is not None
+            self._baseline = _normalized(json.loads(self._baseline_text))
+        return self._baseline
+
+    def replace(
+        self,
+        current: dict[str, Any],
+        *,
+        baseline: dict[str, Any] | None = None,
+        baseline_text: str | None = None,
+    ) -> None:
         self.clear()
         self.update(current)
-        self.baseline = deepcopy(dict(current))
+        self._set_baseline(current, baseline, baseline_text)
         self.scanned = False
 
+    def adopt(self, other: Registry) -> None:
+        self.replace(other, baseline=other._baseline, baseline_text=other._baseline_text)
 
-def _write_registry(path: Path, reg: dict[str, Any]) -> None:
-    atomic_write_text(path.resolve(), json.dumps(reg, indent=2, ensure_ascii=False))
+
+def _write_registry(path: Path, reg: dict[str, Any]) -> str:
+    text = json.dumps(reg, indent=2, ensure_ascii=False)
+    atomic_write_text(path.resolve(), text)
+    return text
 
 
 def save_registry(path: str | Path, reg: dict[str, Any]) -> None:
@@ -119,10 +161,12 @@ def save_registry(path: str | Path, reg: dict[str, Any]) -> None:
 
 def mutate_registry(path: str | Path, mutation: Callable[[dict[str, Any]], object]) -> Registry:
     with registry_lock(Path(path)):
-        current = load_registry(path)
+        current = _load(path)
         mutation(current)
-        _write_registry(Path(path), current)
-        return Registry(current)
+        if Path(path).exists() and dict(current) == current.baseline:
+            return Registry(dict(current), path=current.path, baseline=current.baseline)
+        text = _write_registry(Path(path), current)
+        return Registry(dict(current), path=current.path, baseline_text=text)
 
 
 _MISSING = object()
@@ -273,7 +317,7 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
     if not isinstance(reg, Registry):
         raise TypeError("registry mutations require a loaded snapshot")
     with registry_lock(Path(path)):
-        current = load_registry(path)
+        current = _load(path)
         _merge_sessions(reg.baseline, reg, current, scan=reg.scanned)
         _merge_memory(reg.baseline, reg, current, scan=reg.scanned)
         clocks = {"lastScan", "lastRoundupAt"}
@@ -296,8 +340,11 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
         for key in other(reg.baseline).keys() - other(reg).keys():
             if current.get(key) == reg.baseline[key]:
                 current.pop(key, None)
-        _write_registry(Path(path), current)
-    reg.replace(current)
+        if Path(path).exists() and dict(current) == current.baseline:
+            reg.replace(current, baseline=current.baseline)
+            return
+        text = _write_registry(Path(path), current)
+    reg.replace(current, baseline_text=text)
 
 
 def _merge_scan_times(
@@ -316,48 +363,106 @@ def qualified_id(record: dict[str, Any]) -> str:
     return ":".join(identity(record))
 
 
-def find_session(
-    reg: dict[str, Any], selector: str, *, bucket: str = "threads", source: str | None = None
-) -> dict[str, Any] | None:
+def _parse_selector(selector: str, source: str | None) -> tuple[str, str | None]:
     if ":" in selector:
         selected_source, selector = selector.split(":", 1)
         selected_source = canonical_agent(selected_source)
         if source is not None and source != selected_source:
             raise ValueError("conflicting session sources")
         source = selected_source
-    matches = [
-        record
-        for record in reg.get(bucket, [])
-        if record["sessionId"] == selector and (source is None or identity(record)[0] == source)
+    return selector, source
+
+
+def _pick(
+    rows: Iterable[tuple[str, dict[str, Any]]], native: str, bucket: str, source: str | None
+) -> dict[str, Any] | None:
+    chosen = [
+        (name, record)
+        for name, record in rows
+        if record["sessionId"] == native and (source is None or identity(record)[0] == source)
     ]
-    all_matches = {
-        identity(record)
-        for name in _SESSION_BUCKETS
-        for record in reg.get(name, [])
-        if record["sessionId"] == selector and (source is None or identity(record)[0] == source)
-    }
-    if len(all_matches) > 1 or len(matches) > 1:
-        raise AmbiguousSession(f"ambiguous session {selector}; qualify it as AGENT:{selector}")
+    matches = [record for name, record in chosen if name == bucket]
+    if len({identity(record) for _, record in chosen}) > 1 or len(matches) > 1:
+        raise AmbiguousSession(f"ambiguous session {native}; qualify it as AGENT:{native}")
     return matches[0] if matches else None
 
 
-def session_identity(reg: dict[str, Any], selector: str) -> tuple[str, str]:
-    for bucket in _SESSION_BUCKETS:
-        record = find_session(reg, selector, bucket=bucket)
-        if record is not None:
-            return identity(record)
+def _fallback_identity(selector: str) -> tuple[str, str]:
     if ":" in selector:
         source, native_id = selector.split(":", 1)
         return (canonical_agent(source), native_id)
     return ("claude-code", selector)
 
 
+class SessionIndex:
+    def __init__(self, reg: dict[str, Any], *, native: str | None = None) -> None:
+        self._rows: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+        for bucket in _SESSION_BUCKETS:
+            for record in reg.get(bucket, []):
+                if native is None or record["sessionId"] == native:
+                    self._add(bucket, record)
+
+    def _add(self, bucket: str, record: dict[str, Any]) -> None:
+        self._rows.setdefault(record["sessionId"], []).append((bucket, record))
+
+    def _discard(self, bucket: str, record: dict[str, Any]) -> None:
+        rows = self._rows.get(record["sessionId"], [])
+        rows[:] = [(name, row) for name, row in rows if not (name == bucket and row is record)]
+
+    def _remove(self, reg: dict[str, Any], bucket: str, record: dict[str, Any]) -> None:
+        _drop(reg[bucket], record)
+        self._discard(bucket, record)
+
+    def _append(self, reg: dict[str, Any], bucket: str, record: dict[str, Any]) -> None:
+        reg.setdefault(bucket, []).append(record)
+        self._add(bucket, record)
+
+    def has(self, key: tuple[str, str], bucket: str) -> bool:
+        return any(
+            name == bucket and identity(row) == key for name, row in self._rows.get(key[1], [])
+        )
+
+    def find(
+        self, selector: str, *, bucket: str = "threads", source: str | None = None
+    ) -> dict[str, Any] | None:
+        native, source = _parse_selector(selector, source)
+        return _pick(self._rows.get(native, []), native, bucket, source)
+
+    def session_identity(self, selector: str) -> tuple[str, str]:
+        for bucket in _SESSION_BUCKETS:
+            record = self.find(selector, bucket=bucket)
+            if record is not None:
+                return identity(record)
+        return _fallback_identity(selector)
+
+
+def _index_for(reg: dict[str, Any], selector: str, index: SessionIndex | None) -> SessionIndex:
+    if index is not None:
+        return index
+    return SessionIndex(reg, native=_parse_selector(selector, None)[0])
+
+
+def find_session(
+    reg: dict[str, Any], selector: str, *, bucket: str = "threads", source: str | None = None
+) -> dict[str, Any] | None:
+    return _index_for(reg, selector, None).find(selector, bucket=bucket, source=source)
+
+
+def session_identity(reg: dict[str, Any], selector: str) -> tuple[str, str]:
+    return SessionIndex(reg).session_identity(selector)
+
+
+def _drop(rows: list[dict[str, Any]], record: dict[str, Any]) -> None:
+    del rows[next(index for index, row in enumerate(rows) if row is record)]
+
+
 def harvest_paths_by_identity(
     reg: dict[str, Any], paths_by_session: dict[str, list[str]]
 ) -> dict[tuple[str, str], list[str]]:
+    index = SessionIndex(reg)
     result: dict[tuple[str, str], list[str]] = {}
     for selector, paths in paths_by_session.items():
-        existing = result.setdefault(session_identity(reg, selector), [])
+        existing = result.setdefault(index.session_identity(selector), [])
         existing.extend(path for path in paths if path not in existing)
     return result
 
@@ -660,7 +765,7 @@ def mark_reviewed(reg: dict[str, Any], session_id: str, mtime: str | None = None
     raise KeyError(session_id)
 
 
-def archive_session(
+def archive_session(  # noqa: PLR0913 -- the archived record's fields, plus the index
     reg: dict[str, Any],
     session_id: str,
     archive_path: str,
@@ -668,35 +773,35 @@ def archive_session(
     *,
     summary: str | None = None,
     project: str | None = None,
+    index: SessionIndex | None = None,
 ) -> dict[str, Any]:
-    threads = reg["threads"]
-    thread = find_session(reg, session_id)
-    key = identity(thread) if thread is not None else session_identity(reg, session_id)
+    index = _index_for(reg, session_id, index)
+    thread = index.find(session_id)
+    key = identity(thread) if thread is not None else index.session_identity(session_id)
     if thread is not None:
-        threads.remove(thread)
-    session_id = key[1]
-    if thread is not None:
-        thread = without_finish_mark(thread)
-    harvest = thread.get("harvestPath") if thread else None
-    archived = reg.setdefault("archived", [])
-    if not any(identity(a) == key for a in archived):
-        archived.append(
-            {
-                "sessionId": session_id,
-                "source": key[0],
-                "archivedAt": archived_at,
-                "archivePath": archive_path,
-                "harvestPath": harvest,
-                "summary": summary,
-                "project": project,
-                # where the transcript lived before the move: restoring puts it back
-                # here, and the agent's picker index still points at this path.
-                "originalPath": thread.get("file") if thread else None,
-                # the whole record, so a restore doesn't come back stripped of its
-                # classification and need re-enriching.
-                "thread": thread,
-            }
-        )
+        index._remove(reg, "threads", thread)
+    if index.has(key, "archived"):
+        return reg
+    finished = without_finish_mark(thread) if thread is not None else None
+    index._append(
+        reg,
+        "archived",
+        {
+            "sessionId": key[1],
+            "source": key[0],
+            "archivedAt": archived_at,
+            "archivePath": archive_path,
+            "harvestPath": finished.get("harvestPath") if finished else None,
+            "summary": summary,
+            "project": project,
+            # where the transcript lived before the move: restoring puts it back
+            # here, and the agent's picker index still points at this path.
+            "originalPath": finished.get("file") if finished else None,
+            # the whole record, so a restore doesn't come back stripped of its
+            # classification and need re-enriching.
+            "thread": finished,
+        },
+    )
     return reg
 
 
@@ -824,42 +929,45 @@ def remap_cached_git_root(thread: dict[str, Any], old: str, new: str) -> None:
 
 
 def prune_session(
-    reg: dict[str, Any], session_id: str, deleted_at: str, *, reason: str = "prune"
+    reg: dict[str, Any],
+    session_id: str,
+    deleted_at: str,
+    *,
+    reason: str = "prune",
+    index: SessionIndex | None = None,
 ) -> dict[str, Any]:
-    threads = reg["threads"]
-    thread = find_session(reg, session_id)
-    key = identity(thread) if thread is not None else session_identity(reg, session_id)
-    session_id = key[1]
-    harvest = thread.get("harvestPath") if thread is not None else None
+    index = _index_for(reg, session_id, index)
+    thread = index.find(session_id)
+    key = identity(thread) if thread is not None else index.session_identity(session_id)
     if thread is not None:
-        threads.remove(thread)
-    deleted = reg.setdefault("deleted", [])
-    if not any(identity(d) == key for d in deleted):
-        deleted.append(
-            {
-                "sessionId": session_id,
-                "deletedAt": deleted_at,
-                "reason": reason,
-                "source": key[0],
-                "thread": thread,
-                "harvestPath": harvest,
-            }
-        )
+        index._remove(reg, "threads", thread)
+    if not index.has(key, "deleted"):
+        tombstone = {
+            "sessionId": key[1],
+            "deletedAt": deleted_at,
+            "reason": reason,
+            "source": key[0],
+            "thread": thread,
+            "harvestPath": thread.get("harvestPath") if thread is not None else None,
+        }
+        index._append(reg, "deleted", tombstone)
     return reg
 
 
-def purge_archived_session(reg: dict[str, Any], session_id: str, purged_at: str) -> dict[str, Any]:
+def purge_archived_session(
+    reg: dict[str, Any], session_id: str, purged_at: str, *, index: SessionIndex | None = None
+) -> dict[str, Any]:
     """Archive retention removed the archived copy: the transcript is now really gone,
     so the record moves out of `archived` and into `deleted`."""
-    archived = reg.setdefault("archived", [])
-    rec = find_session(reg, session_id, bucket="archived")
+    index = _index_for(reg, session_id, index)
+    rec = index.find(session_id, bucket="archived")
     if rec is None:
         return reg
-    archived.remove(rec)
+    index._remove(reg, "archived", rec)
     rec["reason"] = "purged"
     rec["purgedAt"] = purged_at
     rec.setdefault("deletedAt", purged_at)
-    reg.setdefault("deleted", []).append(rec)
+    index._append(reg, "deleted", rec)
     return reg
 
 

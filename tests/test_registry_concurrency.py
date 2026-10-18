@@ -168,7 +168,7 @@ def test_memory_scan_preserves_review_and_unknown_metadata(tmp_path, monkeypatch
     path = seed(tmp_path)
     note = str(tmp_path / "note.md")
 
-    def scan(_):
+    def scan(_, **__):
         mark_mem_reviewed.cmd_mark_mem_reviewed([note, "--registry", str(path)])
         keep.cmd_keep(["same", "--yes", "--registry", str(path)])
         return [MemoryEntry(note, "encoded", str(tmp_path), LATER, "note", None, None, "body")]

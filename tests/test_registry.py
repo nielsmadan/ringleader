@@ -1,3 +1,7 @@
+import json
+
+import pytest
+from ringleader import registry
 from ringleader.registry import (
     apply_name_filters,
     commit_registry,
@@ -181,7 +185,6 @@ def test_reconcile_persists_raw_git_clone_url():
     assert reg["threads"][0]["gitCloneUrl"] == "git@github.com:me/repo.git"
 
 
-import pytest
 from ringleader.registry import (
     apply_classification,
     needs_classification,
@@ -520,7 +523,6 @@ def test_reconcile_preserves_snoozed():
     assert reg2["threads"][0]["snoozedAt"] == "2026-07-01T00:00:00+00:00"
 
 
-from ringleader import registry
 from ringleader.memory import MemoryEntry
 
 
@@ -596,16 +598,12 @@ def _ns(**kw):
 
 
 def test_reconcile_persists_source():
-    from ringleader import registry
-
     reg = registry.empty_registry()
     reg = registry.reconcile(reg, [_ns(source="codex", session_id="c1")], "now")
     assert reg["threads"][0]["source"] == "codex"
 
 
 def test_reconcile_backfills_source_on_legacy_thread():
-    from ringleader import registry
-
     reg = registry.empty_registry()
     reg["threads"].append({"sessionId": "s1", "file": "/p/s1.jsonl"})  # legacy: no source
     reg = registry.reconcile(reg, [_ns(source="claude-code", session_id="s1")], "now")
@@ -616,8 +614,6 @@ def test_reconcile_backfills_source_on_legacy_thread():
 
 
 def test_reconcile_distinguishes_same_id_across_sources():
-    from ringleader import registry
-
     reg = registry.empty_registry()
     reg = registry.reconcile(
         reg,
@@ -629,8 +625,6 @@ def test_reconcile_distinguishes_same_id_across_sources():
 
 
 def test_apply_name_targets_source_when_ids_collide():
-    from ringleader import registry
-
     reg = registry.empty_registry()
     reg = registry.reconcile(
         reg,
@@ -646,8 +640,6 @@ def test_apply_name_targets_source_when_ids_collide():
 
 
 def test_mark_finish_on_exit_sets_the_fields():
-    from ringleader import registry
-
     reg = {"threads": [{"sessionId": "s1", "decision": "harvested"}]}
     t = registry.mark_finish_on_exit(reg, "s1", "2026-08-28T10:00:00+00:00")
     assert t["finishOnExit"] is True
@@ -655,8 +647,6 @@ def test_mark_finish_on_exit_sets_the_fields():
 
 
 def test_mark_finish_on_exit_is_idempotent():
-    from ringleader import registry
-
     reg = {"threads": [{"sessionId": "s1", "decision": "harvested"}]}
     registry.mark_finish_on_exit(reg, "s1", "2026-08-28T10:00:00+00:00")
     registry.mark_finish_on_exit(reg, "s1", "2026-08-28T11:00:00+00:00")
@@ -664,9 +654,6 @@ def test_mark_finish_on_exit_is_idempotent():
 
 
 def test_mark_finish_on_exit_raises_for_an_unknown_session():
-    import pytest
-    from ringleader import registry
-
     with pytest.raises(KeyError):
         registry.mark_finish_on_exit({"threads": []}, "nope", "2026-08-28T10:00:00+00:00")
 
@@ -724,3 +711,104 @@ def test_filtered_sessions_are_not_offered_for_classification():
     pending = sessions_needing_classification(reg)
 
     assert [t["sessionId"] for t in pending] == ["s2"]
+
+
+def _rows():
+    reg = empty_registry()
+    reg["threads"] = [
+        {"sessionId": "a", "source": "claude-code", "mtime": "m"},
+        {"sessionId": "dup", "source": "claude-code"},
+        {"sessionId": "dup", "source": "codex"},
+    ]
+    reg["archived"] = [{"sessionId": "b", "source": "codex", "thread": {"sessionId": "b"}}]
+    reg["deleted"] = [{"sessionId": "c", "thread": {"sessionId": "c", "source": "pi"}}]
+    return reg
+
+
+def test_session_index_finds_what_find_session_finds():
+    reg = _rows()
+    index = registry.SessionIndex(reg)
+    for selector, bucket in [
+        ("a", "threads"),
+        ("claude:a", "threads"),
+        ("codex:dup", "threads"),
+        ("b", "archived"),
+        ("c", "deleted"),
+        ("pi:c", "deleted"),
+        ("missing", "threads"),
+    ]:
+        found = index.find(selector, bucket=bucket)
+        assert found is registry.find_session(reg, selector, bucket=bucket)
+    with pytest.raises(registry.AmbiguousSession, match="qualify it as AGENT:dup"):
+        index.find("dup")
+    with pytest.raises(registry.AmbiguousSession, match="qualify it as AGENT:dup"):
+        registry.find_session(reg, "dup")
+    assert index.session_identity("b") == ("codex", "b")
+    assert index.session_identity("pi:zzz") == ("pi", "zzz")
+
+
+def test_prune_session_with_an_index_tombstones_once_and_keeps_the_index_current():
+    reg = _rows()
+    index = registry.SessionIndex(reg)
+    registry.prune_session(reg, "claude:a", "now", index=index)
+    registry.prune_session(reg, "claude:a", "later", index=index)
+    assert [t["sessionId"] for t in reg["threads"]] == ["dup", "dup"]
+    assert [(d["sessionId"], d.get("deletedAt")) for d in reg["deleted"]] == [
+        ("c", None),
+        ("a", "now"),
+    ]
+    assert index.find("claude:a", bucket="deleted") is reg["deleted"][-1]
+
+
+def test_committing_an_unchanged_snapshot_leaves_the_file_alone(tmp_path):
+    path = tmp_path / "registry.json"
+    save_registry(path, _rows())
+    before = path.stat().st_mtime_ns, path.stat().st_ino
+    reg = load_registry(path)
+    registry.commit_registry(path, reg)
+    registry.mutate_registry(path, lambda current: None)
+    assert (path.stat().st_mtime_ns, path.stat().st_ino) == before
+    reg["threads"][0]["title"] = "named"
+    registry.commit_registry(path, reg)
+    assert load_registry(path)["threads"][0]["title"] == "named"
+    assert reg.baseline["threads"][0]["title"] == "named"
+
+
+def test_archive_session_with_an_index_moves_the_row_and_keeps_the_index_current():
+    reg = _rows()
+    index = registry.SessionIndex(reg)
+    registry.archive_session(reg, "claude:a", "/archive/a.jsonl", "now", index=index)
+    registry.archive_session(reg, "claude:a", "/archive/a.jsonl", "later", index=index)
+    assert [t["sessionId"] for t in reg["threads"]] == ["dup", "dup"]
+    assert [(a["sessionId"], a.get("archivedAt")) for a in reg["archived"]] == [
+        ("b", None),
+        ("a", "now"),
+    ]
+    assert index.find("claude:a", bucket="archived") is reg["archived"][-1]
+    assert index.find("claude:a") is None
+
+
+def test_purging_an_archived_session_with_an_index_moves_it_to_deleted():
+    reg = _rows()
+    index = registry.SessionIndex(reg)
+    registry.purge_archived_session(reg, "codex:b", "now", index=index)
+    assert [d["sessionId"] for d in reg["deleted"]] == ["c", "b"]
+    assert index.find("codex:b", bucket="deleted") is reg["deleted"][-1]
+    assert index.find("codex:b", bucket="archived") is None
+
+
+def test_a_load_parses_once_and_a_write_does_not_reparse_what_it_wrote(tmp_path, monkeypatch):
+    path = tmp_path / "registry.json"
+    save_registry(path, _rows())
+    parses = []
+    loads = json.loads
+    monkeypatch.setattr(registry.json, "loads", lambda text: parses.append(1) or loads(text))
+
+    load_registry(path)
+    loaded = len(parses)
+    result = registry.mutate_registry(path, lambda reg: reg["threads"][0].update(title="named"))
+    mutated = len(parses)
+    result["threads"][0]["title"] = "edited in memory"
+
+    assert (loaded, mutated) == (1, 3)
+    assert result.baseline["threads"][0]["title"] == "named"

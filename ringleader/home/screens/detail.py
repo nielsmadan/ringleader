@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
+from textual.binding import Binding, BindingType
 from textual.message import Message
-from textual.widgets import Footer, Header, Static
+from textual.widgets import Footer, Header, Static, TextArea
 
 from ... import export, overview, resume
 from ...tui.background import CancelToken, Done, Failed, start_daemon
@@ -69,6 +69,28 @@ class ConversationLoaded(Message):
         self.result = result
 
 
+class ConversationView(TextArea):
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("up", "scroll_up", show=False),
+        Binding("down", "scroll_down", show=False),
+        Binding("pageup", "page_up", show=False),
+        Binding("pagedown", "page_down", show=False),
+        Binding("home", "scroll_home", show=False),
+        Binding("end", "scroll_end", show=False),
+    ]
+
+    DEFAULT_CSS = """
+    ConversationView {
+        border: none;
+        padding: 0 1;
+        background: $background;
+    }
+    ConversationView:focus {
+        border: none;
+    }
+    """
+
+
 class DetailScreen(InboxScreen):
     DEFAULT_CSS = """
     DetailScreen #detail-title, DetailScreen #detail-head, DetailScreen #tail-heading {
@@ -82,11 +104,8 @@ class DetailScreen(InboxScreen):
         margin-top: 1;
         color: $text-muted;
     }
-    DetailScreen #conversation-scroll {
-        height: 1fr;
-    }
     DetailScreen #conversation {
-        padding: 0 1;
+        height: 1fr;
     }
     """
 
@@ -99,8 +118,13 @@ class DetailScreen(InboxScreen):
         yield Static(Text(resume.label(self.thread), style="bold"), id="detail-title")
         yield Static("", id="detail-head")
         yield Static("", id="tail-heading")
-        with VerticalScroll(id="conversation-scroll"):
-            yield Static("", id="conversation")
+        yield ConversationView(
+            id="conversation",
+            read_only=True,
+            soft_wrap=True,
+            show_cursor=False,
+            highlight_cursor_line=False,
+        )
         yield Footer()
 
     def on_mount(self) -> None:
@@ -119,8 +143,9 @@ class DetailScreen(InboxScreen):
         self.post_message(ConversationLoaded(result))
 
     def _show_conversation(self, text: str) -> None:
-        self.query_one("#conversation", Static).update(Text(text))
-        self.query_one("#conversation-scroll", VerticalScroll).scroll_home(animate=False)
+        view = self.query_one("#conversation", ConversationView)
+        view.load_text(text)
+        view.scroll_home(animate=False)
 
     def on_conversation_loaded(self, message: ConversationLoaded) -> None:
         match message.result:

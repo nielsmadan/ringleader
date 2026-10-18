@@ -23,15 +23,22 @@ Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.p
 - **`RawRef`** — what `discover()` yields: `source`, a stable source-owned `source_ref`, an
   optional filesystem `file`, `mtime`, `size_bytes`, and an optional `fingerprint`. JSONL
   sources use the transcript's session id as `source_ref` and retain its path separately;
-  OpenCode uses its session row id and has no file. File discovery is stat-only. Database
-  sources may query row metadata and content to produce a per-session fingerprint.
+  OpenCode uses its session row id and has no file. File discovery stats each file; Codex
+  and Droid also read the first record to drop subagent threads, memoized per stat
+  fingerprint on the source instance. Each `discover()` pass keeps only the paths it saw, so a
+  deleted or moved transcript drops out. The memo pays off only when the same instance scans
+  again: `scanner.SourcePool` hands a long-lived caller (`refresh_registry(pool=...)`) the
+  instance it used last time for every source whose configuration is unchanged.
+  Database sources may query row metadata to produce a per-session fingerprint.
 - **`NormalizedSession`** — what `parse()` returns. A cross-harness core (`session_id`, `cwd`,
   `custom_title`, `summary`, `last_prompt`, …) plus Claude-Code-observed extras
   (`message_count`, `git_branch`, `ai_title`) that earn their place by driving real behavior:
   `message_count` gates prune eligibility, the others are display and classification context. A
   source that cannot supply them leaves the defaults.
 
-`tail_text` is transient — used for classification, never persisted.
+`tail_text` is transient — used for classification, never persisted — and every source caps it
+at 6000 characters. `git_checked_at` is stamped by the scanner, not the source: when git last
+gave a definite answer for the cwd.
 
 ### The required protocol
 
@@ -155,11 +162,15 @@ does, and the session is not in it) need opposite handling from the caller, and
 - **OpenCode fingerprints are per session, not per database file.** They cover the session's
   parsed metadata plus message/part counts, byte sizes and timestamp generations, so changing one
   conversation invalidates one cache entry without transferring every payload during discovery.
+  Byte sizes come from `octet_length()`, which reads the record header; `length(CAST(... AS
+  BLOB))` gives the same number but loads every payload page, and is only the fallback for
+  SQLite older than 3.43.
 - **Unavailable stores retain their cached sessions.** A locked or schema-incompatible store is
   omitted from that scan, but its previous registry records are not mistaken for deleted rows or
   classified without a readable transcript tail.
-- **`git_resolved` marks whether git identity came from this scan** rather than the cache —
-  the registry needs it to decide whether to overwrite the git fields.
+- **`git_resolved` marks a definite git answer from this scan** — the registry then replaces
+  the git fields outright, clearing them when the cwd is no longer a repo. When it is false
+  (identity reused, cwd gone, lookup failed) the registry only fills in non-empty values.
 
 ## Why
 

@@ -1,11 +1,18 @@
+import os
+import time
 from pathlib import Path
 
+import pytest
+from ringleader import registry
 from ringleader.prune import (
     DEFAULT_MAX_TURNS,
+    DELETE_BATCH,
     archive_purge_candidates,
     delete_sessions,
+    handoff_purge_candidates,
     prune_candidates,
     purge_archived,
+    purge_handoffs,
 )
 from ringleader.sources.base import stat_fingerprint
 
@@ -294,7 +301,9 @@ def test_delete_sessions_routes_skip_messages_to_report(tmp_path):
     reg = _reg([thread])
     messages = []
 
-    deleted = delete_sessions(reg, [thread], NOW, report=messages.append, guard=lambda t: "busy")
+    deleted = delete_sessions(
+        reg, [thread], NOW, report=messages.append, guard=lambda t, live: "busy"
+    )
 
     assert (deleted, messages) == (0, ["skipped d: busy"])
 
@@ -321,3 +330,101 @@ def test_delete_sessions_batches_and_reports_progress(tmp_path):
     )
 
     assert events == [(2, 3), (3, 3)]
+
+
+def _file(path, *, age_days=0):
+    path.write_text(path.stem)
+    when = time.time() - age_days * 86_400
+    os.utime(path, (when, when))
+    return path
+
+
+def _handoff_dir(tmp_path):
+    d = tmp_path / "handoffs"
+    d.mkdir()
+    old = _file(d / "a-1.md", age_days=40)
+    _file(d / "b-2.md")
+    _file(d / "notes.txt", age_days=40)
+    return d, old
+
+
+def test_handoff_candidates_are_markdown_exports_older_than_retention(tmp_path):
+    d, old = _handoff_dir(tmp_path)
+    now = time.time()
+    assert handoff_purge_candidates(d, now, retention_days=30) == [old]
+    assert handoff_purge_candidates(d, now, retention_days=0) == []
+    assert handoff_purge_candidates(tmp_path / "missing", now, retention_days=30) == []
+
+
+def test_purging_handoffs_rechecks_age_and_stays_inside_the_directory(tmp_path):
+    d, _ = _handoff_dir(tmp_path)
+    outside = _file(tmp_path / "elsewhere.md", age_days=40)
+    rewritten = _file(d / "c-3.md", age_days=40)
+    candidates = [*handoff_purge_candidates(d, time.time(), retention_days=30), outside]
+    _file(rewritten)
+
+    purged = purge_handoffs(d, candidates, time.time(), retention_days=30)
+
+    assert purged == 1
+    assert sorted(p.name for p in d.iterdir()) == ["b-2.md", "c-3.md", "notes.txt"]
+    assert outside.exists()
+
+
+def test_a_changed_session_mid_batch_is_skipped_and_the_rest_are_deleted(tmp_path):
+    slug = _droid_slug(tmp_path)
+    slug.mkdir(parents=True)
+    threads = []
+    for sid in ("a", "b", "c"):
+        transcript = slug / f"{sid}.jsonl"
+        transcript.write_text("{}\n")
+        threads.append(
+            {
+                "sessionId": sid,
+                "source": "droid",
+                "file": str(transcript),
+                "fileFingerprint": stat_fingerprint(transcript.stat()),
+                "mtime": OLD,
+            }
+        )
+    path = tmp_path / "registry.json"
+    registry.save_registry(path, _reg(threads))
+    with open(threads[1]["file"], "a", encoding="utf-8") as handle:
+        handle.write("{}\n")
+    reg = registry.load_registry(path)
+    messages = []
+
+    deleted = delete_sessions(
+        reg, list(reg["threads"]), NOW, report=messages.append, batch_size=DELETE_BATCH
+    )
+
+    saved = registry.load_registry(path)
+    assert (deleted, messages) == (2, ["skipped b: session changed since selection"])
+    assert [t["sessionId"] for t in saved["threads"]] == ["b"]
+    assert sorted(d["sessionId"] for d in saved["deleted"]) == ["a", "c"]
+    assert sorted(p.name for p in slug.iterdir()) == ["b.jsonl"]
+
+
+def test_delete_sessions_rejects_a_batch_size_below_one():
+    with pytest.raises(ValueError, match="batch_size must be at least 1, not 0"):
+        delete_sessions(_reg([]), [], NOW, batch_size=0)
+
+
+def test_an_aged_symlinked_handoff_is_neither_a_candidate_nor_purged(tmp_path):
+    d = tmp_path / "handoffs"
+    d.mkdir()
+    target = _file(tmp_path / "target.md", age_days=40)
+    link = d / "linked.md"
+    link.symlink_to(target)
+    when = time.time() - 40 * 86_400
+    os.utime(link, (when, when), follow_symlinks=False)
+
+    assert handoff_purge_candidates(d, time.time(), retention_days=30) == []
+    assert purge_handoffs(d, [link], time.time(), retention_days=30) == 0
+    assert (link.is_symlink(), target.read_text()) == (True, "target")
+
+
+def test_purging_handoffs_with_retention_off_deletes_nothing(tmp_path):
+    d, old = _handoff_dir(tmp_path)
+
+    assert purge_handoffs(d, [old], time.time(), retention_days=0) == 0
+    assert old.exists()

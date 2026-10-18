@@ -3,15 +3,24 @@ from __future__ import annotations
 import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 from ..sources.claude_code import default_projects_dir
-from .base import UsageRecord, as_dict, as_int, total_of
+from .base import UsageRecord, as_dict, as_int, files_since, latest_day_of, total_of
 
 
 def decode_project(raw: str) -> str:
     return "/" + raw.strip("-").replace("-", "/")
+
+
+def _credit_scope(files: list[Path], session_prefix: str) -> list[Path]:
+    hits = [i for i, f in enumerate(files) if f.stem.startswith(session_prefix)]
+    if not hits:
+        return []
+    dirs = {files[i].parent for i in hits}
+    return [f for f in files[: hits[-1] + 1] if f.parent in dirs]
 
 
 @dataclass
@@ -25,32 +34,48 @@ class ClaudeUsageReader:
     def available(self) -> bool:
         return self.projects_dir.exists()
 
-    def records(self) -> Iterator[UsageRecord]:
+    def _files(self) -> list[Path]:
+        return list(self.projects_dir.glob("*/*.jsonl"))
+
+    def records(
+        self, since: date | None = None, session_prefix: str | None = None
+    ) -> Iterator[UsageRecord]:
         if not self.available():
             return
+        files = files_since(self._files(), since)
+        if session_prefix:
+            files = _credit_scope(files, session_prefix)
         seen: set[tuple[Any, ...]] = set()
-        for f in sorted(self.projects_dir.glob("*/*.jsonl")):
-            try:
-                fh = f.open(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            with fh:
-                for line in fh:
-                    if '"assistant"' not in line:
-                        continue
-                    try:
-                        o = json.loads(line)
-                    except json.JSONDecodeError:
-                        continue
-                    rec = self._record(o, f)
-                    if rec is None:
-                        continue
-                    key = (as_dict(o.get("message")).get("id"), o.get("requestId"))
-                    if key in seen:
-                        continue
-                    seen.add(key)
-                    rec.record_id = f"{key[0]}|{key[1]}"
-                    yield rec
+        credited = (r for f in files for r in self._file_records(f, seen))
+        yield from (r for r in credited if r.session_id.startswith(session_prefix or ""))
+
+    def latest_day(self) -> str | None:
+        if not self.available():
+            return None
+        return latest_day_of(self._files(), lambda f: self._file_records(f, set()))
+
+    def _file_records(self, f: Path, seen: set[tuple[Any, ...]]) -> Iterator[UsageRecord]:
+        try:
+            fh = f.open(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        with fh:
+            for line in fh:
+                if '"assistant"' not in line:
+                    continue
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                rec = self._record(o, f)
+                if rec is None:
+                    continue
+                key = (as_dict(o.get("message")).get("id"), o.get("requestId"))
+                if key in seen:
+                    continue
+                seen.add(key)
+                rec.record_id = f"{key[0]}|{key[1]}"
+                yield rec
 
     def _record(self, o: dict[str, Any], f: Path) -> UsageRecord | None:
         if o.get("type") != "assistant":

@@ -1,5 +1,8 @@
 import os
+import signal
 import stat
+import sys
+import threading
 import time
 from pathlib import Path
 
@@ -102,3 +105,27 @@ def test_non_utf8_bytes_are_replaced_not_fatal(tmp_path):
     python = _script(tmp_path, "printf 'a\\377b\\n'\n")
     run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python)
     assert run.output.strip() == "a\ufffdb"
+
+
+def test_a_grandchild_holding_the_pipe_open_does_not_leak_the_reader(tmp_path, monkeypatch):
+    monkeypatch.setattr("ringleader.tui.runner.READER_JOIN_SECONDS", 0.2)
+    pids = tmp_path / "pids"
+    escape = (
+        "import os, subprocess; "
+        "p = subprocess.Popen(['sleep', '30'], start_new_session=True); "
+        f"open({str(pids)!r}, 'w').write(str(p.pid))"
+    )
+    python = _script(tmp_path, f'{sys.executable} -c "{escape}"\necho done\n')
+    readers_before = _readers()
+    started = time.monotonic()
+    try:
+        run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python)
+        elapsed = time.monotonic() - started
+    finally:
+        os.kill(int(pids.read_text()), signal.SIGKILL)
+    assert (run.returncode, run.output.strip(), elapsed < 2.0) == (0, "done", True)
+    assert _readers() == readers_before
+
+
+def _readers():
+    return sum(1 for thread in threading.enumerate() if thread.name == "rl-run-reader")

@@ -498,3 +498,39 @@ def test_discover_yields_one_ref_for_a_session_filed_under_two_directories(tmp_p
     refs = list(DroidSource(sessions_dir=tmp_path).discover())
 
     assert [(ref.source_ref, ref.file) for ref in refs] == [(SESSION_ID, str(first))]
+
+
+def test_discover_reads_an_unchanged_session_start_once_per_source(tmp_path, monkeypatch):
+    from ringleader.sources import droid
+
+    path = _session(tmp_path, [_start()])
+    source = DroidSource(sessions_dir=tmp_path)
+    reads = []
+    real_start = droid._session_start
+
+    def counting_start(p):
+        reads.append(p)
+        return real_start(p)
+
+    monkeypatch.setattr(droid, "_session_start", counting_start)
+    first = [ref.source_ref for ref in source.discover()]
+    second = [ref.source_ref for ref in source.discover()]
+    path.write_text(json.dumps(_start(id="renamed-id")) + "\n", encoding="utf-8")
+    third = [ref.source_ref for ref in source.discover()]
+
+    assert first == second == [SESSION_ID]
+    assert third == ["renamed-id"]
+    assert reads == [path, path]
+
+
+def test_discover_forgets_a_session_start_whose_file_is_gone(tmp_path):
+    kept = _session(tmp_path, [_start()])
+    gone = tmp_path / "other.jsonl"
+    gone.write_text(json.dumps(_start(id="gone-id")) + "\n", encoding="utf-8")
+    source = DroidSource(sessions_dir=tmp_path)
+    list(source.discover())
+    gone.unlink()
+
+    list(source.discover())
+
+    assert list(source._headers) == [str(kept)]

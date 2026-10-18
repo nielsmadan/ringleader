@@ -14,6 +14,7 @@ from ringleader.resume import Scope
 
 MATCH_COUNT = 1322
 SESSION_COUNT = 1834
+TYPED_QUERIES = tuple("session 12"[:end] for end in range(1, len("session 12") + 1))
 
 
 async def benchmark(path: Path) -> None:
@@ -29,10 +30,9 @@ async def benchmark(path: Path) -> None:
         await pilot.pause()
         screen = app.screen
         assert isinstance(screen, PickerScreen)
-        screen._query = "session"
-        await screen._render_rows()
         samples = []
-        for _ in range(3):
+        for query in TYPED_QUERIES:
+            screen._query = query
             start = perf_counter()
             await screen._render_rows()
             samples.append(perf_counter() - start)

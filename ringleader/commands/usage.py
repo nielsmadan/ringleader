@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import re
 from collections.abc import Callable, Iterable
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
 from ..paths import archive_root
 from ..usage import aggregate
-from ..usage.base import UsageRecord, WindowSnapshot, window_is_current
+from ..usage.base import UsageReader, UsageRecord, WindowSnapshot, record_day, window_is_current
 from ..usage.codex import CodexUsageReader
 
 _AMBIGUOUS_LIMIT = 10
+_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _KEYS = {
-    "day": aggregate.day_of,
+    "day": record_day,
     "project": lambda r: r.project or "(unknown)",
     "session": lambda r: f"{r.session_id[:8]}  {r.project or ''}".strip(),
     "model": lambda r: r.model or "(unknown)",
@@ -22,19 +25,47 @@ _KEYS = {
 }
 
 
-def collect(
+def _day(value: str) -> date:
+    if _DAY.fullmatch(value):
+        with contextlib.suppress(ValueError):
+            return date.fromisoformat(value)
+    raise argparse.ArgumentTypeError(f"{value!r} is not a YYYY-MM-DD date")
+
+
+def _readers(
     sources: Iterable[str], dirs: dict[str, dict[str, Any]] | None = None
+) -> list[UsageReader]:
+    built = (
+        cls(**(dirs or {}).get(name, {}))
+        for name in sources
+        if (cls := aggregate.READERS.get(name)) is not None
+    )
+    return [reader for reader in built if reader.available()]
+
+
+def _records_from(
+    readers: Iterable[UsageReader], since: date | None = None, session_prefix: str | None = None
 ) -> list[UsageRecord]:
-    out: list[UsageRecord] = []
-    for name in sources:
-        cls = aggregate.READERS.get(name)
-        if cls is None:
-            continue
-        reader = cls(**(dirs or {}).get(name, {}))
-        if not reader.available():
-            continue
-        out.extend(reader.records())
-    return out
+    return [
+        r for reader in readers for r in reader.records(since=since, session_prefix=session_prefix)
+    ]
+
+
+def collect(
+    sources: Iterable[str],
+    dirs: dict[str, dict[str, Any]] | None = None,
+    since: date | None = None,
+    session_prefix: str | None = None,
+) -> list[UsageRecord]:
+    return _records_from(_readers(sources, dirs), since, session_prefix)
+
+
+def latest_day(readers: Iterable[UsageReader]) -> str | None:
+    return max((d for reader in readers if (d := reader.latest_day())), default=None)
+
+
+def _window_start(latest: str | None, days: int) -> date | None:
+    return date.fromisoformat(latest) - timedelta(days=days - 1) if latest else None
 
 
 _ARCHIVE_KWARG: dict[str, str] = {
@@ -61,18 +92,41 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
-def _resolve_window(
-    records: Iterable[UsageRecord], args: argparse.Namespace
-) -> tuple[str | None, str | None]:
+def _pooled(
+    args: argparse.Namespace, sources: list[str], records: list[UsageRecord]
+) -> list[UsageRecord]:
+    if args.archived:
+        from ..usage import transfer  # noqa: PLC0415
+
+        records = transfer.dedupe(records + collect_archived(sources))
+    if args.merge:
+        from ..usage import transfer  # noqa: PLC0415
+
+        records = transfer.dedupe(records + transfer.load_exports(args.merge))
+    return records
+
+
+def _gather(
+    args: argparse.Namespace, sources: list[str]
+) -> tuple[list[UsageRecord], date | None, date | None]:
+    pooled = bool(args.archived or args.merge)
     if args.all:
-        return None, None
+        return _pooled(args, sources, collect(sources)), None, None
     if args.since or args.until:
-        return args.since, args.until
-    latest = max((aggregate.day_of(r) for r in records), default=None)
-    if latest is None:
-        return None, None
-    start = date.fromisoformat(latest) - timedelta(days=args.days - 1)
-    return start.isoformat(), None
+        records = collect(sources, since=None if pooled else args.since)
+        return _pooled(args, sources, records), args.since, args.until
+    if pooled:
+        records = _pooled(args, sources, collect(sources))
+        start = _window_start(max((record_day(r) for r in records), default=None), args.days)
+    else:
+        readers = _readers(sources)
+        start = _window_start(latest_day(readers), args.days)
+        records = _records_from(readers, since=start) if start else []
+    return (records, start, None) if start else ([], None, None)
+
+
+def _iso(day: date | None) -> str | None:
+    return day.isoformat() if day else None
 
 
 def _row(key: str, b: aggregate.Bucket, breakdown: bool) -> dict[str, Any]:
@@ -100,7 +154,11 @@ def _cmd_session(argv: list[str], prog: str) -> int:
 
     from ..usage.session import analyze  # noqa: PLC0415 -- keeps the hot path light
 
-    records = [r for r in collect(sorted(aggregate.READERS)) if r.session_id.startswith(args.id)]
+    records = [
+        r
+        for r in collect(sorted(aggregate.READERS), session_prefix=args.id)
+        if r.session_id.startswith(args.id)
+    ]
     if not records:
         print(f"no usage data for session {args.id}")
         return 1
@@ -160,7 +218,7 @@ def _cmd_session(argv: list[str], prog: str) -> int:
 
 def collect_windows() -> list[WindowSnapshot]:
     reader = CodexUsageReader()
-    return list(reader.windows()) if reader.available() else []
+    return reader.latest_windows()
 
 
 def collect_claude_windows() -> list[WindowSnapshot]:
@@ -281,8 +339,8 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
     )
     ap.add_argument("--source", action="append", choices=sorted(aggregate.READERS))
     ap.add_argument("--days", type=int, default=7)
-    ap.add_argument("--since")
-    ap.add_argument("--until")
+    ap.add_argument("--since", type=_day)
+    ap.add_argument("--until", type=_day)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--archived", action="store_true")
     ap.add_argument("--by", choices=sorted(_KEYS), default="project")
@@ -293,25 +351,18 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
     args = ap.parse_args(argv)
 
     sources = args.source or sorted(aggregate.READERS)
-    records = collect(sources)
-    if args.archived:
-        from ..usage import transfer  # noqa: PLC0415
-
-        records = transfer.dedupe(records + collect_archived(sources))
-    if args.merge:
-        from ..usage import transfer  # noqa: PLC0415
-
-        records = transfer.dedupe(records + transfer.load_exports(args.merge))
-    since, until = _resolve_window(records, args)
-    scoped = [r for r in records if aggregate.in_window(r, since, until)]
+    records, since, until = _gather(args, sources)
+    scoped = (
+        [r for r in records if aggregate.in_window(r, since, until)] if since or until else records
+    )
 
     if not scoped:
         if args.json:
             print(
                 json.dumps(
                     {
-                        "since": since,
-                        "until": until,
+                        "since": _iso(since),
+                        "until": _iso(until),
                         "sources": sources,
                         "total_tokens": 0,
                         "total_cost": None,
@@ -327,7 +378,7 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
             print("no usage data")
         return 0
 
-    per_day = aggregate.rollup(scoped, key=aggregate.day_of)
+    per_day = aggregate.rollup(scoped, key=record_day)
     rows = aggregate.rollup(scoped, key=_KEYS[args.by])
     total_tokens = sum(b.total for b in rows.values())
     total_cost = sum(b.cost for b in rows.values())
@@ -339,8 +390,8 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
         print(
             json.dumps(
                 {
-                    "since": since,
-                    "until": until,
+                    "since": _iso(since),
+                    "until": _iso(until),
                     "sources": sources,
                     "total_tokens": total_tokens,
                     "total_cost": round(total_cost, 2) if priced else None,

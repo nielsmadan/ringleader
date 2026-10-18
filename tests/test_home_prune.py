@@ -6,6 +6,7 @@ from pathlib import Path
 from ringleader import decisions, registry
 from ringleader.decisions import KeepOp
 from ringleader.home.app import InboxApp
+from ringleader.home.screens import prune as prune_screen
 from ringleader.home.screens.prune import PruneScreen
 from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ConfirmModal
@@ -186,7 +187,7 @@ async def test_c_on_a_queued_prune_drops_it_and_says_so(tmp_path):
         try:
             await _open(app, pilot)
             app.decide("keep", [registry.load_registry(path)["threads"][2]])
-            await until(pilot, lambda: app._running_ticket is not None)
+            await until(pilot, lambda: app.writer.waiting == 0 and not app.writer.idle)
             await _delete_all(app, pilot, "y")
             await pilot.press("c")
             await until(
@@ -199,3 +200,23 @@ async def test_c_on_a_queued_prune_drops_it_and_says_so(tmp_path):
         assert _transcript("oldest").exists()
         assert _transcript("young").exists()
         assert _ids(app) == ["claude-code:oldest", "claude-code:young"]
+
+
+async def test_a_rerender_with_the_same_view_does_not_relist_the_candidates(tmp_path, monkeypatch):
+    listed = []
+    original = prune_screen.prune_rows
+
+    def counted(*args, **kwargs):
+        listed.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(prune_screen, "prune_rows", counted)
+    app = _app(_write(tmp_path / "registry.json"))
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open(app, pilot)
+        await until(pilot, lambda: app.idle)
+        before = len(listed)
+        app._set()
+        app._rerender()
+        await until(pilot, lambda: app.idle)
+        assert (len(listed), _ids(app)) == (before, ["claude-code:oldest", "claude-code:young"])

@@ -50,6 +50,10 @@ original exactly where it was.
 - Nothing prunes `handoffs/`. Unlike `archive/`, which `prune` and `roundup` purge on a retention
   clock, handoff transcripts accumulate. They are full conversations, so they are written
   owner-only, but retention is unbuilt and deliberately out of scope here.
+  *Amended 2026-10-17:* handoff exports now share `archive.retention_days`. At the default `0`
+  nothing removes them; above `0`, an unscoped `rl prune --delete` and `rl roundup` remove
+  `handoffs/*.md` older than that many days, rechecking at delete time that each is a regular
+  file, not a symlink, directly inside `handoffs/`, and still aged.
 - When the portability layer arrives it **replaces** this mechanism rather than extending it.
   `rl resume --to` keeps its spelling; what happens behind it changes from "seed a new session"
   to "convert and resume". The seam that makes that swap cheap is `launch_argv` living on the

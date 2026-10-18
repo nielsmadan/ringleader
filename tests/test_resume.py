@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import pytest
 from ringleader import resume
 from ringleader.resume import Scope
 
@@ -218,7 +219,7 @@ def test_a_name_match_outranks_a_better_blurb_match():
 
 
 def test_an_id_match_outranks_a_better_blurb_match():
-    thread = _thread("s1-deadbeef-auth", title="zzz", summary="auth")
+    thread = _thread("auth-deadbeef", title="zzz", summary="auth")
     got = resume.match(thread, "auth")
     assert got is not None
     assert got[1] == "id"
@@ -280,12 +281,96 @@ def test_rank_puts_a_name_match_above_a_blurb_match_however_old():
     assert _ids(resume.rank(rows, "auth")) == ["name", "blurb"]
 
 
-def test_rank_puts_a_literal_run_above_a_scattered_match_in_the_same_field():
+def test_rank_keeps_a_literal_blurb_run_and_drops_a_scattered_one():
     rows = [
         _thread("real", summary="a full rewrite of the auth layer", mtime=OLDER),
         _thread("noise", summary="a u t h", mtime=NEWER),
     ]
-    assert _ids(resume.rank(rows, "auth")) == ["real", "noise"]
+    assert _ids(resume.rank(rows, "auth")) == ["real"]
+
+
+def test_an_exact_name_ranks_first_however_old():
+    rows = [
+        _thread("blurb", title="zzz", summary="follow up on sd-review", mtime=NEWER),
+        _thread("longer", title="sd-review-followup", mtime=NEWER),
+        _thread("fuzzy", title="sd-xx-review", mtime=NEWER),
+        _thread("exact", title="SD-Review", mtime=OLDER),
+    ]
+    assert _ids(resume.rank(rows, "sd-review")) == ["exact", "longer", "fuzzy", "blurb"]
+
+
+def test_a_name_prefix_outranks_a_name_substring_which_outranks_a_fuzzy_name():
+    rows = [
+        _thread("fuzzy", title="a-u-t-h", mtime=NEWER),
+        _thread("substring", title="oauth-fix", mtime=NEWER),
+        _thread("prefix", title="auth-fix", mtime=OLDER),
+    ]
+    assert _ids(resume.rank(rows, "auth")) == ["prefix", "substring", "fuzzy"]
+
+
+def test_letters_scattered_through_a_blurb_do_not_match():
+    thread = _thread("s1", title="zzz", summary="give the view a walkthrough", gitProjectLabel="x")
+    assert resume.match(thread, "gvw") is None
+
+
+def test_a_real_word_from_the_summary_still_matches():
+    thread = _thread("s1", title="zzz", summary="give the view a walkthrough", gitProjectLabel="x")
+    got = resume.match(thread, "walk")
+    assert got is not None
+    assert got[1] == "summary"
+
+
+def test_every_word_of_a_blurb_query_must_appear_but_in_any_order_or_field():
+    thread = _thread("s1", title="zzz", whatItIs="login flow", summary="add a retry")
+    assert resume.match(thread, "retry login") is not None
+    assert resume.match(thread, "retry logout") is None
+
+
+def test_a_multi_word_query_whose_words_are_all_in_the_name_is_a_name_match():
+    got = resume.match(_thread("s1", title="sd-review"), "review sd")
+    assert got is not None
+    assert got[1] == "name"
+
+
+def test_the_session_id_matches_by_prefix_only():
+    thread = _thread("deadbeef-cafe", title="zzz", gitProjectLabel="x")
+    assert resume.match(thread, "deadb") == resume.match(thread, "DEADB")
+    assert resume.match(thread, "deadb")[1] == "id"
+    assert resume.match(thread, "cafe") is None
+
+
+def test_the_project_label_matches_fuzzily():
+    got = resume.match(_thread("s1", title="zzz", gitProjectLabel="ringleader"), "rgldr")
+    assert got is not None
+    assert got[1] == "project"
+
+
+def test_rank_reads_text_through_the_supplied_haystack_factory():
+    thread = _thread("s1", title="zzz")
+    haystack = resume.Haystack.of(name="Cached", sid="s1", project="", blurbs=())
+    assert _ids(resume.rank([thread], "cached", lambda _: haystack)) == ["s1"]
+
+
+def test_haystack_of_lowercases_every_field():
+    got = resume.Haystack.of(name="AbC", sid="DEF", project="GhI", blurbs=[("summary", "JkL")])
+    assert (got.name, got.sid, got.project, got.blurbs) == (
+        "abc",
+        "def",
+        "ghi",
+        (("summary", "jkl"),),
+    )
+
+
+@pytest.mark.parametrize("field", ["name", "sid", "project"])
+def test_haystack_refuses_unlowered_text(field):
+    fields = {"name": "", "sid": "", "project": "", field: "Mixed"}
+    with pytest.raises(ValueError, match="lowercased"):
+        resume.Haystack(**fields, blurbs=())
+
+
+def test_haystack_refuses_unlowered_blurbs():
+    with pytest.raises(ValueError, match="lowercased"):
+        resume.Haystack(name="", sid="", project="", blurbs=(("summary", "Mixed"),))
 
 
 def test_within_a_tier_the_most_recent_session_comes_first():

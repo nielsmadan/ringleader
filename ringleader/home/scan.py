@@ -64,6 +64,7 @@ class ScanService:
         self._running = False
         self._rerun = False
         self._latest: ScanLanded | None = None
+        self._harvests: HarvestSnapshot | None = None
 
     def request(self) -> bool:
         with self._cond:
@@ -99,7 +100,10 @@ class ScanService:
         warnings: list[str] = []
         reg, note, scanned, unavailable = self._refreshed(warnings)
         live_ids = self._live_ids(warnings)
-        harvest_snapshot = _guarded(warnings, "harvests", harvests.snapshot_harvests)
+        harvest_snapshot = _guarded(
+            warnings, "harvests", lambda: harvests.snapshot_harvests(self._harvests)
+        )
+        self._harvests = harvest_snapshot
         return ScanLanded(
             snapshot=Snapshot(reg, generation, scanned=scanned, taken_at=self._monotonic()),
             note=note,

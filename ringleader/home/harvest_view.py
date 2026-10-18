@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 from collections import defaultdict
+from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,10 +19,10 @@ class HarvestGroup:
     items: tuple[Harvest, ...]
 
 
-def _existing_folders(items: tuple[Harvest, ...]) -> list[str]:
-    return [
+def _existing_folders(items: tuple[Harvest, ...]) -> Iterator[str]:
+    return (
         item.folder_path for item in items if item.folder_path and os.path.isdir(item.folder_path)
-    ]
+    )
 
 
 def _label(repo_key: str | None, items: tuple[Harvest, ...]) -> str:
@@ -38,7 +39,7 @@ def _group(repo_key: str | None, items: tuple[Harvest, ...]) -> HarvestGroup:
     return HarvestGroup(
         repo_key=repo_key,
         label=_label(repo_key, items),
-        folder=next(iter(_existing_folders(items)), None),
+        folder=next(_existing_folders(items), None),
         items=items,
     )
 
@@ -52,7 +53,7 @@ def harvest_groups(items: tuple[Harvest, ...]) -> tuple[HarvestGroup, ...]:
 
 
 def publish_all_cwd(items: tuple[Harvest, ...], home: Path) -> str:
-    folders = _existing_folders(items)
+    folders = list(_existing_folders(items))
     if not folders:
         return str(home)
     common = os.path.commonpath(folders)

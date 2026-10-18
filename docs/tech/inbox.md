@@ -60,12 +60,51 @@ or applied at a generation newer than the adopted snapshot. Rows are re-derived 
 keyed by `qualified_id`, never by index, so a decided row cannot return from a scan or from
 another decision's reload.
 
+### Rendering
+
+Every change to `AppState` bumps its `version`. Writer events, scans, harvest and enrich
+messages, and roundup state call `_rerender`, which runs at most once per refresh: it calls the
+active screen's `sync` only when the version changed since the app last synced that screen.
+Otherwise a screen with `render_status` (Home's status line, Roundup's run) redraws just that,
+so roundup, enrich and prune progress never rebuild a list. Prune progress goes straight to the
+Prune screen's bar through `op_progress`.
+
+The view is memoized: `InboxApp.view()` and `view_threads()` are rebuilt only when the adopted
+snapshot object or the set of hidden identities changes, and each rebuild gets a new serial.
+`InboxApp.render_basis()` issues the one `RenderBasis` every screen compares against: that view
+serial, the clock truncated to the minute, and the live ids, plus the exact time, which does not
+take part in equality. `home_state()` is rebuilt when the basis's view or minute or the
+pending-harvest count changes; the palette and the Home and Projects screens share that one
+`HomeState`. Triage redraws its rows when the whole basis changed, Prune when its view or minute
+did, Harvests when its groups or the minute did. `tui/rows.py::set_rows` then diffs against what
+the `OptionList` shows: unchanged ids replace only the prompts that differ, up to
+`MAX_PATCHED_REMOVALS` (64) in-order removals remove just those rows, and anything else rebuilds
+the list. A removal combined with more than `MAX_PATCHED_CHANGE_SHARE_WITH_REMOVALS` (three
+quarters) of the rows changed also rebuilds. Both limits come from timing patch against rebuild
+on 2,000 rows with Textual 8.2.8: replacing the prompt of every row (about 78 ms) stays cheaper
+than `set_options` (about 96 ms), so a minute tick that ages every row patches. A single removal
+already costs about 76 ms, so with one the rebuild wins once about three quarters of the rows
+changed. A Triage mark redraws only the rows it flipped.
+
 ### The writer and its ops
 
-`Writer` is one daemon thread draining a queue, one op at a time. Ops are `ArchiveOp`,
-`DeleteOp`, `KeepGoingOp`, `SnoozeOp`, `KeepOp`, `HarvestSaveOp`, `PruneOp`, `RoundupPhasesOp`,
-`ClassifyOp`, `StampRoundupOp` and `ReloadOp` (`decisions.py`). Screens call `InboxApp` methods
-that build ops and `submit` them; they never write.
+`Writer` is one daemon thread draining a queue in order. Consecutive ready ops of one kind
+form a group of up to `GROUP_LIMIT` (`prune.DELETE_BATCH`, 25): marks (keep going, snooze,
+keep), archives and deletes each run inside one registry transaction (`batch.run_batch`, see
+[registry.md](registry.md)) that rechecks each session right before acting on it. Ops stay in
+the queue while their group runs: the executor *claims* each one as its turn comes, which moves
+it to running and delivers its `Started`. An op withdrawn before its claim — by `cancel(ticket)`,
+`u` or the discard confirm — is skipped and gets no `Finished`; only the claimed one is
+`running`. Every claimed op gets its own `Finished` with its own outcome and generation; only
+the last carries the reload snapshot. A group whose transaction fails before claiming anything
+still finishes those ops with the failure. Harvest, prune, roundup, classify, stamp and reload
+ops always run alone. The writer takes one `decisions.Executor` holding both `execute` and
+`execute_group`; the app's default is `decisions.EXECUTOR`, a test can inject its own executor
+object (which then groups too), and a plain callable is wrapped as `decisions.OneByOne`. Ops
+are `ArchiveOp`, `DeleteOp`, `KeepGoingOp`, `SnoozeOp`, `KeepOp`, `HarvestSaveOp`, `PruneOp`,
+`RoundupPhasesOp`, `ClassifyOp`, `StampRoundupOp` and `ReloadOp` (`decisions.py`). Screens call
+`InboxApp` methods that build ops and `submit` them; they never write. `writer.waiting` counts
+ops that have not started; `writer.unfinished` adds the ones claimed but not yet finished.
 
 - Deletes carry a `not_before` of now plus `DELETE_GRACE_SECONDS` (10 s). Everything else runs
   at once.
@@ -73,11 +112,17 @@ that build ops and `submit` them; they never write.
   further back on repeated presses. An op that has started cannot be undone; an archive is
   reversed with `rl session unarchive`. When part of the batch already ran, the toast says so:
   `undone: 2 of delete 3 sessions (1 already applied)`.
-- `cancel(ticket)` drops one queued op; `discard_pending` drops all that have not started.
+- `cancel(ticket)` drops one op that has not started; `discard_pending` drops all of them.
+  Cancelling the running op asks it to stop at its next item boundary; the flag resets when the
+  next op is claimed, so it never leaks into the rest of a group.
+- A delete still in its grace window does not hold up later ops: a ready mark or archive
+  submitted after it runs first.
 - In read-only mode every submit except a reload is refused with `read-only: <what> is disabled`.
 - An unexpected exception in an op becomes an `internal error: <type>: <message>` outcome and the
-  traceback is appended to `<state dir>/inbox-errors.log`. `InboxApp(strict=True)` re-raises it
-  instead.
+  traceback is appended to `<state dir>/inbox-errors.log`, which rotates to
+  `inbox-errors.log.1` once it reaches 1 MB. Inside a group, only the op that raised gets the
+  internal error; when the whole group raises, every op in it gets the error and the traceback is
+  logged once. `InboxApp(strict=True)` re-raises it instead.
 - A registry write that fails after a file already moved reports it: "on disk, but the registry
   was not updated".
 
@@ -89,7 +134,8 @@ registry `mtime` differs from what the user saw, or the transcript's `(size, mti
 from its `fileFingerprint`. A delete or prune also refuses a thread with no `fileFingerprint`
 (`changed since you looked: no fingerprint, rescan`), and `scanner.filesystem_path` refuses to
 delete a transcript, or a companion, that is not inside its source's session store. A sweep also refuses a transcript newer than `sweep.GRACE_SECONDS`.
-Presence is read fresh: a running session is refused with a pointer to `ringleader-finish`, and a
+Presence is probed inside the transaction, after the locks are taken, and again before an item
+once the reading is over a second old: a running session is refused with a pointer to `ringleader-finish`, and a
 presence result that cannot tell refuses with `can't tell whether <label> is running`. A refused
 op returns its row, shows the reason in a warning toast and asks for a rescan. A harvest is also
 revalidated when the session is already harvested.
@@ -111,7 +157,8 @@ while an enrich job is still draining.
 labels, then posts `ScanLanded`. The hosted Resume picker and the Roundup screen wait on the
 service instead of scanning. A scan newer than `SCAN_FRESH_SECONDS` (120 s) is reused. The
 subtitle shows the scan's age, `scanning…` or `scan failed`, and `presence unknown` when it could
-not tell.
+not tell. Each scan passes the previous `HarvestSnapshot` to `harvests.snapshot_harvests`, which
+reuses a harvest whose file still has the same `(mtime_ns, size)` and rereads the rest.
 
 ### Model jobs
 
@@ -193,7 +240,8 @@ the harvests' folders and asks first when that is `$HOME` or above.
 --unclassified --no-scan`, `doctor`, `config show`. Each runs as `python -P -m ringleader <argv>` in
 its own process group (`-P`, so a `ringleader/` directory in the cwd cannot shadow the installed
 package) and its captured output shows in `OutputScreen` (600 s limit, 2 M characters,
-cancelled on quit). `PALETTE_EXCLUDED` names every other top-level verb with a reason, and a test
+cancelled on quit and whenever the screen is unmounted, so `1`–`7` away from Usage stop its
+run). The output is written once per run, not on every state change. `PALETTE_EXCLUDED` names every other top-level verb with a reason, and a test
 requires each to be in exactly one of the two.
 
 ### Read-only mode
@@ -226,7 +274,15 @@ second by `home/prints.py::PrintCoalescer`.
 - **Jobs belong to the app, not a screen.** Textual cancels a screen's workers when it is popped,
   which would orphan a write or a harvest.
 - **`OptionList` loses its highlight on `set_options`.** `tui/rows.py::set_rows` restores it by
-  key; removal posts no `OptionHighlighted`. Use `OptionList`, not `ListView`, for long lists.
+  key and posts `OptionHighlighted` only when the highlighted row changed; Textual's own removal
+  posts none. Its visuals are built eagerly, about 20 µs a row, so never `set_options` a long
+  list when `set_rows` or `replace_option_prompt_at_index` will do. Use `OptionList`, not
+  `ListView`, for long lists.
+- **Rendering a large `Static` blocks the UI thread.** The Detail conversation (up to 200 KB) is
+  a read-only `TextArea` (`ConversationView`), which renders only the visible lines and
+  re-wraps on resize; the arrows scroll it instead of moving a hidden cursor.
+- **A screen's own `sync` is invisible to the app's version check**, so the first `_rerender`
+  after a push or resume syncs once more. With the memoized view that second sync draws nothing.
 - **Modals own their keys.** App bindings do not fire under a `ModalScreen`, so each modal binds
   its own `y`/`n`/`escape`/digits, and the palette is disabled over one.
 - **`ctrl+r` on the Resume screen means "this tree"**, the picker's meaning, not rescan.

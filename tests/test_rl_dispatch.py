@@ -55,7 +55,7 @@ def test_new_paths_resolve(path, expected):
     node = commands.TABLE
     for tok in path:
         node = node[tok]
-    assert node is expected
+    assert node.resolve() is expected
 
 
 def test_presence_group_lists_its_verbs(capsys):
@@ -140,7 +140,7 @@ def test_every_table_leaf_resolves_to_a_callable():
                 stack.append((path, value))
                 continue
             checked += 1
-            assert callable(value), f"rl {' '.join(path)} is not callable"
+            assert callable(value.resolve()), f"rl {' '.join(path)} does not resolve to a callable"
     assert checked > 40, f"only {checked} leaves walked — TABLE shape changed?"
 
 

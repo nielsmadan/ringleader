@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import date
 
-from .base import UsageReader, UsageRecord
+from .base import UsageReader, UsageRecord, record_day
 from .claude import ClaudeUsageReader
 from .codex import CodexUsageReader
 from .droid import DroidUsageReader
@@ -68,12 +69,8 @@ def rollup(records: Iterable[UsageRecord], key: Callable[[UsageRecord], str]) ->
     return out
 
 
-def day_of(rec: UsageRecord) -> str:
-    return (rec.timestamp or "")[:10]
-
-
-def in_window(rec: UsageRecord, since: str | None, until: str | None) -> bool:
-    d = day_of(rec)
-    if since and d < since:
+def in_window(rec: UsageRecord, since: date | None, until: date | None) -> bool:
+    d = record_day(rec)
+    if since and d < since.isoformat():
         return False
-    return not (until and d > until)
+    return not (until and d > until.isoformat())
