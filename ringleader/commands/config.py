@@ -31,10 +31,11 @@ def _show() -> int:
     print(f"model: {cfg.model}")
     print(f"ai.command_prefix: {shlex.join(cfg.ai_command_prefix) or 'none'}")
     print(f"enrich.model: {cfg.enrich_model or 'default'}")
+    print(f"analyze.model: {cfg.analyze_model or 'default'}")
     print(f"llm.provider: {cfg.llm_provider}")
     print(f"archive.retention_days: {cfg.archive_retention_days}")
     print(f"session.filters: {', '.join(cfg.session_filters) or 'none'}")
-    for task in ("enrich", "harvest"):
+    for task in ("enrich", "harvest", "analyze"):
         model = active_model(cfg, task)
         print(
             f"{task} model: {describe(model) if model else 'none — no model configured/available'}"
@@ -68,6 +69,8 @@ def _set(args: list[str]) -> int:
         cfg.ai_command_prefix = [] if words == ["none"] else words
     elif key == "enrich.model":
         cfg.enrich_model = None if value == "default" else value
+    elif key == "analyze.model":
+        cfg.analyze_model = None if value == "default" else value
     elif key == "llm.provider":
         cfg.llm_provider = value
     elif key == "archive.retention_days":

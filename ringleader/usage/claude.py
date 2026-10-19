@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -9,13 +9,13 @@ from typing import Any
 
 from ..sources.claude_code import default_projects_dir
 from .base import (
+    TokenCounts,
     UsageRecord,
     as_dict,
     as_int,
     files_since,
     latest_day_of,
     project_dir,
-    total_of,
 )
 
 
@@ -44,6 +44,34 @@ def _credit_scope(files: list[Path], session_prefix: str, root: Path) -> list[Pa
     return [f for f in files[: hits[-1] + 1] if project_dir(f, root) in dirs]
 
 
+def is_claude_model(model: str | None) -> bool:
+    return "claude" in (model or "")
+
+
+def _text(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None
+
+
+def request_ids(record: Mapping[str, Any]) -> tuple[str | None, str | None]:
+    return _text(as_dict(record.get("message")).get("id")), _text(record.get("requestId"))
+
+
+def claude_tokens(usage: Mapping[str, Any]) -> TokenCounts:
+    fresh = as_int(usage.get("input_tokens"))
+    cache_read = as_int(usage.get("cache_read_input_tokens"))
+    cache_write = as_int(usage.get("cache_creation_input_tokens"))
+    split = as_dict(usage.get("cache_creation"))
+    return TokenCounts(
+        input=fresh,
+        output=as_int(usage.get("output_tokens")),
+        cache_read=cache_read,
+        cache_write=cache_write,
+        context=fresh + cache_read + cache_write,
+        cache_write_5m=as_int(split.get("ephemeral_5m_input_tokens")),
+        cache_write_1h=min(as_int(split.get("ephemeral_1h_input_tokens")), cache_write),
+    )
+
+
 @dataclass
 class ClaudeUsageReader:
     name: str = "claude"
@@ -70,7 +98,7 @@ class ClaudeUsageReader:
         files = sorted(files_since(self._files(), since), key=str)
         if session_prefix:
             files = _credit_scope(files, session_prefix, self.projects_dir)
-        seen: set[tuple[Any, ...]] = set()
+        seen: set[tuple[str | None, str | None]] = set()
         credited = (r for f in files for r in self._file_records(f, seen))
         yield from (r for r in credited if r.session_id.startswith(session_prefix or ""))
 
@@ -79,7 +107,9 @@ class ClaudeUsageReader:
             return None
         return latest_day_of(self._files(), lambda f: self._file_records(f, set()))
 
-    def _file_records(self, f: Path, seen: set[tuple[Any, ...]]) -> Iterator[UsageRecord]:
+    def _file_records(
+        self, f: Path, seen: set[tuple[str | None, str | None]]
+    ) -> Iterator[UsageRecord]:
         try:
             fh = f.open(encoding="utf-8", errors="replace")
         except OSError:
@@ -95,7 +125,7 @@ class ClaudeUsageReader:
                 rec = self._record(o, f)
                 if rec is None:
                     continue
-                key = (as_dict(o.get("message")).get("id"), o.get("requestId"))
+                key = request_ids(o)
                 if key in seen:
                     continue
                 seen.add(key)
@@ -108,18 +138,12 @@ class ClaudeUsageReader:
         msg = as_dict(o.get("message"))
         usage = as_dict(msg.get("usage"))
         model = msg.get("model") or ""
-        if not usage or "claude" not in model:
+        if not usage or not is_claude_model(model):
             return None
         ts = o.get("timestamp")
         if not ts:
             return None
-        inp = as_int(usage.get("input_tokens", 0))
-        out = as_int(usage.get("output_tokens", 0))
-        cr = as_int(usage.get("cache_read_input_tokens", 0))
-        cw = as_int(usage.get("cache_creation_input_tokens", 0))
-        cw_1h = min(
-            as_int(as_dict(usage.get("cache_creation")).get("ephemeral_1h_input_tokens")), cw
-        )
+        tokens = claude_tokens(usage)
         return UsageRecord(
             source="claude",
             session_id=session_of(f, self.projects_dir),
@@ -127,12 +151,12 @@ class ClaudeUsageReader:
             timestamp=ts,
             provider="anthropic",
             model=model,
-            input=inp,
-            output=out,
-            cache_read=cr,
-            cache_write=cw,
-            cache_write_1h=cw_1h,
+            input=tokens.input,
+            output=tokens.output,
+            cache_read=tokens.cache_read,
+            cache_write=tokens.cache_write,
+            cache_write_1h=tokens.cache_write_1h,
             nested=_subagents_dir(f, self.projects_dir) is not None,
             reasoning=0,
-            total=total_of(input=inp, cache_read=cr, cache_write=cw, output=out),
+            total=tokens.total,
         )

@@ -132,3 +132,11 @@ def test_model_family_maps_bare_aliases():
         "fable",
         "fable",
     ]
+
+
+def test_estimate_prices_a_one_hour_write_no_larger_than_the_whole_write():
+    over = _rec(inp=0, out=0, cr=0, cw=1_000_000)
+    over.cache_write_1h = 3_000_000
+    whole = _rec(inp=0, out=0, cr=0, cw=1_000_000)
+    whole.cache_write_1h = 1_000_000
+    assert estimate(over) == estimate(whole) == pytest.approx(10.0)

@@ -13,6 +13,7 @@ class Config:
     model: str | None = None
     ai_command_prefix: list[str] = field(default_factory=list)
     enrich_model: str | None = None
+    analyze_model: str | None = None
     llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
     archive_retention_days: int = 0  # 0 = keep archived sessions forever
@@ -32,6 +33,7 @@ def load_config(path: Path | None = None) -> Config:
         model=data.get("model"),
         ai_command_prefix=list(data.get("ai_command_prefix", [])),
         enrich_model=data.get("enrich_model"),
+        analyze_model=data.get("analyze_model"),
         llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
         archive_retention_days=data.get("archive_retention_days", 0),

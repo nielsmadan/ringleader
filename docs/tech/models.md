@@ -4,9 +4,10 @@
 
 ## Purpose
 
-Two verbs need a model — `rl session enrich` (classify status / whatItIs / name) and
-`rl session harvest` (distill a finished session into markdown). Both go through a `Model`
-protocol with three implementations, and both **no-op cleanly** when none is available
+Three verbs need a model — `rl session enrich` (classify status / whatItIs / name),
+`rl session harvest` (distill a finished session into markdown) and `rl analyze --label`
+(System-1 labels for flagged episodes, user messages and recurring issues). All go through a
+`Model` protocol with three implementations, and all **no-op cleanly** when none is available
 ([0009](../decisions/0009-reuse-agent-cli-auth-and-store-no-secrets.md)).
 
 ## How it works
@@ -29,7 +30,8 @@ and `rl config set ai llm` reports the install hint.
 
 ### Resolution
 
-`active_model(cfg, task)` is the single resolution point (`task` is `"harvest"` by default, or `"enrich"`):
+`active_model(cfg, task)` is the single resolution point (`task` is `"harvest"` by default, or
+`"enrich"` or `"analyze"`):
 
 1. `ai = llm` → build `LlmModel` from `llm_provider` + `model`; return it only if available.
 2. `ai = claude` / `codex` → build that class; return it only if available.
@@ -38,8 +40,10 @@ and `rl config set ai llm` reports the install hint.
 4. Otherwise `None`.
 
 The model name is per task (`model_name_for`): harvest uses `model`; enrich uses `enrich_model`,
-else the engine default in `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`, others none), else `model`.
-CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s) and the configured
+else the engine default in `ENRICH_DEFAULT_MODELS` (`claude` → `haiku`, others none), else `model`;
+analyze uses `analyze_model` (`rl config set analyze.model <name>`, `default` clears it), else
+`ANALYZE_DEFAULT_MODELS` (`claude` → `haiku`, others none), else `model`.
+CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s, analyze 180 s) and the configured
 `ai_command_prefix` as `command_prefix`, which `complete_json` puts in front of the argv. `describe()` renders
 the choice, and `with_cancel()` returns a copy of a CLI adapter bound to a cancel check.
 
@@ -61,15 +65,63 @@ Returning `None` rather than raising is what makes the no-model path a clean no-
 `harvest` check for `None` and report that nothing was configured, leaving classification to the
 triage skill.
 
-`rl config show` prints the resolved enrich and harvest models, which is the fastest way to see
-what a run would actually use.
+### Analyze labelling
+
+`analysis/labels.py` labels what the deterministic analysis flagged, with a cheap model. It is
+the only model use in `rl analyze`; everything else there is deterministic.
+
+- **What gets labelled.** `plan_labels` picks three groups. Episodes get a `category`
+  (`EPISODE_CATEGORIES`), a `friction` tag (`FRICTION_TAGS`) and a `cause` of at most 140
+  characters. Human user messages that no rule classified get a `kind` (`MESSAGE_KINDS`), but
+  only in sessions that own a planned or already-labelled episode. Recurring issues get a 3–6
+  word name and a one-sentence summary. Each prompt defines every enum value in one sentence and
+  asks for JSON keyed by the ids it sent.
+- **Scopes.** `--label recent` takes unlabelled episodes from the last `RECENT_DAYS` (7) of the
+  scope by severity, capped at `DEFAULT_LABEL_LIMIT` (50); `all` takes every episode in scope.
+  Messages are capped at 500 and issue names at 20. `rl analyze session <id> --label` takes that
+  session uncapped. Without `--label`, the scope is `recent` only on an interactive non-agent
+  TTY (the bare-`rl` inbox rule) and `none` otherwise, with a note naming `--label recent`;
+  `--json` never labels unless `--label` is given. An explicit `--label` given non-interactively
+  is consent and does not prompt.
+- **Cost guard.** Text mode prints `labelling N episodes, M messages, K issues: ~C calls, ~Xs,
+  ~$Y via <model>` to stderr first, and an interactive TTY asks `continue? [Y/n]` unless `--yes`
+  is given. `calls` is batches of `EPISODE_BATCH` (4) episodes and `MESSAGE_BATCH` (75) messages
+  plus one call per issue. Seconds come from `enrichment.estimate_seconds`; dollars from
+  `ESTIMATED_PROMPT_TOKENS` at the model family's input price, omitted when the model has no
+  known price (codex's own default, most `llm` models).
+- **Calls.** `run_labels` runs one `complete_json` per batch on a thread pool sized by
+  `enrichment.default_concurrency`. Ids a reply omits, or labels it with a value outside the
+  enum, are retried once in a fresh batch and then counted as failed. A `ModelError` fails that
+  batch only and feeds the shared `enrichment.Breaker` (the one enrich uses); five identical
+  failures in a row trip it, cancel the queued batches and report the reason. Ctrl-C kills
+  every running model call.
+- **Storage.** Labels live in `labels.sqlite` beside the analysis index (the state dir's
+  `analysis/` by default, so `--index DIR` keeps them in `DIR`). Rows are keyed by (episode id
+  or message key or issue id, content hash, `LABEL_PROMPT_VERSION`) and record the engine and
+  model. A row counts only at the current prompt version, so a prompt or taxonomy change
+  re-plans everything, and an episode whose calls changed status gets a new content hash and is
+  labelled again. An issue keeps its name while new examples join it: it counts as named by issue id and prompt version alone. Writes happen on the calling thread, one transaction per batch. An index
+  rebuild never touches the store, and v1 never garbage-collects it
+  ([0015](../decisions/0015-sqlite-analysis-index.md)).
+- **No-op paths.** No available model sets `labels.note` to `no model configured — run rl config
+  set ai …; labels skipped` and exits 0. An index dir that is not writable skips labelling with
+  a note saying so; existing labels are still joined when the store can be read.
+
+The labelling defaults are **provisional** until the [labelling benchmark](../tests/analyze/README.md)
+runs: its bar on held-out episodes is category accuracy ≥ 80 % and friction accuracy ≥ 70 %.
+
+`rl config show` prints the resolved enrich, harvest and analyze models, which is the fastest
+way to see what a run would actually use.
 
 ## Key entry points
 
 - `models/__init__.py` — `MODELS` (the auto-pick order) and `active_model()`.
 - `models/base.py` — `Model`, `ModelError`, `CallStats`, `ModelTask`.
 - `models/proc.py` — `run_model_process` (the one place a model CLI is spawned) and `kill_all_children`.
-- `enrichment.py` — `enrich_prompt`, `TAIL_CHARS`, `ESTIMATED_SECONDS_PER_CALL`; `scripts/benchmark_enrich.py` measures them.
+- `enrichment.py` — `enrich_prompt`, `TAIL_CHARS`, `ESTIMATED_SECONDS_PER_CALL`, and the
+  `Breaker` enrich and analyze labelling share; `scripts/benchmark_enrich.py` measures them.
+- `analysis/labels.py` — `plan_labels`, `run_labels`, the label prompts and schemas, and
+  `default_label_scope`.
 - `commands/config.py` — `_VALID_ENGINES = ("claude", "codex", "llm")`.
 
 ## Gotchas
@@ -110,3 +162,4 @@ authenticated agent CLIs sitting on `PATH`.
 - [0009: reuse agent CLI auth](../decisions/0009-reuse-agent-cli-auth-and-store-no-secrets.md)
 - [features/harvest-and-publish.md](../features/harvest-and-publish.md)
 - [tests/enrich/](../tests/enrich/README.md) — the enrich model benchmark and its runs
+- [tests/analyze/](../tests/analyze/README.md) — the analysis labelling benchmark (run pending)

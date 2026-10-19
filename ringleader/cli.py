@@ -14,6 +14,7 @@ _FLAT = (
     "prune",
     "roundup",
     "usage",
+    "analyze",
     "doctor",
     "harvests",
     "config",
@@ -65,6 +66,18 @@ def _group_usage(crumbs: list[str], node: dict[str, Any], stream: TextIO) -> Non
     print(f"rl {group} — subcommands: " + _leaf_names(node, group), file=stream)
 
 
+def _quiet_stdout() -> None:
+    try:
+        fd = sys.stdout.fileno()
+    except (OSError, ValueError):
+        return
+    devnull = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull, fd)
+    finally:
+        os.close(devnull)
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else list(argv)
     if not argv and _opens_inbox():
@@ -93,6 +106,9 @@ def main(argv: list[str] | None = None) -> int:
             return entry(rest) or 0
         except (registry.RegistryConflict, registry.AmbiguousSession) as error:
             print(f"rl: {error}", file=sys.stderr)
+            return 1
+        except BrokenPipeError:
+            _quiet_stdout()
             return 1
     _group_usage(crumbs, node, sys.stdout)
     return 0

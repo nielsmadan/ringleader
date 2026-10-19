@@ -21,6 +21,9 @@ go deeper, per subsystem.
   and the one-module-per-verb convention.
 - [usage.md](usage.md) — `usage/`: five per-harness readers, aggregation, pricing, subscription
   windows, and cross-machine merge.
+- [analysis.md](analysis.md) — `analysis/`, `commands/analyze.py`: the SQLite analysis index,
+  signal detection, health, rollups, issues, labels and reports, with the
+  [calibration](analysis.md#calibration) record for its thresholds.
 - [models.md](models.md) — `models/`: the `Model` seam and `active_model()` resolution.
 - [publish.md](publish.md) — `harvests.py`, `publish_state.py`, `publish_git.py`: the harvest
   queue and the guarded write path into a repository.
@@ -47,7 +50,9 @@ into `registry.json` → `overview.py` / `commands/triage.py` / `prune.py` read 
 `refresh.auto_refresh()` is the scan+reconcile+persist wrapper the views call; `--no-scan` skips
 it. Alongside: `models/` supplies classification and harvesting on demand, `harvests.py` queues
 what they produce, `publish_*.py` drains it into a repo, and `usage/` runs an entirely separate
-read path over the same transcript files or database rows for token accounting.
+read path over the same transcript files or database rows for token accounting. `analysis/` is a
+third read path: it indexes Claude and Codex transcripts into a derivable SQLite cache under the
+state dir and answers `rl analyze` from it.
 
 ## Cross-cutting patterns (read before editing any module)
 

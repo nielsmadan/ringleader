@@ -19,13 +19,28 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
    (one-time, wires a capture snippet into their statusLine command) rather than falling
    back to `claude /usage`.
 3. **Drill in.** For each heavy session, run `rl usage session <id> --json`: turns, the
-   full token split, cache hit rate, the top turns, and context growth. A **droid** session
+   full token split, cache hit rate, the top turns, and context growth. `turns` counts every
+   turn, subagents included; `main_turns` counts the main thread, and `top_turns` and
+   `context_growth` cover the main thread only, indexed into its turns. A **droid** session
    reports a single turn holding the whole spend — droid records no per-turn counts — so skip
    the top-turns analysis there and reason from the transcript instead.
-4. **Explain.** Read the session transcript around the top turns (`rl data export <id>`)
+4. **Where it went wrong.** To see which tools, skills and MCP servers a spend belongs to,
+   and where sessions hit errors, retries or cache rebuilds, run `rl analyze --json` for the
+   corpus and `rl analyze session <id> --json` for one session. Both read a local index that
+   the first run builds, so say so before a cold run on a large history. For errors that
+   recur across sessions, run `rl analyze issues --json`: each issue groups one normalized
+   error signature (`command class|category|first error line`, where the first field falls back
+   to the tool name when the call ran no command; user-caused categories such as
+   `user_rejected` or `permission_denied` are not agent failures) and reports how many
+   distinct sessions hit it. The `embed` key says whether near-duplicate signatures were
+   merged; without the optional `embed` extra only exact signatures group, and `reason` says
+   why. `--download-embed-model` fetches the model once, only if the user asks for it.
+   To turn that into a written report of what went wrong, hand off to `ringleader-analyze`;
+   `ringleader-recommend` then proposes edits from its findings.
+5. **Explain.** Read the session transcript around the top turns (`rl data export <id>`)
    and name the *specific* cause — a file re-read many times uncached, a huge tool result
    pasted back each turn, a long session whose context grew monotonically.
-5. **Recommend.** Give concrete, checkable advice tied to what you found: narrow the reads,
+6. **Recommend.** Give concrete, checkable advice tied to what you found: narrow the reads,
    summarize and restart the thread, avoid re-reading a large file, keep the stable prefix
    stable so the cache holds.
 

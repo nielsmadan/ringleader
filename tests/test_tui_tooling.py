@@ -73,6 +73,7 @@ async def test_picker_golden_after_typing_a_filter(tmp_path, golden):
         await settle_workers(app, pilot)
         await pilot.press(*"bravo")
         await until(pilot, lambda: app.screen.query_one("#rows", OptionList).option_count == 1)
+        await until(pilot, lambda: "[all] (1)" in screen_text(app))
         golden("picker/filtered", screen_text(app), replace=_paths(tmp_path))
 
 

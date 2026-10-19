@@ -61,6 +61,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "model": None,
         "ai_command_prefix": [],
         "enrich_model": None,
+        "analyze_model": None,
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
         "archive_retention_days": 0,
@@ -203,6 +204,17 @@ def test_config_set_enrich_model_persists_and_default_clears(tmp_path):
     assert "enrich.model: default" in shown.stdout
 
 
+def test_config_set_analyze_model_persists_and_default_clears(tmp_path):
+    env = _env(tmp_path)
+    assert _run("config", "set", "analyze.model", "sonnet", env=env).returncode == 0
+    shown = _run("config", "show", env=env)
+    assert "analyze.model: sonnet" in shown.stdout
+    data = json.loads((tmp_path / "ringleader" / "config.json").read_text(encoding="utf-8"))
+    assert data["analyze_model"] == "sonnet"
+    assert _run("config", "set", "analyze.model", "default", env=env).returncode == 0
+    assert "analyze.model: default" in _run("config", "show", env=env).stdout
+
+
 def test_config_show_prints_both_model_lines(tmp_path):
     env = _env(tmp_path)
     assert _run("config", "set", "ai", "llm", env=env).returncode == 0
@@ -211,6 +223,7 @@ def test_config_show_prints_both_model_lines(tmp_path):
 
     assert "enrich model: none" in out
     assert "harvest model: none" in out
+    assert "analyze model: none" in out
 
 
 def test_config_show_describes_the_resolved_model_per_task(tmp_path):
@@ -226,6 +239,7 @@ def test_config_show_describes_the_resolved_model_per_task(tmp_path):
 
     assert "enrich model: claude (haiku)" in out
     assert "harvest model: claude (default model)" in out
+    assert "analyze model: claude (haiku)" in out
 
 
 def test_config_set_ai_command_prefix_splits_and_none_clears(tmp_path):

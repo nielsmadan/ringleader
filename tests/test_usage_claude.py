@@ -204,6 +204,16 @@ def test_one_hour_cache_writes_are_a_subset_of_cache_write(tmp_path):
     assert (r.cache_write, r.cache_write_1h) == (50, 30)
 
 
+def test_a_one_hour_write_above_the_total_is_clamped_to_the_total(tmp_path):
+    rec = _assistant("m1", "r1", cw=50)
+    rec["message"]["usage"]["cache_creation"] = {"ephemeral_1h_input_tokens": 80}
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [rec])
+
+    r = next(iter(ClaudeUsageReader(projects_dir=tmp_path).records()))
+
+    assert (r.cache_write, r.cache_write_1h) == (50, 50)
+
+
 def test_session_report_grows_over_the_parent_turns_and_totals_include_the_subagent(tmp_path):
     from ringleader.usage.session import analyze
 

@@ -148,6 +148,12 @@ twice. `rl usage --merge <dir>` is the consumer.
   `session_meta`. In observed rollouts `token_count`
   events carry no thread id, so `own_thread()` only filters payloads that do. Each token_count takes
   the model of the latest `turn_context` after the start. `windows()` is unaffected.
+  Each fork's start is cached in `analysis/codex-own-starts.json` under the state dir
+  (`StartCache`, keyed by path and stat fingerprint, versioned by `REPLAY_VERSION`), so a later run
+  re-reads a fork's head only when the file changed. A reader loads the cache on first use and
+  keeps it for `latest_day` and `records`; `rl usage` writes it once, at the end of the command,
+  with a private atomic write. `rl analyze` reads the same file and never writes it; see
+  [analysis](analysis.md#codex-start-cache).
 - **Pi nested runs** (`<proj>/<stem>/<hash>/run-N/session.jsonl`) take the parent session's id. Reviewer transcripts
   (`<proj>/subagent-artifacts/<uuid>_reviewer_transcript.jsonl`) are not read: each duplicates a
   nested run, so counting both double-counts the reviewer's tokens.

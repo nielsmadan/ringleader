@@ -13,6 +13,7 @@ class SessionReport:
     session_id: str = ""
     source: str = ""
     turns: int = 0
+    main_turns: int = 0
     totals: Bucket = field(default_factory=Bucket)
     cache_hit_rate: float = 0.0
     top_turns: list[tuple[int, int]] = field(default_factory=list)
@@ -33,6 +34,7 @@ def analyze(records: list[UsageRecord]) -> SessionReport:
     denom = rep.totals.cache_read + rep.totals.input + rep.totals.cache_write
     rep.cache_hit_rate = round(rep.totals.cache_read / denom, 4) if denom else 0.0
     main = [r for r in ordered if not r.nested]
+    rep.main_turns = len(main)
     rep.top_turns = sorted(((i, r.total) for i, r in enumerate(main)), key=lambda t: -t[1])[
         :_TOP_TURNS_LIMIT
     ]

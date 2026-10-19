@@ -1,8 +1,8 @@
 # Smoke checklist
 
-The six `ringleader-*` skills (`ringleader-overview`, `ringleader-init`,
-`ringleader-triage`, `ringleader-cleanup`, `ringleader-usage`, and
-`ringleader-publish`) are markdown (agent-driven flows over the `rl` CLI), so there's no
+The nine `ringleader-*` skills (`ringleader-overview`, `ringleader-init`,
+`ringleader-triage`, `ringleader-cleanup`, `ringleader-usage`, `ringleader-finish`,
+`ringleader-publish`, `ringleader-analyze`, and `ringleader-recommend`) are markdown (agent-driven flows over the `rl` CLI), so there's no
 unit-test harness for them —
 `just test` covers `rl` itself. This is a manual run list for exercising the skills end to
 end before a release. Each row gives the command(s) to run and what "working" looks like.
@@ -44,3 +44,6 @@ Every command below then reads and writes only `.sandbox/`; exit the shell and r
 | 10b | `rl resume --to` hands a session to a different agent | `uv run rl resume <id-prefix> --to codex --dry-run`, then re-run it without `--dry-run`. | The dry run prints `would write:` and leaves `~/.local/share/ringleader/handoffs/` absent; the real run writes one owner-only (`0600`) Markdown transcript there and launches Codex with a prompt naming the original agent and pointing at that file. The source session's registry entry is unchanged and it is still listed by `rl resume`. |
 | 10c | `rl resume` refuses safely when it cannot launch | Try each of: an id that does not exist; an id that is archived; a session whose directory you have since deleted; `--to emacs`. | Each exits non-zero with a message naming the fix (`rl session unarchive <id>`, `rl workspace retarget`, the list of valid agents). None of them launches an agent or changes directory. |
 | 11 | Droid sessions are scanned, resumable, counted and archived whole | On a machine with real droid history: `rl overview --source droid --sessions`, `rl usage --source droid --all --by session`, `rl resume <droid-id-prefix> --dry-run`, then archive one finished droid session and inspect the archive directory | Overview lists only **top-level** droid sessions — subagent threads (those carrying `callingSessionId`) never appear, so the count is far below the file count under `~/.factory/sessions`. Usage reports totals with **no cost column** for droid (Factory bills credits; nothing is priced), one record per session. The dry run prints `droid resume <id>` and the session's own directory. The archive holds the transcript **and both** `<uuid>.settings.json` / `.settings.json.bak` sidecars, and `rl usage --archived --source droid` still counts it. |
+| 12a | `ringleader-analyze` hands a cold index to the user | With no analysis index built, drive `ringleader-analyze` inside an agent | `rl analyze --json --no-refresh` exits 3; the skill says the index isn't built, tells the user to run `rl analyze` in a terminal, builds nothing and stops. |
+| 12b | `ringleader-analyze` writes a findings report | With the index built (`rl analyze` run once in a terminal), drive `ringleader-analyze` over the last 7 days | The skill reads the worst sessions and their episodes, passes no `--label`, and saves a report via `rl analyze reports save findings -`; `rl analyze reports --kind findings --json` lists it with its window. |
+| 12c | `ringleader-recommend` cites its findings and edits nothing | After 12b, drive `ringleader-recommend` | A report is saved with `rl analyze reports save recommendations - --based-on <id>`; its `based_on` names the findings report; no skill, instruction or config file changes (`git status` in the repo and `~/.claude` is clean of edits). |

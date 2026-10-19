@@ -59,7 +59,7 @@ def default_codex_dir() -> Path:
     )
 
 
-def _is_preamble(text: str) -> bool:
+def is_preamble(text: str) -> bool:
     t = text.lstrip()
     return t.startswith("# AGENTS.md") or "<INSTRUCTIONS>" in text
 
@@ -101,7 +101,7 @@ def _message_stats(path: Path) -> tuple[str | None, str | None, int]:
                 continue
             if not first_seen:
                 first_seen = True
-                if _is_preamble(text):
+                if is_preamble(text):
                     continue  # drop only the injected first-message preamble
             message_count += 1
             first = first if first is not None else text

@@ -1,3 +1,6 @@
+import subprocess
+import sys
+
 import pytest
 from ringleader import commands
 from ringleader.cli import main
@@ -230,3 +233,24 @@ def test_stream_without_isatty_is_not_a_terminal():
     from ringleader import cli
 
     assert cli._is_tty(object()) is False
+
+
+def test_output_into_a_closed_pipe_exits_one_without_a_traceback():
+    script = (
+        "import sys\n"
+        "from ringleader import cli\n"
+        "def flood(argv):\n"
+        "    for _ in range(100_000):\n"
+        "        print('x' * 100)\n"
+        "    return 0\n"
+        "cli.TABLE['flood'] = flood\n"
+        "sys.exit(cli.main(['flood']))\n"
+    )
+    proc = subprocess.Popen(
+        [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE
+    )
+    assert proc.stdout is not None and proc.stderr is not None
+    proc.stdout.close()
+    err = proc.stderr.read()
+    proc.stderr.close()
+    assert (proc.wait(), err) == (1, b"")

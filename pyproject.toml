@@ -12,6 +12,9 @@ dependencies = ["textual>=8"]
 license = "MIT"
 authors = [{ name = "Niels Madan" }]
 
+[project.optional-dependencies]
+embed = ["model2vec>=0.4"]
+
 [project.scripts]
 rl = "ringleader.cli:main"
 
@@ -59,6 +62,19 @@ strict = true
 # dependency, so its absence must not fail the type check.
 [[tool.mypy.overrides]]
 module = "llm"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "model2vec",
+    "model2vec.*",
+    "numpy",
+    "numpy.*",
+    "tokenizers",
+    "tokenizers.*",
+    "huggingface_hub",
+    "huggingface_hub.*",
+]
 ignore_missing_imports = true
 
 [tool.ruff]

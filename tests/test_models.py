@@ -1,4 +1,6 @@
 import json
+import threading
+import time
 import types
 from pathlib import Path
 
@@ -275,6 +277,10 @@ def _cfg(**kw):
         (_cfg(), "codex", "enrich", None),
         (_cfg(enrich_model="sonnet", model="opus"), "claude", "harvest", "opus"),
         (_cfg(enrich_model="sonnet"), "claude", "harvest", None),
+        (_cfg(enrich_model="sonnet", model="opus"), "claude", "analyze", "haiku"),
+        (_cfg(analyze_model="sonnet", enrich_model="opus"), "claude", "analyze", "sonnet"),
+        (_cfg(model="gpt-x"), "codex", "analyze", "gpt-x"),
+        (_cfg(), "codex", "analyze", None),
     ],
 )
 def test_model_name_for(cfg, engine, task, expected):
@@ -285,6 +291,12 @@ def test_active_model_for_enrich_builds_haiku_with_timeout(monkeypatch):
     monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: "/bin/claude")
     m = models.active_model(_cfg(ai="claude"), "enrich")
     assert m == ClaudeCliModel(model="haiku", timeout=120.0)
+
+
+def test_active_model_for_analyze_builds_haiku_with_its_own_timeout(monkeypatch):
+    monkeypatch.setattr("ringleader.models.claude_cli.shutil.which", lambda n: "/bin/claude")
+    m = models.active_model(_cfg(ai="claude"), "analyze")
+    assert m == ClaudeCliModel(model="haiku", timeout=180.0)
 
 
 def test_active_model_defaults_to_harvest_task(monkeypatch):
@@ -434,3 +446,27 @@ def test_describe_names_the_command_prefix():
     model = ClaudeCliModel(model="haiku", command_prefix=("env", "A=b c"))
 
     assert models.describe(model) == "claude (haiku) via env 'A=b c'"
+
+
+def test_a_cancelled_llm_call_returns_before_the_request_finishes(monkeypatch):
+    release = threading.Event()
+
+    def slow(self, prompt, schema):
+        release.wait(5)
+        return {}
+
+    monkeypatch.setattr(LlmModel, "_complete", slow)
+    model = models.with_cancel(LlmModel(), lambda: True)
+    started = time.monotonic()
+    try:
+        with pytest.raises(ModelError, match="cancelled"):
+            model.complete_json("p", {})
+    finally:
+        release.set()
+    assert time.monotonic() - started < 2
+
+
+def test_an_llm_call_that_is_not_cancelled_returns_its_result(monkeypatch):
+    monkeypatch.setattr(LlmModel, "_complete", lambda self, prompt, schema: {"ok": prompt})
+    model = models.with_cancel(LlmModel(), lambda: False)
+    assert model.complete_json("p", {}) == {"ok": "p"}

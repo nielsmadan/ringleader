@@ -43,6 +43,7 @@ PALETTE_EXCLUDED: dict[str, str] = {
     "roundup": "deletes — use the Roundup screen",
     "resume": "interactive — use the Resume screen",
     "inbox": "this app",
+    "analyze": "builds an index on first run — run it from a shell",
     "install": "changes agent configuration on this machine",
     "update": "changes agent configuration on this machine",
     "uninstall": "changes agent configuration on this machine",

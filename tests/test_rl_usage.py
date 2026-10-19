@@ -455,6 +455,30 @@ def test_unambiguous_session_prefix_still_reports(monkeypatch, capsys):
     assert "ab111" in capsys.readouterr().out
 
 
+def _nested(rec):
+    rec.nested = True
+    return rec
+
+
+def test_session_with_subagents_labels_the_main_thread_sections(monkeypatch, capsys):
+    records = [
+        _rec(session="ab111", ts="2026-08-17T10:00:00Z"),
+        _nested(_rec(session="ab111", ts="2026-08-17T10:01:00Z", inp=9000)),
+        _rec(session="ab111", ts="2026-08-17T10:02:00Z"),
+    ]
+    monkeypatch.setattr(usage_cmd, "collect", lambda sources, dirs=None, **_: list(records))
+
+    assert usage_cmd.cmd_usage(["session", "ab"]) == 0
+    text = capsys.readouterr().out
+    assert "3 turns: 2 main, 1 subagent" in text
+    assert "top main-thread turns by tokens" in text
+    assert "over 2 main-thread turns" in text
+
+    usage_cmd.cmd_usage(["session", "ab", "--json"])
+    doc = json.loads(capsys.readouterr().out)
+    assert (doc["turns"], doc["main_turns"]) == (3, 2)
+
+
 def test_cmd_usage_total_includes_subagent_tokens(tmp_path, capsys):
     def line(msg_id):
         return json.dumps(

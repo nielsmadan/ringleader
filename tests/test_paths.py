@@ -29,3 +29,26 @@ def test_save_registry_creates_a_missing_state_dir(tmp_path, monkeypatch):
     assert not target.parent.exists()
     registry.save_registry(target, registry.empty_registry())
     assert target.exists()
+
+
+def test_analysis_index_lives_under_the_state_dir(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    assert paths.analysis_index_path(1) == tmp_path / "ringleader" / "analysis" / "index-v1.sqlite"
+    assert paths.analysis_lock_path() == tmp_path / "ringleader" / "analysis" / "index.lock"
+    assert paths.analysis_labels_path() == tmp_path / "ringleader" / "analysis" / "labels.sqlite"
+    assert paths.analysis_labels_path(tmp_path / "idx") == tmp_path / "idx" / "labels.sqlite"
+    assert (
+        paths.analysis_reports_dir("findings") == tmp_path / "ringleader" / "analysis" / "findings"
+    )
+
+
+def test_analysis_index_follows_an_override_dir(tmp_path):
+    assert paths.analysis_index_path(3, tmp_path) == tmp_path / "index-v3.sqlite"
+    assert paths.analysis_lock_path(tmp_path) == tmp_path / "index.lock"
+
+
+def test_ensure_analysis_dir_is_owner_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    d = paths.ensure_analysis_dir()
+    assert d == tmp_path / "ringleader" / "analysis"
+    assert d.stat().st_mode & 0o777 == 0o700

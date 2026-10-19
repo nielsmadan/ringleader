@@ -1,6 +1,23 @@
+import hashlib
+import inspect
 import json
+import os
+import stat
 
-from ringleader.usage.codex import CodexUsageReader, own_events_start, own_thread
+from ringleader import paths
+from ringleader.analysis import codex as analysis_codex
+from ringleader.commands import usage as usage_cmd
+from ringleader.sources.base import stat_fingerprint
+from ringleader.usage import aggregate
+from ringleader.usage import codex as usage_codex
+from ringleader.usage.codex import (
+    REPLAY_VERSION,
+    CodexUsageReader,
+    StartCache,
+    _head,
+    own_events_start,
+    own_thread,
+)
 
 SESSION = "01a0118b-f3a9-7453-af81-02d2d94a4e64"
 
@@ -362,6 +379,27 @@ def test_own_events_start_reads_the_recorded_ordinal():
     assert own_events_start(records) == 12
 
 
+def _stream_until(records, limit):
+    for index, record in records:
+        if index > limit:
+            raise AssertionError(f"read past line {limit}")
+        yield index, record
+
+
+def test_own_events_start_stops_reading_at_the_recorded_ordinal():
+    records = [(0, _fork_meta(ordinal=3)), *((i, _settings_applied(PARENT)) for i in range(1, 50))]
+
+    assert own_events_start(_stream_until(records, 3)) == 3
+
+
+def test_own_events_start_stops_reading_at_its_own_settings_record():
+    replay = ((i, _settings_applied(PARENT)) for i in range(1, 5))
+    tail = ((i, _settings_applied(PARENT)) for i in range(6, 50))
+    records = [(0, _fork_meta(ordinal=None)), *replay, (5, _settings_applied(CHILD)), *tail]
+
+    assert own_events_start(_stream_until(records, 5)) == 5
+
+
 def test_own_thread_accepts_unstamped_and_own_payloads_only():
     assert own_thread({}, CHILD) is True
     assert own_thread({"thread_id": CHILD}, CHILD) is True
@@ -393,4 +431,216 @@ def test_windows_are_unchanged_by_turn_context_and_replay_lines(tmp_path):
 
     assert list(CodexUsageReader(sessions_dir=noisy).windows()) == list(
         CodexUsageReader(sessions_dir=plain).windows()
+    )
+
+
+def _forked_rollout(tmp_path):
+    lines = [
+        _fork_meta(ordinal=None),
+        _token_count(900, 0, 0, 90, 0, ts="2026-08-17T20:00:00Z"),
+        _settings_applied(CHILD),
+        _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z"),
+    ]
+    return _write_named(tmp_path, CHILD, lines)
+
+
+def _counting_head(opened):
+    def head(path):
+        opened.append(path)
+        return _head(path)
+
+    return head
+
+
+def test_start_cache_does_not_reopen_a_rollout_whose_fingerprint_is_unchanged(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    opened = []
+
+    first = StartCache(store, _counting_head(opened))
+    assert first.start(rollout) == 2
+    first.flush()
+    second = StartCache(store, _counting_head(opened))
+
+    assert second.start(rollout) == 2
+    assert opened == [rollout]
+
+
+def test_start_cache_rereads_a_rollout_that_changed(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    opened = []
+    first = StartCache(store, _counting_head(opened))
+    first.start(rollout)
+    first.flush()
+    with rollout.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(_turn_context("gpt-x")) + "\n")
+
+    StartCache(store, _counting_head(opened)).start(rollout)
+
+    assert opened == [rollout, rollout]
+
+
+def test_start_cache_ignores_a_corrupt_store_and_rebuilds_it(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    store.write_text("{not json", encoding="utf-8")
+    cache = StartCache(store)
+
+    assert cache.start(rollout) == 2
+    cache.flush()
+
+    assert list(json.loads(store.read_text(encoding="utf-8"))["entries"]) == [str(rollout)]
+
+
+def test_start_cache_survives_an_unwritable_store(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    blocker = tmp_path / "blocker"
+    blocker.write_text("file", encoding="utf-8")
+    cache = StartCache(blocker / "starts.json")
+
+    assert cache.start(rollout) == 2
+    cache.flush()
+    assert blocker.read_text(encoding="utf-8") == "file"
+
+
+def test_start_of_a_rollout_that_forks_nothing_is_zero(tmp_path):
+    rollout = _write(
+        tmp_path / "sessions", [_token_count(1, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z")]
+    )
+
+    assert StartCache(tmp_path / "starts.json").start(rollout) == 0
+
+
+def test_reader_fills_the_shared_start_cache_in_the_analysis_state_dir(tmp_path):
+    _forked_rollout(tmp_path / "sessions")
+    reader = CodexUsageReader(sessions_dir=tmp_path / "sessions")
+
+    recs = list(reader.records())
+    reader.flush()
+
+    assert [r.input for r in recs] == [10]
+    assert paths.codex_starts_path().is_file()
+
+
+def test_one_reader_resolves_each_fork_once_and_writes_only_when_flushed(tmp_path):
+    forked = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    opened = []
+    reader = CodexUsageReader(
+        sessions_dir=tmp_path / "sessions", starts=StartCache(store, _counting_head(opened))
+    )
+
+    assert reader.latest_day() == "2026-08-17"
+    assert [r.input for r in reader.records()] == [10]
+    assert (opened, store.exists()) == ([forked], False)
+    reader.flush()
+
+    assert list(json.loads(store.read_text(encoding="utf-8"))["entries"]) == [str(forked)]
+
+
+def test_the_usage_command_flushes_the_start_cache_it_filled(tmp_path):
+    _forked_rollout(tmp_path / "sessions")
+
+    found = usage_cmd.collect(["codex"], {"codex": {"sessions_dir": tmp_path / "sessions"}})
+
+    assert [r.input for r in found] == [10]
+    assert paths.codex_starts_path().is_file()
+
+
+def test_the_default_usage_run_flushes_the_start_cache_it_filled(tmp_path):
+    _forked_rollout(tmp_path / "_codex")
+
+    assert usage_cmd.cmd_usage(["--json"]) == 0
+    assert paths.codex_starts_path().is_file()
+
+
+def test_collecting_archived_usage_flushes_the_start_cache_it_filled(tmp_path):
+    _forked_rollout(tmp_path / "archive")
+
+    found = aggregate.collect_archived(["codex"], tmp_path / "archive")
+
+    assert [r.input for r in found] == [10]
+    assert paths.codex_starts_path().is_file()
+
+
+def test_start_cache_writes_the_store_private(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    cache = StartCache(store)
+    cache.start(rollout)
+    cache.flush()
+
+    assert stat.S_IMODE(store.stat().st_mode) == 0o600
+
+
+def test_start_cache_ignores_a_store_written_by_another_replay_version(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    stale = {str(rollout): [stat_fingerprint(rollout.stat()), 99]}
+    store.write_text(json.dumps({"v": REPLAY_VERSION + 1, "entries": stale}), encoding="utf-8")
+
+    assert StartCache(store).start(rollout) == 2
+
+
+def test_start_cache_rereads_a_rollout_replaced_with_the_same_size_and_mtime(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    store = tmp_path / "starts.json"
+    first = StartCache(store)
+    first.start(rollout)
+    first.flush()
+    before = rollout.stat()
+    swap = rollout.with_name("swap.jsonl")
+    swap.write_bytes(rollout.read_bytes())
+    os.utime(swap, ns=(before.st_atime_ns, before.st_mtime_ns))
+    swap.replace(rollout)
+    opened = []
+
+    StartCache(store, _counting_head(opened)).start(rollout)
+
+    assert opened == [rollout]
+
+
+def test_start_cache_stores_only_forked_rollouts_and_drops_vanished_ones(tmp_path):
+    forked = _forked_rollout(tmp_path / "sessions")
+    plain = _write(tmp_path / "plain", [_token_count(1, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z")])
+    gone = _write_named(
+        tmp_path / "gone", "01a0118b-f3a9-7453-af81-02d2d94a4e00", [_fork_meta(ordinal=None)]
+    )
+    store = tmp_path / "starts.json"
+    cache = StartCache(store)
+    for rollout in (forked, plain, gone):
+        cache.start(rollout)
+    gone.unlink()
+    cache.flush()
+
+    assert list(json.loads(store.read_text(encoding="utf-8"))["entries"]) == [str(forked)]
+
+
+def test_start_cache_creates_the_analysis_dir_private(tmp_path):
+    rollout = _forked_rollout(tmp_path / "sessions")
+    cache = StartCache()
+    cache.start(rollout)
+    cache.flush()
+
+    assert stat.S_IMODE(paths.analysis_dir().stat().st_mode) == 0o700
+
+
+def test_replay_logic_is_pinned_to_the_replay_version():
+    parts = (
+        usage_codex.own_events_start,
+        usage_codex._ordinal_start,
+        usage_codex._settings_applied,
+        usage_codex._forked_start,
+        usage_codex._head,
+        usage_codex.StartCache.start,
+        analysis_codex._replay_rows,
+        analysis_codex._lines,
+        analysis_codex._parse,
+    )
+    material = "".join(inspect.getsource(part) for part in parts) + repr(usage_codex._REPLAY_BURST)
+
+    assert (REPLAY_VERSION, hashlib.sha256(material.encode()).hexdigest()[:16]) == (
+        2,
+        "7e01ee09f7dcaf8f",
     )

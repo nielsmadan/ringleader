@@ -198,6 +198,23 @@ def test_enrich_sessions_trips_the_breaker_on_repeated_identical_failures(tmp_pa
     assert (outcome.failed, model.calls, outcome.classified) == (5, 5, 0)
 
 
+def test_breaker_trips_on_identical_failures_and_names_the_streak():
+    breaker = enrichment.Breaker(limit=3)
+    for _ in range(3):
+        breaker.record_failure(ModelError("quota exhausted"))
+    assert breaker.tripped.is_set()
+    assert breaker.reason == "3 calls failed in a row: quota exhausted"
+
+
+def test_breaker_success_resets_the_streak():
+    breaker = enrichment.Breaker(limit=3)
+    breaker.record_failure("quota exhausted")
+    breaker.record_failure("quota exhausted")
+    breaker.record_success()
+    breaker.record_failure("quota exhausted")
+    assert (breaker.streak, breaker.reason) == (1, None)
+
+
 def test_enrich_sessions_breaker_ignores_varied_failures(tmp_path):
     path = _registry(tmp_path, [_thread(f"s{i}") for i in range(8)])
 

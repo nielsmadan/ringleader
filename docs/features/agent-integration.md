@@ -33,7 +33,7 @@ Dormant-session views do not yet use presence to exclude running sessions.
 
 ## Skills
 
-Seven bundled skills at `.agents/skills/ringleader-*`, each an agent-neutral `SKILL.md`. Six
+Nine bundled skills at `.agents/skills/ringleader-*`, each an agent-neutral `SKILL.md`. Eight
 also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 (`just sync-playbook`); `ringleader-publish` ships `references/protocol.md` instead:
 
@@ -46,6 +46,8 @@ also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 | `ringleader-finish` | finish the session you are *in*, harvesting from live context |
 | `ringleader-usage` | explain where tokens went |
 | `ringleader-publish` | drain pending harvests into repository docs |
+| `ringleader-analyze` | find where sessions went wrong, save findings as a report ([analysis](analysis.md)) |
+| `ringleader-recommend` | turn saved findings into proposed setup edits; never applies them |
 
 `rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid) — the two agents with a native

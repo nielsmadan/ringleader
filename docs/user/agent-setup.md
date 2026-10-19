@@ -15,7 +15,7 @@ rl doctor             # what's linked, registered, and how retention is set
 
 ## Skills
 
-`.agents/skills/` ships seven agent-neutral skills that drive `rl` instead of raw commands:
+`.agents/skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands:
 
 | Skill | Does |
 |---|---|
@@ -26,12 +26,14 @@ rl doctor             # what's linked, registered, and how retention is set
 | `ringleader-finish` | finish the session you're in, harvesting from live context |
 | `ringleader-usage` | explain where tokens went and how to spend fewer (read-only) |
 | `ringleader-publish` | drain pending harvests into the living docs of matching repos |
+| `ringleader-analyze` | find where recent sessions went wrong and save the findings as a report |
+| `ringleader-recommend` | turn saved findings into proposed edits to instruction files, skills and config; proposes only |
 
-The six session-track skills share an agent-neutral `SKILL.md` plus a bundled
+The eight session-track skills share an agent-neutral `SKILL.md` plus a bundled
 `references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
 (`just sync-playbook`). `ringleader-publish` owns its focused publishing protocol.
 
-All seven read natively in **Claude Code, Codex, Droid, OpenCode and Pi** — no per-agent plugin
+All nine read natively in **Claude Code, Codex, Droid, OpenCode and Pi** — no per-agent plugin
 format. `rl install skills` symlinks them into `~/.agents/skills` (Codex, OpenCode, Pi),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid).
 

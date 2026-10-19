@@ -21,11 +21,13 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
   retention, and tombstones. Which verbs preview and which delete.
 - [usage-analytics.md](usage-analytics.md) — token spend across five harnesses, per-session
   breakdowns, subscription windows, and cross-machine merge.
+- [analysis.md](analysis.md) — `rl analyze`: failure signals, session health, cache rebuilds, recurring
+  issues, optional labels, and the reports the `analyze` and `recommend` skills write.
 - [session-portability.md](session-portability.md) — native conversion, forks, resume, handoff,
   lineage, deterministic compact conversion, and crash recovery.
 - [workspace-portability.md](workspace-portability.md) — moving a checkout without stranding its
   sessions; why the registry has to be pinned and why a move refuses to merge.
-- [agent-integration.md](agent-integration.md) — the seven bundled skills, the session-end hook,
+- [agent-integration.md](agent-integration.md) — the nine bundled skills, the session-end hook,
   the status-line capture, and the ownership rules that keep uninstall safe.
 - [memory-curation.md](memory-curation.md) — the parallel `rl mem` track behind the
   `memory-triage` skill.
@@ -40,6 +42,7 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
 | [resuming-sessions](resuming-sessions.md) | [resume](../tech/resume.md), [sources](../tech/sources.md) |
 | [pruning-and-retention](pruning-and-retention.md) | [registry](../tech/registry.md), `prune.py` |
 | [usage-analytics](usage-analytics.md) | [usage](../tech/usage.md) |
+| [analysis](analysis.md) | [analysis](../tech/analysis.md) ([calibration](../tech/analysis.md#calibration)), [ADR 0015](../decisions/0015-sqlite-analysis-index.md), `commands/analyze.py`, `analysis/` |
 | [session-portability](session-portability.md) | [session-portability internals](../tech/session-portability.md), `portability/`, `commands/conversion.py` |
 | [workspace-portability](workspace-portability.md) | [sources](../tech/sources.md), [scanning-and-refresh](../tech/scanning-and-refresh.md) |
 | [agent-integration](agent-integration.md) | [integration](../tech/integration.md) |

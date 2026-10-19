@@ -73,10 +73,13 @@ rl install             # skills, session-end hook, statusline capture
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
 - **Usage** — where your tokens went, across five harnesses, plus 5h/weekly subscription
   windows. → [Usage analytics](docs/user/usage-analytics.md)
+- **Analyze** — where sessions went wrong: retry loops, failure streaks, rewinds, cache rebuilds,
+  recurring errors, scored per session and grouped by project, tool, skill and model. Reads from a
+  local SQLite index; a model is used only for optional labels. → [Analysis](docs/features/analysis.md)
 
 ## Skills
 
-`.agents/skills/` ships seven agent-neutral skills that drive `rl` instead of raw commands, and
+`.agents/skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands, and
 read natively in Claude Code, Codex, Droid, OpenCode and Pi:
 
 | Skill | Does |
@@ -88,6 +91,8 @@ read natively in Claude Code, Codex, Droid, OpenCode and Pi:
 | `ringleader-finish` | finish the session you're *in*, harvesting from live context — or nothing, when there was nothing to keep |
 | `ringleader-usage` | explain where tokens went and how to spend fewer |
 | `ringleader-publish` | drain pending harvests into the living docs of matching repos |
+| `ringleader-analyze` | find where recent sessions went wrong and save the findings as a report |
+| `ringleader-recommend` | turn saved findings into proposed edits to your agent setup; proposes only |
 
 `memory-triage` is separate and lives in `.claude/skills/`.
 
@@ -110,6 +115,10 @@ rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/droid/opencode/pi
+rl analyze [<selector>] [--by X]    # where sessions went wrong and where tokens went, from a SQLite index
+rl analyze session <id>             # one session in detail
+rl analyze issues                   # error signatures that recur across sessions
+rl analyze reports [save ...]       # saved findings and recommendations
 rl harvests [--json]                # inbox of harvested knowledge
 rl session search <query>           # find a session by name, id prefix or cached blurb
 rl doctor                           # what's linked, registered, and how retention is set
@@ -118,7 +127,7 @@ rl mem <sub>                        # memory plumbing
 rl data <sub>                       # export, tokens, migrate, presence
 rl data presence status [--json]    # is live-session presence wired up
 rl workspace move <old> <new>       # move a checkout without stranding its sessions
-rl config show | set <key> <value>  # the AI engine and retention (stores no secrets)
+rl config show | set <key> <value>  # the AI engine, retention, label model (stores no secrets)
 ```
 
 A `<selector>` is a git-project label (`ringleader`) or a cwd path — **not** a session id.
@@ -216,12 +225,14 @@ That directory must contain all three release binaries and `SHA256SUMS`.
 
 ## The AI engine
 
-`rl session enrich` and `rl session harvest` need a model. Ringleader **stores no secrets** — it
+`rl session enrich`, `rl session harvest` and `rl analyze` labels need a model. Ringleader **stores no secrets** — it
 drives an already-installed agent CLI one-shot (`claude`, then `codex`), reusing that CLI's own
 auth. `rl config set ai <claude|codex|llm>` pins a choice; the `llm` engine calls a provider API
 directly with your own key and is not a dependency. With nothing available, both verbs are clean
 no-ops and classifying stays a manual step in the triage skill. Enrich defaults to `haiku` on the
-`claude` engine; change it with `rl config set enrich.model <name>` (`default` restores `haiku`). If that CLI gets its
+`claude` engine; change it with `rl config set enrich.model <name>` (`default` restores `haiku`).
+`rl analyze` labels default to `haiku` the same way; `rl config set analyze.model <name>` changes
+them. If that CLI gets its
 credentials from a shell wrapper, `rl config set ai.command_prefix sops-exec` launches it through one.
 
 ## Documentation

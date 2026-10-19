@@ -31,6 +31,27 @@ class UsageRecord:
     record_id: str | None = None
 
 
+@dataclass(frozen=True)
+class TokenCounts:
+    input: int
+    output: int
+    cache_read: int
+    cache_write: int
+    context: int
+    cache_write_5m: int = 0
+    cache_write_1h: int = 0
+    reasoning: int = 0
+
+    @property
+    def total(self) -> int:
+        return total_of(
+            input=self.input,
+            cache_read=self.cache_read,
+            cache_write=self.cache_write,
+            output=self.output,
+        )
+
+
 @dataclass
 class WindowSnapshot:
     source: str

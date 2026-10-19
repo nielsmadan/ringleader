@@ -24,7 +24,9 @@ the transcripts `rl session archive` moved out of the agents' own stores.
 rl usage session <id>
 ```
 
-Turn count, the full token split, cache hit rate, the top turns, and context growth. An id
+Turn count, the full token split, cache hit rate, the top turns, and context growth. Totals
+include subagent turns; the top turns and context growth cover the main thread only, and say so
+when the session has subagents (`main_turns` in the JSON). An id
 prefix matching several sessions is refused rather than silently merged. OpenCode detail uses the
 per-response token, model, cost and timestamp data in its database, so day and model grouping do
 not shift when an old session is resumed. **Droid has no per-turn detail to show** — its counts
@@ -79,8 +81,12 @@ rl usage --merge <dir>                      # combined report
 ```
 
 File-based, no sync service. Records carry a machine id and are de-duplicated on merge.
-Exports from this version need this version (or newer) to merge; an older rl drops every record of
-such an export.
+Exports from this version need this version (or newer) to merge: every record now carries
+`cache_write_1h` and `nested`, and an older rl drops every record of such an export. When merging
+across machines, upgrade them all, or the newer machine shows zero usage on the older one.
+
+To see where sessions went wrong rather than where tokens went, use `rl analyze`
+([analysis](../features/analysis.md)).
 
 ## Known reporting artifacts
 

@@ -171,34 +171,43 @@ def _resolve(
     return [(identity, _lookup(index, identity)) for identity in ids]
 
 
-class _Breaker:
-    def __init__(self) -> None:
+class Breaker:
+    def __init__(self, limit: int = BREAKER_FAILURES) -> None:
+        self.limit = limit
         self.prefix: str | None = None
         self.streak = 0
         self.tripped = threading.Event()
         self.reason: str | None = None
         self._lock = threading.Lock()
 
-    def record(self, outcome: _Outcome) -> None:
-        if isinstance(outcome, _Interrupted):
-            return
+    def record_success(self) -> None:
         with self._lock:
-            if isinstance(outcome, Classified):
-                self.prefix, self.streak = None, 0
-                return
-            prefix = str(outcome)[:_BREAKER_PREFIX]
+            self.prefix, self.streak = None, 0
+
+    def record_failure(self, error: BaseException | str) -> None:
+        with self._lock:
+            prefix = str(error)[:_BREAKER_PREFIX]
             self.streak = self.streak + 1 if prefix == self.prefix else 1
             self.prefix = prefix
-            if self.streak >= BREAKER_FAILURES and not self.tripped.is_set():
-                self.reason = f"{self.streak} calls failed in a row: {outcome}"
+            if self.streak >= self.limit and not self.tripped.is_set():
+                self.reason = f"{self.streak} calls failed in a row: {error}"
                 self.tripped.set()
+
+
+def _record(breaker: Breaker, outcome: _Outcome) -> None:
+    if isinstance(outcome, _Interrupted):
+        return
+    if isinstance(outcome, Classified):
+        breaker.record_success()
+    else:
+        breaker.record_failure(outcome)
 
 
 def _attempt(
     model: Model,
     stop: Callable[[], bool],
     tail_for: Callable[[dict[str, Any]], str],
-    breaker: _Breaker,
+    breaker: Breaker,
     identity: Identity,
     thread: dict[str, Any],
 ) -> _Outcome:
@@ -213,7 +222,7 @@ def _attempt(
         outcome = _Interrupted() if stop() else error
     finally:
         if judged:
-            breaker.record(outcome)
+            _record(breaker, outcome)
     return outcome
 
 
@@ -239,7 +248,7 @@ def enrich_sessions(  # noqa: PLR0913 -- injection points the suite drives
         if thread is not None:
             jobs.put((identity, thread))
     results: queue.SimpleQueue[tuple[Identity, _Outcome]] = queue.SimpleQueue()
-    breaker = _Breaker()
+    breaker = Breaker()
     abort = threading.Event()
 
     def stop() -> bool:

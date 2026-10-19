@@ -20,9 +20,11 @@ ModelFactory = Callable[..., Model]
 MODELS: list[ModelFactory] = [ClaudeCliModel, CodexCliModel]
 
 ENRICH_DEFAULT_MODELS: dict[str, str | None] = {"claude": "haiku", "codex": None, "llm": None}
-CALL_TIMEOUT_SECONDS: dict[ModelTask, float] = {"enrich": 120.0, "harvest": 300.0}
+ANALYZE_DEFAULT_MODELS: dict[str, str | None] = {"claude": "haiku", "codex": None, "llm": None}
+CALL_TIMEOUT_SECONDS: dict[ModelTask, float] = {"enrich": 120.0, "harvest": 300.0, "analyze": 180.0}
 
 __all__ = [
+    "ANALYZE_DEFAULT_MODELS",
     "CALL_TIMEOUT_SECONDS",
     "ENRICH_DEFAULT_MODELS",
     "MODELS",
@@ -43,6 +45,8 @@ __all__ = [
 def model_name_for(cfg: Config, engine: str, task: ModelTask) -> str | None:
     if task == "harvest":
         return cfg.model or None
+    if task == "analyze":
+        return cfg.analyze_model or ANALYZE_DEFAULT_MODELS.get(engine) or cfg.model or None
     return cfg.enrich_model or ENRICH_DEFAULT_MODELS.get(engine) or cfg.model or None
 
 
@@ -82,6 +86,6 @@ def describe(model: Model) -> str:
 
 
 def with_cancel(model: Model, cancelled: CancelCheck) -> Model:
-    if isinstance(model, ClaudeCliModel | CodexCliModel):
+    if isinstance(model, ClaudeCliModel | CodexCliModel | LlmModel):
         return dataclasses.replace(model, cancelled=cancelled)
     return model

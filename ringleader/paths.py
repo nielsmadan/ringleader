@@ -101,3 +101,36 @@ def bundled_skills_dir() -> Path:
     if packaged.is_dir():
         return packaged
     return Path(__file__).resolve().parent.parent / ".agents" / "skills"
+
+
+def analysis_dir() -> Path:
+    return state_dir() / "analysis"
+
+
+def ensure_analysis_dir(root: Path | None = None) -> Path:
+    d = root or analysis_dir()
+    existed = d.exists()
+    d.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if root is None or not existed:
+        d.chmod(0o700)
+    return d
+
+
+def analysis_index_path(facts_version: int, root: Path | None = None) -> Path:
+    return (root or analysis_dir()) / f"index-v{facts_version}.sqlite"
+
+
+def analysis_lock_path(root: Path | None = None) -> Path:
+    return (root or analysis_dir()) / "index.lock"
+
+
+def codex_starts_path() -> Path:
+    return analysis_dir() / "codex-own-starts.json"
+
+
+def analysis_labels_path(root: Path | None = None) -> Path:
+    return (root or analysis_dir()) / "labels.sqlite"
+
+
+def analysis_reports_dir(kind: str) -> Path:
+    return analysis_dir() / kind

@@ -61,3 +61,32 @@ It refuses destination merges and does not provide a general transaction journal
 
 The broader design remains unimplemented: per-session native history moves for every supported agent, structured-field-only rewrites, staged publication with checksummed rollback, crash recovery, cross-filesystem manifest verification, and Hooklinesinker liveness gating.
 Any future work must preserve the current rule that historical prompts, commands, tool arguments, and tool results are never search-and-replaced.
+
+## Session analysis
+
+`rl analyze` is implemented (see [analysis](features/analysis.md)). These directions were left out
+of it on purpose.
+
+- **An inbox analysis screen.** The inbox does not read the analysis index. A screen would show
+  the worst sessions and recurring issues beside triage, with one key to open a session's detail.
+- **Local-model label defaults.** Labels use a cheap hosted model through the agent CLI engines.
+  A local model default would make `--label` free, but needs the labelling benchmark
+  ([tests/analyze](tests/analyze/README.md)) run against it first. The benchmark has not been run on
+  a real model yet.
+- **Label garbage collection.** Labels for episodes that no longer exist, and for superseded
+  prompt versions, are never removed. A cleanup would need to decide which labels are still wanted.
+- **Parallel extraction.** A cold build reads every transcript in one process and took 205 s on
+  about 11,600 transcripts. Extraction is per transcript and independent, so it could fan out.
+- **A faster JSON parser.** `orjson` was not added because the cold build stayed under the 5
+  minute bar. Revisit if cold builds grow past it.
+- **Append-only re-extraction.** A changed transcript is re-read whole. A live session that only
+  appended could resume from its last line.
+- **Merge before the session filter.** Recurring issues drop a signature seen in too few sessions
+  before near-duplicates are merged, so near-duplicates that each appear once never surface. Merging
+  first would surface more issues when the `embed` extra is installed.
+- **The deferred precision notes.** Existence probes, failed writes counted as writes, runaway
+  windows a human message does not reset, and Droid's `Create` tool. Each is a small detector change
+  plus a `DERIVE_VERSION` bump and a re-calibration. See
+  [Deferred precision notes](tech/analysis.md#deferred-precision-notes).
+- **Analysis for Droid, OpenCode and Pi.** They contribute tokens only. Calls, signals and episodes
+  need an extractor per agent.

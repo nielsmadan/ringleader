@@ -1,10 +1,8 @@
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Sequence
 from datetime import UTC, date, datetime, timedelta
 from typing import Any
 
@@ -12,9 +10,6 @@ from ..paths import archive_root
 from ..usage import aggregate
 from ..usage.base import UsageReader, UsageRecord, WindowSnapshot, record_day, window_is_current
 from ..usage.codex import CodexUsageReader
-
-_AMBIGUOUS_LIMIT = 10
-_DAY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 _KEYS = {
     "day": record_day,
@@ -25,26 +20,8 @@ _KEYS = {
 }
 
 
-def _day(value: str) -> date:
-    if _DAY.fullmatch(value):
-        with contextlib.suppress(ValueError):
-            return date.fromisoformat(value)
-    raise argparse.ArgumentTypeError(f"{value!r} is not a YYYY-MM-DD date")
-
-
-def _readers(
-    sources: Iterable[str], dirs: dict[str, dict[str, Any]] | None = None
-) -> list[UsageReader]:
-    built = (
-        cls(**(dirs or {}).get(name, {}))
-        for name in sources
-        if (cls := aggregate.READERS.get(name)) is not None
-    )
-    return [reader for reader in built if reader.available()]
-
-
 def _records_from(
-    readers: Iterable[UsageReader], since: date | None = None, session_prefix: str | None = None
+    readers: Sequence[UsageReader], since: date | None = None, session_prefix: str | None = None
 ) -> list[UsageRecord]:
     return [
         r for reader in readers for r in reader.records(since=since, session_prefix=session_prefix)
@@ -57,35 +34,20 @@ def collect(
     since: date | None = None,
     session_prefix: str | None = None,
 ) -> list[UsageRecord]:
-    return _records_from(_readers(sources, dirs), since, session_prefix)
-
-
-def latest_day(readers: Iterable[UsageReader]) -> str | None:
-    return max((d for reader in readers if (d := reader.latest_day())), default=None)
+    readers = aggregate.readers(sources, dirs)
+    records = _records_from(readers, since, session_prefix)
+    aggregate.flush_caches(readers)
+    return records
 
 
 def _window_start(latest: str | None, days: int) -> date | None:
     return date.fromisoformat(latest) - timedelta(days=days - 1) if latest else None
 
 
-_ARCHIVE_KWARG: dict[str, str] = {
-    "claude": "projects_dir",
-    "codex": "sessions_dir",
-    "droid": "sessions_dir",
-}
-
-
 def collect_archived(sources: list[str] | None = None) -> list[UsageRecord]:
-    root = archive_root()
-    wanted = set(sources) if sources is not None else set(aggregate.READERS)
-    out: list[UsageRecord] = []
-    for name, cls in aggregate.READERS.items():
-        if name not in wanted or name not in _ARCHIVE_KWARG:
-            continue
-        reader = cls(**{_ARCHIVE_KWARG[name]: root})
-        if reader.available():
-            out.extend(reader.records())
-    return out
+    return aggregate.collect_archived(
+        sources if sources is not None else aggregate.READERS, archive_root()
+    )
 
 
 def _now() -> datetime:
@@ -119,9 +81,10 @@ def _gather(
         records = _pooled(args, sources, collect(sources))
         start = _window_start(max((record_day(r) for r in records), default=None), args.days)
     else:
-        readers = _readers(sources)
-        start = _window_start(latest_day(readers), args.days)
+        readers = aggregate.readers(sources)
+        start = _window_start(aggregate.latest_day(readers), args.days)
         records = _records_from(readers, since=start) if start else []
+        aggregate.flush_caches(readers)
     return (records, start, None) if start else ([], None, None)
 
 
@@ -164,11 +127,7 @@ def _cmd_session(argv: list[str], prog: str) -> int:
         return 1
     matches = sorted({(r.source, r.session_id) for r in records})
     if len(matches) > 1:
-        print(f"ambiguous session id {args.id!r} — matches {len(matches)} sessions:")
-        for src, sid in matches[:_AMBIGUOUS_LIMIT]:
-            print(f"  {src:<9} {sid}")
-        if len(matches) > _AMBIGUOUS_LIMIT:
-            print(f"  … {len(matches) - _AMBIGUOUS_LIMIT} more")
+        aggregate.print_ambiguous(args.id, matches, 9)
         return 1
     rep = analyze(records)
 
@@ -179,6 +138,7 @@ def _cmd_session(argv: list[str], prog: str) -> int:
                     "session_id": rep.session_id,
                     "source": rep.source,
                     "turns": rep.turns,
+                    "main_turns": rep.main_turns,
                     "tokens": rep.totals.total,
                     "input": rep.totals.input,
                     "output": rep.totals.output,
@@ -195,7 +155,14 @@ def _cmd_session(argv: list[str], prog: str) -> int:
         )
         return 0
 
-    print(f"session {rep.session_id}  ({rep.source}, {rep.turns} turns)")
+    nested = rep.turns - rep.main_turns
+    turns = (
+        f"{rep.turns} turns: {rep.main_turns} main, {nested} subagent"
+        if nested
+        else f"{rep.turns} turns"
+    )
+    scope = "main-thread turns" if nested else "turns"
+    print(f"session {rep.session_id}  ({rep.source}, {turns})")
     print(f"  {rep.totals.total:,} tokens" + (f"   ~${rep.cost:,.2f}" if rep.cost else ""))
     print(
         f"  in={rep.totals.input:,}  out={rep.totals.output:,}  "
@@ -204,14 +171,14 @@ def _cmd_session(argv: list[str], prog: str) -> int:
     )
     print(f"  cache hit rate: {rep.cache_hit_rate:.0%}")
     print()
-    print("  top turns by tokens")
+    print(f"  top {scope} by tokens")
     for i, tot in rep.top_turns[:5]:
         print(f"    turn {i:>3}  {tot:>12,}")
     if rep.context_growth:
         print()
         print(
             f"  context: {rep.context_growth[0]:,} -> {rep.context_growth[-1]:,} tokens "
-            f"over {len(rep.context_growth)} turns"
+            f"over {len(rep.context_growth)} {scope}"
         )
     return 0
 
@@ -339,8 +306,8 @@ def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
     )
     ap.add_argument("--source", action="append", choices=sorted(aggregate.READERS))
     ap.add_argument("--days", type=int, default=7)
-    ap.add_argument("--since", type=_day)
-    ap.add_argument("--until", type=_day)
+    ap.add_argument("--since", type=aggregate.parse_day)
+    ap.add_argument("--until", type=aggregate.parse_day)
     ap.add_argument("--all", action="store_true")
     ap.add_argument("--archived", action="store_true")
     ap.add_argument("--by", choices=sorted(_KEYS), default="project")

@@ -18,6 +18,10 @@ rl
 │   ├── session <id>            where one session's tokens went
 │   ├── windows                 5h/weekly subscription limits
 │   └── export                  dump usage for merging across machines
+├── analyze [<selector>]        where sessions went wrong and where tokens went
+│   ├── session <id>            one session in detail
+│   ├── issues                  recurring error signatures across sessions
+│   └── reports [save]          saved findings and recommendations
 ├── harvests                    inbox of knowledge harvested out of sessions
 ├── doctor                      what's linked, registered, how retention is set
 ├── install | update | uninstall  <skills|statusline|hooks|all>
@@ -41,9 +45,14 @@ rl
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl prune` | Delete tiny + stale sessions. **Previews unless `--delete`.** | `--delete`, `--older-than` (7), `--max-turns` (12), `--project` |
 | `rl usage` | Token usage from local transcript files and agent databases. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until` (`YYYY-MM-DD`), `--all`, `--archived`, `--limit`, `--merge`, `--json` |
-| `rl usage session <id>` | One session's spend: turns, split, cache rate, top turns. | `--json` |
+| `rl usage session <id>` | One session's spend: turns (main and subagent), split, cache rate, top main-thread turns. | `--json` |
 | `rl usage windows` | 5h/weekly windows. Codex from disk; Claude needs `rl install statusline`. | |
 | `rl usage export` | Write usage records out, to `--merge` elsewhere. | `--out` |
+| `rl analyze [<selector>]` | Index Claude and Codex transcripts and report failure signals, health, cache rebuilds and token rollups. Refreshes a SQLite index first; the first run reads every transcript. Default window is the last 7 days of data. On a terminal labels default to `--label recent` with a cost estimate and a confirmation; an agent session, a pipe, a redirected stderr or `--json` labels nothing unless `--label` is passed. `--until` alone reads all history up to that day. `--source` takes `claude` or `claude-code`. | `--project`, `--source`, `--days`/`--since`/`--until`, `--all`, `--archived`, `--by project\|folder\|skill\|plugin\|mcp_server\|tool\|model\|agent`, `--worst`, `--issues`, `--label recent\|all\|none`, `--yes`, `--no-refresh`, `--rebuild`, `--index`, `--registry`, `--json` |
+| `rl analyze session <id>` | One session: outcome, health, signals, episodes with evidence, messages, compactions, context growth, skills, tools, subagents. | `--label`, `--yes`, `--no-refresh`, `--rebuild`, `--index`, `--registry`, `--json` |
+| `rl analyze issues` | Error signatures that recur across sessions. Merges near-duplicates when the `embed` extra and its model are present. | scope flags as above, `--min-sessions` (2), `--limit` (20), `--download-embed-model`, `--no-refresh`, `--rebuild`, `--index`, `--registry`, `--json` |
+| `rl analyze reports` | List saved reports, newest first. `--json` prints `{"schema", "reports": [...]}`. | `--kind findings\|recommendations`, `--limit`, `--json` |
+| `rl analyze reports save <kind> <file\|->` | Store a report under the state dir. Exits 2 on an unreadable file, an empty body or an unknown `--based-on` id. `--json` prints `{"schema", "report_id", "path"}`. | `--title`, `--window`, `--based-on` (repeatable), `--json` |
 | `rl harvests` | The pending harvest queue. | `--json` |
 | `rl doctor` | Per-agent report: skills, hooks, statusline, retention. `--verify-conversion [AGENT]` runs the offline self-verification harness for installed conversion targets (or one named agent) and records a pass. | `--settings`, `--verify-conversion [AGENT]`, `--verified` |
 
@@ -53,6 +62,23 @@ rl
 
 In the default project rollup, `total` matches the `rl triage` count for each project. An
 explicit status view counts every matching session instead.
+
+`rl analyze` exits 0 on success. It exits 1 when more than 20% of changed transcripts failed to
+parse, the index is unreadable, the index dir cannot be written and holds no current index, a
+session is missing or ambiguous, `--download-embed-model` could not load the model, or an explicit
+`--label recent|all` did not complete: no model, a labels store it cannot write or that a newer rl
+wrote, every call failed, or the breaker tripped. A missing or ambiguous session is reported on
+stderr; a missing one points to `rl usage session <id>`, since Droid, OpenCode and Pi sessions have
+no analysis data.
+It exits 2 on a usage error before any refresh: `--rebuild` with `--no-refresh`, `--days` with
+`--all`, `--since` or `--until`, `--since` later than `--until`, or a bare-word selector that
+matches no registered project (a word close to a subcommand, such as `issue`, gets a "did you
+mean"). It exits 3 when `--no-refresh` finds no complete index, or one a different rl version
+built. With `--json`, an index that cannot be used prints an error document whose `index.reason`
+is `missing`, `mismatch`, `unreadable` or `unwritable`.
+`--index DIR` points the index, its lock and the labels at another directory; saved reports and
+the Codex start cache stay under the state dir. For a trial run on real data, pair `--index` with a
+temporary `XDG_DATA_HOME`.
 
 ## Setup
 
@@ -160,15 +186,16 @@ to the explicit presence command or onboarding skill.
 
 ## `rl config`
 
-`rl config show` prints the current values and the resolved enrich and harvest models.
+`rl config show` prints the current values and the resolved enrich, harvest and analyze models.
 `rl config set <key> <value>` accepts:
 
 | Key | Values |
 |---|---|
-| `ai` | `claude` \| `codex` \| `llm` — engine for `enrich`/`harvest` |
+| `ai` | `claude` \| `codex` \| `llm` — engine for `enrich`/`harvest` and `rl analyze` labels |
 | `model` | model name for the chosen engine |
 | `ai.command_prefix` | command the `claude`/`codex` engines launch through, shell-split (`sops-exec`); `none` clears it |
 | `enrich.model` | model for `enrich`; `default` clears it (claude engine then uses `haiku`) |
+| `analyze.model` | model for `rl analyze` labels; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
 | `archive.retention_days` | non-negative int; `0` = keep archives and handoff exports forever. Above `0`, `prune --delete` and `roundup` also remove `handoffs/*.md` exports older than this many days (an unscoped `prune` only) |
 

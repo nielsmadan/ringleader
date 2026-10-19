@@ -113,6 +113,7 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
     "prune": Lazy("prune", "cmd_prune"),
     "roundup": Lazy("roundup", "cmd_roundup"),
     "usage": Lazy("usage", "cmd_usage"),
+    "analyze": Lazy("analyze", "cmd_analyze"),
     "doctor": Lazy("doctor", "cmd_doctor"),
     "harvests": Lazy("harvests", "cmd_harvests"),
     "resume": Lazy("resume", "cmd_resume"),
@@ -132,11 +133,18 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
 # Leaves that parse their own sub-verb instead of nesting in TABLE. Declared by the
 # module that dispatches them, so a new subcommand cannot hide from `command_paths()`.
 def _leaf_subcommands() -> dict[str, tuple[str, ...]]:
-    from . import config, harvests, setup, usage  # noqa: PLC0415 -- keeps CLI startup light
+    from . import (  # noqa: PLC0415 -- keeps CLI startup light
+        analyze,
+        config,
+        harvests,
+        setup,
+        usage,
+    )
 
     return {
         "config": config.SUBCOMMANDS,
         "usage": usage.SUBCOMMANDS,
+        "analyze": analyze.SUBCOMMANDS,
         "harvests": harvests.SUBCOMMANDS,
         "install": setup.nouns_for("install"),
         "update": setup.nouns_for("update"),

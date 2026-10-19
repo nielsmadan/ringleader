@@ -29,8 +29,10 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
   [Cass comparison](reference/coding-agent-session-search.md) covers overlap with an external
   session-search tool and possible complementary uses.
 - tests/: repeatable manual measurements and recorded baselines — the
-  [picker](tests/picker/README.md), the [enrich model benchmark](tests/enrich/README.md) and the
-  [inbox responsiveness benchmark](tests/inbox/README.md).
+  [picker](tests/picker/README.md), the [enrich model benchmark](tests/enrich/README.md), the
+  [inbox responsiveness benchmark](tests/inbox/README.md) and the
+  [analyze labelling benchmark](tests/analyze/README.md). The analysis signal calibration against
+  real transcripts is recorded in [tech/analysis.md](tech/analysis.md#calibration).
 
 ## Layering
 
@@ -43,5 +45,5 @@ re-verified when a dependency moves, not when we change.
 ## A note on state
 
 Nothing under `docs/` describes machine-local state. `registry.json`, `archive/`, `harvests/`
-`publish/`, and `conversion/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
+`publish/`, `conversion/` and `analysis/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
 are never committed — see [tech/registry.md](tech/registry.md).
