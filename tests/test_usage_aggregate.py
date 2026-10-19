@@ -1,5 +1,6 @@
 from datetime import date
 
+import pytest
 from ringleader.usage.aggregate import Bucket, in_window, rollup
 from ringleader.usage.base import UsageRecord, record_day
 from ringleader.usage.pricing import estimate, model_family
@@ -114,3 +115,20 @@ def test_bucket_with_no_priced_records_has_no_cost():
     b.add(_rec(source="codex", model=None))
     assert b.cost_or_none is None
     assert b.cost_partial is False
+
+
+def test_estimate_prices_one_hour_cache_writes_at_double_input():
+    rec = _rec(inp=0, out=0, cr=0, cw=1_000_000)
+    rec.cache_write_1h = 400_000
+
+    assert estimate(rec) == pytest.approx(400_000 * 10 / 1e6 + 600_000 * 6.25 / 1e6)
+
+
+def test_model_family_maps_bare_aliases():
+    assert [model_family(m) for m in ("opus", "sonnet", "haiku", "fable", "mythos")] == [
+        "opus",
+        "sonnet",
+        "haiku",
+        "fable",
+        "fable",
+    ]

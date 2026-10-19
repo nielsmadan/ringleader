@@ -211,7 +211,7 @@ def _cmd_session(argv: list[str], prog: str) -> int:
         print()
         print(
             f"  context: {rep.context_growth[0]:,} -> {rep.context_growth[-1]:,} tokens "
-            f"over {rep.turns} turns"
+            f"over {len(rep.context_growth)} turns"
         )
     return 0
 

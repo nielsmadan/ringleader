@@ -366,3 +366,39 @@ def test_one_project_gets_one_label_across_readers(tmp_path):
     claude = next(iter(ClaudeUsageReader(projects_dir=tmp_path / "claude").records()))
 
     assert pi.project == claude.project == "/Users/x/wrksp/foo"
+
+
+def test_pi_nested_run_is_credited_to_the_parent_session(tmp_path):
+    _pi_session(tmp_path, "--Users-x-wrksp-splash--", [_pi_assistant()])
+    run = (
+        tmp_path
+        / "--Users-x-wrksp-splash--"
+        / f"2026-07-25T22-20-34-239Z_{PI_SESSION}"
+        / "49cee71d"
+        / "run-0"
+    )
+    run.mkdir(parents=True)
+    (run / "session.jsonl").write_text(json.dumps(_pi_assistant(input=7)) + "\n", encoding="utf-8")
+
+    recs = list(PiUsageReader(sessions_dir=tmp_path).records(session_prefix=PI_SESSION[:8]))
+
+    assert sorted((r.session_id, r.project, r.input) for r in recs) == [
+        (PI_SESSION, "/Users/x/wrksp/splash", 7),
+        (PI_SESSION, "/Users/x/wrksp/splash", 22338),
+    ]
+
+
+def test_pi_reviewer_transcript_copies_do_not_double_count_nested_runs(tmp_path):
+    proj = tmp_path / "--Users-x-wrksp-splash--"
+    run = proj / f"2026-10-16T17-32-48-223Z_{PI_SESSION}" / "u" / "run-0"
+    run.mkdir(parents=True)
+    (run / "session.jsonl").write_text(json.dumps(_pi_assistant(input=7)) + "\n", encoding="utf-8")
+    d = proj / "subagent-artifacts"
+    d.mkdir()
+    (d / "u_reviewer_transcript.jsonl").write_text(
+        json.dumps(_pi_assistant(input=7)) + "\n", encoding="utf-8"
+    )
+
+    recs = list(PiUsageReader(sessions_dir=tmp_path).records())
+
+    assert [(r.session_id, r.input) for r in recs] == [(PI_SESSION, 7)]

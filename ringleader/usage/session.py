@@ -32,9 +32,10 @@ def analyze(records: list[UsageRecord]) -> SessionReport:
         rep.totals.add(r)
     denom = rep.totals.cache_read + rep.totals.input + rep.totals.cache_write
     rep.cache_hit_rate = round(rep.totals.cache_read / denom, 4) if denom else 0.0
-    rep.top_turns = sorted(((i, r.total) for i, r in enumerate(ordered)), key=lambda t: -t[1])[
+    main = [r for r in ordered if not r.nested]
+    rep.top_turns = sorted(((i, r.total) for i, r in enumerate(main)), key=lambda t: -t[1])[
         :_TOP_TURNS_LIMIT
     ]
-    rep.context_growth = [r.input + r.cache_read for r in ordered]
+    rep.context_growth = [r.input + r.cache_read for r in main]
     rep.cost = round(rep.totals.cost, 4) if rep.totals.cost else None
     return rep

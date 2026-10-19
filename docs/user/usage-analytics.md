@@ -79,6 +79,8 @@ rl usage --merge <dir>                      # combined report
 ```
 
 File-based, no sync service. Records carry a machine id and are de-duplicated on merge.
+Exports from this version need this version (or newer) to merge; an older rl drops every record of
+such an export.
 
 ## Known reporting artifacts
 
@@ -91,6 +93,14 @@ the grouping splits:
 
 OpenCode projects come from the database's `session.project_id` → `project.worktree` join; the
 opaque id is never reconstructed from a path.
+
+Claude subagent transcripts (including workflow subagents) and pi nested runs are counted too, credited to the session that spawned them, so those totals are higher
+than before. Codex totals can be lower: a forked or spawned rollout replays its parent's history,
+and only the rollout's own token counts are counted. Codex records now carry the model from the
+rollout's `turn_context`.
+
+Claude cost prices one-hour cache writes at 2x the input price and five-minute writes at 1.25x,
+so cost estimates for sessions using the one-hour cache are higher than before.
 
 OpenCode usage includes child/sub-agent session rows because their token totals are separate from
 the parent. Those rows do not appear in session overview or triage, which only curate top-level

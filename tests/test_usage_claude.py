@@ -1,6 +1,6 @@
 import json
 
-from ringleader.usage.claude import ClaudeUsageReader
+from ringleader.usage.claude import ClaudeUsageReader, session_of
 
 
 def _write(dir_, project, session, records):
@@ -109,3 +109,117 @@ def test_record_id_pairs_message_id_with_request_id(tmp_path):
     r = next(iter(ClaudeUsageReader(projects_dir=tmp_path).records()))
 
     assert r.record_id == "m1|r1"
+
+
+def _write_at(dir_, relpath, records):
+    p = dir_ / relpath
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    return p
+
+
+def test_session_of_names_the_parent_of_the_nearest_subagents_dir(tmp_path):
+    root = tmp_path / "-p"
+    assert session_of(root / "sid.jsonl", root) == "sid"
+    assert session_of(root / "sid" / "subagents" / "agent-a1.jsonl", root) == "sid"
+    assert (
+        session_of(root / "sid" / "subagents" / "workflows" / "wf_1" / "agent-b.jsonl", root)
+        == "sid"
+    )
+
+
+def test_session_of_ignores_a_subagents_dir_above_the_projects_root(tmp_path):
+    root = tmp_path / "subagents" / "x" / "projects"
+    assert session_of(root / "-p" / "sid.jsonl", root) == "sid"
+
+
+def test_subagent_and_workflow_subagent_records_are_credited_to_the_parent(tmp_path):
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [_assistant("m1", "r1")])
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", [_assistant("m2", "r2")])
+    _write_at(
+        tmp_path,
+        "-Users-x-wrksp-foo/sid/subagents/workflows/wf_1/agent-b2.jsonl",
+        [_assistant("m3", "r3", inp=7)],
+    )
+
+    recs = list(ClaudeUsageReader(projects_dir=tmp_path).records())
+
+    assert sorted((r.session_id, r.record_id) for r in recs) == [
+        ("sid", "m1|r1"),
+        ("sid", "m2|r2"),
+        ("sid", "m3|r3"),
+    ]
+
+
+def test_subagent_project_falls_back_to_the_project_dir_name(tmp_path):
+    rec = _assistant("m2", "r2")
+    del rec["cwd"]
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", [rec])
+
+    r = next(iter(ClaudeUsageReader(projects_dir=tmp_path).records()))
+
+    assert r.project == "/Users/x/wrksp/foo"
+
+
+def test_request_duplicated_across_main_and_fork_counts_once_in_str_order(tmp_path):
+    dup = _assistant("m1", "r1")
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [dup])
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", [dup])
+    _write(tmp_path, "-Users-x-wrksp-foo", "aaa-fork", [dup])
+
+    recs = list(ClaudeUsageReader(projects_dir=tmp_path).records())
+
+    assert [r.session_id for r in recs] == ["aaa-fork"]
+
+
+def test_session_prefix_includes_the_sessions_subagent_records(tmp_path):
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [_assistant("m1", "r1")])
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", [_assistant("m2", "r2")])
+    _write(tmp_path, "-Users-x-wrksp-foo", "other", [_assistant("m3", "r3")])
+
+    recs = list(ClaudeUsageReader(projects_dir=tmp_path).records(session_prefix="sid"))
+
+    assert sorted(r.record_id for r in recs) == ["m1|r1", "m2|r2"]
+
+
+def test_latest_day_sees_a_subagent_only_newest_day(tmp_path):
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [_assistant("m1", "r1")])
+    late = _assistant("m2", "r2")
+    late["timestamp"] = "2026-08-19T10:00:00.000Z"
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", [late])
+
+    assert ClaudeUsageReader(projects_dir=tmp_path).latest_day() == "2026-08-19"
+
+
+def test_one_hour_cache_writes_are_a_subset_of_cache_write(tmp_path):
+    rec = _assistant("m1", "r1", cw=50)
+    rec["message"]["usage"]["cache_creation"] = {
+        "ephemeral_5m_input_tokens": 20,
+        "ephemeral_1h_input_tokens": 30,
+    }
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", [rec])
+
+    r = next(iter(ClaudeUsageReader(projects_dir=tmp_path).records()))
+
+    assert (r.cache_write, r.cache_write_1h) == (50, 30)
+
+
+def test_session_report_grows_over_the_parent_turns_and_totals_include_the_subagent(tmp_path):
+    from ringleader.usage.session import analyze
+
+    parent = [
+        {**_assistant("m1", "r1", inp=1000, cr=0), "timestamp": "2026-08-17T10:00:00Z"},
+        {**_assistant("m2", "r2", inp=2000, cr=0), "timestamp": "2026-08-17T10:02:00Z"},
+    ]
+    child = [{**_assistant("m3", "r3", inp=10, cr=0), "timestamp": "2026-08-17T10:01:00Z"}]
+    _write(tmp_path, "-Users-x-wrksp-foo", "sid", parent)
+    _write_at(tmp_path, "-Users-x-wrksp-foo/sid/subagents/agent-a1.jsonl", child)
+
+    recs = list(ClaudeUsageReader(projects_dir=tmp_path).records())
+    rep = analyze(recs)
+
+    assert [r.nested for r in sorted(recs, key=lambda r: r.timestamp)] == [False, True, False]
+    assert rep.context_growth == [1000, 2000]
+    assert [t for _, t in rep.top_turns] == [2070, 1070]
+    assert rep.turns == 3
+    assert rep.totals.input == 3010

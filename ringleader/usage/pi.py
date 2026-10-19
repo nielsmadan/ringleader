@@ -13,6 +13,7 @@ from .base import (
     as_float_or_none,
     as_int,
     latest_day_of,
+    project_dir,
     session_files,
     total_of,
 )
@@ -22,7 +23,9 @@ def default_sessions_dir() -> Path:
     return pi_sessions_dir()
 
 
-def _session_id(path: Path) -> str:
+def session_of(path: Path) -> str:
+    if path.name == "session.jsonl" and path.parent.name.startswith("run-"):
+        return path.parents[2].name.split("_", 1)[-1]
     return path.stem.split("_", 1)[-1]
 
 
@@ -42,14 +45,17 @@ class PiUsageReader:
         return self.sessions_dir.exists()
 
     def _files(self) -> list[Path]:
-        return list(self.sessions_dir.glob("*/*.jsonl"))
+        return [
+            *self.sessions_dir.glob("*/*.jsonl"),
+            *self.sessions_dir.glob("*/*/*/run-*/session.jsonl"),
+        ]
 
     def records(
         self, since: date | None = None, session_prefix: str | None = None
     ) -> Iterator[UsageRecord]:
         if not self.available():
             return
-        for f in session_files(self._files(), since, session_prefix, _session_id):
+        for f in session_files(self._files(), since, session_prefix, session_of):
             yield from self._file_records(f)
 
     def latest_day(self) -> str | None:
@@ -81,8 +87,8 @@ class PiUsageReader:
                 cost = as_float_or_none(as_dict(usage.get("cost")).get("total"))
                 yield UsageRecord(
                     source="pi",
-                    session_id=_session_id(f),
-                    project=_decode_project(f.parent.name),
+                    session_id=session_of(f),
+                    project=_decode_project(project_dir(f, self.sessions_dir)),
                     timestamp=o.get("timestamp") or msg.get("timestamp") or "",
                     provider=msg.get("provider"),
                     model=msg.get("model"),

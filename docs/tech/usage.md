@@ -47,6 +47,12 @@ that `date`, never a string.
 therefore go stale when a provider reprices. An unrecognized model yields `None` rather than a
 wrong number.
 
+`estimate()` prices `cache_write_1h` (a subset of `cache_write`, read from
+`usage.cache_creation.ephemeral_1h_input_tokens`) at 2x the input price and the remaining cache
+writes at the table's cache-write price (1.25x). `model_family()` also accepts the bare aliases
+`opus`, `sonnet`, `haiku`, `fable` and `mythos`. Exports written before `cache_write_1h` existed
+load with it at 0.
+
 `ROUTED_PROVIDERS` is the short-circuit before the table is consulted at all: a provider that
 routes requests and bills its own units cannot be priced from the model vendor's list price.
 `factory` is the only member, so every droid record reports no cost.
@@ -130,6 +136,21 @@ twice. `rl usage --merge <dir>` is the consumer.
   deduping needs the full set. OpenCode filters on `time_created` in SQL. Droid reads every
   transcript header and sidecar once per reader, because its per-session dedupe keeps the first
   path in sorted order and an mtime prefilter would hand a twice-filed session to its newer copy.
+- **Claude subagents count toward the parent.** `*/<sid>/subagents/agent-*.jsonl` and
+  `*/<sid>/subagents/workflows/*/agent-*.jsonl` are read with the main transcripts, and
+  `claude.session_of()` credits them to `<sid>`. Files are ordered by `str(path)` before the
+  shared `(message id, requestId)` dedupe, so `<sid>.jsonl` is read before `<sid>/subagents/...`.
+- **Codex forks count once.** A forked or spawned rollout replays its parent's history before its
+  own events. `codex.own_events_start()` finds where they begin (the `subagent_history_start_ordinal`
+  in `session_meta`, else the first `thread_settings_applied` carrying the rollout's own id; 0
+  when the rollout is not a fork) and earlier lines are skipped. An ordinal at or past the last
+  line is not trusted: the start is then the first event stamped more than a second after
+  `session_meta`. In observed rollouts `token_count`
+  events carry no thread id, so `own_thread()` only filters payloads that do. Each token_count takes
+  the model of the latest `turn_context` after the start. `windows()` is unaffected.
+- **Pi nested runs** (`<proj>/<stem>/<hash>/run-N/session.jsonl`) take the parent session's id. Reviewer transcripts
+  (`<proj>/subagent-artifacts/<uuid>_reviewer_transcript.jsonl`) are not read: each duplicates a
+  nested run, so counting both double-counts the reviewer's tokens.
 - **`rl usage session <id>` must agree with `--by session`.** Claude records are deduped by
   (message id, requestId), first file in sorted path order wins, and a resumed or forked session
   copies its parent's lines with the same ids. So for Claude the command reads every transcript in

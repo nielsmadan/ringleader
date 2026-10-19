@@ -1,6 +1,6 @@
 import json
 
-from ringleader.usage.codex import CodexUsageReader
+from ringleader.usage.codex import CodexUsageReader, own_events_start, own_thread
 
 SESSION = "01a0118b-f3a9-7453-af81-02d2d94a4e64"
 
@@ -228,3 +228,169 @@ def test_project_is_none_when_the_rollout_has_no_session_meta(tmp_path):
     _write(tmp_path, [_token_count(100, 0, 0, 10, 0, ts="2026-08-17T21:06:26.967Z")])
 
     assert next(iter(CodexUsageReader(sessions_dir=tmp_path).records())).project is None
+
+
+CHILD = "01a12cfc-2eaa-7492-8e3d-76c57fc66ffb"
+PARENT = "01a12cfb-c620-7ad3-aa4e-1c540d1bf686"
+
+
+def _turn_context(model):
+    return {
+        "type": "turn_context",
+        "timestamp": "2026-08-17T21:00:00Z",
+        "payload": {"model": model},
+    }
+
+
+def _write_named(dir_, session, records):
+    d = dir_ / "2026" / "08" / "17"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / f"rollout-2026-08-17T23-06-19-{session}.jsonl"
+    p.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
+    return p
+
+
+def _fork_meta(*, ordinal):
+    payload = {"id": CHILD, "forked_from_id": PARENT, "cwd": "/x"}
+    if ordinal is not None:
+        payload["subagent_history_start_ordinal"] = ordinal
+    return {"type": "session_meta", "timestamp": "2026-08-17T21:00:00Z", "payload": payload}
+
+
+def _parent_meta():
+    return {
+        "type": "session_meta",
+        "timestamp": "2026-08-17T21:00:00Z",
+        "payload": {"id": PARENT, "cwd": "/x"},
+    }
+
+
+def _settings_applied(thread):
+    return {
+        "type": "event_msg",
+        "timestamp": "2026-08-17T21:00:00Z",
+        "payload": {"type": "thread_settings_applied", "thread_id": thread},
+    }
+
+
+def test_token_counts_take_the_preceding_turn_context_model(tmp_path):
+    _write(
+        tmp_path,
+        [
+            _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z"),
+            _turn_context("gpt-a"),
+            _token_count(20, 0, 0, 2, 0, ts="2026-08-17T21:00:02Z"),
+            _turn_context("gpt-b"),
+            _token_count(30, 0, 0, 3, 0, ts="2026-08-17T21:00:03Z"),
+        ],
+    )
+
+    recs = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [r.model for r in recs] == [None, "gpt-a", "gpt-b"]
+
+
+def test_forked_rollout_counts_only_its_own_token_counts(tmp_path):
+    replay = [
+        _parent_meta(),
+        _turn_context("gpt-old"),
+        _token_count(900, 0, 0, 90, 0, ts="2026-08-17T20:00:00Z"),
+        _settings_applied(CHILD),
+    ]
+    own = [
+        _turn_context("gpt-new"),
+        _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z"),
+        _token_count(20, 0, 0, 2, 0, ts="2026-08-17T21:00:02Z"),
+    ]
+    _write_named(tmp_path, CHILD, [_fork_meta(ordinal=len(replay) + 1), *replay, *own])
+
+    recs = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [(r.input, r.output, r.model) for r in recs] == [(10, 1, "gpt-new"), (20, 2, "gpt-new")]
+
+
+def test_a_fork_whose_ordinal_is_the_line_count_still_counts_its_own_turn(tmp_path):
+    stamp = "2026-08-17T21:00:00"
+    replay = [
+        _parent_meta(),
+        _token_count(900, 0, 0, 90, 0, ts=f"{stamp}.100Z"),
+        _settings_applied(PARENT),
+    ]
+    own = [
+        _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:05Z"),
+        _token_count(20, 0, 0, 2, 0, ts="2026-08-17T21:00:06Z"),
+    ]
+    lines = [_fork_meta(ordinal=len(replay) + len(own) + 1), *replay, *own]
+    _write_named(tmp_path, CHILD, lines)
+
+    recs = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [r.input for r in recs] == [10, 20]
+
+
+def test_a_fork_whose_ordinal_is_the_line_count_and_replays_only_counts_nothing(tmp_path):
+    replay = [_parent_meta(), _token_count(900, 0, 0, 90, 0, ts="2026-08-17T21:00:00Z")]
+    _write_named(tmp_path, CHILD, [_fork_meta(ordinal=len(replay) + 1), *replay])
+
+    assert list(CodexUsageReader(sessions_dir=tmp_path).records()) == []
+
+
+def test_a_fork_without_an_ordinal_starts_at_its_thread_settings_event(tmp_path):
+    lines = [
+        _fork_meta(ordinal=None),
+        _token_count(900, 0, 0, 90, 0, ts="2026-08-17T20:00:00Z"),
+        _settings_applied(CHILD),
+        _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z"),
+    ]
+    _write_named(tmp_path, CHILD, lines)
+
+    recs = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [r.input for r in recs] == [10]
+
+
+def test_own_events_start_is_zero_for_a_rollout_that_replays_nothing():
+    records = [(0, _parent_meta()), (1, _settings_applied(PARENT))]
+
+    assert own_events_start(records) == 0
+    assert own_events_start([]) == 0
+
+
+def test_own_events_start_reads_the_recorded_ordinal():
+    records = [(0, _fork_meta(ordinal=12)), *((i, _settings_applied(PARENT)) for i in range(1, 20))]
+
+    assert own_events_start(records) == 12
+
+
+def test_own_thread_accepts_unstamped_and_own_payloads_only():
+    assert own_thread({}, CHILD) is True
+    assert own_thread({"thread_id": CHILD}, CHILD) is True
+    assert own_thread({"thread_id": PARENT}, CHILD) is False
+
+
+def test_a_token_count_stamped_with_another_thread_is_excluded(tmp_path):
+    foreign = _token_count(900, 0, 0, 90, 0, ts="2026-08-17T21:00:01Z")
+    foreign["payload"]["thread_id"] = PARENT
+    mine = _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:02Z")
+    mine["payload"]["thread_id"] = SESSION
+    _write(tmp_path, [foreign, mine])
+
+    recs = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [r.input for r in recs] == [10]
+
+
+def test_windows_are_unchanged_by_turn_context_and_replay_lines(tmp_path):
+    limits = {
+        "primary": {"used_percent": 12.0, "window_minutes": 300, "resets_at": 1787000000},
+        "secondary": None,
+    }
+    tc = _token_count(10, 0, 0, 1, 0, ts="2026-08-17T21:00:01Z", rate_limits=limits)
+    plain = tmp_path / "plain"
+    noisy = tmp_path / "noisy"
+    _write(plain, [tc])
+    _write(noisy, [_turn_context("gpt-a"), tc])
+
+    assert list(CodexUsageReader(sessions_dir=noisy).windows()) == list(
+        CodexUsageReader(sessions_dir=plain).windows()
+    )

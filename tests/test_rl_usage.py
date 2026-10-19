@@ -453,3 +453,30 @@ def test_unambiguous_session_prefix_still_reports(monkeypatch, capsys):
 
     assert rc == 0
     assert "ab111" in capsys.readouterr().out
+
+
+def test_cmd_usage_total_includes_subagent_tokens(tmp_path, capsys):
+    def line(msg_id):
+        return json.dumps(
+            {
+                "type": "assistant",
+                "requestId": f"r-{msg_id}",
+                "timestamp": "2026-08-17T10:00:00.000Z",
+                "cwd": "/x/foo",
+                "message": {
+                    "id": msg_id,
+                    "model": "claude-opus-5",
+                    "usage": {"input_tokens": 100, "output_tokens": 20},
+                },
+            }
+        )
+
+    proj = tmp_path / "_claude" / "-x-foo"
+    (proj / "sid" / "subagents").mkdir(parents=True)
+    (proj / "sid.jsonl").write_text(line("m1") + "\n", encoding="utf-8")
+    (proj / "sid" / "subagents" / "agent-a.jsonl").write_text(line("m2") + "\n", encoding="utf-8")
+
+    rc = usage_cmd.cmd_usage(["--all", "--json", "--source", "claude"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out)["total_tokens"] == 240

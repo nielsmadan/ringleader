@@ -11,8 +11,15 @@ PRICES = {
 }
 
 
+CACHE_WRITE_1H_MULTIPLIER = 2
+
+
 def model_family(model: str | None) -> str | None:
     m = model or ""
+    if m in PRICES:
+        return m
+    if m == "mythos":
+        return "fable"
     if "claude" not in m:
         return None
     if "fable" in m or "mythos" in m:
@@ -37,4 +44,11 @@ def estimate(rec: UsageRecord) -> float | None:
     if fam is None:
         return None
     inp, out, cw, cr = PRICES[fam]
-    return rec.input * inp + rec.output * out + rec.cache_write * cw + rec.cache_read * cr
+    one_hour = min(rec.cache_write_1h, rec.cache_write)
+    return (
+        rec.input * inp
+        + rec.output * out
+        + one_hour * inp * CACHE_WRITE_1H_MULTIPLIER
+        + (rec.cache_write - one_hour) * cw
+        + rec.cache_read * cr
+    )

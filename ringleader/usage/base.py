@@ -24,6 +24,8 @@ class UsageRecord:
     reasoning: int  # subset of output; never summed into total
     total: int
     cost: float | None = None
+    cache_write_1h: int = 0
+    nested: bool = False
     machine: str | None = None
     # stable per-reader identity; dedupe keys on it instead of the timestamp
     record_id: str | None = None
@@ -103,6 +105,13 @@ def files_since(files: Iterable[Path], since: date | None) -> list[Path]:
     if cutoff is None:
         return sorted(files)
     return sorted(f for f in files if (m := mtime_of(f)) is not None and m >= cutoff)
+
+
+def project_dir(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).parts[0]
+    except (ValueError, IndexError):
+        return path.parent.name
 
 
 def session_files(

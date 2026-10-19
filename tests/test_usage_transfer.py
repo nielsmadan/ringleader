@@ -1,3 +1,4 @@
+import dataclasses
 import json
 
 from ringleader.usage.base import UsageRecord
@@ -106,3 +107,16 @@ def test_load_accepts_an_export_written_before_record_id_existed(tmp_path):
 
     assert len(loaded) == 1
     assert loaded[0].record_id is None
+
+
+def test_an_export_without_cache_write_1h_or_nested_still_loads(tmp_path):
+    raw = {
+        k: v for k, v in dataclasses.asdict(_rec()).items() if k not in {"cache_write_1h", "nested"}
+    }
+    (tmp_path / "old.json").write_text(
+        json.dumps({"version": 1, "machine": "old", "records": [raw]}), encoding="utf-8"
+    )
+
+    loaded = load_exports(tmp_path)
+
+    assert [(r.machine, r.cache_write_1h, r.nested) for r in loaded] == [("old", 0, False)]

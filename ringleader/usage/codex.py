@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -25,12 +25,69 @@ _WEEKLY_MINUTES = 1440
 _UUID_DASH_PARTS = 5
 _KINDS = ("5h", "weekly")
 _LONGEST_WINDOW = timedelta(weeks=1)
+_REPLAY_BURST = timedelta(seconds=1)
 
 
 def _session_id(path: Path) -> str:
     stem = path.stem  # rollout-<ISO-ts>-<uuid>
     parts = stem.split("-")
     return "-".join(parts[-_UUID_DASH_PARTS:]) if len(parts) >= _UUID_DASH_PARTS else stem
+
+
+def _after_replay(rows: list[tuple[int, Mapping[str, Any]]]) -> int:
+    begun = parse_iso(rows[0][1].get("timestamp"))
+    if begun is None:
+        return len(rows)
+    return next(
+        (
+            index
+            for index, record in rows
+            if (at := parse_iso(record.get("timestamp"))) and at - begun > _REPLAY_BURST
+        ),
+        rows[-1][0] + 1,
+    )
+
+
+def own_events_start(records: Iterable[tuple[int, Mapping[str, Any]]]) -> int:
+    rows = list(records)
+    if not rows:
+        return 0
+    meta = as_dict(rows[0][1].get("payload"))
+    if not meta.get("forked_from_id"):
+        return 0
+    ordinal = meta.get("subagent_history_start_ordinal")
+    if isinstance(ordinal, int) and not isinstance(ordinal, bool):
+        return max(ordinal, 0) if ordinal < rows[-1][0] + 1 else _after_replay(rows)
+    own_id = meta.get("id")
+    return next(
+        (
+            index
+            for index, record in rows[1:]
+            if as_dict(record.get("payload")).get("type") == "thread_settings_applied"
+            and as_dict(record.get("payload")).get("thread_id") == own_id
+        ),
+        0,
+    )
+
+
+def own_thread(payload: Mapping[str, Any], own_id: str) -> bool:
+    thread = payload.get("thread_id")
+    return not thread or thread == own_id
+
+
+def _head(f: Path) -> Iterator[tuple[int, dict[str, Any]]]:
+    try:
+        fh = f.open(encoding="utf-8", errors="replace")
+    except OSError:
+        return
+    with fh:
+        for index, line in enumerate(fh):
+            try:
+                o = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(o, dict):
+                yield index, o
 
 
 def _iso(epoch: float) -> str:
@@ -53,12 +110,10 @@ class CodexUsageReader:
     def _files(self) -> list[Path]:
         return list(self.sessions_dir.glob("**/*.jsonl"))
 
-    def _payloads(
-        self, files: Iterable[Path] | None = None
-    ) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
+    def _payloads(self) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
         if not self.available():
             return
-        for f in sorted(self._files()) if files is None else files:
+        for f in sorted(self._files()):
             yield from self._file_payloads(f)
 
     def _file_payloads(self, f: Path) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
@@ -78,6 +133,32 @@ class CodexUsageReader:
                 if payload.get("type") != "token_count":
                     continue
                 yield f, ordinal, o, payload
+
+    def _usage_payloads(
+        self, f: Path
+    ) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any], str | None]]:
+        start = own_events_start(_head(f))
+        own_id = _session_id(f)
+        model: str | None = None
+        try:
+            fh = f.open(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        with fh:
+            for ordinal, line in enumerate(fh):
+                if ordinal < start or (
+                    '"token_count"' not in line and '"turn_context"' not in line
+                ):
+                    continue
+                try:
+                    o = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                payload = as_dict(o.get("payload"))
+                if o.get("type") == "turn_context":
+                    model = payload.get("model") or model
+                elif payload.get("type") == "token_count" and own_thread(payload, own_id):
+                    yield f, ordinal, o, payload, model
 
     def _project(self, path: Path) -> str | None:
         if path != self._meta_path:
@@ -103,7 +184,9 @@ class CodexUsageReader:
     def _records(self, files: Iterable[Path]) -> Iterator[UsageRecord]:
         prev: tuple[Any, ...] | None = None
         prev_file: Path | None = None
-        for f, ordinal, o, payload in self._payloads(files):
+        for f, ordinal, o, payload, model in (
+            row for path in files for row in self._usage_payloads(path)
+        ):
             info = as_dict(payload.get("info"))
             last = as_dict(info.get("last_token_usage"))
             if not last:
@@ -127,7 +210,7 @@ class CodexUsageReader:
                 project=self._project(f),
                 timestamp=ts,
                 provider="openai",
-                model=None,
+                model=model if isinstance(model, str) else None,
                 input=inp,
                 output=out,
                 cache_read=cache_read,
