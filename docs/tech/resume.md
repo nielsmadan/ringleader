@@ -121,6 +121,11 @@ else the previous index clamped — since `set_options` resets it.
 
 ### The command (`commands/resume.py`)
 
+`--last` prints flushed status lines to stderr before loading the registry, refreshing,
+checking live sessions, and launching the agent. Refresh completion includes elapsed time;
+the launch line includes total ringleader preparation time. A missing scan baseline or an
+empty scope announces the full scan. Dry runs show refresh progress but skip presence and launch.
+
 Validates, then execs exactly once. Order matters — every check runs before any side effect,
 because after `execvpe` there is no recovering:
 

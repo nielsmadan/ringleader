@@ -115,6 +115,31 @@ class Rescoper:
 UNSTUBBED = object()  # leaves cmd_resume its own scoped refresh
 
 
+def test_last_reports_each_stage_before_doing_the_work(tmp_path, monkeypatch, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    monkeypatch.chdir(thread["project"])
+
+    def scan(registry_path, now_iso, cwd, scope):
+        output = capsys.readouterr().err
+        assert "Loading session registry…" in output
+        assert f"Refreshing sessions in {cwd}…" in output
+        return Rescoper()(registry_path, now_iso, cwd, scope)
+
+    def probe():
+        output = capsys.readouterr().err
+        assert "Refresh finished in " in output
+        assert "Checking whether the session is already running…" in output
+        return frozenset()
+
+    def launch(argv, cwd):
+        output = capsys.readouterr().err
+        assert "Launching claude --resume aaa111 (ringleader took " in output
+        return 0
+
+    assert _run(["--last", "--registry", reg], scoper=scan, presence=probe, runner=launch) == 0
+
+
 def installed(binary: str) -> str:
     return f"/opt/bin/{binary}"
 

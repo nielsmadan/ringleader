@@ -9,6 +9,7 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
+from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from .. import export, paths, refresh, registry, resume, scanner
@@ -262,13 +263,17 @@ def _for_last(
     scope is always rescanned; one still empty earns a full scan, unless the rescan was
     one, before it is refused — never a picker, since --last asked not to be asked."""
     now_iso = datetime.now(UTC).isoformat()
+    started = monotonic()
+    _progress(f"Refreshing sessions {_where(scope, cwd)}…")
     current, complete = scoper(args.registry, now_iso, cwd, scope)
     rows = resume.candidates(current, scope=scope, cwd=cwd)
     if not rows and not complete:
+        _progress("No session found in scope; scanning all session stores…")
         current = refresher(args.registry, now_iso)[0]
         rows = resume.candidates(current, scope=scope, cwd=cwd)
     if not rows:
         raise _Abort(f"no sessions {_where(scope, cwd)}, even after a fresh scan{_WIDEN[scope]}")
+    _progress(f"Refresh finished in {monotonic() - started:.1f}s.")
     return rows[0], current
 
 
@@ -540,7 +545,11 @@ def _resolve(
     args: argparse.Namespace, picker: Picker, refreshers: tuple[ScopedRefresher, Refresher]
 ) -> _Plan | None:
     requested = _requested_target(args.to)
+    if args.last:
+        _progress("Loading session registry…")
     reg = registry.load_registry(args.registry)
+    if args.last and not reg.get("sourcesScannedAt"):
+        _progress("No scan baseline yet; refresh will scan all session stores.")
     cwd = os.getcwd()
     pick = _choose(args, reg, cwd, picker, refreshers, requested)
     if pick is None:
@@ -563,6 +572,7 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     args = _parser().parse_args(argv)
     if args.last and args.query:
         return _fail(f"--last takes the most recent session, so it cannot also take '{args.query}'")
+    started = monotonic()
 
     def _scan(registry_path: str, now_iso: str) -> tuple[dict[str, Any], str | None]:
         return refresh.auto_refresh(registry_path, now_iso, persist=not args.dry_run)
@@ -598,6 +608,16 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     if args.dry_run:
         _report(plan, absent=binary if absent else None)
         return 0
-    if not _permitted(plan, seams.presence):
+
+    def _probe() -> frozenset[tuple[str, str]]:
+        if args.last:
+            _progress("Checking whether the session is already running…")
+        return seams.presence()
+
+    if not _permitted(plan, _probe):
         return 0
+    if args.last:
+        _progress(
+            f"Launching {shlex.join(plan.argv)} (ringleader took {monotonic() - started:.1f}s)…"
+        )
     return _carry_out(plan, text, seams.runner)
