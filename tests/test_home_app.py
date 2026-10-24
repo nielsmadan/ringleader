@@ -7,7 +7,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-from ringleader import registry, revalidate
+from ringleader import refresh, registry, revalidate
 from ringleader.decisions import ArchiveOp, KeepOp, Outcome, ReloadOp
 from ringleader.harvests import Harvest
 from ringleader.home.app import InboxApp, ScanFailedMessage
@@ -22,7 +22,7 @@ from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_fixture import build_fixture
 from scripts.tui_shot import settle_inbox
-from textual.widgets import OptionList, Static
+from textual.widgets import Label, OptionList, Static
 
 from tui_helpers import until
 
@@ -637,3 +637,65 @@ async def test_a_resize_rewraps_the_counts_without_rebuilding_home(tmp_path, mon
         await pilot.resize_terminal(30, 30)
         await until(pilot, lambda: "\n" in str(app.screen.query_one("#counts", Static).content))
         assert len(rebuilt) == before
+
+
+async def test_hosted_picker_tracks_a_pending_scan_until_it_finishes(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    gate = Gate()
+    app = _app(path, refresher=gate)
+    async with app.run_test(size=(100, 30)) as pilot:
+        try:
+            await pilot.press("3")
+            await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+            assert str(app.screen.query_one("#refresh-status", Label).render()) == (
+                "Refreshing sessions… showing cached results"
+            )
+            gate.release.set()
+            await until(
+                pilot,
+                lambda: (
+                    str(app.screen.query_one("#refresh-status", Label).render())
+                    == "Sessions refreshed"
+                ),
+            )
+        finally:
+            gate.release.set()
+
+
+async def test_hosted_picker_reports_a_failed_inbox_scan(tmp_path):
+    def fail(path, now):
+        raise OSError("unreadable store")
+
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    app = _app(path, refresher=fail)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        await until(
+            pilot,
+            lambda: (
+                str(app.screen.query_one("#refresh-status", Label).render())
+                == "Refresh failed — showing cached results"
+            ),
+        )
+        assert app.screen.query_one("#rows", OptionList).option_count == 1
+
+
+async def test_hosted_picker_reports_unavailable_sources(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    app = _app(path)
+    app.scans._full_refresher = lambda path, now: refresh.Refreshed(
+        registry.load_registry(path), None, frozenset({"opencode"})
+    )
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        await until(
+            pilot,
+            lambda: (
+                str(app.screen.query_one("#refresh-status", Label).render())
+                == "Partially refreshed — cached sources: opencode"
+            ),
+        )

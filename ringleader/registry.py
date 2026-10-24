@@ -30,6 +30,7 @@ _METADATA_FIELDS = {
     "summary": "summary",
     "lastPrompt": "last_prompt",
     "mtime": "mtime",
+    "startedAt": "started_at",
     "sizeBytes": "size_bytes",
     "messageCount": "message_count",
     "gitBranch": "git_branch",  # from transcript; always available, refresh freely
@@ -566,6 +567,7 @@ def cached_session(
         source=ref.source,
         session_id=thread["sessionId"],
         cwd=thread.get("project"),
+        started_at=thread.get("startedAt"),
         mtime=ref.mtime,
         size_bytes=ref.size_bytes,
         custom_title=thread.get("title"),

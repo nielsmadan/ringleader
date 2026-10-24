@@ -112,7 +112,6 @@ from .writer import (
 type ModelResolver = Callable[[ModelTask], Model | None]
 
 SUBTITLE_REFRESH_SECONDS = 30.0
-PICKER_SCAN_WAIT_SECONDS = 60.0
 
 
 @runtime_checkable
@@ -604,7 +603,7 @@ class InboxApp(App[ExitIntent | None]):
             self.registry_path,
             self._cwd,
             scope=Scope.ALL,
-            refresher=self._picker_registry,
+            full_refresher=self._picker_registry,
             presence=self._presence,
             now=self._now,
             initial=self._decided_view(None),
@@ -620,9 +619,15 @@ class InboxApp(App[ExitIntent | None]):
         )
         return overlay.visible(base.reg, self._state.overlay)
 
-    def _picker_registry(self, _path: str, _now_iso: str) -> tuple[dict[str, Any], str | None]:
-        landed = self.scans.latest() or self.scans.wait(PICKER_SCAN_WAIT_SECONDS)
-        return self._decided_view(landed), landed.note if landed else None
+    def _picker_registry(self, _path: str, _now_iso: str) -> refresh.Refreshed | None:
+        if self.scans.running:
+            return None
+        landed = self.scans.latest()
+        if landed is None or not landed.snapshot.scanned:
+            raise RuntimeError("inbox session scan failed")
+        return refresh.Refreshed(
+            self._decided_view(landed), landed.note, landed.unavailable_sources
+        )
 
     def _resume_chosen(self, choice: Choice | None) -> None:
         if choice is not None:

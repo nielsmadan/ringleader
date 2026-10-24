@@ -11,7 +11,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, ClassVar
 
-from .base import NormalizedSession, RawRef, append_jsonl_line, iso_mtime, stat_fingerprint
+from .base import (
+    NormalizedSession,
+    RawRef,
+    append_jsonl_line,
+    iso_mtime,
+    iso_timestamp,
+    stat_fingerprint,
+)
 
 
 def default_sessions_dir() -> Path:
@@ -48,6 +55,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     turns: deque[tuple[str, str]] = deque(maxlen=max(tail_turns, 0))
     last_prompt: str | None = None
     message_count = 0
+    started_at: str | None = None
 
     with path.open(encoding="utf-8", errors="replace") as fh:
         for raw in fh:
@@ -58,6 +66,9 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+            if started_at is None:
+                started_at = iso_timestamp(o.get("timestamp"))
 
             t = o.get("type")
 
@@ -93,6 +104,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     tail_text = "\n".join(f"{s}: {x}" for s, x in turns)
 
     return {
+        "started_at": started_at,
         "cwd": cwd,
         "session_id": session_id,
         "custom_title": custom_title,
@@ -104,7 +116,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
 
 @dataclass
 class PiSource:
-    parser_version: ClassVar[int] = 1
+    parser_version: ClassVar[int] = 2
     sessions_dir: Path = field(default_factory=default_sessions_dir)
     tail_turns: int = 30
     name: str = "pi"
@@ -158,6 +170,7 @@ class PiSource:
             source=self.name,
             session_id=session_id,
             cwd=fields["cwd"],
+            started_at=fields["started_at"],
             mtime=ref.mtime,
             size_bytes=ref.size_bytes,
             custom_title=fields["custom_title"],

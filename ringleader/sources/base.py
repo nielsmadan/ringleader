@@ -26,6 +26,16 @@ class SourceUnavailableError(OSError):
     pass
 
 
+def iso_timestamp(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    try:
+        stamp = datetime.fromisoformat(value)
+        return stamp.astimezone(UTC).isoformat() if stamp.tzinfo is not None else None
+    except (ValueError, OverflowError):
+        return None
+
+
 def append_jsonl_line(path: Path, line: str) -> None:
     try:
         size = path.stat().st_size
@@ -126,6 +136,7 @@ class NormalizedSession:
     git_resolved: bool = False
     git_checked_at: str | None = None
     source_ref: str | None = None
+    started_at: str | None = None
 
 
 @runtime_checkable

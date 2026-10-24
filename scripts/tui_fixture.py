@@ -160,6 +160,7 @@ def _thread(root: Path, plan: _Plan) -> dict[str, Any]:
         "summary": None,
         "lastPrompt": plan.prompt,
         "mtime": _iso(plan.mtime),
+        "startedAt": _iso(plan.mtime - timedelta(days=7)),
         "sizeBytes": plan.size_bytes,
         "messageCount": plan.message_count,
         "gitBranch": None,
@@ -306,6 +307,7 @@ def _transcript_lines(plan: _Plan) -> list[dict[str, Any]]:
     turns = [
         {
             "type": "user" if k % 2 == 0 else "assistant",
+            "timestamp": _iso(plan.mtime - timedelta(days=7) if k == 0 else plan.mtime),
             "cwd": plan.project,
             "sessionId": plan.session_id,
             "message": {

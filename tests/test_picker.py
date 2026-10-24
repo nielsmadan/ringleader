@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import ClassVar
 
 import pytest
-from ringleader import resume, scanner
+from ringleader import refresh, resume, scanner
 from ringleader.picker.app import (
     PREVIEW_CHARS,
     AgentChoice,
@@ -498,6 +498,9 @@ async def test_the_rows_render_from_disk_before_the_background_scan_lands(tmp_pa
         await pilot.pause()
         assert _ids(app) == ["s0", "s1"]
         assert _screen(app).query_one("#rows", OptionList).option_count == 2
+        assert "showing cached results" in _rendered(
+            _screen(app).query_one("#refresh-status", Label)
+        )
         gate.set()
         await _settle(app, pilot)
         assert _ids(app) == ["s0", "s1"]
@@ -508,6 +511,7 @@ async def test_the_scanned_registry_replaces_the_one_read_from_disk(tmp_path):
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         assert _screen(app)._reg["lastScan"] == SCANNED
+        assert _rendered(_screen(app).query_one("#refresh-status", Label)) == "Sessions refreshed"
 
 
 async def test_quitting_while_the_scan_is_still_running_exits_without_a_choice(tmp_path):
@@ -623,6 +627,9 @@ async def test_a_scan_that_blows_up_warns_and_keeps_the_rows_read_from_disk(tmp_
         await _settle(app, pilot)
         assert _ids(app) == ["s0", "s1"]
         assert [n.severity for n in app._notifications] == ["warning"]
+        assert _rendered(_screen(app).query_one("#refresh-status", Label)) == (
+            "Refresh failed — showing cached results"
+        )
         assert app.is_running
 
 
@@ -1169,3 +1176,39 @@ async def test_escape_on_a_hosted_picker_returns_to_its_host(tmp_path):
         await until(pilot, lambda: app.results == [None])
         assert app.screen is app.default_screen
         assert app.is_running
+
+
+def test_row_separates_start_from_last_activity():
+    thread = _thread("s0", title="alpha", mtime="2026-10-23")
+    thread["startedAt"] = "2026-10-16T00:00:00+00:00"
+    text = row_text(thread, "2026-10-24T00:00:00+00:00").plain
+    assert text[10:22].strip() == "1d ago"
+    assert text[22:34].strip() == "8d ago"
+    assert text[34:].startswith("alpha")
+
+
+def test_row_shows_unknown_start_for_old_registry():
+    text = row_text(_thread("s0"), NOW).plain
+    assert text[22:34].strip() == "?"
+
+
+async def test_default_refresh_reports_sources_that_still_use_cached_rows(tmp_path, monkeypatch):
+    path = _seed(tmp_path, _default_threads())
+    monkeypatch.setattr(
+        refresh,
+        "refresh_registry",
+        lambda path, now: refresh.Refreshed(_scanned(path), None, frozenset({"opencode"})),
+    )
+    app = PickerApp(path, CWD, presence=frozenset)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert _rendered(_screen(app).query_one("#refresh-status", Label)) == (
+            "Partially refreshed — cached sources: opencode"
+        )
+        assert _ids(app) == ["s0", "s1"]
+
+
+@pytest.mark.parametrize("started_at", [None, 42, {}, "invalid"])
+def test_row_shows_unknown_for_invalid_start(started_at):
+    text = row_text({**_thread("s0"), "startedAt": started_at}, NOW).plain
+    assert text[22:34].strip() == "?"

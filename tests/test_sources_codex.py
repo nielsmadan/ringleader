@@ -164,6 +164,7 @@ def test_parse_extracts_fields_and_skips_preamble(tmp_path):
     )
     src = CodexSource(sessions_dir=tmp_path)
     ns = src.parse(next(iter(src.discover())))
+    assert ns.started_at == "2026-07-28T17:19:45.210000+00:00"
     assert ns.source == "codex"
     assert ns.session_id == "22222222-0000-0000-0000-000000000002"
     assert ns.cwd == "/Users/me/proj"

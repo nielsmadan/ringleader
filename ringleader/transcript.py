@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .sources.base import iso_timestamp
+
 
 @dataclass
 class TranscriptInfo:
@@ -18,6 +20,7 @@ class TranscriptInfo:
     last_prompt: str | None = None
     message_count: int = 0
     tail_text: str = ""
+    started_at: str | None = None
 
 
 def _text_blocks(message: dict[str, Any]) -> str:
@@ -47,6 +50,9 @@ def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo:
                 o = json.loads(line)
             except json.JSONDecodeError:
                 continue
+
+            if info.started_at is None:
+                info.started_at = iso_timestamp(o.get("timestamp"))
 
             if info.cwd is None and o.get("cwd"):
                 info.cwd = o["cwd"]

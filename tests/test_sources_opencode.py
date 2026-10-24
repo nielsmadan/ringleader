@@ -1,6 +1,7 @@
 import json
 import sqlite3
 
+import pytest
 from ringleader import export, refresh, registry, scanner
 from ringleader.scanner import scan
 from ringleader.sources.opencode import OpenCodeSource
@@ -126,6 +127,7 @@ def test_parse_populates_db_metadata_and_bounded_conversation_tail(tmp_path):
     ref = next(source.discover())
     parsed = source.parse(ref)
 
+    assert parsed.started_at == "2026-02-13T15:53:20+00:00"
     assert parsed.session_id == "ses_live"
     assert parsed.source_ref == "ses_live"
     assert parsed.file is None
@@ -371,3 +373,18 @@ def test_discover_sizes_sessions_in_payload_bytes_and_sees_a_new_message(tmp_pat
 
     assert before.size_bytes == sum(len(data.encode()) for (data,) in payloads)
     assert after.fingerprint != before.fingerprint
+
+
+@pytest.mark.parametrize("created", [-1, "bad", 0, 1e100])
+def test_invalid_creation_time_is_unknown(tmp_path, created):
+    db = _create_db(tmp_path / "opencode.db")
+    _session(db)
+    connection = sqlite3.connect(db)
+    try:
+        connection.execute("UPDATE session SET time_created = ?", (created,))
+        connection.commit()
+    finally:
+        connection.close()
+    source = OpenCodeSource(db_path=db)
+    parsed = source.parse(next(source.discover()))
+    assert parsed.started_at is None

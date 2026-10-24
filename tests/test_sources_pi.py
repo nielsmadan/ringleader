@@ -67,7 +67,7 @@ def test_parse_extracts_header_messages_latest_name_and_tail(tmp_path):
     _session(
         tmp_path,
         [
-            {"type": "session", "id": SESSION_ID, "cwd": CWD},
+            {"type": "session", "id": SESSION_ID, "cwd": CWD, "timestamp": "2026-08-31T10:20:30Z"},
             {"type": "session_info", "id": "name-1", "name": "old name"},
             {
                 "type": "message",
@@ -105,6 +105,7 @@ def test_parse_extracts_header_messages_latest_name_and_tail(tmp_path):
 
     parsed = source.parse(next(iter(source.discover())))
 
+    assert parsed.started_at == "2026-08-31T10:20:30+00:00"
     assert parsed.source == "pi"
     assert parsed.session_id == SESSION_ID
     assert parsed.cwd == CWD

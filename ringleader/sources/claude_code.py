@@ -45,7 +45,7 @@ def _iter_session_files(root: Path) -> Iterator[Path]:
 
 @dataclass
 class ClaudeCodeSource:
-    parser_version: ClassVar[int] = 1
+    parser_version: ClassVar[int] = 2
     projects_dir: Path = field(default_factory=default_projects_dir)
     tail_turns: int = 30
     name: str = "claude-code"
@@ -147,6 +147,7 @@ class ClaudeCodeSource:
             session_id=info.session_id,
             cwd=info.cwd,
             mtime=ref.mtime,
+            started_at=info.started_at,
             size_bytes=ref.size_bytes,
             custom_title=info.custom_title,
             summary=info.summary,

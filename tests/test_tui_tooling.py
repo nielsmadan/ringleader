@@ -44,6 +44,7 @@ def _picker(tmp_path):
         _thread("s2", source="pi", project="/work/repo/sub", title="charlie", mtime="2026-03-01"),
         _thread("s3", source="opencode", project="/elsewhere", title="delta", mtime="2026-05-05"),
     ]
+    threads[0]["startedAt"] = "2026-04-01T00:00:00+00:00"
     path = tmp_path / "registry.json"
     path.write_text(json.dumps({**registry.empty_registry(), "threads": threads}))
     return PickerApp(

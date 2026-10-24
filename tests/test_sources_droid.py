@@ -202,6 +202,7 @@ def test_parse_extracts_the_session_start_and_conversation(tmp_path):
 
     parsed = source.parse(next(iter(source.discover())))
 
+    assert parsed.started_at == "2026-09-21T22:40:18.970000+00:00"
     assert parsed.source == "droid"
     assert parsed.session_id == SESSION_ID
     assert parsed.cwd == CWD

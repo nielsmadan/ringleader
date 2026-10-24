@@ -126,3 +126,41 @@ def test_parse_caps_the_tail_text_like_the_other_sources(tmp_path: Path):
     ns = src.parse(next(src.discover()))
 
     assert ns.tail_text == "USER: " + "x" * 5994
+
+
+def test_start_time_survives_registry_cache(tmp_path):
+    from ringleader import registry, scanner
+
+    path = _transcript(tmp_path, "/work", "started-session")
+    path.write_text(
+        "\n".join(
+            json.dumps(row)
+            for row in [
+                {"type": "user", "cwd": "/work", "timestamp": "invalid"},
+                {"type": "user", "timestamp": "2026-10-16T02:00:00+02:00"},
+                {"type": "assistant", "timestamp": "2026-10-23T00:00:00Z"},
+            ]
+        )
+    )
+    source = ClaudeCodeSource(projects_dir=tmp_path)
+    sessions = scanner.scan(sources=[source], git_resolver=lambda _: None)
+    reg = registry.reconcile(registry.empty_registry(), sessions, "2026-10-24T00:00:00Z")
+    assert reg["threads"][0]["startedAt"] == "2026-10-16T00:00:00+00:00"
+    cached = registry.cached_session(
+        reg["threads"][0], next(source.discover()), source.parser_version
+    )
+    assert cached is not None
+    assert cached.started_at == "2026-10-16T00:00:00+00:00"
+
+
+def test_extreme_start_timestamp_does_not_prevent_parsing_the_session(tmp_path):
+    path = tmp_path / "session.jsonl"
+    rows = [
+        {"type": "user", "timestamp": "9999-12-31T23:00:00-05:00", "message": {"content": "first"}},
+        {"type": "user", "timestamp": "2026-10-16T00:00:00Z", "message": {"content": "second"}},
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows))
+    from ringleader.transcript import parse_transcript
+
+    parsed = parse_transcript(path)
+    assert parsed.started_at == "2026-10-16T00:00:00+00:00"

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
@@ -44,6 +44,8 @@ __all__ = [
 
 FILTER_DELAY = 0.12
 
+type FullRefresher = Callable[[str, str], refresh.Refreshed | None]
+
 _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
     Scope.CWD: ("ctrl+r for this tree", "ctrl+a for everywhere"),
     Scope.RECURSIVE: ("ctrl+a for everywhere",),
@@ -66,6 +68,7 @@ class RefreshResult:
     running: frozenset[tuple[str, str]] | None
     note: str | None
     error: str | None
+    unavailable_sources: frozenset[str] = frozenset()
 
 
 @dataclass
@@ -133,7 +136,10 @@ def row_text(
         marks = [*marks, "running"]
     text = Text()
     text.append(f"{agent_name(resume.source_of(thread)):<9} ", style="bold")
-    text.append(f"{_age(thread.get('mtime'), now_iso):<10}", style="dim")
+    text.append(f"{_age(thread.get('mtime'), now_iso):<12}", style="dim")
+    started_at = thread.get("startedAt")
+    started = _age(started_at, now_iso) if isinstance(started_at, str) else "?"
+    text.append(f"{started:<12}", style="dim")
     text.append(resume.label(thread))
     if marks:
         text.append("  [" + " ".join(marks) + "]", style="italic")
@@ -213,6 +219,7 @@ class PickerScreen(Screen[Choice | None]):
         query: str = "",
         target: str | None = None,
         refresher: Refresher | None = None,
+        full_refresher: FullRefresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
         initial: dict[str, Any] | None = None,
@@ -228,7 +235,8 @@ class PickerScreen(Screen[Choice | None]):
         self._scope = scope
         self._query = query
         self._target = target
-        self._refresher: Refresher = refresher or refresh.auto_refresh
+        self._refresher = refresher
+        self._full_refresher = full_refresher or refresh.refresh_registry
         self._presence: Presence = presence or live_session_ids
         self._now: Clock = now or (lambda: datetime.now(UTC))
         self._reg: dict[str, Any] = registry.empty_registry()
@@ -239,6 +247,8 @@ class PickerScreen(Screen[Choice | None]):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Input(placeholder="filter…", id="filter")
+        yield Label("Refreshing sessions… showing cached results", id="refresh-status")
+        yield Label(f"{'Agent':<10}{'Last active':<12}{'Started':<12}Session", id="columns")
         yield OptionList(id="rows", compact=True)
         yield Label("", id="empty")
         yield Footer()
@@ -273,6 +283,16 @@ class PickerScreen(Screen[Choice | None]):
                 except Empty:
                     await asyncio.sleep(0.02)
                     continue
+                self.query_one("#refresh-status", Label).update(
+                    "Refresh failed — showing cached results"
+                    if result.error
+                    else (
+                        "Partially refreshed — cached sources: "
+                        + ", ".join(sorted(result.unavailable_sources))
+                        if result.unavailable_sources
+                        else "Sessions refreshed"
+                    )
+                )
                 if result.error:
                     self.app.notify(result.error, title="rl resume", severity="warning")
                 self._adopt(result.reg, result.running, result.note)
@@ -284,8 +304,18 @@ class PickerScreen(Screen[Choice | None]):
         reg: dict[str, Any] | None = None
         note: str | None = None
         warning: str | None = None
+        unavailable_sources: frozenset[str] = frozenset()
         try:
-            reg, note = self._refresher(self.registry_path, self._now().isoformat())
+            if self._refresher is not None:
+                reg, note = self._refresher(self.registry_path, self._now().isoformat())
+            else:
+                while not stopped.is_set():
+                    refreshed = self._full_refresher(self.registry_path, self._now().isoformat())
+                    if refreshed is not None:
+                        reg, note = refreshed.reg, refreshed.note
+                        unavailable_sources = refreshed.unavailable_sources
+                        break
+                    stopped.wait(0.1)
         except Exception as error:  # noqa: BLE001 -- report in the UI, do not crash it
             warning = f"scan failed: {error}"
         if stopped.is_set():
@@ -295,7 +325,7 @@ class PickerScreen(Screen[Choice | None]):
             running = self._presence()
         except Exception:  # noqa: BLE001 -- no presence means no live sessions
             running = None
-        results.put(RefreshResult(reg, running, note, warning))
+        results.put(RefreshResult(reg, running, note, warning, unavailable_sources))
 
     def _adopt(
         self,
@@ -473,6 +503,7 @@ class PickerApp(App[Choice | None]):
         query: str = "",
         target: str | None = None,
         refresher: Refresher | None = None,
+        full_refresher: FullRefresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
         filter_delay: float = FILTER_DELAY,
@@ -485,6 +516,7 @@ class PickerApp(App[Choice | None]):
             query=query,
             target=target,
             refresher=refresher,
+            full_refresher=full_refresher,
             presence=presence,
             now=now,
             filter_delay=filter_delay,

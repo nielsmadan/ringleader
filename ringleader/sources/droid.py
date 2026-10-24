@@ -20,6 +20,7 @@ from .base import (
     changed_since,
     existing_files,
     iso_mtime,
+    iso_timestamp,
     memo_by_fingerprint,
     stat_fingerprint,
     workspace_dirs,
@@ -78,6 +79,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     turns: deque[tuple[str, str]] = deque(maxlen=max(tail_turns, 0))
     last_prompt: str | None = None
     message_count = 0
+    started_at: str | None = None
 
     with path.open(encoding="utf-8", errors="replace") as fh:
         for raw in fh:
@@ -90,6 +92,9 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
                 continue
             if not isinstance(o, dict):
                 continue
+
+            if started_at is None:
+                started_at = iso_timestamp(o.get("timestamp"))
 
             if o.get("type") == "session_start":
                 if not start:
@@ -117,6 +122,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
     manual = bool(start.get("isSessionTitleManuallySet"))
     return {
         "session_id": start.get("id"),
+        "started_at": started_at,
         "cwd": start.get("cwd"),
         "custom_title": title if manual else None,
         "ai_title": None if manual else title,
@@ -128,7 +134,7 @@ def _session_fields(path: Path, tail_turns: int) -> dict[str, Any]:
 
 @dataclass
 class DroidSource:
-    parser_version: ClassVar[int] = 1
+    parser_version: ClassVar[int] = 2
     sessions_dir: Path = field(default_factory=default_sessions_dir)
     tail_turns: int = 30
     name: str = "droid"
@@ -255,6 +261,7 @@ class DroidSource:
             source=self.name,
             session_id=fields["session_id"] or path.stem,
             cwd=fields["cwd"],
+            started_at=fields["started_at"],
             mtime=ref.mtime,
             size_bytes=ref.size_bytes,
             custom_title=fields["custom_title"],

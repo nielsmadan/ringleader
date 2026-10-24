@@ -150,6 +150,15 @@ def _nonnegative_int(value: object) -> int:
     return max(int(value), 0)
 
 
+def _start_time(value: object) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, int | float) or value <= 0:
+        return None
+    try:
+        return datetime.fromtimestamp(value / 1000, UTC).isoformat()
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
 def _iso_millis(value: object) -> str:
     milliseconds = _nonnegative_int(value)
     try:
@@ -231,7 +240,7 @@ def _render(turns: list[tuple[str, str]]) -> str:
 
 @dataclass
 class OpenCodeSource:
-    parser_version: ClassVar[int] = 1
+    parser_version: ClassVar[int] = 2
     db_path: Path = field(default_factory=default_opencode_db)
     tail_turns: int = 30
     name: str = "opencode"
@@ -328,6 +337,7 @@ class OpenCodeSource:
             source_ref=source_ref,
             session_id=source_ref,
             cwd=row["directory"],
+            started_at=_start_time(row["time_created"]),
             mtime=ref.mtime,
             size_bytes=ref.size_bytes,
             custom_title=title or slug or None,

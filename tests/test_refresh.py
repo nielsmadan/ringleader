@@ -223,7 +223,7 @@ def test_auto_refresh_cache_roundtrip_preserves_metadata(tmp_path):
     )
     saved = json.loads(reg_path.read_text(encoding="utf-8"))
     thread = saved["threads"][0]
-    assert thread.get("cacheVersion") == 1
+    assert thread.get("cacheVersion") == source.parser_version
     assert thread.get("fileFingerprint")
     expected = {
         "title": "custom title",
@@ -249,7 +249,7 @@ def test_auto_refresh_cache_roundtrip_preserves_metadata(tmp_path):
 
     actual = reg["threads"][0]
     assert {key: actual[key] for key in expected} == expected
-    assert actual["cacheVersion"] == 1
+    assert actual["cacheVersion"] == source.parser_version
     assert actual["fileFingerprint"] == thread["fileFingerprint"]
 
 

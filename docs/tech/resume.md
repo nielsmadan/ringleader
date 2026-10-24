@@ -70,13 +70,25 @@ recovery silently falls through to the drifted directory.
 
 ### The picker (`picker/app.py`)
 
-The picker is a `PickerScreen`: `Header` / `Input#filter` / `OptionList#rows` / `Label#empty` /
+The picker is a `PickerScreen`: `Header` / `Input#filter` / `Label#refresh-status` /
+`Label#columns` / `OptionList#rows` / `Label#empty` /
 `Footer`. `PickerApp` is a thin shell that pushes one on mount and exits with whatever it
 dismisses, so `rl resume` behaves as before; a host app can push the same screen, where `escape`
 dismisses `None` back to the screen below instead of quitting. The screen touches `self.app` only
 to notify, push modals and check that the app is running. Its row renderer is `_render_rows`, not
 `_render` (every `Widget` already has one). App-level queries resolve against the default screen,
 so tests reach the picker through the `PickerScreen` on `app.screen_stack`.
+The picker labels separate Last active (`mtime`, the source modification time) and Started
+(`startedAt`, the first recorded timestamp or source creation timestamp) columns. Unknown starts
+show `?`. A persistent refresh status distinguishes cached results from a completed, partial, or failed scan.
+Partial refreshes name the unavailable sources whose cached rows remain. Hosted pickers keep
+showing refresh progress until the inbox scan finishes.
+Source parser versions invalidate older caches once to populate start times.
+For Claude Code, Droid and Pi, Started follows the first valid recorded timestamp, including
+inherited history in copied transcripts. It does not measure when a fork was made.
+The picker's structured `full_refresher` returns `Refreshed` on completion, `None` while
+pending, and raises on failure; unavailable sources travel with the completed result.
+
 The result list holds Rich text options, avoiding a widget per match. It keeps every result,
 clips long rows with an ellipsis, and preserves the highlighted `(source, sessionId)` across
 filtering, scope changes and refreshes. Filtering is debounced: each input change restarts a

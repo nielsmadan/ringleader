@@ -19,6 +19,7 @@ from .base import (
     changed_since,
     in_workspace,
     iso_mtime,
+    iso_timestamp,
     memo_by_fingerprint,
     stat_fingerprint,
 )
@@ -146,7 +147,7 @@ def _header(path: Path) -> tuple[str, bool, str | None]:
 
 @dataclass
 class CodexSource:
-    parser_version: ClassVar[int] = 1
+    parser_version: ClassVar[int] = 2
     sessions_dir: Path = field(default_factory=default_codex_dir)
     session_index_file: Path | None = None
     tail_turns: int = 30
@@ -254,6 +255,7 @@ class CodexSource:
             source=self.name,
             session_id=session_id,
             cwd=meta.get("cwd"),
+            started_at=iso_timestamp(meta.get("timestamp")),
             mtime=ref.mtime,
             size_bytes=ref.size_bytes,
             custom_title=self._thread_names().get(session_id),
