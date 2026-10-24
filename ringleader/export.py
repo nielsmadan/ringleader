@@ -7,8 +7,9 @@ from pathlib import Path
 from typing import Any
 
 from . import scanner
+from .agents import source_of
 from .sources.base import ConversationRenderingSource, Source
-from .transcript import _text_blocks
+from .transcript import text_blocks
 
 
 def _turn(role: object, txt: str) -> str | None:
@@ -46,16 +47,16 @@ def _codex_text(payload: dict[str, Any]) -> str:
 def _record_chunks(o: dict[str, Any]) -> list[str]:
     t = o.get("type")
     if t == "user":
-        return [c for c in (_turn("user", _text_blocks(o.get("message", {})).strip()),) if c]
+        return [c for c in (_turn("user", text_blocks(o.get("message", {})).strip()),) if c]
     if t == "assistant":
         msg = o.get("message", {})
-        parts = (_turn("assistant", _text_blocks(msg).strip()), _tool_note(msg))
+        parts = (_turn("assistant", text_blocks(msg).strip()), _tool_note(msg))
         return [c for c in parts if c]
     if t == "message":  # pi and droid
         msg = o.get("message")
         if not isinstance(msg, dict):
             return []
-        return [c for c in (_turn(msg.get("role"), _text_blocks(msg).strip()),) if c]
+        return [c for c in (_turn(msg.get("role"), text_blocks(msg).strip()),) if c]
     if t == "response_item":  # codex
         payload = o.get("payload") or {}
         if payload.get("type") != "message":
@@ -141,7 +142,7 @@ def render_conversation(
     if not isinstance(subject, dict):
         return _render_jsonl(subject)
 
-    source_name = subject.get("source") or "claude-code"
+    source_name = source_of(subject)
     src = _native_renderer(subject, source)
     if src is not None:
         if not isinstance(src, ConversationRenderingSource):
@@ -158,4 +159,4 @@ def render_tail(thread: dict[str, Any], max_chars: int) -> str:
     src = _native_renderer(thread, None)
     if src is not None:
         return _last(render_conversation(thread, source=src), max_chars)
-    return _jsonl_tail(_jsonl_file(thread, thread.get("source") or "claude-code"), max_chars)
+    return _jsonl_tail(_jsonl_file(thread, source_of(thread)), max_chars)

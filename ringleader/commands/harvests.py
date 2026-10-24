@@ -15,7 +15,6 @@ from ..publish_git import (
     validate_prepared_changes,
 )
 from ..publish_state import (
-    PublishReceipt,
     PublishStateError,
     abandon_receipt,
     begin_publish,
@@ -23,6 +22,7 @@ from ..publish_state import (
     list_receipts,
     load_receipt,
     prepare_publish,
+    receipt_data,
 )
 
 
@@ -30,33 +30,6 @@ def _write_json(data: object) -> int:
     json.dump(data, sys.stdout, ensure_ascii=False)
     sys.stdout.write("\n")
     return 0
-
-
-def _receipt_json(receipt: PublishReceipt) -> dict[str, object]:
-    return {
-        "receiptId": receipt.receipt_id,
-        "repoKey": receipt.repo_key,
-        "checkout": receipt.checkout,
-        "branch": receipt.branch,
-        "baseCommit": receipt.base_commit,
-        "registryPath": receipt.registry_path,
-        "items": [
-            {
-                "harvestId": item.harvest_id,
-                "digest": item.digest,
-                "token": item.token,
-                "sessionId": item.session_id,
-                "relativePath": item.relative_path,
-            }
-            for item in receipt.items
-        ],
-        "state": receipt.state,
-        "outcome": receipt.outcome,
-        "expectedTree": receipt.expected_tree,
-        "changedPaths": list(receipt.changed_paths),
-        "commit": receipt.commit,
-        "createdAt": receipt.created_at,
-    }
 
 
 def _cmd_snapshot(argv: list[str]) -> int:
@@ -114,7 +87,7 @@ def _cmd_begin(argv: list[str]) -> int:
         tokens=args.item,
         bundle_path=Path(args.bundle),
     )
-    return _write_json({"receipt": _receipt_json(receipt)})
+    return _write_json({"receipt": receipt_data(receipt)})
 
 
 def _cmd_prepare(argv: list[str]) -> int:
@@ -141,7 +114,7 @@ def _cmd_prepare(argv: list[str]) -> int:
             raise PublishStateError("no-change outcome does not accept --tree or --paths-file")
         require_clean_base(receipt.checkout, branch=receipt.branch, head=receipt.base_commit)
         prepared = prepare_publish(receipt.receipt_id, outcome="no-change")
-    return _write_json({"receipt": _receipt_json(prepared)})
+    return _write_json({"receipt": receipt_data(prepared)})
 
 
 def _cmd_consume(argv: list[str]) -> int:
@@ -177,7 +150,7 @@ def _cmd_recover(argv: list[str]) -> int:
     receipts, problems = list_receipts()
     return _write_json(
         {
-            "receipts": [_receipt_json(receipt) for receipt in receipts],
+            "receipts": [receipt_data(receipt) for receipt in receipts],
             "problems": [
                 {"path": str(problem.path), "message": problem.message} for problem in problems
             ],

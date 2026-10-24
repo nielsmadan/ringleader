@@ -160,7 +160,7 @@ def snapshot_harvests(previous: HarvestSnapshot | None = None) -> HarvestSnapsho
     return HarvestSnapshot(items=tuple(items), problems=tuple(problems), stamps=stamps)
 
 
-def _write_harvest_unlocked(  # noqa: PLR0913
+def write_harvest_unlocked(  # noqa: PLR0913
     *,
     session_id: str,
     name: str,
@@ -208,7 +208,7 @@ def write_harvest(  # noqa: PLR0913
     clone_url: str | None = None,
 ) -> Path:
     with publish_lock():
-        return _write_harvest_unlocked(
+        return write_harvest_unlocked(
             session_id=session_id,
             name=name,
             folder_path=folder_path,

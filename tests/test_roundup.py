@@ -226,6 +226,7 @@ def test_run_phases_sweeps_prunes_and_purges_the_plan(tmp_path):
     assert (result.swept, result.deleted, result.purged, result.errors) == (1, 1, 1, 0)
     saved = registry.load_registry(path)
     assert [a["sessionId"] for a in saved["archived"]] == ["fin"]
+    assert saved["archived"][0]["archivedAt"] == NOW
     assert sorted(d["sessionId"] for d in saved["deleted"]) == ["expired", "tiny"]
 
 
@@ -327,6 +328,10 @@ def test_run_phases_reports_a_sweep_batch_whose_registry_write_failed(tmp_path, 
         [_thread(tmp_path, "fin-a", finish=True), _thread(tmp_path, "fin-b", finish=True)],
     )
     plan = _plan(path)
+    moved = tmp_path / "projects" / "fin-a.jsonl"
+    archive = tmp_path / "archive" / "x" / moved.name
+    archive.parent.mkdir(parents=True)
+    moved.rename(archive)
 
     def failing(target, text, **options):
         raise OSError("disk full")
@@ -337,6 +342,7 @@ def test_run_phases_reports_a_sweep_batch_whose_registry_write_failed(tmp_path, 
 
     assert (result.swept, result.errors) == (0, 2)
     assert result.warnings == (
+        f"{moved} already gone, recording archive anyway",
         "sweep fin-a-title: archived on disk, but the registry was not updated: disk full",
         "sweep fin-b-title: archived on disk, but the registry was not updated: disk full",
     )
@@ -640,14 +646,14 @@ def test_a_sweep_batch_skips_a_running_middle_session_and_archives_the_others(tm
 def test_an_interrupted_sweep_batch_records_what_it_already_archived(tmp_path, monkeypatch):
     path = _write(tmp_path, [_thread(tmp_path, f"fin-{i}", finish=True) for i in range(3)])
     plan = _plan(path)
-    archive = roundup_api.archive_cmd.archive_thread
+    archive = roundup_api.lifecycle.archive_thread
 
     def interrupted(reg, thread, **options):
         if thread["sessionId"] == "fin-1":
             raise KeyboardInterrupt
         return archive(reg, thread, **options)
 
-    monkeypatch.setattr(roundup_api.archive_cmd, "archive_thread", interrupted)
+    monkeypatch.setattr(roundup_api.lifecycle, "archive_thread", interrupted)
 
     with pytest.raises(KeyboardInterrupt):
         _phases(plan)
@@ -656,3 +662,18 @@ def test_an_interrupted_sweep_batch_records_what_it_already_archived(tmp_path, m
     assert [a["sessionId"] for a in saved["archived"]] == ["fin-0"]
     assert sorted(t["sessionId"] for t in saved["threads"]) == ["fin-1", "fin-2"]
     assert not os.path.exists(tmp_path / "projects" / "fin-0.jsonl")
+
+
+def test_sweep_reports_a_prior_move_as_a_warning(tmp_path, capsys):
+    thread = _thread(tmp_path, "fin", finish=True)
+    path = _write(tmp_path, [thread])
+    plan = _plan(path)
+    archive = tmp_path / "archive" / "x" / "fin.jsonl"
+    archive.parent.mkdir(parents=True)
+    os.rename(thread["file"], archive)
+
+    result = _phases(plan)
+
+    assert (result.swept, result.errors) == (1, 0)
+    assert result.warnings == (f"{thread['file']} already gone, recording archive anyway",)
+    assert capsys.readouterr() == ("", "")

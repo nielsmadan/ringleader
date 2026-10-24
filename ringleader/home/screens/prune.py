@@ -10,8 +10,8 @@ from textual.app import ComposeResult
 from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, OptionList, ProgressBar, Static
 
-from ... import overview, prune, registry, resume, revalidate
-from ...commands import sweep
+from ... import lifecycle, overview, prune, registry, resume, revalidate
+from ...agents import source_of
 from ...config import load_config
 from ...decisions import Outcome, PruneOp
 from ...revalidate import Seen
@@ -36,7 +36,7 @@ class PruneResult:
 
 
 def prune_rows(reg: dict[str, Any], now_iso: str, now_epoch: float) -> list[dict[str, Any]]:
-    swept = {registry.identity(t) for t in sweep.due(reg, now_epoch)}
+    swept = {registry.identity(t) for t in lifecycle.due(reg, now_epoch)}
     return sorted(
         (t for t in prune.prune_candidates(reg, now_iso) if registry.identity(t) not in swept),
         key=lambda t: t.get("mtime") or "",
@@ -46,7 +46,7 @@ def prune_rows(reg: dict[str, Any], now_iso: str, now_epoch: float) -> list[dict
 def prune_row(thread: dict[str, Any], now_iso: str) -> Text:
     text = Text(f"{overview.age_human(thread.get('mtime'), now_iso):<{AGE_WIDTH}}", style="dim")
     text.append(f"{thread.get('messageCount') or 0:>3} msgs  ")
-    text.append(f"{resume.agent_name(resume.source_of(thread)):<{AGENT_WIDTH}}", style="bold")
+    text.append(f"{resume.agent_name(source_of(thread)):<{AGENT_WIDTH}}", style="bold")
     text.append(resume.label(thread))
     text.append(f"  {project_label(thread)}", style="dim")
     return text

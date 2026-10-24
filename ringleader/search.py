@@ -7,7 +7,7 @@ from typing import Any
 
 from . import namefilter, registry
 
-_BLURB_FIELDS = ("aiTitle", "whatItIs", "summary", "lastPrompt")
+BLURB_FIELDS = ("aiTitle", "whatItIs", "summary", "lastPrompt")
 
 _TIERS = {"name": 0, "id": 1}
 
@@ -64,7 +64,7 @@ def _match_thread(
     fields: list[tuple[str, str | None]] = [
         ("name", clean(namefilter.display_name(thread))),
         ("id", clean(thread.get("sessionId"))),
-        *((field, clean(thread.get(field))) for field in _BLURB_FIELDS),
+        *((field, clean(thread.get(field))) for field in BLURB_FIELDS),
     ]
     for matched_on, value in fields:
         if not value:

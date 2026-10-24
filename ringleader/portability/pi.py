@@ -508,6 +508,92 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
     return result
 
 
+def _message_payload(
+    message: Message,
+    assets: dict[str, Attachment],
+    calls: dict[str, str],
+    historical: datetime,
+) -> dict[str, Any]:
+    millis = historical.timestamp() * 1000
+    content = message.content
+    role = native.native_role(message)
+    result: dict[str, Any]
+    if len(content) == 1 and isinstance(content[0], ToolResult) and role in ("user", "tool"):
+        tool = content[0]
+        result = {
+            "role": "toolResult",
+            "toolCallId": tool.call_id,
+            "toolName": calls[tool.call_id],
+            "content": native.emit_blocks(tool.output, assets, "pi"),
+            "isError": tool.is_error,
+            "timestamp": millis,
+        }
+    elif role in ("user", "assistant"):
+        result = {
+            "role": role,
+            "content": native.emit_blocks(content, assets, "pi"),
+            "timestamp": millis,
+        }
+        if role == "assistant":
+            result.update(
+                api="anthropic-messages",
+                provider="anthropic",
+                model="claude-sonnet-4-5",
+                usage=ZERO_USAGE,
+                stopReason="toolUse"
+                if any(isinstance(item, ToolCall) for item in content)
+                else "stop",
+            )
+    else:
+        raise PreservationError(
+            "Pi requires user/assistant messages or one tool result per message; historical system policy cannot be activated"
+        )
+    return result
+
+
+def _checkpoint_row(
+    checkpoint: Checkpoint,
+    history: tuple[Message, ...],
+    position: int,
+    ids: dict[str, str],
+    parent: str | None,
+    now: datetime,
+) -> dict[str, Any]:
+    if checkpoint.retained_context is not None:
+        raise CheckpointShape(
+            "Pi 0.85.1 runtime does not honor embedded retainedTail; cannot preserve this checkpoint"
+        )
+    if (
+        len(checkpoint.summary) != 1
+        or checkpoint.summary[0].role != "user"
+        or len(checkpoint.summary[0].content) != 1
+        or not isinstance(checkpoint.summary[0].content[0], Text)
+    ):
+        raise CheckpointShape("Pi requires one user text compaction summary")
+    summary_message = checkpoint.summary[0]
+    summary = cast(Text, summary_message.content[0]).text
+    if not summary.startswith(SUMMARY_PREFIX) or not summary.endswith(SUMMARY_SUFFIX):
+        raise CheckpointShape("Pi checkpoint summary must preserve its native context wrapper")
+    retained = checkpoint.retained_message_ids
+    if retained and retained != tuple(
+        item.id for item in history[position - len(retained) + 1 : position + 1]
+    ):
+        raise CheckpointShape("Pi requires a contiguous retained history suffix")
+    key = uuid4().hex[:8]
+    return {
+        "type": "compaction",
+        "id": key,
+        "parentId": parent,
+        "timestamp": native.historical_time(summary_message, now)
+        .isoformat()
+        .replace("+00:00", "Z"),
+        "summary": summary[len(SUMMARY_PREFIX) : -len(SUMMARY_SUFFIX)],
+        "firstKeptEntryId": ids[retained[0]] if retained else key,
+        "tokensBefore": 0,
+        "ringleader": native.message_annotations(summary_message, freeform_calls=True),
+    }
+
+
 class PiAdapter:
     profile = PROFILE
 
@@ -599,53 +685,15 @@ class PiAdapter:
             for item in message.content
             if isinstance(item, ToolCall)
         }
-        parent = None
+        parent: str | None = None
         for position, message in enumerate(conversation.history):
             historical = native.historical_time(message, now)
-            millis = historical.timestamp() * 1000
-            content = message.content
-            role = native.native_role(message)
-            result: dict[str, Any]
-            if (
-                len(content) == 1
-                and isinstance(content[0], ToolResult)
-                and role in ("user", "tool")
-            ):
-                tool = content[0]
-                result = {
-                    "role": "toolResult",
-                    "toolCallId": tool.call_id,
-                    "toolName": calls[tool.call_id],
-                    "content": native.emit_blocks(tool.output, assets, "pi"),
-                    "isError": tool.is_error,
-                    "timestamp": millis,
-                }
-            elif role in ("user", "assistant"):
-                result = {
-                    "role": role,
-                    "content": native.emit_blocks(content, assets, "pi"),
-                    "timestamp": millis,
-                }
-                if role == "assistant":
-                    result.update(
-                        api="anthropic-messages",
-                        provider="anthropic",
-                        model="claude-sonnet-4-5",
-                        usage=ZERO_USAGE,
-                        stopReason="toolUse"
-                        if any(isinstance(item, ToolCall) for item in content)
-                        else "stop",
-                    )
-            else:
-                raise PreservationError(
-                    "Pi requires user/assistant messages or one tool result per message; historical system policy cannot be activated"
-                )
-            row = {
+            row: dict[str, Any] = {
                 "type": "message",
                 "id": ids[message.id],
                 "parentId": parent,
                 "timestamp": historical.isoformat().replace("+00:00", "Z"),
-                "message": result,
+                "message": _message_payload(message, assets, calls, historical),
                 "ringleader": native.message_annotations(message, freeform_calls=True),
             }
             rows.append(row)
@@ -653,47 +701,11 @@ class PiAdapter:
             for checkpoint in conversation.checkpoints:
                 if checkpoint.after_message_id != message.id:
                     continue
-                if checkpoint.retained_context is not None:
-                    raise CheckpointShape(
-                        "Pi 0.85.1 runtime does not honor embedded retainedTail; cannot preserve this checkpoint"
-                    )
-                if (
-                    len(checkpoint.summary) != 1
-                    or checkpoint.summary[0].role != "user"
-                    or len(checkpoint.summary[0].content) != 1
-                    or not isinstance(checkpoint.summary[0].content[0], Text)
-                ):
-                    raise CheckpointShape("Pi requires one user text compaction summary")
-                summary_message = checkpoint.summary[0]
-                summary = cast(Text, summary_message.content[0]).text
-                if not summary.startswith(SUMMARY_PREFIX) or not summary.endswith(SUMMARY_SUFFIX):
-                    raise CheckpointShape(
-                        "Pi checkpoint summary must preserve its native context wrapper"
-                    )
-                retained = checkpoint.retained_message_ids
-                if retained and retained != tuple(
-                    item.id
-                    for item in conversation.history[position - len(retained) + 1 : position + 1]
-                ):
-                    raise CheckpointShape("Pi requires a contiguous retained history suffix")
-                key = uuid4().hex[:8]
-                rows.append(
-                    {
-                        "type": "compaction",
-                        "id": key,
-                        "parentId": parent,
-                        "timestamp": native.historical_time(summary_message, now)
-                        .isoformat()
-                        .replace("+00:00", "Z"),
-                        "summary": summary[len(SUMMARY_PREFIX) : -len(SUMMARY_SUFFIX)],
-                        "firstKeptEntryId": ids[retained[0]] if retained else key,
-                        "tokensBefore": 0,
-                        "ringleader": native.message_annotations(
-                            summary_message, freeform_calls=True
-                        ),
-                    }
+                compacted = _checkpoint_row(
+                    checkpoint, conversation.history, position, ids, parent, now
                 )
-                parent = key
+                rows.append(compacted)
+                parent = compacted["id"]
         rows.append(
             {
                 "type": "session_info",

@@ -10,6 +10,7 @@ from textual.message import Message
 from textual.widgets import Footer, Header, Static, TextArea
 
 from ... import export, overview, resume
+from ...agents import source_of
 from ...tui.background import CancelToken, Done, Failed, start_daemon
 from ..base import InboxScreen
 from ..state import short_path
@@ -26,7 +27,7 @@ def detail_lines(thread: dict[str, Any], now_iso: str) -> list[str]:
     kept = f"kept since {str(thread['keptAt'])[:10]}" if thread.get("keptAt") else None
     fields = [
         ("project", short_path(thread.get("project"))),
-        ("agent", resume.agent_name(resume.source_of(thread))),
+        ("agent", resume.agent_name(source_of(thread))),
         ("status", overview.effective_status(thread, now_iso)),
         ("what it is", thread.get("whatItIs") or "—"),
         ("last prompt", thread.get("lastPrompt") or "—"),

@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from ringleader.commands import keep
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -152,3 +154,16 @@ def test_keep_on_archived_session_offers_to_restore(tmp_path):
     assert r.returncode == 1
     assert "archived" in r.stdout
     assert "original path" in r.stderr
+
+
+def test_declining_keep_does_not_mutate_the_registry(tmp_path, monkeypatch, capsys):
+    path = _reg(tmp_path, _thread("a", decision="harvested"))
+    loaded = keep.registry.load_registry(path)
+    monkeypatch.setattr(keep.registry, "load_registry", lambda _: loaded)
+    monkeypatch.setattr("builtins.input", lambda _: "n")
+
+    assert keep.cmd_keep(["a", "--registry", str(path)]) == 0
+
+    assert loaded["threads"][0]["decision"] == "harvested"
+    assert json.loads(path.read_text())["threads"][0]["decision"] == "harvested"
+    assert "aborted" in capsys.readouterr().out

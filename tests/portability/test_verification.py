@@ -31,7 +31,7 @@ from ringleader.portability.opencode import OpenCodeAdapter
 from ringleader.portability.operations import decode, digest, encode
 from ringleader.portability.pi import PROFILE as PI_PROFILE
 from ringleader.portability.pi import PiAdapter
-from ringleader.portability.serialization import _encode
+from ringleader.portability.serialization import encode_value
 from ringleader.portability.service import ConversionService
 from ringleader.portability.verification import (
     HARNESS_VERSION,
@@ -153,9 +153,9 @@ def test_missing_state_loads_empty_and_corrupt_state_refuses(tmp_path):
         load_verified(path)
 
 
-def test_compatibility_without_new_fields_decodes():
+def test_compatibility_without_new_fieldsdecode_values():
     current = Compatibility(False, None, ("old",), "codex-cli 0.155.1", "schema")
-    stored = _encode(current)
+    stored = encode_value(current)
     del stored["warnings"], stored["needs_verification"]
     assert decode(json.dumps(stored).encode(), Compatibility) == current
 

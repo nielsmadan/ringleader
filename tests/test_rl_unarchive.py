@@ -6,7 +6,9 @@ import time
 from pathlib import Path
 
 import pytest
-from ringleader.commands import sweep, unarchive
+from ringleader import lifecycle
+from ringleader.commands import keep, sweep, unarchive
+from ringleader.sources.base import IndexUpdate
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -106,7 +108,7 @@ def test_restore_without_original_path_is_refused(tmp_path):
     reg = {"threads": [], "archived": []}
     ts = {"sessionId": "old", "reason": "archived", "archivePath": str(tmp_path / "a.jsonl")}
     with pytest.raises(RuntimeError, match="original path"):
-        unarchive.restore(reg, ts)
+        lifecycle.restore(reg, ts)
 
 
 def test_restore_missing_archived_file_is_refused(tmp_path):
@@ -118,7 +120,7 @@ def test_restore_missing_archived_file_is_refused(tmp_path):
         "originalPath": str(tmp_path / "back.jsonl"),
     }
     with pytest.raises(RuntimeError, match="gone"):
-        unarchive.restore(reg, ts)
+        lifecycle.restore(reg, ts)
 
 
 def test_restored_thread_is_not_swept_again(tmp_path, monkeypatch):
@@ -182,3 +184,24 @@ def test_restore_strips_a_finish_mark_left_by_an_older_build(tmp_path):
     t = json.loads(reg.read_text())["threads"][0]
     assert t.get("finishOnExit") is None
     assert t.get("finishedAt") is None
+
+
+@pytest.mark.parametrize("command", [keep.cmd_keep, unarchive.cmd_unarchive])
+@pytest.mark.parametrize("outcome", list(IndexUpdate))
+def test_restore_reports_only_missing_picker_entries(
+    tmp_path, monkeypatch, capsys, command, outcome
+):
+    reg, original = _setup(tmp_path)
+    monkeypatch.setattr(lifecycle.scanner, "show_in_picker", lambda *_: outcome)
+    args = ["s1", "--registry", str(reg)]
+    if command is keep.cmd_keep:
+        args.append("--yes")
+
+    assert command(args) == 0
+
+    output = capsys.readouterr()
+    assert original.exists()
+    if outcome is IndexUpdate.NO_ENTRY:
+        assert "picker entry could not be updated" in output.err
+    else:
+        assert output.err == ""

@@ -35,7 +35,7 @@ def default_sessions_dir() -> Path:
     return (Path(home) if home else Path.home()) / ".factory" / "sessions"
 
 
-def _session_start(path: Path) -> dict[str, Any]:
+def session_start(path: Path) -> dict[str, Any]:
     with path.open(encoding="utf-8", errors="replace") as fh:
         for raw in fh:
             if not raw.strip():
@@ -55,7 +55,7 @@ def _is_own_session(start: dict[str, Any]) -> bool:
 
 
 def _header(path: Path) -> tuple[bool, object]:
-    start = _session_start(path)
+    start = session_start(path)
     return _is_own_session(start), start.get("id")
 
 

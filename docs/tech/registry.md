@@ -111,6 +111,11 @@ editing:
   `namedAtMtime`) and `locationPinned`. **Never overwritten by a scan.** `selectedForDay` is
   unused: still written as `null` on new sessions, read by nothing.
 
+`session_lifecycle()` resolves records across lifecycle buckets; `session_lineage()` and
+`conversion_lineage()` read their conversion relationships. `register_conversion()` owns
+lineage collision checks, nested tombstone updates, and creation of converted threads.
+The conversion service calls it within `mutate_registry()`.
+
 Conversion fields `lineage` and `nativeRoots` are preserved by scans and lifecycle
 transitions. `conversionLineage` retains relationships even after target deletion;
 operation journals under `conversion/` supply recovery evidence. See

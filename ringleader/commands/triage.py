@@ -7,6 +7,7 @@ from typing import Any
 
 from .. import jsonout, overview, projects, refresh, registry
 from .. import memory as memmod
+from ..agents import source_of
 from . import default_registry
 
 
@@ -103,7 +104,7 @@ def cmd_triage(argv: list[str]) -> int:
     threads = projects.filter_by_projects(reg["threads"], args.project)
     if args.source:
         wanted = set(args.source)
-        threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
+        threads = [t for t in threads if (source_of(t)) in wanted]
     threads = overview.filter_recent(threads, now, args.recent)
     if not args.include_filtered:
         threads = [t for t in threads if not overview.is_filtered(t)]

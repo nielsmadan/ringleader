@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import gitinfo, registry, scanner
+from ..agents import source_of
 from ..slug import normalize
 from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
@@ -19,7 +20,7 @@ def _follow_storage(thread: dict[str, Any], new_path: str) -> tuple[str | None, 
 
     A source with neither capability is not a failure: the registry record is still
     worth re-pointing, it just leaves the session where the agent's picker had it."""
-    source = thread.get("source") or "claude-code"
+    source = source_of(thread)
     sid = thread["sessionId"]
     if not thread.get("file"):
         print(f"registry only — no transcript recorded for {sid[:8]}")

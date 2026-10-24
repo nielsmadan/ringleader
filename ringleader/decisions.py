@@ -5,10 +5,18 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, Literal, Protocol, runtime_checkable
 
-from . import enrichment, export, registry, revalidate, roundup, scanner, stateio
+from . import (
+    enrichment,
+    export,
+    harvesting,
+    lifecycle,
+    registry,
+    revalidate,
+    roundup,
+    scanner,
+    stateio,
+)
 from .batch import Txn, run_batch
-from .commands import archive as archive_cmd
-from .commands import harvest as harvest_cmd
 from .enrichment import Classified
 from .models.base import Model, ModelError
 from .presence import PresenceUnavailable
@@ -166,12 +174,15 @@ def _revalidated_in(
     return _revalidated(thread, seen, txn.live, unknown, require_stamp=require_stamp)
 
 
-def _moved_unrecorded(seen: Seen, dest: str, error: BaseException) -> Outcome:
+def _moved_unrecorded(
+    seen: Seen, dest: str, error: BaseException, warnings: tuple[str, ...]
+) -> Outcome:
     return Outcome(
         ok=False,
         message=f"archived {seen.label} on disk, but the registry was not updated: {error}",
         wrote=True,
         path=dest,
+        warnings=warnings,
     )
 
 
@@ -179,14 +190,24 @@ def _archive_in(txn: Txn, op: ArchiveOp, ctx: OpContext) -> Outcome:
     thread = _revalidated_in(txn, op.seen, ctx.unknown)
     if isinstance(thread, Outcome):
         return thread
-    dest = archive_cmd.archive_thread(
-        txn.reg, thread, archive_root_path=ctx.archive_root_path, index=txn.index
+    result = lifecycle.archive_thread(
+        txn.reg,
+        thread,
+        archive_root_path=ctx.archive_root_path,
+        now_iso=ctx.now_iso(),
+        index=txn.index,
     )
-    return Outcome(ok=True, message=f"archived {op.seen.label}", wrote=True, path=dest)
+    return Outcome(
+        ok=True,
+        message=f"archived {op.seen.label}",
+        wrote=True,
+        path=result.path,
+        warnings=result.warnings,
+    )
 
 
 def _archive_unrecorded(op: ArchiveOp, outcome: Outcome, error: Exception) -> Outcome:
-    return _moved_unrecorded(op.seen, outcome.path or "", error)
+    return _moved_unrecorded(op.seen, outcome.path or "", error, outcome.warnings)
 
 
 def _delete_in(txn: Txn, op: DeleteOp, ctx: OpContext) -> Outcome:
@@ -246,7 +267,9 @@ def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> 
         prefix = "harvested, not archived" if wrote else op.seen.label
         return Outcome(ok=False, message=f"{prefix}: {reason}", wrote=wrote, path=saved)
     try:
-        dest = archive_cmd.archive_thread(reg, thread, archive_root_path=ctx.archive_root_path)
+        result = lifecycle.archive_thread(
+            reg, thread, archive_root_path=ctx.archive_root_path, now_iso=ctx.now_iso()
+        )
     except (RuntimeError, OSError) as error:
         if not wrote:
             return Outcome(ok=False, message=f"{op.seen.label}: {error}", wrote=False)
@@ -256,10 +279,22 @@ def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> 
     try:
         registry.commit_registry(ctx.registry_path, reg)
     except (RuntimeError, OSError) as error:
-        return _moved_unrecorded(op.seen, dest, error)
+        return _moved_unrecorded(op.seen, result.path, error, result.warnings)
     if saved is None:
-        return Outcome(ok=True, message=f"archived {op.seen.label}", wrote=True, path=dest)
-    return Outcome(ok=True, message=f"harvested {op.seen.label} → {saved}", wrote=True, path=saved)
+        return Outcome(
+            ok=True,
+            message=f"archived {op.seen.label}",
+            wrote=True,
+            path=result.path,
+            warnings=result.warnings,
+        )
+    return Outcome(
+        ok=True,
+        message=f"harvested {op.seen.label} → {saved}",
+        wrote=True,
+        path=saved,
+        warnings=result.warnings,
+    )
 
 
 def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
@@ -276,8 +311,8 @@ def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
                 reason = "nothing harvested to save"
                 return _refused(op.seen, reason, f"{op.seen.label}: {reason}")
             try:
-                _, path = harvest_cmd.save_harvest_unlocked(
-                    _selector(op.seen), ctx.registry_path, op.markdown
+                _, path = harvesting.save_harvest_unlocked(
+                    _selector(op.seen), ctx.registry_path, op.markdown, now_iso=ctx.now_iso()
                 )
             except registry.RegistryConflict as error:
                 return Outcome(
@@ -560,5 +595,5 @@ def _worth_keeping(data: dict[str, Any]) -> bool:
 
 def harvest_markdown(thread: dict[str, Any], model: Model) -> str | None:
     text = export.render_conversation(thread)
-    data = model.complete_json(harvest_cmd.build_prompt(thread, text), harvest_cmd.HARVEST_SCHEMA)
-    return harvest_cmd.render_markdown(thread, data) if _worth_keeping(data) else None
+    data = model.complete_json(harvesting.build_prompt(thread, text), harvesting.HARVEST_SCHEMA)
+    return harvesting.render_markdown(thread, data) if _worth_keeping(data) else None

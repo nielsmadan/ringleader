@@ -517,3 +517,15 @@ def test_a_recorded_no_repo_check_is_dropped_once_a_repository_appears(tmp_path)
     scanned = _scan_repo(tmp_path, [no_repo], lambda c: _project(c, "github.com/me/new"), NOW)
 
     assert scanned[0].git_project_key == "github.com/me/new"
+
+
+def test_default_scan_uses_current_storage_environment(tmp_path, monkeypatch):
+    from ringleader import scanner
+
+    monkeypatch.setattr(scanner, "SOURCE_TYPES", (ClaudeCodeSource,))
+    for name in ("first", "second"):
+        root = tmp_path / name
+        _session(root / "project", name, "/workspace")
+        monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(root))
+        found = scanner.scan(git_resolver=lambda cwd: None)
+        assert [session.session_id for session in found] == [name]

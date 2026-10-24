@@ -412,6 +412,17 @@ def test_native_split_checkpoint_keeps_distinct_suffix(tmp_path):
     assert compacted.context[-1].content == (Text("Model after"),)
     staged = stage(tmp_path, original)
     compare(original, CodexAdapter().read_stage(staged), CodexAdapter().normalizations(PROFILE))
+    output = native.records(staged.files[0].data)
+    assert [(row["type"], row["payload"].get("type")) for row in output] == [
+        ("session_meta", None),
+        ("event_msg", "task_started"),
+        ("event_msg", "user_message"),
+        ("response_item", "message"),
+        ("compacted", None),
+        ("response_item", "message"),
+        ("event_msg", "agent_message"),
+        ("event_msg", "task_complete"),
+    ]
 
 
 def test_model_status_markers_are_native_and_verified(tmp_path):
@@ -515,6 +526,14 @@ def test_native_turn_grouping_survives_multiple_users_in_one_task(tmp_path):
     output = native.records(staged.files[0].data)
     starts = [row["payload"] for row in output if row["payload"].get("type") == "task_started"]
     assert len(starts) == 1
+    events = [row["payload"] for row in output if row["type"] == "event_msg"]
+    assert [event["type"] for event in events] == [
+        "task_started",
+        "user_message",
+        "user_message",
+        "task_complete",
+    ]
+    assert events[-1]["turn_id"] == events[0]["turn_id"]
 
 
 def test_pending_native_task_fails(tmp_path):

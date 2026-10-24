@@ -981,6 +981,94 @@ def cli_version(output: str) -> str:
     return match.group(1) if match else output.strip()
 
 
+def _session_meta(
+    conversation: Conversation,
+    request: TargetRequest,
+    now: datetime,
+    version: str,
+    base: Message | None,
+) -> dict[str, Any]:
+    meta = {
+        "id": request.identity.native_id,
+        "session_id": request.identity.native_id,
+        "timestamp": now.isoformat(),
+        "cwd": str(request.roots.cwd),
+        "originator": "ringleader",
+        "cli_version": version,
+        "source": "cli",
+        "history_mode": "legacy",
+        "model_provider": "openai",
+        "base_instructions": json.loads(cast(Opaque, base.content[0]).payload) if base else None,
+        "ringleader": native.session_metadata(conversation),
+        "ringleader_title": request.title,
+    }
+    if base:
+        meta["ringleader_base_instructions"] = native.message_annotations(base)
+    return {"timestamp": now.isoformat(), "type": "session_meta", "payload": meta}
+
+
+def _task_started(turn: str, stamp: datetime) -> dict[str, Any]:
+    return {
+        "timestamp": stamp.isoformat(),
+        "type": "event_msg",
+        "payload": {
+            "type": "task_started",
+            "turn_id": turn,
+            "model_context_window": None,
+            "started_at": int(stamp.timestamp()),
+            "collaboration_mode_kind": "default",
+        },
+    }
+
+
+def _task_complete(turn: str, stamp: datetime) -> dict[str, Any]:
+    return {
+        "timestamp": stamp.isoformat(),
+        "type": "event_msg",
+        "payload": {
+            "type": "task_complete",
+            "turn_id": turn,
+            "last_agent_message": None,
+            "completed_at": int(stamp.timestamp()),
+        },
+    }
+
+
+def _context_rows(
+    context: tuple[Message, ...], assets: dict[str, Attachment], now: datetime
+) -> list[dict[str, Any]]:
+    calls = _tool_calls(context)
+    return [
+        row
+        for message in context
+        for row in _group_rows(
+            _model_parts(message, assets, calls),
+            message,
+            "response_item",
+            native.historical_time(message, now),
+            str(uuid4()),
+        )
+    ]
+
+
+def _checkpoint_rows(
+    checkpoint: Checkpoint,
+    by_id: dict[str, Message],
+    assets: dict[str, Attachment],
+    now: datetime,
+    mapping: dict[str, str],
+    stamp: datetime,
+) -> list[dict[str, Any]]:
+    return [
+        {
+            "timestamp": stamp.isoformat(),
+            "type": "compacted",
+            "payload": _checkpoint_payload(checkpoint, by_id, assets, now, mapping),
+        },
+        *_context_rows(checkpoint.following_context or (), assets, now),
+    ]
+
+
 class CodexAdapter:
     profile = PROFILE
 
@@ -1058,10 +1146,10 @@ class CodexAdapter:
         ref = now.strftime("sessions/%Y/%m/%d/rollout-%Y-%m-%dT%H-%M-%S-") + target + ".jsonl"
         applied = self.normalizations(PROFILE)
         try:
-            rows, preview = self._rows(conversation, request, now, target, version)
+            rows, preview = self._rows(conversation, request, now, version)
         except CheckpointShape:
             conversation = flattened(conversation)
-            rows, preview = self._rows(conversation, request, now, target, version)
+            rows, preview = self._rows(conversation, request, now, version)
             applied = (*applied, flattened_checkpoint(PROFILE.name), FLATTENED_VIEW)
         epoch = int(now.timestamp())
         payload = {
@@ -1104,34 +1192,12 @@ class CodexAdapter:
         conversation: Conversation,
         request: TargetRequest,
         now: datetime,
-        target: str,
         version: str,
     ) -> tuple[list[dict[str, Any]], str]:
         base, context = _split_base(conversation.context)
-        meta = {
-            "id": target,
-            "session_id": target,
-            "timestamp": now.isoformat(),
-            "cwd": str(request.roots.cwd),
-            "originator": "ringleader",
-            "cli_version": version,
-            "source": "cli",
-            "history_mode": "legacy",
-            "model_provider": "openai",
-            "base_instructions": json.loads(cast(Opaque, base.content[0]).payload)
-            if base
-            else None,
-            "ringleader": native.session_metadata(conversation),
-            "ringleader_title": request.title,
-        }
-        if base:
-            meta["ringleader_base_instructions"] = native.message_annotations(base)
-        rows: list[dict[str, Any]] = [
-            {"timestamp": now.isoformat(), "type": "session_meta", "payload": meta}
-        ]
+        rows = [_session_meta(conversation, request, now, version, base)]
         assets = {item.id: item for item in conversation.attachments}
         visible_calls = _tool_calls(conversation.history)
-        model_calls = _tool_calls(context)
         results = {
             part.call_id: part
             for message in conversation.history
@@ -1153,32 +1219,9 @@ class CodexAdapter:
             stamp = native.historical_time(message, now)
             if message.id in turn_starts:
                 if turn is not None:
-                    rows.append(
-                        {
-                            "timestamp": last_stamp.isoformat(),
-                            "type": "event_msg",
-                            "payload": {
-                                "type": "task_complete",
-                                "turn_id": turn,
-                                "last_agent_message": None,
-                                "completed_at": int(last_stamp.timestamp()),
-                            },
-                        }
-                    )
+                    rows.append(_task_complete(turn, last_stamp))
                 turn = str(uuid4())
-                rows.append(
-                    {
-                        "timestamp": stamp.isoformat(),
-                        "type": "event_msg",
-                        "payload": {
-                            "type": "task_started",
-                            "turn_id": turn,
-                            "model_context_window": None,
-                            "started_at": int(stamp.timestamp()),
-                            "collaboration_mode_kind": "default",
-                        },
-                    }
-                )
+                rows.append(_task_started(turn, stamp))
             rows.extend(
                 _group_rows(
                     _visible_parts(message, assets, visible_calls, results),
@@ -1199,53 +1242,14 @@ class CodexAdapter:
                     )
                 )
             if message.id in boundaries:
-                rows.append(
-                    {
-                        "timestamp": stamp.isoformat(),
-                        "type": "compacted",
-                        "payload": _checkpoint_payload(
-                            boundaries[message.id], by_id, assets, now, mapping
-                        ),
-                    }
-                )
                 checkpoint = boundaries[message.id]
+                rows.extend(_checkpoint_rows(checkpoint, by_id, assets, now, mapping, stamp))
                 explicit_suffix = checkpoint.following_context is not None
-                following_calls = _tool_calls(checkpoint.following_context or ())
-                for following in checkpoint.following_context or ():
-                    rows.extend(
-                        _group_rows(
-                            _model_parts(following, assets, following_calls),
-                            following,
-                            "response_item",
-                            native.historical_time(following, now),
-                            str(uuid4()),
-                        )
-                    )
             last_stamp = stamp
         if turn:
-            rows.append(
-                {
-                    "timestamp": last_stamp.isoformat(),
-                    "type": "event_msg",
-                    "payload": {
-                        "type": "task_complete",
-                        "turn_id": turn,
-                        "last_agent_message": None,
-                        "completed_at": int(last_stamp.timestamp()),
-                    },
-                }
-            )
+            rows.append(_task_complete(turn, last_stamp))
         if not conversation.checkpoints:
-            for message in context:
-                rows.extend(
-                    _group_rows(
-                        _model_parts(message, assets, model_calls),
-                        message,
-                        "response_item",
-                        native.historical_time(message, now),
-                        str(uuid4()),
-                    )
-                )
+            rows.extend(_context_rows(context, assets, now))
         preview = next(
             (
                 part.text

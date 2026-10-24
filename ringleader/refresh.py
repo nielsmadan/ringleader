@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from . import registry, scanner
+from .agents import source_of
 from .config import load_config
 from .gitinfo import GitResolver
 from .sources.base import RawRef, Source, in_workspace
@@ -165,7 +166,7 @@ def _known_files(
     by_source: dict[str, set[str]] = {}
     for t in threads:
         if t.get("file") and in_workspace(t.get("project"), cwd, recursive=recursive):
-            by_source.setdefault(t.get("source") or "claude-code", set()).add(t["file"])
+            by_source.setdefault(source_of(t), set()).add(t["file"])
     return {name: frozenset(files) for name, files in by_source.items()}
 
 

@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from .. import registry
+from .. import lifecycle, registry
 from . import default_registry, unarchive
 
 
@@ -42,18 +42,12 @@ def cmd_keep(argv: list[str]) -> int:
             print("aborted")
             return 0
         try:
-            dest, shown = unarchive.restore(reg, ts)
+            dest, shown = lifecycle.restore(reg, ts)
         except RuntimeError as e:
             print(f"rl-keep: {e}", file=sys.stderr)
             return 1
         registry.commit_registry(args.registry, reg)
-        print(f"restored {args.id} -> {dest}")
-        if not shown and (ts.get("thread") or {}).get("source") == "codex":
-            print(
-                "  note: restored on disk, but the agent's picker entry could not be "
-                "updated (it may have been archived by the agent itself)",
-                file=sys.stderr,
-            )
+        unarchive.report_restored(args.id, dest, shown)
         t = registry.find_session(reg, args.id)
         if t is None:
             registry.commit_registry(args.registry, reg)
@@ -62,15 +56,17 @@ def cmd_keep(argv: list[str]) -> int:
             )
             return 1
 
-    previous = registry.keep_thread(reg, args.id, _now())
+    previous = t.get("decision")
+    if previous == "keep":
+        previous = None
     if previous and not args.yes:
         print(f"{args.id} is currently marked '{previous}'; keeping replaces that decision.")
         if input("Proceed? [y/N] ").strip().lower() not in ("y", "yes"):
             print("aborted")
             return 0
         reg = registry.load_registry(args.registry)
-        registry.keep_thread(reg, args.id, _now())
 
+    registry.keep_thread(reg, args.id, _now())
     registry.commit_registry(args.registry, reg)
     extra = f" (replaced decision '{previous}')" if previous else ""
     print(f"keeping {args.id} long-term{extra} — `rl session unkeep {args.id}` to undo")

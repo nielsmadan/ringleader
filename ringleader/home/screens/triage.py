@@ -8,6 +8,7 @@ from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, OptionList, Static
 
 from ... import overview, registry, resume
+from ...agents import source_of
 from ...decisions import Decision
 from ...tui.keys import nav_bindings
 from ...tui.modals import ConfirmModal, SnoozeModal
@@ -46,7 +47,7 @@ def triage_row(thread: dict[str, Any], now_iso: str, *, marked: bool, running: b
     status = overview.effective_status(thread, now_iso)
     text = Text("● " if marked else "  ", style="bold")
     text.append(f"{status:<{STATUS_WIDTH}}", style=_STATUS_STYLES.get(status, "italic"))
-    text.append(f"{resume.agent_name(resume.source_of(thread)):<{AGENT_WIDTH}}", style="bold")
+    text.append(f"{resume.agent_name(source_of(thread)):<{AGENT_WIDTH}}", style="bold")
     text.append(f"{overview.age_human(thread.get('mtime'), now_iso):<{AGE_WIDTH}}", style="dim")
     text.append(resume.label(thread))
     what = thread.get("whatItIs")

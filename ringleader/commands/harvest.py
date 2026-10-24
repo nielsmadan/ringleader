@@ -4,9 +4,8 @@ import argparse
 import sys
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
-from .. import export, harvests, registry
+from .. import export, harvesting, registry
 from ..config import load_config
 from ..models import active_model
 from ..models.base import ModelError
@@ -14,49 +13,14 @@ from ..session_env import current_session
 from ..stateio import publish_lock
 from . import default_registry
 
-HARVEST_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "summary": {"type": "string"},
-        "gotchas": {"type": "array", "items": {"type": "string"}},
-        "decisions": {"type": "array", "items": {"type": "string"}},
-        "whatChanged": {"type": "array", "items": {"type": "string"}},
-    },
-    "required": ["summary", "gotchas", "decisions", "whatChanged"],
-}
-
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def build_prompt(thread: dict[str, Any], condensed: str) -> str:
-    return (
-        "Extract the DURABLE, reusable knowledge from this finished coding session for the "
-        "repo's docs. Keep only what's worth remembering later; discard routine steps.\n"
-        f"project: {thread.get('project')}\n\n"
-        "Condensed transcript:\n"
-        f"{condensed[:24000]}\n\n"
-        "Return: summary (one paragraph), gotchas (non-obvious things), decisions "
-        "(+rationale), whatChanged."
-    )
-
-
-def render_markdown(thread: dict[str, Any], data: dict[str, Any]) -> str:
-    title = thread.get("title") or thread.get("suggestedName") or thread["sessionId"]
-    parts = [f"# {title}\n", f"## Summary\n\n{data.get('summary', '').strip()}\n"]
-    for key, heading in (
-        ("gotchas", "Gotchas"),
-        ("decisions", "Decisions"),
-        ("whatChanged", "What changed"),
-    ):
-        items = [i for i in (data.get(key) or []) if i]
-        if items:
-            parts.append(f"## {heading}\n\n" + "\n".join(f"- {i}" for i in items) + "\n")
-    return "\n".join(parts)
-
-
-def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | None]:
+def prepare_harvest(
+    session_id: str, registry_path: str, *, prog: str = "rl-harvest"
+) -> tuple[int, str | None]:
     model = active_model(load_config())
     if model is None:
         print(
@@ -68,7 +32,7 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
     thread = registry.find_session(reg, session_id)
     if thread is None:
         print(
-            f"rl-harvest: unknown session {session_id} — run `rl session refresh` "
+            f"{prog}: unknown session {session_id} — run `rl session refresh` "
             "first if it started since the last scan",
             file=sys.stderr,
         )
@@ -76,35 +40,16 @@ def _prepare_harvest(session_id: str, registry_path: str) -> tuple[int, str | No
     try:
         condensed = export.render_conversation(thread)
     except (OSError, RuntimeError) as error:
-        print(f"rl-harvest: {error}", file=sys.stderr)
+        print(f"{prog}: {error}", file=sys.stderr)
         return 1, None
     try:
-        data = model.complete_json(build_prompt(thread, condensed), HARVEST_SCHEMA)
+        data = model.complete_json(
+            harvesting.build_prompt(thread, condensed), harvesting.HARVEST_SCHEMA
+        )
     except (ModelError, KeyError) as error:
-        print(f"rl-harvest: {error}", file=sys.stderr)
+        print(f"{prog}: {error}", file=sys.stderr)
         return 1, None
-    return 0, render_markdown(thread, data)
-
-
-def save_harvest_unlocked(
-    session_id: str, registry_path: str, markdown: str
-) -> tuple[dict[str, Any], Path]:
-    reg = registry.load_registry(registry_path)
-    thread = registry.find_session(reg, session_id)
-    if thread is None:
-        raise KeyError(session_id)
-    path = harvests._write_harvest_unlocked(
-        session_id=registry.qualified_id(thread),
-        name=thread.get("title") or thread.get("suggestedName") or "",
-        folder_path=thread.get("gitRoot") or thread.get("project"),
-        repo_url=thread.get("gitRemote"),
-        clone_url=thread.get("gitCloneUrl"),
-        harvested_at=_now(),
-        content=markdown,
-    )
-    registry.append_harvest_path(reg, registry.qualified_id(thread), str(path))
-    registry.commit_registry(registry_path, reg)
-    return thread, path
+    return 0, harvesting.render_markdown(thread, data)
 
 
 def _read_from_file(path: str) -> str:
@@ -138,7 +83,7 @@ def cmd_harvest(argv: list[str]) -> int:
             print("rl-harvest: refusing to store an empty harvest", file=sys.stderr)
             return 1
     else:
-        rc, markdown = _prepare_harvest(session_id, args.registry)
+        rc, markdown = prepare_harvest(session_id, args.registry)
         if rc != 0 or markdown is None:
             return rc
 
@@ -148,7 +93,9 @@ def cmd_harvest(argv: list[str]) -> int:
 
     with publish_lock():
         try:
-            thread, path = save_harvest_unlocked(session_id, args.registry, markdown)
+            thread, path = harvesting.save_harvest_unlocked(
+                session_id, args.registry, markdown, now_iso=_now()
+            )
         except KeyError:
             print(
                 f"rl-harvest: unknown session {session_id} — run `rl session refresh` "

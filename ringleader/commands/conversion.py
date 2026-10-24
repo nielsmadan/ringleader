@@ -69,7 +69,7 @@ def parser(command: str, description: str, *, verified: bool = True) -> argparse
     return result
 
 
-def _error(error: Exception, *, json_output: bool = False) -> int:
+def render_error(error: Exception, *, json_output: bool = False) -> int:
     if json_output:
         print(json.dumps({"error": str(error)}))
     else:
@@ -77,7 +77,7 @@ def _error(error: Exception, *, json_output: bool = False) -> int:
     return 1
 
 
-def _render_result(result: ConversionResult) -> str:
+def render_result(result: ConversionResult) -> str:
     source = f"{display_agent(result.source.agent)}:{result.source.native_id}"
     target = f"{display_agent(result.target.agent)}:{result.target.native_id}"
     verb = "preview" if result.dry_run else "reused" if result.reused else "created"
@@ -166,7 +166,7 @@ def cmd_convert(argv: list[str]) -> int:
         target = worker.adapters.get(args.to).agent
         selected, errors = _select(args, worker)
     except (ValueError, OSError) as exc:
-        return _error(exc, json_output=args.json)
+        return render_error(exc, json_output=args.json)
     results = []
     previews: list[dict[str, str]] = []
     for item in selected:
@@ -199,7 +199,7 @@ def cmd_convert(argv: list[str]) -> int:
         )
     else:
         for result in results:
-            print(_render_result(result))
+            print(render_result(result))
         for preview in previews:
             print(f"{preview['selector']}: would self-verify; {preview['wouldSelfVerify']}")
         for error in errors:
@@ -278,7 +278,7 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
             )
         )
         print(
-            json.dumps(asdict(result), indent=2) if args.json else _render_result(result),
+            json.dumps(asdict(result), indent=2) if args.json else render_result(result),
             flush=True,
         )
         if launch:
@@ -294,7 +294,7 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
                 f"Target retained: {display_agent(result.target.agent)}:{result.target.native_id}. Resume with: {_resume_command(result.target, args)}",
                 file=sys.stderr,
             )
-        return _error(exc, json_output=args.json and result is None)
+        return render_error(exc, json_output=args.json and result is None)
 
 
 def cmd_fork(argv: list[str]) -> int:
@@ -317,7 +317,7 @@ def cmd_resume(argv: list[str]) -> int:
         _launch(worker, selected, ExecLauncher())
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
-        return _error(exc, json_output=args.json)
+        return render_error(exc, json_output=args.json)
 
 
 def cmd_lineage(argv: list[str]) -> int:
@@ -355,4 +355,4 @@ def cmd_lineage(argv: list[str]) -> int:
                 print("No conversion lineage recorded.")
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
-        return _error(exc, json_output=args.json)
+        return render_error(exc, json_output=args.json)

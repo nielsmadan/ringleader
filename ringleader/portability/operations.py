@@ -21,7 +21,7 @@ from .capabilities import (
 from .compact import CompactReport
 from .compare import Normalization
 from .model import Conversation, Identity, PreservationError, unique_object, validate
-from .serialization import _decode, _encode
+from .serialization import decode_value, encode_value
 from .snapshot import SourceSnapshot, TransformOptions
 
 OPERATION_VERSION = 2
@@ -179,7 +179,7 @@ class Operation:
 
 
 def encode(value: object) -> bytes:
-    return json.dumps(_encode(value), sort_keys=True, separators=(",", ":")).encode()
+    return json.dumps(encode_value(value), sort_keys=True, separators=(",", ":")).encode()
 
 
 def digest(data: bytes) -> str:
@@ -226,7 +226,7 @@ def _valid_entry(entry: Any) -> bool:
 
 def decode[T](data: bytes, expected: type[T]) -> T:
     try:
-        return cast(T, _decode(json.loads(data, object_pairs_hook=unique_object), expected))
+        return cast(T, decode_value(json.loads(data, object_pairs_hook=unique_object), expected))
     except (ValueError, TypeError, UnicodeError) as exc:
         raise PreservationError(f"Invalid conversion operation: {exc}") from exc
 
@@ -391,6 +391,10 @@ class OperationStore:
                 or (step.name.startswith("prepare:") and step.phase == "done")
             ) and (step.device < 0 or step.inode <= 0):
                 raise PreservationError("Missing durable publisher inode evidence")
+
+    def discard_artifacts(self, operation_id: str) -> None:
+        self._path(operation_id, "artifacts.json").unlink(missing_ok=True)
+        fsync_directory(self.directory(operation_id))
 
     def create(self, operation: Operation, artifacts: bytes) -> None:
         durable_directory(self.root)

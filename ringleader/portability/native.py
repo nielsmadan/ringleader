@@ -39,7 +39,7 @@ from .model import (
     canonical_json,
     unique_object,
 )
-from .serialization import _decode, _encode
+from .serialization import decode_value, encode_value
 from .versions import VersionVerdict
 
 MAX_BYTES = 128 * 1024 * 1024
@@ -281,11 +281,11 @@ def _matches_native(item: Instruction | ToolOmission | ToolCall, actual: Content
 
 def message_annotations(message: Message, *, freeform_calls: bool = False) -> dict[str, Any]:
     return {
-        "provenance": _encode(message.provenance),
-        "timestamp": _encode(message.timestamp),
+        "provenance": encode_value(message.provenance),
+        "timestamp": encode_value(message.timestamp),
         "role": message.role,
         "content": {
-            str(i): _encode(item)
+            str(i): encode_value(item)
             for i, item in enumerate(message.content)
             if _annotated(item, freeform_calls)
         },
@@ -311,7 +311,7 @@ def restore(message: Message, row: dict[str, Any]) -> Message:
             index = int(key)
             if str(index) != key:
                 raise PreservationError("Invalid historical content index")
-            item = _decode(raw, Instruction | ToolOmission | ToolCall)
+            item = decode_value(raw, Instruction | ToolOmission | ToolCall)
             actual = content[index] if index >= 0 else None
         except (ValueError, IndexError, TypeError) as exc:
             raise PreservationError("Invalid historical annotation") from exc
@@ -336,16 +336,16 @@ def restore(message: Message, row: dict[str, Any]) -> Message:
         message,
         role=role,
         content=tuple(content),
-        provenance=_decode(metadata["provenance"], Provenance),
-        timestamp=_decode(metadata["timestamp"], HistoricalTimestamp | None),
+        provenance=decode_value(metadata["provenance"], Provenance),
+        timestamp=decode_value(metadata["timestamp"], HistoricalTimestamp | None),
     )
 
 
 def session_metadata(conversation: Conversation) -> dict[str, Any]:
     return {
         "branch": conversation.branch_id,
-        "created": _encode(conversation.source_created_at),
-        "updated": _encode(conversation.source_updated_at),
+        "created": encode_value(conversation.source_created_at),
+        "updated": encode_value(conversation.source_updated_at),
     }
 
 
@@ -357,8 +357,8 @@ def restore_session(conversation: Conversation, metadata: Any) -> Conversation:
     return replace(
         conversation,
         branch_id=string(metadata["branch"], "branch"),
-        source_created_at=_decode(metadata["created"], HistoricalTimestamp | None),
-        source_updated_at=_decode(metadata["updated"], HistoricalTimestamp | None),
+        source_created_at=decode_value(metadata["created"], HistoricalTimestamp | None),
+        source_updated_at=decode_value(metadata["updated"], HistoricalTimestamp | None),
     )
 
 

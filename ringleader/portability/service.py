@@ -111,18 +111,6 @@ class BatchResult:
     error: str | None = None
 
 
-def _record(reg: dict[str, Any], target: Identity) -> tuple[str, dict[str, Any] | None]:
-    for bucket, lifecycle in (
-        ("deleted", "deleted"),
-        ("archived", "archived"),
-        ("threads", "active"),
-    ):
-        record = registry.find_session(reg, target.native_id, source=target.agent, bucket=bucket)
-        if record is not None:
-            return lifecycle, record
-    return "missing", None
-
-
 def _applied(writer: NativeWriter, stage: NativeStage) -> tuple[Normalization, ...]:
     if stage.normalizations is None:
         # a journal written before normalizations were recorded predates today's
@@ -153,15 +141,6 @@ def _reuse_identity(artifacts: Artifacts) -> tuple[object, ...]:
         artifacts.stage.profile,
         artifacts.conversation.title,
     )
-
-
-def _lineage(record: dict[str, Any]) -> dict[str, Any] | None:
-    while record:
-        if record.get("lineage"):
-            lineage: dict[str, Any] = record["lineage"]
-            return lineage
-        record = record.get("thread") or {}
-    return None
 
 
 RETIRED = frozenset({"archived", "deleted", "missing"})
@@ -350,7 +329,11 @@ class ConversionService:
     def _prior_lifecycle(self, operation: Operation, artifacts: Artifacts) -> str:
         if operation.terminal_lifecycle:
             return operation.terminal_lifecycle
-        lifecycle, _ = _record(registry.load_registry(self.registry_path), operation.target)
+        lifecycle, _ = registry.session_lifecycle(
+            registry.load_registry(self.registry_path),
+            operation.target.native_id,
+            source=operation.target.agent,
+        )
         if lifecycle in ("archived", "deleted"):
             return lifecycle
         if operation.state != "complete":
@@ -445,16 +428,8 @@ class ConversionService:
         return tuple(self.store.load(key) for key in self.store.ids())
 
     def lineage(self, identity: Identity) -> tuple[dict[str, Any], ...]:
-        reg = registry.load_registry(self.registry_path)
-        entries = dict(reg.get("conversionLineage", {}))
-        for bucket in ("threads", "archived", "deleted"):
-            for record in reg[bucket]:
-                item = _lineage(record)
-                if item:
-                    entries.setdefault(item["operationId"], item)
-        qualified = {"agent": identity.agent, "nativeId": identity.native_id}
-        return tuple(
-            item for item in entries.values() if qualified in (item["source"], item["target"])
+        return registry.conversion_lineage(
+            registry.load_registry(self.registry_path), identity.native_id, source=identity.agent
         )
 
     def _metadata(self, stage: NativeStage, title: str | None) -> None:
@@ -504,10 +479,14 @@ class ConversionService:
         checked: bool = False,
         probes: Probes = (),
     ) -> ConversionResult:
-        lifecycle, record = _record(registry.load_registry(self.registry_path), operation.target)
+        lifecycle, record = registry.session_lifecycle(
+            registry.load_registry(self.registry_path),
+            operation.target.native_id,
+            source=operation.target.agent,
+        )
         if record is not None and not operation.steps:
             raise PreservationError("Registry target identity collision before publication")
-        existing_lineage = _lineage(record) if record is not None else None
+        existing_lineage = registry.session_lineage(record) if record is not None else None
         if existing_lineage is not None and existing_lineage.get("operationId") != operation.id:
             raise PreservationError("Registry target identity collision")
         if operation.state == "complete":
@@ -542,7 +521,11 @@ class ConversionService:
     ) -> Operation:
         stage = artifacts.stage.native()
         if not operation.terminal_lifecycle:
-            owned = (_lineage(record) or {}).get("operationId") == operation.id if record else False
+            owned = (
+                (registry.session_lineage(record) or {}).get("operationId") == operation.id
+                if record
+                else False
+            )
             registration = self.adapters.get(stage.identity.agent).registration
             if registration and registration.registration_status(stage) == "archived":
                 owned = bool(operation.step("database") or operation.step("file:0"))
@@ -831,34 +814,29 @@ class ConversionService:
             "profile": stage.profile.name,
         }
 
+        metadata = {
+            "source": operation.target.agent,
+            "session_id": operation.target.native_id,
+            "source_ref": operation.target.native_id,
+            "file": str(stage.roots.store / stage.source_ref) if stage.files else None,
+            "cwd": str(stage.roots.cwd),
+            "mtime": operation.created_at,
+            "custom_title": artifacts.conversation.title,
+            "size_bytes": sum(len(item.data) for item in stage.files),
+            "message_count": len(artifacts.conversation.history),
+        }
+
         def mutation(reg: dict[str, Any]) -> None:
-            _lifecycle, existing = _record(reg, operation.target)
-            if existing is not None:
-                existing_lineage = _lineage(existing)
-                if existing_lineage is not None and existing_lineage != lineage:
-                    raise PreservationError("Registry lineage collision")
-                while existing:
-                    existing["lineage"] = lineage
-                    existing.setdefault("nativeRoots", asdict(artifacts.stage.roots))
-                    existing = existing.get("thread")
-            elif create_active and operation.id not in reg.get("conversionLineage", {}):
-                record = registry._new_thread(
-                    {
-                        "source": operation.target.agent,
-                        "session_id": operation.target.native_id,
-                        "source_ref": operation.target.native_id,
-                        "file": str(stage.roots.store / stage.source_ref) if stage.files else None,
-                        "cwd": str(stage.roots.cwd),
-                        "mtime": operation.created_at,
-                        "custom_title": artifacts.conversation.title,
-                        "size_bytes": sum(len(item.data) for item in stage.files),
-                        "message_count": len(artifacts.conversation.history),
-                    }
+            try:
+                registry.register_conversion(
+                    reg,
+                    metadata,
+                    lineage,
+                    asdict(artifacts.stage.roots),
+                    create_active=create_active,
                 )
-                record["lineage"] = lineage
-                record["nativeRoots"] = asdict(artifacts.stage.roots)
-                reg["threads"].append(record)
-            reg.setdefault("conversionLineage", {})[operation.id] = lineage
+            except ValueError as exc:
+                raise PreservationError(str(exc)) from exc
 
         self._point("before:registry:action", operation)
         registry.mutate_registry(self.registry_path, mutation)
@@ -868,7 +846,11 @@ class ConversionService:
     def _result(
         self, operation: Operation, artifacts: Artifacts, *, reused: bool
     ) -> ConversionResult:
-        lifecycle, _ = _record(registry.load_registry(self.registry_path), operation.target)
+        lifecycle, _ = registry.session_lifecycle(
+            registry.load_registry(self.registry_path),
+            operation.target.native_id,
+            source=operation.target.agent,
+        )
         stage = artifacts.stage.native()
         diagnostics = (*artifacts.compatibility.diagnostics, *artifacts.compatibility.warnings)
         if operation.abandoned_private:
@@ -911,8 +893,7 @@ class ConversionService:
             operation = self.store.load(operation_id)
             self._check_registry(operation)
             if operation.state == "rolled_back":
-                self.store._path(operation.id, "artifacts.json").unlink(missing_ok=True)
-                fsync_directory(self.store.directory(operation.id))
+                self.store.discard_artifacts(operation.id)
                 return operation
             if any(not step.name.startswith("prepare:") for step in operation.steps):
                 raise PreservationError(
@@ -940,6 +921,5 @@ class ConversionService:
                 ),
                 "rollback",
             )
-            self.store._path(operation.id, "artifacts.json").unlink(missing_ok=True)
-            fsync_directory(self.store.directory(operation.id))
+            self.store.discard_artifacts(operation.id)
             return operation

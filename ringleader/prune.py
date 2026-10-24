@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from . import overview, registry, revalidate, scanner
+from .agents import source_of
 from .batch import Txn, apply_batch, no_presence, run_batch
 from .progress import CancelCheck, never_cancelled
 from .revalidate import PresenceProbe
@@ -202,7 +203,7 @@ def purge_archived(
         if archive_path:
             lifecycle_thread = ts.get("thread") or {
                 "sessionId": ts.get("sessionId"),
-                "source": ts.get("source") or "claude-code",
+                "source": source_of(ts),
                 "file": ts.get("originalPath") or archive_path,
             }
             try:

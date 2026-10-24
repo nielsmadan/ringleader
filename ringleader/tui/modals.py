@@ -11,7 +11,8 @@ from textual.containers import Grid
 from textual.screen import ModalScreen
 from textual.widgets import Input, Label, ListItem, ListView, OptionList
 
-from .. import fuzzytime, resume
+from .. import fuzzytime
+from ..agents import source_of
 from ..resume import SessionAction, agent_name, launchable_agents
 from .keys import nav_bindings
 from .types import Clock
@@ -57,7 +58,7 @@ class AgentModal(ModalScreen[AgentChoice | None]):
 
     def __init__(self, thread: dict[str, Any]) -> None:
         super().__init__()
-        self._source = resume.source_of(thread)
+        self._source = source_of(thread)
         agents = launchable_agents()
         own = (
             [AgentChoice(self._source), AgentChoice(self._source, "fork")]

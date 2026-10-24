@@ -9,8 +9,10 @@ from pathlib import Path
 from typing import Any, cast
 
 from . import registry
+from .agents import source_of
 from .gitinfo import GitIdentity, GitResolver, git_identities, lookup_git_project
 from .sources.base import (
+    AvailabilitySource,
     CachedMetadataSource,
     CompanionFileSource,
     IndexUpdate,
@@ -21,6 +23,7 @@ from .sources.base import (
     ScopedDiscoverySource,
     Source,
     SourceUnavailableError,
+    StoredSource,
     WorkspaceRebindingSource,
     WorkspaceRelocatingSource,
 )
@@ -33,26 +36,20 @@ from .sources.pi import PiSource
 SOURCE_TYPES = (ClaudeCodeSource, CodexSource, DroidSource, OpenCodeSource, PiSource)
 
 
-def _new_sources() -> list[Source]:
+def _new_sources() -> list[StoredSource]:
     return [source_type() for source_type in SOURCE_TYPES]
-
-
-SOURCES = _new_sources()
 
 
 def active_sources(
     *,
     unavailable_sources: set[str] | None = None,
     recorded_threads: Iterable[dict[str, Any]] = (),
-) -> list[Source]:
-    # Fresh instances (not SOURCES) so each call re-reads the env-based default
-    # roots — SOURCES is constructed once at import time and would otherwise
-    # keep whatever root was current then, which breaks under monkeypatched env.
+) -> list[StoredSource]:
     active = []
     candidates = _new_sources()
 
-    def source_key(source: Source) -> tuple[str, Path]:
-        return source.name, cast(Path, getattr(source, "root", None)).resolve()
+    def source_key(source: StoredSource) -> tuple[str, Path]:
+        return source.name, source.root.resolve()
 
     known = {source_key(source) for source in candidates}
     for thread in recorded_threads:
@@ -63,10 +60,7 @@ def active_sources(
             candidates.append(recorded_source)
             known.add(source_key(recorded_source))
     for source in candidates:
-        available = getattr(source, "available", None)
-        # `root` is not part of the Source protocol: a source that only parses
-        # transcripts has no session storage of its own to report.
-        root = cast(Path, getattr(source, "root", None))
+        root = source.root
         try:
             root.stat()
         except FileNotFoundError:
@@ -77,7 +71,7 @@ def active_sources(
             print(f"skipped {source.name} source at {root}: {error}", file=sys.stderr)
             continue
         try:
-            present = available() if callable(available) else True
+            present = source.available() if isinstance(source, AvailabilitySource) else True
         except OSError as error:
             if unavailable_sources is not None:
                 unavailable_sources.add(source.name)
@@ -97,14 +91,14 @@ class SourcePool:
     """Keeps the active sources across scans. A source equal to one the last scan used
     is that same instance, so what it memoised about unchanged files survives."""
 
-    held: list[Source] = field(default_factory=list)
+    held: list[StoredSource] = field(default_factory=list)
 
     def active(
         self,
         *,
         unavailable_sources: set[str] | None = None,
         recorded_threads: Iterable[dict[str, Any]] = (),
-    ) -> list[Source]:
+    ) -> list[StoredSource]:
         current = [
             next((held for held in self.held if held == source), source)
             for source in active_sources(
@@ -128,22 +122,23 @@ def storage_slug(name: str, cwd: str) -> str:
     return cast(WorkspaceRelocatingSource, source).storage_for(cwd).name
 
 
-def source_for_thread(thread: dict[str, Any]) -> Source | None:
-    name = thread.get("source") or "claude-code"
+def source_for_thread(thread: dict[str, Any]) -> StoredSource | None:
+    name = source_of(thread)
     stored = thread.get("nativeRoots")
     if not stored:
-        return cast(Source | None, source_by_name(name))
+        return cast(StoredSource | None, source_by_name(name))
     store = Path(stored["store"])
     if not store.is_absolute():
         raise ValueError("Recorded native store must be absolute")
-    factories: dict[str, Callable[[], Source]] = {
+    factories: dict[str, Callable[[], StoredSource]] = {
         "claude-code": lambda: ClaudeCodeSource(projects_dir=store / "projects"),
         "codex": lambda: CodexSource(sessions_dir=store / "sessions"),
         "pi": lambda: PiSource(sessions_dir=store / "sessions"),
+        "droid": lambda: DroidSource(sessions_dir=store / "sessions"),
         "opencode": lambda: OpenCodeSource(db_path=store / "opencode.db"),
     }
     factory = factories.get(name)
-    return factory() if factory else cast(Source | None, source_by_name(name))
+    return factory() if factory else cast(StoredSource | None, source_by_name(name))
 
 
 def supports(source: Source | None, capability: str, protocol: type) -> bool:
@@ -168,17 +163,14 @@ def _strictly_under(path: Path, root: Path) -> bool:
     return placed != root and placed.is_relative_to(root)
 
 
-def _outside_store(source: Source, path: Path) -> Path | None:
-    root = getattr(source, "root", None)
-    if not isinstance(root, Path):
-        return path
-    store = root.resolve()
+def _outside_store(source: StoredSource, path: Path) -> Path | None:
+    store = source.root.resolve()
     owned = (path, *companion_paths(source.name, path))
     return next((p for p in owned if not _strictly_under(p, store)), None)
 
 
 def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
-    source_name = thread.get("source") or "claude-code"
+    source_name = source_of(thread)
     source = source_for_thread(thread)
     file_path = thread.get("file")
     if (
@@ -325,7 +317,7 @@ def scan(  # noqa: PLR0913
     now: datetime | None = None,
 ) -> list[NormalizedSession]:
     if sources is None:
-        sources = SOURCES
+        sources = _new_sources()
     if git_resolver is None:
         git_resolver = lookup_git_project
     if now is None:
@@ -333,7 +325,7 @@ def scan(  # noqa: PLR0913
     threads = list(cached_threads or [])
     threads_by_ref: dict[tuple[str, str], dict[str, Any]] = {}
     for thread in threads:
-        source_name = thread.get("source") or "claude-code"
+        source_name = source_of(thread)
         for source_ref in (thread.get("sourceRef"), thread.get("file")):
             if source_ref:
                 threads_by_ref[(source_name, source_ref)] = thread

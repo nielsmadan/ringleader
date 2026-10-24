@@ -28,6 +28,7 @@ from .. import (
     revalidate,
     scanner,
 )
+from ..agents import source_of
 from ..config import load_config
 from ..decisions import (
     ArchiveOp,
@@ -387,7 +388,7 @@ class InboxApp(App[ExitIntent | None]):
 
     def session_running(self, thread: dict[str, Any]) -> bool:
         live = self._state.live_ids
-        key = (resume.agent_name(resume.source_of(thread)), thread.get("sessionId") or "")
+        key = (resume.agent_name(source_of(thread)), thread.get("sessionId") or "")
         return live is not None and key in live
 
     def status_line(self) -> str:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from ..sources.base import iso_mtime
-from ..sources.droid import _session_start, default_sessions_dir
+from ..sources.droid import default_sessions_dir, session_start
 from .base import UsageRecord, as_dict, as_int, record_day, total_of
 
 _SIDECAR_SUFFIX = ".settings.json"
@@ -116,7 +116,7 @@ class DroidUsageReader:
             if f.parent.name == "btw":
                 continue  # a btw fork is its own layout, never re-filed under a slug dir
             try:
-                thread = _Thread(f, iso_mtime(f.stat()), _session_start(f), _sidecar(f))
+                thread = _Thread(f, iso_mtime(f.stat()), session_start(f), _sidecar(f))
             except (OSError, json.JSONDecodeError):
                 continue
             if not thread.session_id or thread.session_id in seen:

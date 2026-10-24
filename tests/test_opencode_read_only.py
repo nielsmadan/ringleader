@@ -3,7 +3,7 @@ import sqlite3
 from unittest.mock import Mock
 
 import pytest
-from ringleader import export, prune, refresh, registry, scanner
+from ringleader import export, lifecycle, prune, refresh, registry, scanner
 from ringleader.commands import (
     archive,
     complete,
@@ -12,7 +12,6 @@ from ringleader.commands import (
     harvest,
     roundup,
     sweep,
-    unarchive,
 )
 
 
@@ -121,7 +120,7 @@ def test_export_and_harvest_route_db_backed_conversation(tmp_path, monkeypatch, 
             return {"summary": "kept", "gotchas": [], "decisions": [], "whatChanged": []}
 
     monkeypatch.setattr(harvest, "active_model", lambda config: Model())
-    rc, markdown = harvest._prepare_harvest("ses_1", str(reg_path))
+    rc, markdown = harvest.prepare_harvest("ses_1", str(reg_path))
 
     assert rc == 0
     assert "kept" in markdown
@@ -143,7 +142,7 @@ def test_destructive_commands_refuse_opencode_for_the_expected_reason(
 ):
     reg_path = _registry_file(tmp_path / "registry.json", _thread(finishOnExit=True))
     prepare_harvest = Mock(side_effect=AssertionError("harvest must not run"))
-    monkeypatch.setattr(complete.harvest_mod, "_prepare_harvest", prepare_harvest)
+    monkeypatch.setattr(complete.harvest_mod, "prepare_harvest", prepare_harvest)
 
     if command == "archive":
         result = archive.cmd_archive(
@@ -203,7 +202,7 @@ def test_unarchive_and_unknown_sources_fail_safe_before_path_conversion():
     reg["archived"] = [archived]
 
     with pytest.raises(RuntimeError, match="no filesystem transcript lifecycle"):
-        unarchive.restore(reg, archived)
+        lifecycle.restore(reg, archived)
     with pytest.raises(RuntimeError, match="no filesystem transcript lifecycle"):
         scanner.filesystem_path(
             {"source": "unknown", "sessionId": "x", "file": "/tmp/x.jsonl"}, "delete"

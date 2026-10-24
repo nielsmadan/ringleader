@@ -9,8 +9,8 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 from . import namefilter, overview, scanner, search
-from .agents import canonical_agent, display_agent
-from .search import _BLURB_FIELDS
+from .agents import canonical_agent, display_agent, source_of
+from .search import BLURB_FIELDS
 from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource, in_workspace
 
 SessionAction = Literal["resume", "fork"]
@@ -153,7 +153,7 @@ def _project_label(thread: dict[str, Any]) -> str:
 
 
 def haystack_of(thread: dict[str, Any]) -> Haystack:
-    blurbs = ((field, _lowered(thread.get(field))) for field in _BLURB_FIELDS)
+    blurbs = ((field, _lowered(thread.get(field))) for field in BLURB_FIELDS)
     return Haystack.of(
         name=_name(thread) or "",
         sid=_lowered(thread.get("sessionId")),
@@ -266,10 +266,6 @@ def badges(
     if drifted(thread, sources):
         out.append("drifted")
     return out
-
-
-def source_of(thread: dict[str, Any]) -> str:
-    return thread.get("source") or "claude-code"
 
 
 agent_name = display_agent

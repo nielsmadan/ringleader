@@ -8,7 +8,7 @@ import threading
 from copy import deepcopy
 
 import pytest
-from ringleader import refresh, registry
+from ringleader import lifecycle, refresh, registry
 from ringleader.cli import main
 from ringleader.commands import archive, enrich, keep, mark_mem_reviewed, mem_scan
 from ringleader.config import Config
@@ -185,7 +185,7 @@ def test_archive_preserves_metadata_written_while_moving_and_recovers_scan_gc(
     tmp_path, monkeypatch
 ):
     path = seed(tmp_path)
-    real_move = archive.shutil.move
+    real_move = lifecycle.shutil.move
 
     def move(src, dest):
         result = real_move(src, dest)
@@ -196,7 +196,7 @@ def test_archive_preserves_metadata_written_while_moving_and_recovers_scan_gc(
         registry.commit_registry(path, current)
         return result
 
-    monkeypatch.setattr(archive.shutil, "move", move)
+    monkeypatch.setattr(lifecycle.shutil, "move", move)
     assert (
         archive.cmd_archive(
             ["same", "--registry", str(path), "--archive-root", str(tmp_path / "archive")]

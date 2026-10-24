@@ -101,6 +101,7 @@ def test_archive_moves_the_transcript_and_records_the_tombstone(tmp_path):
     )
     assert dest.exists()
     assert [a["sessionId"] for a in _load(path)["archived"]] == ["s1"]
+    assert _load(path)["archived"][0]["archivedAt"] == NOW
 
 
 def test_archive_refuses_a_transcript_that_gained_a_line(tmp_path):
@@ -311,6 +312,8 @@ def test_harvest_save_writes_the_harvest_and_archives(tmp_path):
     assert (outcome.ok, outcome.wrote) == (True, True)
     assert outcome.message == f"harvested s1-title → {stored.path}"
     assert "fixed the parser" in stored.content
+    assert stored.harvested_at == NOW
+    assert archived["archivedAt"] == NOW
     assert (archived["sessionId"], archived["thread"]["decision"]) == ("s1", "harvested")
     assert (tmp_path / "archive" / "x" / "s1.jsonl").exists()
 
@@ -427,9 +430,14 @@ def _conflicting_commit(monkeypatch):
     monkeypatch.setattr(registry, "commit_registry", commit)
 
 
-def test_an_archive_whose_registry_write_fails_reports_the_move(tmp_path, monkeypatch):
-    thread = _thread(tmp_path)
+@pytest.mark.parametrize("prior_move", [False, True])
+def test_an_archive_whose_registry_write_fails_reports_the_move(tmp_path, monkeypatch, prior_move):
+    thread = _thread(tmp_path, fileFingerprint=None)
     path = _write(tmp_path, [thread])
+    if prior_move:
+        dest = tmp_path / "archive" / "x" / "s1.jsonl"
+        dest.parent.mkdir(parents=True)
+        Path(thread["file"]).rename(dest)
 
     def failing_write(*args, **kwargs):
         raise OSError("disk full")
@@ -443,16 +451,29 @@ def test_an_archive_whose_registry_write_fails_reports_the_move(tmp_path, monkey
     assert outcome.path == str(tmp_path / "archive" / "x" / "s1.jsonl")
     assert (tmp_path / "archive" / "x" / "s1.jsonl").exists()
 
+    assert outcome.warnings == (
+        (f"{thread['file']} already gone, recording archive anyway",) if prior_move else ()
+    )
 
+
+@pytest.mark.parametrize("prior_move", [False, True])
 def test_archiving_a_harvested_session_whose_commit_conflicts_reports_the_move(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, prior_move
 ):
-    thread = _thread(tmp_path, decision="harvested")
+    thread = _thread(tmp_path, decision="harvested", fileFingerprint=None)
     path = _write(tmp_path, [thread])
+    if prior_move:
+        dest = tmp_path / "archive" / "x" / "s1.jsonl"
+        dest.parent.mkdir(parents=True)
+        Path(thread["file"]).rename(dest)
     _conflicting_commit(monkeypatch)
     outcome = decisions.execute(HarvestSaveOp(_seen(thread), None), _ctx(path, tmp_path))
     assert (outcome.ok, outcome.wrote) == (False, True)
     assert outcome.message.startswith("archived s1-title on disk, but the registry")
+
+    assert outcome.warnings == (
+        (f"{thread['file']} already gone, recording archive anyway",) if prior_move else ()
+    )
 
 
 def test_a_harvest_whose_save_conflicts_reports_the_saved_file(tmp_path, monkeypatch):
@@ -688,14 +709,14 @@ def test_an_interrupted_delete_group_records_the_deletes_it_already_made(tmp_pat
 def test_an_interrupted_archive_group_records_the_moves_it_already_made(tmp_path, monkeypatch):
     threads = [_thread(tmp_path, sid) for sid in ("s1", "s2")]
     path = _write(tmp_path, threads)
-    archive = decisions.archive_cmd.archive_thread
+    archive = decisions.lifecycle.archive_thread
 
     def interrupted(reg, thread, **options):
         if thread["sessionId"] == "s2":
             raise KeyboardInterrupt
         return archive(reg, thread, **options)
 
-    monkeypatch.setattr(decisions.archive_cmd, "archive_thread", interrupted)
+    monkeypatch.setattr(decisions.lifecycle, "archive_thread", interrupted)
 
     with pytest.raises(KeyboardInterrupt):
         decisions.execute_group([ArchiveOp(_seen(t)) for t in threads], _ctx(path, tmp_path))
@@ -729,3 +750,17 @@ def test_a_group_reprobes_presence_once_the_reading_is_too_old(tmp_path, monkeyp
 
     assert (first.ok, second.ok) == (True, False)
     assert second.message.startswith("s2-title is running")
+
+
+def test_archive_reports_a_prior_move_as_a_warning(tmp_path, capsys):
+    thread = _thread(tmp_path, fileFingerprint=None)
+    path = _write(tmp_path, [thread])
+    dest = tmp_path / "archive" / "x" / "s1.jsonl"
+    dest.parent.mkdir(parents=True)
+    Path(thread["file"]).rename(dest)
+
+    outcome = decisions.execute(ArchiveOp(_seen(thread)), _ctx(path, tmp_path))
+
+    assert (outcome.ok, outcome.path) == (True, str(dest))
+    assert outcome.warnings == (f"{thread['file']} already gone, recording archive anyway",)
+    assert capsys.readouterr() == ("", "")

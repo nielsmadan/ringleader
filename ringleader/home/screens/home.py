@@ -9,6 +9,7 @@ from textual.binding import Binding, BindingType
 from textual.widgets import Footer, Header, Label, OptionList, Static
 
 from ... import overview, registry, resume
+from ...agents import source_of
 from ...revalidate import Identity
 from ...tui.keys import nav_bindings
 from ...tui.rows import highlighted_key, set_rows
@@ -79,7 +80,7 @@ def recommended_text(steps: tuple[NextStep, ...], width: int = 80) -> Text:
 
 def in_flight_text(thread: dict[str, Any], now_iso: str, *, running: bool) -> Text:
     text = Text()
-    text.append(f"{resume.agent_name(resume.source_of(thread)):<9} ", style="bold")
+    text.append(f"{resume.agent_name(source_of(thread)):<9} ", style="bold")
     text.append(f"{overview.age_human(thread.get('mtime'), now_iso):<10}", style="dim")
     text.append(resume.label(thread))
     text.append(f"  {overview.effective_status(thread, now_iso)}", style="italic")

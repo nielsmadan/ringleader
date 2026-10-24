@@ -6,6 +6,7 @@ import os
 import re
 import shlex
 import sys
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from json.decoder import JSONDecoder
 from pathlib import Path
@@ -95,27 +96,6 @@ def _print_snippet_help() -> None:
     print(SNIPPET)
 
 
-def _string_end(text: str, quote_start: int) -> int:
-    """Index just past the closing quote of the JSON string starting at ``quote_start``.
-
-    A 2-char skip on every backslash is enough to find the terminator correctly for any
-    valid JSON escape, ``\\uXXXX`` included: the four hex digits that follow ``\\u`` are
-    plain characters, never a quote or a backslash themselves. Only used to find a key
-    string's span here — value spans come from the real decoder, see ``_object_key_span``.
-    """
-    i = quote_start + 1
-    n = len(text)
-    while i < n:
-        c = text[i]
-        if c == "\\":
-            i += 2
-            continue
-        if c == '"':
-            return i + 1
-        i += 1
-    raise ValueError("unterminated JSON string")
-
-
 def _ws_end(text: str, pos: int) -> int:
     """Index just past the whitespace run starting at ``pos``.
 
@@ -125,6 +105,36 @@ def _ws_end(text: str, pos: int) -> int:
     m = _WS_RE.match(text, pos)
     assert m is not None
     return m.end()
+
+
+def _object_entries(text: str) -> Iterator[tuple[str, int, int]]:
+    decoder = JSONDecoder()
+    i = _ws_end(text, 0)
+    if i >= len(text) or text[i] != "{":
+        return
+    i += 1
+    while True:
+        i = _ws_end(text, i)
+        if i >= len(text) or text[i] != '"':
+            return
+        try:
+            key, key_end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            return
+        i = _ws_end(text, key_end)
+        if i >= len(text) or text[i] != ":":
+            return
+        i = _ws_end(text, i + 1)
+        try:
+            _, value_end = decoder.raw_decode(text, i)
+        except json.JSONDecodeError:
+            return
+        yield key, i, value_end
+        i = _ws_end(text, value_end)
+        if i < len(text) and text[i] == ",":
+            i += 1
+            continue
+        return
 
 
 def _object_key_span(text: str, key: str) -> tuple[int, int] | None:
@@ -140,37 +150,7 @@ def _object_key_span(text: str, key: str) -> tuple[int, int] | None:
     with ``_command_of``'s ``data.get("statusLine")``, which is unambiguous by construction
     (plain dict access, no notion of "the wrong nested one").
     """
-    decoder = JSONDecoder()
-    i = _ws_end(text, 0)
-    if i >= len(text) or text[i] != "{":
-        return None
-    i += 1
-    while True:
-        i = _ws_end(text, i)
-        if i >= len(text) or text[i] == "}":
-            return None
-        if text[i] != '"':
-            return None
-        key_end = _string_end(text, i)
-        try:
-            this_key = json.loads(text[i:key_end])
-        except json.JSONDecodeError:
-            return None
-        i = _ws_end(text, key_end)
-        if i >= len(text) or text[i] != ":":
-            return None
-        i = _ws_end(text, i + 1)
-        try:
-            _, value_end = decoder.raw_decode(text, i)
-        except json.JSONDecodeError:
-            return None
-        if this_key == key:
-            return i, value_end
-        i = _ws_end(text, value_end)
-        if i < len(text) and text[i] == ",":
-            i += 1
-            continue
-        return None
+    return next(((start, end) for name, start, end in _object_entries(text) if name == key), None)
 
 
 def _top_level_key_count(text: str, key: str) -> int:
@@ -180,38 +160,7 @@ def _top_level_key_count(text: str, key: str) -> int:
     duplicate ``statusLine`` key would let a splice land on the shadowed object while
     ``data.get("statusLine")`` reports the other one as live. Callers refuse rather than
     guess which occurrence is real."""
-    decoder = JSONDecoder()
-    i = _ws_end(text, 0)
-    if i >= len(text) or text[i] != "{":
-        return 0
-    i += 1
-    count = 0
-    while True:
-        i = _ws_end(text, i)
-        if i >= len(text) or text[i] == "}":
-            return count
-        if text[i] != '"':
-            return count
-        key_end = _string_end(text, i)
-        try:
-            this_key = json.loads(text[i:key_end])
-        except json.JSONDecodeError:
-            return count
-        if this_key == key:
-            count += 1
-        i = _ws_end(text, key_end)
-        if i >= len(text) or text[i] != ":":
-            return count
-        i = _ws_end(text, i + 1)
-        try:
-            _, value_end = decoder.raw_decode(text, i)
-        except json.JSONDecodeError:
-            return count
-        i = _ws_end(text, value_end)
-        if i < len(text) and text[i] == ",":
-            i += 1
-            continue
-        return count
+    return sum(name == key for name, _, _ in _object_entries(text))
 
 
 def _splice_command(raw: str, new_command: str) -> str:

@@ -142,6 +142,9 @@ def test_archive_cli_retries_after_move_when_registry_save_failed(tmp_path, monk
     assert not f.exists()
     assert (arc / "unknown" / "crash.jsonl").exists()
     assert (arc / "unknown" / "crash.md").read_text() == "# Crash recovery\n"
+    with pytest.raises(OSError, match="registry save failed"):
+        archive_mod.cmd_archive(["crash", "--registry", str(reg), "--archive-root", str(arc)])
+    assert f"{f} already gone, recording archive anyway" in capsys.readouterr().err
     monkeypatch.setattr(archive_mod.registry, "commit_registry", real_save)
 
     assert (

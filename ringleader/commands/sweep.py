@@ -11,16 +11,14 @@ import argparse
 import json
 import sys
 import time
-from pathlib import Path
+from datetime import UTC, datetime
 from typing import Any
 
-from .. import registry, scanner
+from .. import lifecycle, registry, scanner
 from ..paths import archive_root
 from ..session_env import current_session
-from . import archive as archive_cmd
 from . import default_registry
 
-GRACE_SECONDS = 120
 QUIET_TIMEOUT = 3.0
 QUIET_INTERVAL = 0.25
 
@@ -48,39 +46,13 @@ def _session_id_from_hook_payload(raw: str) -> str | None:
     return None
 
 
-def _mtime(path: str) -> float | None:
-    try:
-        return Path(path).stat().st_mtime
-    except OSError:
-        return None
-
-
-def due(
-    reg: dict[str, Any], now: float, *, grace_seconds: int = GRACE_SECONDS
-) -> list[dict[str, Any]]:
-    out: list[dict[str, Any]] = []
-    for t in reg.get("threads", []):
-        if not t.get("finishOnExit"):
-            continue
-        try:
-            path = scanner.filesystem_path(t, "sweep")
-        except RuntimeError:
-            out.append(t)
-            continue
-        m = _mtime(str(path))
-        # a transcript already gone is still due: archive_thread records it either way
-        if m is None or now - m >= grace_seconds:
-            out.append(t)
-    return out
-
-
 def wait_until_quiet(path: str, *, timeout: float = QUIET_TIMEOUT) -> None:
     """Block until two consecutive mtime samples match, or `timeout` elapses."""
     deadline = time.monotonic() + timeout
-    last = _mtime(path)
+    last = lifecycle.mtime(path)
     while time.monotonic() < deadline:
         time.sleep(QUIET_INTERVAL)
-        now = _mtime(path)
+        now = lifecycle.mtime(path)
         if now == last:
             return
         last = now
@@ -90,14 +62,18 @@ def _archive(reg: dict[str, Any], threads: list[dict[str, Any]], registry_path: 
     failed = 0
     for t in threads:
         try:
-            dest = archive_cmd.archive_thread(reg, t, archive_root_path=str(archive_root()))
+            result = lifecycle.archive_thread(
+                reg, t, archive_root_path=str(archive_root()), now_iso=datetime.now(UTC).isoformat()
+            )
         # OSError too: the sweep runs unattended inside roundup, where a failed move
         # must not abort the prune and enrich phases that follow it
         except (RuntimeError, OSError) as e:
             print(f"rl-sweep: {t['sessionId']}: {e}", file=sys.stderr)
             failed += 1
             continue
-        print(f"archived {t['sessionId']} -> {dest}")
+        for warning in result.warnings:
+            print(f"rl-sweep: {warning}", file=sys.stderr)
+        print(f"archived {t['sessionId']} -> {result.path}")
     if threads:
         registry.commit_registry(registry_path, reg)
     return 1 if failed else 0
@@ -113,7 +89,7 @@ def cmd_sweep(argv: list[str]) -> int:
     )
     ap.add_argument("--current", action="store_true")
     ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--grace", type=int, default=GRACE_SECONDS)
+    ap.add_argument("--grace", type=int, default=lifecycle.GRACE_SECONDS)
     args = ap.parse_args(argv)
 
     session_id = args.session
@@ -142,4 +118,4 @@ def cmd_sweep(argv: list[str]) -> int:
         wait_until_quiet(str(path))
         return _archive(reg, [t], args.registry)
 
-    return _archive(reg, due(reg, time.time(), grace_seconds=args.grace), args.registry)
+    return _archive(reg, lifecycle.due(reg, time.time(), grace_seconds=args.grace), args.registry)

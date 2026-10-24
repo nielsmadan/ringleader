@@ -4,12 +4,12 @@ import json
 import os
 from collections.abc import Callable, Iterable
 from copy import deepcopy
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from . import namefilter, overview
-from .agents import canonical_agent
+from .agents import canonical_agent, source_of
 from .slug import is_beneath
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text, registry_lock
@@ -195,8 +195,18 @@ def _merge_fields(
     return result
 
 
-def _session_rows(reg: dict[str, Any]) -> dict[tuple[str, str], tuple[str, dict[str, Any]]]:
-    return {identity(row): (bucket, row) for bucket in _SESSION_BUCKETS for row in reg[bucket]}
+@dataclass(frozen=True)
+class _SessionRow:
+    bucket: str
+    record: dict[str, Any]
+
+
+def _session_rows(reg: dict[str, Any]) -> dict[tuple[str, str], _SessionRow]:
+    return {
+        identity(row): _SessionRow(bucket, row)
+        for bucket in _SESSION_BUCKETS
+        for row in reg[bucket]
+    }
 
 
 def _scan_changes(
@@ -218,6 +228,22 @@ def _scan_changes(
     return changed
 
 
+def _merge_lifecycle_move(
+    old: _SessionRow, new: _SessionRow, latest: _SessionRow, *, scan: bool
+) -> dict[str, Any]:
+    moved = deepcopy(new.record)
+    if old.bucket == "threads":
+        embedded = _merge_fields(
+            old.record, new.record.get("thread") or old.record, latest.record, scan=scan
+        )
+        moved["thread"] = without_finish_mark(embedded)
+        moved["harvestPath"] = embedded.get("harvestPath")
+        return moved
+    if new.bucket == "threads" and isinstance(latest.record.get("thread"), dict):
+        return _merge_fields(old.record.get("thread") or {}, moved, latest.record["thread"])
+    return _merge_fields(old.record, moved, latest.record)
+
+
 def _merge_sessions(  # noqa: PLR0912
     before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool
 ) -> None:
@@ -232,7 +258,7 @@ def _merge_sessions(  # noqa: PLR0912
         if old is None:
             if latest is None:
                 assert new is not None
-                buckets[new[0]][key] = deepcopy(new[1])
+                buckets[new.bucket][key] = deepcopy(new.record)
             elif not scan:
                 raise RegistryConflict(f"session already exists: {key}")
             continue
@@ -243,42 +269,32 @@ def _merge_sessions(  # noqa: PLR0912
         if (
             not scan
             and new is not None
-            and old[0] == "threads"
-            and new[0] in {"archived", "deleted"}
-            and latest[0] == "deleted"
-            and latest[1].get("reason") == "gc"
+            and old.bucket == "threads"
+            and new.bucket in {"archived", "deleted"}
+            and latest.bucket == "deleted"
+            and latest.record.get("reason") == "gc"
         ):
             del buckets["deleted"][key]
-            latest = ("threads", latest[1].get("thread") or old[1])
-            buckets["threads"][key] = latest[1]
+            latest = _SessionRow("threads", latest.record.get("thread") or old.record)
+            buckets["threads"][key] = latest.record
         if new is None:
             if latest != old:
                 raise RegistryConflict(f"session changed concurrently: {key}")
-            del buckets[latest[0]][key]
-        elif new[0] == old[0]:
-            if latest[0] != old[0]:
+            del buckets[latest.bucket][key]
+        elif new.bucket == old.bucket:
+            if latest.bucket != old.bucket:
                 if not scan:
                     raise RegistryConflict(f"session lifecycle changed concurrently: {key}")
                 continue
-            changed = _scan_changes(old[1], new[1], latest[1]) if scan else new[1]
-            merged = _merge_fields(old[1], changed, latest[1], scan=scan)
-            buckets[latest[0]][key] = merged
-        elif latest[0] == old[0]:
+            changed = _scan_changes(old.record, new.record, latest.record) if scan else new.record
+            merged = _merge_fields(old.record, changed, latest.record, scan=scan)
+            buckets[latest.bucket][key] = merged
+        elif latest.bucket == old.bucket:
             if scan and latest != old:
                 continue
-            moved = deepcopy(new[1])
-            if old[0] == "threads":
-                embedded = _merge_fields(
-                    old[1], new[1].get("thread") or old[1], latest[1], scan=scan
-                )
-                moved["thread"] = without_finish_mark(embedded)
-                moved["harvestPath"] = embedded.get("harvestPath")
-            elif new[0] == "threads" and isinstance(latest[1].get("thread"), dict):
-                moved = _merge_fields(old[1].get("thread") or {}, moved, latest[1]["thread"])
-            else:
-                moved = _merge_fields(old[1], moved, latest[1])
-            del buckets[latest[0]][key]
-            buckets[new[0]][key] = moved
+            moved = _merge_lifecycle_move(old, new, latest, scan=scan)
+            del buckets[latest.bucket][key]
+            buckets[new.bucket][key] = moved
         elif not scan:
             raise RegistryConflict(f"session lifecycle changed concurrently: {key}")
 
@@ -356,8 +372,7 @@ def _merge_scan_times(
 
 
 def identity(record: dict[str, Any]) -> tuple[str, str]:
-    embedded = record.get("thread") or {}
-    return (record.get("source") or embedded.get("source") or "claude-code", record["sessionId"])
+    return source_of(record), record["sessionId"]
 
 
 def qualified_id(record: dict[str, Any]) -> str:
@@ -548,6 +563,67 @@ def _new_thread(md: dict[str, Any]) -> dict[str, Any]:
         }
     )
     return thread
+
+
+def session_lifecycle(
+    reg: dict[str, Any], session_id: str, *, source: str
+) -> tuple[str, dict[str, Any] | None]:
+    for bucket, lifecycle in (
+        ("deleted", "deleted"),
+        ("archived", "archived"),
+        ("threads", "active"),
+    ):
+        record = find_session(reg, session_id, source=source, bucket=bucket)
+        if record is not None:
+            return lifecycle, record
+    return "missing", None
+
+
+def session_lineage(record: dict[str, Any]) -> dict[str, Any] | None:
+    while record:
+        if record.get("lineage"):
+            lineage: dict[str, Any] = record["lineage"]
+            return lineage
+        record = record.get("thread") or {}
+    return None
+
+
+def conversion_lineage(
+    reg: dict[str, Any], session_id: str, *, source: str
+) -> tuple[dict[str, Any], ...]:
+    entries = dict(reg.get("conversionLineage", {}))
+    for bucket in _SESSION_BUCKETS:
+        for record in reg[bucket]:
+            item = session_lineage(record)
+            if item:
+                entries.setdefault(item["operationId"], item)
+    qualified = {"agent": source, "nativeId": session_id}
+    return tuple(item for item in entries.values() if qualified in (item["source"], item["target"]))
+
+
+def register_conversion(
+    reg: dict[str, Any],
+    metadata: dict[str, Any],
+    lineage: dict[str, Any],
+    native_roots: dict[str, Any],
+    *,
+    create_active: bool = True,
+) -> None:
+    _, existing = session_lifecycle(reg, metadata["session_id"], source=metadata["source"])
+    if existing is not None:
+        existing_lineage = session_lineage(existing)
+        if existing_lineage is not None and existing_lineage != lineage:
+            raise ValueError("Registry lineage collision")
+        while existing:
+            existing["lineage"] = lineage
+            existing.setdefault("nativeRoots", native_roots)
+            existing = existing.get("thread")
+    elif create_active and lineage["operationId"] not in reg.get("conversionLineage", {}):
+        record = _new_thread(metadata)
+        record["lineage"] = lineage
+        record["nativeRoots"] = native_roots
+        reg["threads"].append(record)
+    reg.setdefault("conversionLineage", {})[lineage["operationId"]] = lineage
 
 
 def cached_session(

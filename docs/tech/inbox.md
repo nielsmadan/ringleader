@@ -39,13 +39,12 @@ only then runs the exit intent through `launch.run_intent`.
 
 ### Layering
 
-`home/` depends on `decisions`, `roundup`, `enrichment` and `revalidate`; `decisions` and
-`roundup` depend on `commands/*` for shared logic (`archive_thread`, `sweep.due`, harvest saving),
-and the Prune screen imports `commands.sweep` directly for sweep eligibility. Because
-`commands/__init__.py` imports every command module, a library module that needs a command
-module imports it as a module (`from .commands import sweep as sweep_cmd`), and a command module
-imports a library module as a module (`from .. import roundup as roundup_api`), never
-`from ..roundup import name`. `revalidate.py` imports no command module.
+`home/` depends on `decisions`, `roundup`, `enrichment` and `revalidate`. Shared
+archive, restore and sweep eligibility operations live in `lifecycle.py`; harvest prompt,
+rendering and persistence live in `harvesting.py`. These modules do not import commands.
+Lifecycle callers supply timestamps and receive structured archive warnings; CLI commands
+print those warnings, while decisions and roundup include them in their result objects.
+The Prune screen uses `lifecycle.due` for sweep eligibility.
 
 ### Snapshots, generations and the overlay
 

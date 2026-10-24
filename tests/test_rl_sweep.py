@@ -3,6 +3,7 @@ import json
 import os
 import time
 
+from ringleader import lifecycle
 from ringleader.commands import sweep
 
 
@@ -28,19 +29,19 @@ def _world(tmp_path, *, mark, age_seconds):
 def test_due_selects_a_marked_and_quiet_thread(tmp_path):
     reg, _ = _world(tmp_path, mark=True, age_seconds=600)
     loaded = json.loads(reg.read_text())
-    assert [t["sessionId"] for t in sweep.due(loaded, time.time(), grace_seconds=120)] == ["s1"]
+    assert [t["sessionId"] for t in lifecycle.due(loaded, time.time(), grace_seconds=120)] == ["s1"]
 
 
 def test_due_skips_a_marked_but_freshly_written_thread(tmp_path):
     reg, _ = _world(tmp_path, mark=True, age_seconds=5)
     loaded = json.loads(reg.read_text())
-    assert sweep.due(loaded, time.time(), grace_seconds=120) == []
+    assert lifecycle.due(loaded, time.time(), grace_seconds=120) == []
 
 
 def test_due_skips_an_unmarked_thread(tmp_path):
     reg, _ = _world(tmp_path, mark=False, age_seconds=600)
     loaded = json.loads(reg.read_text())
-    assert sweep.due(loaded, time.time(), grace_seconds=120) == []
+    assert lifecycle.due(loaded, time.time(), grace_seconds=120) == []
 
 
 def test_sweep_archives_a_due_thread(tmp_path, monkeypatch):
@@ -253,7 +254,7 @@ def test_sweep_reports_an_oserror_instead_of_propagating_it(tmp_path, monkeypatc
     def boom(*_a, **_kw):
         raise OSError(13, "Permission denied")
 
-    monkeypatch.setattr("ringleader.commands.archive.shutil.move", boom)
+    monkeypatch.setattr("ringleader.lifecycle.shutil.move", boom)
 
     assert sweep.cmd_sweep(["--registry", str(reg)]) == 1
     captured = capsys.readouterr()

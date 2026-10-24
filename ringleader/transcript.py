@@ -23,7 +23,7 @@ class TranscriptInfo:
     started_at: str | None = None
 
 
-def _text_blocks(message: dict[str, Any]) -> str:
+def text_blocks(message: dict[str, Any]) -> str:
     content = message.get("content")
     if isinstance(content, str):
         return content
@@ -70,13 +70,13 @@ def parse_transcript(path: str | Path, tail_turns: int = 30) -> TranscriptInfo:
                 info.last_prompt = o.get("lastPrompt") or info.last_prompt
             elif t == "user":
                 info.message_count += 1
-                txt = _text_blocks(o.get("message", {})).strip()
+                txt = text_blocks(o.get("message", {})).strip()
                 if txt:
                     turns.append(("USER", txt))
                     last_user = txt
             elif t == "assistant":
                 info.message_count += 1
-                txt = _text_blocks(o.get("message", {})).strip()
+                txt = text_blocks(o.get("message", {})).strip()
                 if txt:
                     turns.append(("ASSISTANT", txt))
 

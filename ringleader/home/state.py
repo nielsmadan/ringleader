@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any, Literal
 
 from .. import overview, registry, resume, roundup
+from ..agents import source_of
 from ..revalidate import Identity
 
 type StepKind = Literal["roundup", "woke", "recent", "publish", "project", "resume"]
@@ -267,7 +268,7 @@ def _resume_step(thread: dict[str, Any], now_iso: str) -> NextStep:
     return NextStep(
         kind="resume",
         title=f"Resume {resume.label(thread)}",
-        detail=f"{resume.agent_name(resume.source_of(thread))} · {age} · {where}",
+        detail=f"{resume.agent_name(source_of(thread))} · {age} · {where}",
         deletes=False,
         costs_model=False,
         session=registry.identity(thread),

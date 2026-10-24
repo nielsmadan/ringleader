@@ -110,6 +110,8 @@ possible visibility, and acknowledges owned records while preserving subsequent
 native modifications. Uncertain ownership or a missing target after an ambiguous
 intent fails with inspection guidance. Rollback only removes proven private
 staging; private publisher generations and unverified residues are journaled.
+`OperationStore.discard_artifacts()` owns artifact-path validation, deletion, and
+directory fsync for both initial and repeated rollback.
 
 File publication prepares a hidden sibling beside the target, so the journal and
 native store may reside on different filesystems. The complete file is linked into

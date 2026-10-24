@@ -50,6 +50,12 @@ class Source(Protocol):
     def parse(self, ref: RawRef) -> NormalizedSession: ...
 ```
 
+Registered stores implement `StoredSource`, which adds a `root: Path` property.
+`AvailabilitySource` optionally supplies an `available()` probe. `active_sources()` and
+`SourcePool` use those contracts; injected `scan(sources=...)` readers can still implement
+the minimal `Source` protocol. Recorded native roots are honored for all five agents,
+including Droid stores outside the current `FACTORY_HOME_OVERRIDE`.
+
 The two-phase split is what makes incremental scans cheap: `discover()` computes lightweight
 refs and `parse()` runs only for refs the registry's fingerprint check rejects.
 
@@ -119,6 +125,8 @@ does, and the session is not in it) need opposite handling from the caller, and
 
 ### Helpers
 
+- `agents.source_of(record)` — the shared source lookup for live records and tombstones:
+  explicit source, embedded thread source, then the legacy Claude Code default.
 - `stat_fingerprint(st)` — `dev:inode:size:mtime_ns:ctime_ns`, the file-backed sources' cache key.
 - `append_jsonl_line(path, line)` — appends a record, inserting a leading newline only when the
   file does not already end with one. Writing a name into a live transcript must not corrupt it.
@@ -132,9 +140,9 @@ does, and the session is not in it) need opposite handling from the caller, and
 
 ## Gotchas
 
-- **`scanner.SOURCES` is built at import time; `active_sources()` builds fresh instances.**
-  The module-level tuple would otherwise capture whatever root was current at import, which
-  breaks under monkeypatched environment variables in tests.
+- **`scan()` and `active_sources()` build fresh instances by default.** Storage roots
+  reflect the current environment. Long-lived callers use `SourcePool` to retain caches
+  only while a source’s configuration remains unchanged.
 - **A missing capability is a no-op, not an error.** `hide_from_picker()` returns
   `IndexUpdate.NO_INDEX` for a source without an index. Only a source that *has* one and fails
   raises.

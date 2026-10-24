@@ -135,6 +135,14 @@ def test_pi_keeps_writing_its_native_compaction(tmp_path):
     readback = PiAdapter().read_stage(stage)
     compare(conversation, readback, PiAdapter().normalizations(PI_PROFILE))
     assert len(readback.checkpoints) == 1
+    rows = native.records(stage.files[0].data)
+    entries = [row for row in rows if row["type"] in {"message", "compaction", "session_info"}]
+    assert [row["parentId"] for row in entries] == [None, *(row["id"] for row in entries[:-1])]
+    compaction_index = next(i for i, row in enumerate(entries) if row["type"] == "compaction")
+    assert entries[compaction_index]["firstKeptEntryId"] == entries[compaction_index - 1]["id"]
+    assert entries[compaction_index + 1]["message"]["content"] == [
+        {"type": "text", "text": "Continue"}
+    ]
 
 
 @pytest.mark.parametrize(

@@ -39,6 +39,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import gitinfo, refresh, registry, scanner
+from ..agents import source_of
 from ..slug import is_beneath, normalize, remap
 from ..sources.base import IndexUpdate, WorkspaceRebindingSource, WorkspaceRelocatingSource
 from ..stateio import publish_lock
@@ -96,7 +97,7 @@ def _drifted(thread: dict[str, Any], srcs: _Sources) -> bool:
 
     Takes the sources already resolved for this plan rather than re-resolving one
     per thread, which is what made planning many sessions expensive."""
-    name = thread.get("source") or "claude-code"
+    name = source_of(thread)
     relocating = srcs.relocating.get(name)
     if relocating is None:
         raise ValueError(f"{name} does not file sessions under a workspace directory")
@@ -135,7 +136,7 @@ def build_plan(reg: dict[str, Any], old: str, new: str, srcs: _Sources) -> _Plan
     matched = {t.get("file") for t, _ in plan.threads}
     seen: set[str] = set()
     for thread, new_project in plan.threads:
-        source = thread.get("source") or "claude-code"
+        source = source_of(thread)
         if not thread.get("file"):
             plan.unsupported.append(thread)
             continue

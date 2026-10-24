@@ -34,12 +34,12 @@ def _sparse(value: Any, field: Any) -> bool:
     )
 
 
-def _encode(value: Any) -> Any:
+def encode_value(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return {
             "type": type(value).__name__,
             **{
-                f.name: _encode(getattr(value, f.name))
+                f.name: encode_value(getattr(value, f.name))
                 for f in fields(value)
                 if not _sparse(value, f)
             },
@@ -47,17 +47,17 @@ def _encode(value: Any) -> Any:
     if isinstance(value, bytes):
         return base64.b64encode(value).decode("ascii")
     if isinstance(value, tuple):
-        return [_encode(item) for item in value]
+        return [encode_value(item) for item in value]
     return value
 
 
-def _decode(value: Any, expected: Any) -> Any:
+def decode_value(value: Any, expected: Any) -> Any:
     origin = get_origin(expected)
     args = get_args(expected)
     if origin in (Union, types.UnionType):
         for choice in args:
             try:
-                return _decode(value, choice)
+                return decode_value(value, choice)
             except PreservationError:
                 continue
         raise PreservationError("Value does not match a supported canonical content shape")
@@ -68,14 +68,14 @@ def _decode(value: Any, expected: Any) -> Any:
     if origin is tuple:
         if not isinstance(value, list):
             raise PreservationError("Expected canonical list")
-        return tuple(_decode(item, args[0]) for item in value)
+        return tuple(decode_value(item, args[0]) for item in value)
     if isinstance(expected, type) and is_dataclass(expected):
         names = {field.name for field in fields(expected)}
         if not isinstance(value, dict) or value.get("type") != expected.__name__:
             raise PreservationError("Unknown canonical object type")
         value = {
             **{
-                item.name: _encode(item.default)
+                item.name: encode_value(item.default)
                 for item in fields(expected)
                 if item.name in ADDITIVE_FIELDS.get(expected.__name__, ())
                 and item.default is not MISSING
@@ -87,7 +87,7 @@ def _decode(value: Any, expected: Any) -> Any:
         if set(value) != names | {"type"}:
             raise PreservationError(f"Unknown or missing fields in {expected.__name__}")
         hints = get_type_hints(expected)
-        return expected(**{name: _decode(value[name], hints[name]) for name in names})
+        return expected(**{name: decode_value(value[name], hints[name]) for name in names})
     if expected is bytes:
         try:
             return base64.b64decode(value, validate=True)
@@ -101,13 +101,13 @@ def _decode(value: Any, expected: Any) -> Any:
 def dumps(conversation: Conversation) -> bytes:
     validate(conversation)
     return json.dumps(
-        _encode(conversation), sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        encode_value(conversation), sort_keys=True, separators=(",", ":"), ensure_ascii=False
     ).encode("utf-8")
 
 
 def loads(data: bytes) -> Conversation:
     try:
-        conversation: Conversation = _decode(
+        conversation: Conversation = decode_value(
             json.loads(data, object_pairs_hook=unique_object), Conversation
         )
     except (ValueError, TypeError, UnicodeError) as exc:

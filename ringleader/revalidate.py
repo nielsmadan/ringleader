@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from . import registry, resume, scanner
+from .agents import source_of
 from .presence import SETUP_COMMAND, PresenceUnavailable
 
 type Identity = tuple[str, str]
@@ -82,7 +83,7 @@ def running_reason(
         if unknown == "refuse":
             return f"can't tell whether {label} is running — install presence with {SETUP_COMMAND}"
         return None
-    key = (resume.agent_name(resume.source_of(thread)), thread.get("sessionId") or "")
+    key = (resume.agent_name(source_of(thread)), thread.get("sessionId") or "")
     if key in live:
         return f"{label} is running — finish it from inside with the ringleader-finish skill"
     return None

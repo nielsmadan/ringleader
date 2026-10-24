@@ -148,6 +148,17 @@ class Source(Protocol):
     def parse(self, ref: RawRef) -> NormalizedSession: ...
 
 
+@runtime_checkable
+class StoredSource(Source, Protocol):
+    @property
+    def root(self) -> Path: ...
+
+
+@runtime_checkable
+class AvailabilitySource(Protocol):
+    def available(self) -> bool: ...
+
+
 def stat_fingerprint(st: os.stat_result) -> str:
     return ":".join(
         str(value) for value in (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)

@@ -13,6 +13,7 @@ from time import monotonic
 from typing import TYPE_CHECKING, Any
 
 from .. import export, paths, refresh, registry, resume, scanner
+from ..agents import source_of
 from ..presence import PresenceClient
 from ..resume import Scope, SessionAction
 from ..sources.base import SessionLaunchingSource
@@ -332,7 +333,7 @@ def _handoff_path(session_id: str) -> Path:
 
 
 def _prompt(thread: dict[str, Any], path: Path) -> str:
-    origin = resume.agent_name(resume.source_of(thread))
+    origin = resume.agent_name(source_of(thread))
     return (
         f"Read {path} — a Markdown transcript of a {origin} session "
         f"({resume.label(thread)}) handed over to you — then carry on from where it stops."
@@ -342,7 +343,7 @@ def _prompt(thread: dict[str, Any], path: Path) -> str:
 def _plan(pick: _Pick, target_source: str) -> _Plan:
     thread = pick.thread
     session_id = str(thread["sessionId"])
-    source = resume.source_of(thread)
+    source = source_of(thread)
     src = _launchable(target_source)
     if src is None:
         raise _Abort(
@@ -371,7 +372,7 @@ def _live(source: str, session_id: str | None, probe: Presence) -> bool:
 
 
 def _running(thread: dict[str, Any], probe: Presence) -> bool:
-    return _live(resume.source_of(thread), thread.get("sessionId"), probe)
+    return _live(source_of(thread), thread.get("sessionId"), probe)
 
 
 def _ask(question: str) -> bool:
@@ -554,7 +555,7 @@ def _resolve(
     pick = _choose(args, reg, cwd, picker, refreshers, requested)
     if pick is None:
         return None
-    return _plan(pick, requested or pick.target or resume.source_of(pick.thread))
+    return _plan(pick, requested or pick.target or source_of(pick.thread))
 
 
 def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives

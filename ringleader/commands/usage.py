@@ -204,27 +204,31 @@ def _window_json(w: WindowSnapshot) -> dict[str, Any]:
     }
 
 
+def _partition_windows(
+    snapshots: Iterable[WindowSnapshot], now: datetime
+) -> tuple[dict[str, WindowSnapshot], dict[str, WindowSnapshot], dict[str, WindowSnapshot]]:
+    latest: dict[str, WindowSnapshot] = {}
+    for snapshot in snapshots:
+        previous = latest.get(snapshot.window)
+        if previous is None or snapshot.timestamp > previous.timestamp:
+            latest[snapshot.window] = snapshot
+    current = {
+        key: snapshot for key, snapshot in latest.items() if window_is_current(snapshot, now)
+    }
+    expired = {key: snapshot for key, snapshot in latest.items() if key not in current}
+    return latest, current, expired
+
+
 def _cmd_windows(argv: list[str], prog: str) -> int:
     ap = argparse.ArgumentParser(prog=f"{prog} windows")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args(argv)
 
     now = _now()
-    latest: dict[str, WindowSnapshot] = {}
-    for w in collect_windows():
-        cur = latest.get(w.window)
-        if cur is None or w.timestamp > cur.timestamp:
-            latest[w.window] = w
-    current = {k: w for k, w in latest.items() if window_is_current(w, now)}
-    expired = {k: w for k, w in latest.items() if k not in current}
-
-    claude_latest: dict[str, WindowSnapshot] = {}
-    for w in collect_claude_windows():
-        cur = claude_latest.get(w.window)
-        if cur is None or w.timestamp > cur.timestamp:
-            claude_latest[w.window] = w
-    claude_current = {k: w for k, w in claude_latest.items() if window_is_current(w, now)}
-    claude_expired = {k: w for k, w in claude_latest.items() if k not in claude_current}
+    latest, current, expired = _partition_windows(collect_windows(), now)
+    claude_latest, claude_current, claude_expired = _partition_windows(
+        collect_claude_windows(), now
+    )
 
     if args.json:
         print(

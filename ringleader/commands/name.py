@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from .. import naming, overview, projects, registry, scanner
+from ..agents import source_of
 from ..sources.base import NameApplyingSource
 from . import default_registry
 
@@ -63,7 +64,7 @@ def cmd_name(argv: list[str]) -> int:
             print(f"skipped {t['sessionId']}: {e}", file=sys.stderr)
             skipped += 1
             continue
-        registry.apply_name(reg, t["sessionId"], name, source=t.get("source") or "claude-code")
+        registry.apply_name(reg, t["sessionId"], name, source=source_of(t))
         if name != t.get("suggestedName"):
             suffixed += 1
         if kind == "new":

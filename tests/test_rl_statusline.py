@@ -1,6 +1,7 @@
 import json
 import stat
 
+import pytest
 from ringleader.commands import statusline
 from ringleader.paths import state_dir
 
@@ -58,7 +59,8 @@ def test_install_is_idempotent(tmp_path):
     assert p.read_text() == once
 
 
-def test_uninstall_restores_the_original_exactly(tmp_path):
+@pytest.mark.parametrize("escaped_keys", [False, True])
+def test_uninstall_restores_the_original_exactly(tmp_path, escaped_keys):
     p = tmp_path / "settings.json"
     original = json.dumps(
         {
@@ -69,6 +71,10 @@ def test_uninstall_restores_the_original_exactly(tmp_path):
         indent=4,
         ensure_ascii=False,
     )
+    if escaped_keys:
+        original = original.replace('"statusLine"', r'"status\u004cine"').replace(
+            '"command":', r'"comm\u0061nd":'
+        )
     p.write_text(original, encoding="utf-8")
     statusline.cmd_install(["--settings", str(p), "--yes"])
 
@@ -268,11 +274,12 @@ def test_status_reports_inline_target(tmp_path, capsys):
     assert "inline" in out
 
 
-def test_install_refuses_on_duplicate_top_level_statusline_key(tmp_path, capsys):
+@pytest.mark.parametrize("second_key", ["statusLine", r"status\u004cine"])
+def test_install_refuses_on_duplicate_top_level_statusline_key(tmp_path, capsys, second_key):
     p = tmp_path / "settings.json"
     raw = (
         '{"statusLine": {"type": "command", "command": "DECOY"}, '
-        f'"statusLine": {{"type": "command", "command": {json.dumps(BASE_CMD)}}}}}'
+        f'"{second_key}": {{"type": "command", "command": {json.dumps(BASE_CMD)}}}}}'
     )
     p.write_text(raw, encoding="utf-8")
 

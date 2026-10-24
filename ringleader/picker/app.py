@@ -20,6 +20,7 @@ from textual.widgets import Footer, Header, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
 from .. import overview, refresh, registry, resume
+from ..agents import source_of
 from ..presence import PresenceClient
 from ..resume import Haystack, Scope, SessionAction, agent_name, launchable_agents
 from ..sources.base import WorkspaceRelocatingSource
@@ -135,7 +136,7 @@ def row_text(
     if running:
         marks = [*marks, "running"]
     text = Text()
-    text.append(f"{agent_name(resume.source_of(thread)):<9} ", style="bold")
+    text.append(f"{agent_name(source_of(thread)):<9} ", style="bold")
     text.append(f"{_age(thread.get('mtime'), now_iso):<12}", style="dim")
     started_at = thread.get("startedAt")
     started = _age(started_at, now_iso) if isinstance(started_at, str) else "?"
@@ -162,7 +163,7 @@ async def ask_resume_choice(
     )
     if choice is None:
         return None
-    handoff = choice.target != resume.source_of(thread)
+    handoff = choice.target != source_of(thread)
     confirmed = False
     if choice.action == "resume" and not handoff and running:
         message = Text(resume.label(thread))
@@ -361,7 +362,7 @@ class PickerScreen(Screen[Choice | None]):
         session_id = thread.get("sessionId")
         if not session_id:
             return False
-        return (agent_name(resume.source_of(thread)), session_id) in self._live_ids
+        return (agent_name(source_of(thread)), session_id) in self._live_ids
 
     def _haystack(self, thread: dict[str, Any]) -> Haystack:
         key = registry.identity(thread)

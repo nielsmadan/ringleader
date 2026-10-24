@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from .conversion import _error, _render_result, parser, service
+from .conversion import parser, render_error, render_result, service
 
 
 def cmd_list(argv: list[str]) -> int:
@@ -27,7 +27,7 @@ def cmd_list(argv: list[str]) -> int:
                 print("No conversion transactions.")
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
-        return _error(exc, json_output=args.json)
+        return render_error(exc, json_output=args.json)
 
 
 def _recover(argv: list[str], *, rollback: bool) -> int:
@@ -51,10 +51,10 @@ def _recover(argv: list[str], *, rollback: bool) -> int:
                 print(operation.last_error)
         else:
             result = worker.resume(args.id)
-            print(json.dumps(asdict(result), indent=2) if args.json else _render_result(result))
+            print(json.dumps(asdict(result), indent=2) if args.json else render_result(result))
         return 0
     except (OSError, ValueError, RuntimeError, TypeError, LookupError) as exc:
-        return _error(exc, json_output=args.json)
+        return render_error(exc, json_output=args.json)
 
 
 def cmd_resume(argv: list[str]) -> int:

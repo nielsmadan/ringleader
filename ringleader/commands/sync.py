@@ -7,6 +7,7 @@ import sys
 from datetime import UTC, datetime
 
 from .. import projects, registry, scanner
+from ..agents import source_of
 from ..config import load_config
 from . import default_registry, sweep
 
@@ -48,7 +49,7 @@ def cmd_scan(args: argparse.Namespace) -> None:
             "aiTitle": t["aiTitle"],
             "lastPrompt": t["lastPrompt"],
             "messageCount": t["messageCount"],
-            "tail": tails[(t.get("source") or "claude-code", t["sessionId"])][:6000],
+            "tail": tails[(source_of(t), t["sessionId"])][:6000],
         }
         for t in pending
     ]

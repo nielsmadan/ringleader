@@ -244,7 +244,7 @@ def _receipt_from_data(data: object) -> PublishReceipt:
     return receipt
 
 
-def _receipt_data(receipt: PublishReceipt) -> dict[str, object]:
+def receipt_data(receipt: PublishReceipt) -> dict[str, object]:
     return {
         "receiptId": receipt.receipt_id,
         "repoKey": receipt.repo_key,
@@ -351,7 +351,7 @@ def _new_receipt(
 
 def _save_receipt_unlocked(receipt: PublishReceipt) -> None:
     _validate_receipt(receipt)
-    text = json.dumps(_receipt_data(receipt), indent=2, ensure_ascii=False) + "\n"
+    text = json.dumps(receipt_data(receipt), indent=2, ensure_ascii=False) + "\n"
     atomic_write_text(_receipt_path(receipt.receipt_id), text)
 
 

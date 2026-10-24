@@ -33,33 +33,27 @@ def sessions_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[
 
 
 def snoozed_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
-    out = []
-    for t in threads:
-        if overview.snooze_active(t, now_iso):
-            row = _session_json(t, now_iso)
-            row["snoozed_until"] = t.get("snoozedUntil")
-            out.append(row)
-    return out
+    return [
+        {**_session_json(t, now_iso), "snoozed_until": t.get("snoozedUntil")}
+        for t in threads
+        if overview.snooze_active(t, now_iso)
+    ]
 
 
 def kept_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
-    out = []
-    for t in threads:
-        if overview.is_kept(t):
-            row = _session_json(t, now_iso)
-            row["kept_at"] = t.get("keptAt")
-            out.append(row)
-    return out
+    return [
+        {**_session_json(t, now_iso), "kept_at": t.get("keptAt")}
+        for t in threads
+        if overview.is_kept(t)
+    ]
 
 
 def filtered_json(threads: Iterable[dict[str, Any]], now_iso: str) -> list[dict[str, Any]]:
-    out = []
-    for t in threads:
-        if overview.is_filtered(t):
-            row = _session_json(t, now_iso)
-            row["filtered_by"] = t.get("filteredBy")
-            out.append(row)
-    return out
+    return [
+        {**_session_json(t, now_iso), "filtered_by": t.get("filteredBy")}
+        for t in threads
+        if overview.is_filtered(t)
+    ]
 
 
 def triage_json(

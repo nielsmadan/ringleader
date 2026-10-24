@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import jsonout, overview, projects, refresh, registry
+from ..agents import source_of
 from . import default_registry
 
 
@@ -85,7 +86,7 @@ def _filter_source_recent(
 ) -> list[dict[str, Any]]:
     if args.source:
         wanted = set(args.source)
-        threads = [t for t in threads if (t.get("source") or "claude-code") in wanted]
+        threads = [t for t in threads if (source_of(t)) in wanted]
     return overview.filter_recent(threads, now, args.recent)
 
 

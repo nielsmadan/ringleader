@@ -7,10 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import enrichment, overview, paths, prune, registry, stateio
+from . import enrichment, lifecycle, overview, paths, prune, registry, stateio
 from .batch import Txn, run_batch
-from .commands import archive as archive_cmd
-from .commands import sweep as sweep_cmd
 from .enrichment import EnrichOutcome
 from .models import describe
 from .models.base import Model
@@ -131,7 +129,7 @@ def plan_roundup(  # noqa: PLR0913 -- injection points the suite drives
     handoffs_dir: Path | None = None,
 ) -> RoundupPlan:
     handoffs = handoffs_dir if handoffs_dir is not None else paths.handoffs_dir()
-    sweeping = sweep_cmd.due(reg, now_epoch)
+    sweeping = lifecycle.due(reg, now_epoch)
     swept_ids = _identities(sweeping)
     pruning = [
         t for t in prune.prune_candidates(reg, now_iso) if registry.identity(t) not in swept_ids
@@ -247,6 +245,7 @@ class _SweepOutcome:
     swept: bool
     skipped: str | None = None
     error: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def _sweep_item(
@@ -256,6 +255,7 @@ def _sweep_item(
     unknown: UnknownPresence,
     archive_root_path: str,
     now_epoch: float,
+    now_iso: str,
 ) -> _SweepOutcome:
     try:
         thread = txn.index.find(":".join(item.identity))
@@ -265,24 +265,25 @@ def _sweep_item(
         return _SweepOutcome(False, skipped="no longer in the registry")
     if not thread.get("finishOnExit"):
         return _SweepOutcome(False, skipped="no longer marked finished")
-    reason = quiet_reason(thread, now_epoch, sweep_cmd.GRACE_SECONDS) or running_reason(
+    reason = quiet_reason(thread, now_epoch, lifecycle.GRACE_SECONDS) or running_reason(
         thread, txn.live(), unknown
     )
     if reason:
         return _SweepOutcome(False, skipped=reason)
     try:
-        archive_cmd.archive_thread(
-            txn.reg, thread, archive_root_path=archive_root_path, index=txn.index
+        result = lifecycle.archive_thread(
+            txn.reg, thread, archive_root_path=archive_root_path, now_iso=now_iso, index=txn.index
         )
     except (RuntimeError, OSError) as error:
         return _SweepOutcome(False, error=f"sweep {item.label}: {error}")
-    return _SweepOutcome(True)
+    return _SweepOutcome(True, warnings=result.warnings)
 
 
 def _sweep_unrecorded(item: Seen, outcome: _SweepOutcome, error: Exception) -> _SweepOutcome:
     return _SweepOutcome(
         False,
         error=f"sweep {item.label}: archived on disk, but the registry was not updated: {error}",
+        warnings=outcome.warnings,
     )
 
 
@@ -298,6 +299,7 @@ def _sweep_batch(  # noqa: PLR0913 -- injection points the suite drives
     unknown: UnknownPresence,
     archive_root_path: str,
     now_epoch: Callable[[], float],
+    now_iso: str,
     cancelled: CancelCheck,
 ) -> list[tuple[Seen, _SweepOutcome]]:
     def sweep(txn: Txn, item: Seen) -> _SweepOutcome:
@@ -307,6 +309,7 @@ def _sweep_batch(  # noqa: PLR0913 -- injection points the suite drives
             unknown=unknown,
             archive_root_path=archive_root_path,
             now_epoch=now_epoch(),
+            now_iso=now_iso,
         )
 
     run = run_batch(
@@ -366,9 +369,11 @@ def _run_locked(  # noqa: PLR0913 -- injection points the suite drives
             unknown=unknown,
             archive_root_path=archive_root_path,
             now_epoch=now_epoch,
+            now_iso=plan.now_iso,
             cancelled=cancelled,
         ):
             swept += outcome.swept
+            warnings.extend(outcome.warnings)
             if outcome.skipped is not None:
                 skipped.append((item, outcome.skipped))
             if outcome.error is not None:

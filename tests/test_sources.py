@@ -3,7 +3,8 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ringleader.sources.base import CompanionFileSource, NameApplyingSource, Source
+from ringleader import scanner
+from ringleader.sources.base import CompanionFileSource, NameApplyingSource, Source, StoredSource
 from ringleader.sources.claude_code import ClaudeCodeSource
 
 
@@ -164,3 +165,9 @@ def test_extreme_start_timestamp_does_not_prevent_parsing_the_session(tmp_path):
 
     parsed = parse_transcript(path)
     assert parsed.started_at == "2026-10-16T00:00:00+00:00"
+
+
+def test_registered_sources_expose_storage_roots():
+    sources: list[StoredSource] = [factory() for factory in scanner.SOURCE_TYPES]
+    assert all(isinstance(source, StoredSource) for source in sources)
+    assert all(isinstance(source.root, Path) for source in sources)

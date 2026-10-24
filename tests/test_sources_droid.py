@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
+from ringleader import registry, scanner
 from ringleader.slug import droid_slug
 from ringleader.sources.base import (
     CompanionFileSource,
@@ -507,13 +508,13 @@ def test_discover_reads_an_unchanged_session_start_once_per_source(tmp_path, mon
     path = _session(tmp_path, [_start()])
     source = DroidSource(sessions_dir=tmp_path)
     reads = []
-    real_start = droid._session_start
+    real_start = droid.session_start
 
     def counting_start(p):
         reads.append(p)
         return real_start(p)
 
-    monkeypatch.setattr(droid, "_session_start", counting_start)
+    monkeypatch.setattr(droid, "session_start", counting_start)
     first = [ref.source_ref for ref in source.discover()]
     second = [ref.source_ref for ref in source.discover()]
     path.write_text(json.dumps(_start(id="renamed-id")) + "\n", encoding="utf-8")
@@ -535,3 +536,49 @@ def test_discover_forgets_a_session_start_whose_file_is_gone(tmp_path):
     list(source.discover())
 
     assert list(source._headers) == [str(kept)]
+
+
+def test_recorded_droid_store_survives_a_changed_factory_home(tmp_path, monkeypatch):
+    store = tmp_path / "imported" / ".factory"
+    transcript = _session(store / "sessions", [_start(), _message("user", "remember this")])
+    current_home = tmp_path / "current"
+    current_store = current_home / ".factory" / "sessions"
+    current_store.mkdir(parents=True)
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(current_home))
+    monkeypatch.setattr(scanner, "SOURCE_TYPES", (DroidSource,))
+    thread = {
+        "source": "droid",
+        "sessionId": SESSION_ID,
+        "file": str(transcript),
+        "nativeRoots": {"store": str(store)},
+    }
+    sources = scanner.active_sources(recorded_threads=[thread, thread])
+
+    assert {source.root for source in sources} == {current_store, store / "sessions"}
+    assert len(sources) == 2
+    sessions = scanner.scan(sources=sources, git_resolver=lambda _: None)
+    assert [(session.source, session.session_id) for session in sessions] == [("droid", SESSION_ID)]
+    reg = registry.empty_registry()
+    reg["threads"] = [thread]
+    reconciled = registry.reconcile(reg, sessions, "2026-10-24T00:00:00+00:00")
+    retained = registry.find_session(reconciled, "droid:" + SESSION_ID)
+    assert retained["file"] == str(transcript)
+    assert retained["nativeRoots"] == thread["nativeRoots"]
+
+
+@pytest.mark.parametrize("operation", ["delete", "prune"])
+def test_droid_lifecycle_uses_recorded_store_for_confinement(tmp_path, monkeypatch, operation):
+    store = tmp_path / "imported" / ".factory"
+    transcript = _session(store / "sessions", [_start()], sidecars=True)
+    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(tmp_path / "current"))
+    thread = {
+        "source": "droid",
+        "sessionId": SESSION_ID,
+        "file": str(transcript),
+        "nativeRoots": {"store": str(store)},
+    }
+
+    assert scanner.filesystem_path(thread, operation) == transcript
+    outside = _session(tmp_path / "outside", [_start()])
+    with pytest.raises(RuntimeError, match="outside the droid session store"):
+        scanner.filesystem_path({**thread, "file": str(outside)}, operation)
