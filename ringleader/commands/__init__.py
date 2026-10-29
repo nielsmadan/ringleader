@@ -81,6 +81,7 @@ _GUI = {
     "list": Lazy(".gui_cli", "cmd_gui_list"),
     "scan": Lazy(".gui_cli", "cmd_gui_scan"),
     "tail": Lazy(".gui_cli", "cmd_gui_tail"),
+    "decide": Lazy(".gui_cli", "cmd_gui_decide"),
 }
 _MEM = {
     "refresh": Lazy("mem_scan", "cmd_mem_scan"),

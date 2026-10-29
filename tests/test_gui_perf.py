@@ -84,3 +84,31 @@ def test_list_over_two_thousand_threads_meets_its_budget(monkeypatch, tmp_path, 
         doc = json.loads(capsysbinary.readouterr().out)
     assert min(times) <= LIST_BUDGET_SECONDS
     assert len(doc["sessions"]) >= 1000
+
+
+DECIDE_SCRIPT = """
+import contextlib, json, os, sys
+import ringleader.cli
+from ringleader import presence
+presence.PresenceClient.require_running_session_ids = lambda self: frozenset()
+reg, row_id, mtime = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
+    code = ringleader.cli.main(
+        ["gui", "decide", "keep_going", row_id, f"--mtime={mtime}", "--registry", reg]
+    )
+print(json.dumps([code, "ringleader.gui_decide" in sys.modules]), file=sys.stderr)
+"""
+
+
+def test_decide_loads_its_stack_on_demand(monkeypatch, tmp_path):
+    fixture = gui_world(monkeypatch, tmp_path, threads=4, transcripts=False)
+    thread = registry.load_registry(fixture.registry_path)["threads"][0]
+    result = _run(
+        DECIDE_SCRIPT,
+        subprocess_env(fixture),
+        str(fixture.registry_path),
+        registry.qualified_id(thread),
+        thread["mtime"],
+    )
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stderr.strip().splitlines()[-1]) == [0, True]

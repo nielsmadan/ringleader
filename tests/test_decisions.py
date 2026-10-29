@@ -1,7 +1,9 @@
+import contextlib
 import fcntl
 import json
 import os
 import time
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -764,3 +766,36 @@ def test_archive_reports_a_prior_move_as_a_warning(tmp_path, capsys):
     assert (outcome.ok, outcome.path) == (True, str(dest))
     assert outcome.warnings == (f"{thread['file']} already gone, recording archive anyway",)
     assert capsys.readouterr() == ("", "")
+
+
+def _lock_flag(monkeypatch, owner, name):
+    real_lock = getattr(owner, name)
+    held = {"now": False}
+
+    @contextlib.contextmanager
+    def flagged_lock(*args):
+        with real_lock(*args):
+            held["now"] = True
+            try:
+                yield
+            finally:
+                held["now"] = False
+
+    monkeypatch.setattr(owner, name, flagged_lock)
+    return held
+
+
+def test_harvest_save_reads_presence_while_holding_the_publish_lock(tmp_path, monkeypatch):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    held = _lock_flag(monkeypatch, stateio, "publish_lock")
+    seen_while_held = []
+
+    def probe():
+        seen_while_held.append(held["now"])
+        return frozenset()
+
+    ctx = replace(_ctx(path, tmp_path), presence=probe)
+    outcome = decisions.execute(HarvestSaveOp(_seen(thread), MARKDOWN), ctx)
+    assert outcome.ok is True
+    assert seen_while_held == [True]

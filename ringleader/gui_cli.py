@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import signal
 import sys
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Final
+from types import FrameType
+from typing import Any, Final, NoReturn
 
 from . import config, export, paths, presence, refresh, registry
 from . import gui as gui_api
 
 _EXPECTED = (OSError, ValueError, KeyError, RuntimeError)
+_ACTIONS = ("harvest", "archive", "delete", "snooze", "keep", "keep_going")
+_SIGTERM_EXIT = 143
 
 
 def _now_dt() -> datetime:
@@ -124,8 +128,44 @@ def cmd_gui_tail(argv: list[str]) -> int:
     return _run(lambda: _tails_doc(args.registry, args.ids, args.max_chars))
 
 
+def _decide_args(argv: list[str]) -> argparse.Namespace:
+    ap = _parser("decide")
+    ap.add_argument("action", choices=_ACTIONS)
+    ap.add_argument("id", metavar="ID")
+    ap.add_argument("--mtime", required=True)
+    ap.add_argument("--fingerprint", default=None)
+    ap.add_argument("--until", default=None)
+    args = _parse(ap, argv)
+    if args.action == "snooze" and args.until is None:
+        ap.error("snooze needs --until")
+    if args.action != "snooze" and args.until is not None:
+        ap.error(f"--until applies only to snooze, not {args.action}")
+    if ":" not in args.id:
+        ap.error("ID must be qualified as <source>:<sessionId>")
+    return args
+
+
+def _terminate(_signum: int, _frame: FrameType | None) -> NoReturn:
+    raise SystemExit(_SIGTERM_EXIT)
+
+
+def cmd_gui_decide(argv: list[str]) -> int:
+    args = _decide_args(argv)
+    from . import gui_decide  # noqa: PLC0415 -- keeps rl gui list/scan/tail startup fast
+
+    previous = signal.signal(signal.SIGTERM, _terminate)
+    try:
+        return _run(
+            lambda: gui_api.outcome_payload(args.action, args.id, gui_decide.decide(args, _now_dt))
+        )
+    finally:
+        gui_decide.proc.kill_all_children()
+        signal.signal(signal.SIGTERM, previous)
+
+
 GUI_COMMANDS: Final[dict[str, Callable[[list[str]], int]]] = {
     "list": cmd_gui_list,
     "scan": cmd_gui_scan,
     "tail": cmd_gui_tail,
+    "decide": cmd_gui_decide,
 }

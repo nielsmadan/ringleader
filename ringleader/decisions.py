@@ -143,6 +143,16 @@ def is_delete(op: Op) -> bool:
     return isinstance(op, DeleteOp)
 
 
+def lifecycle_reason(thread: dict[str, Any], decision: Decision) -> str | None:
+    if decision not in ("archive", "delete", "harvest"):
+        return None
+    try:
+        scanner.filesystem_path(thread, decision)
+    except RuntimeError as error:
+        return str(error)
+    return None
+
+
 def _selector(seen: Seen) -> str:
     return ":".join(seen.identity)
 

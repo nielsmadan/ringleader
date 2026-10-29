@@ -215,15 +215,37 @@ def _matches(reg: dict[str, Any], query: str, scope: Scope, cwd: str) -> bool:
     return bool(resume.rank(resume.candidates(reg, scope=scope, cwd=cwd), query))
 
 
+def _archived_record(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
+    if ":" not in query:
+        return _by_id(reg.get("archived") or [], query)
+    try:
+        return registry.find_session(reg, query, bucket="archived")
+    except ValueError:
+        return None
+
+
 def _check_archived(reg: dict[str, Any], query: str) -> None:
-    record = _by_id(reg.get("archived") or [], query)
+    record = _archived_record(reg, query)
     if record is None:
         return
     sid = record["sessionId"]
     raise _Abort(f"{sid} is archived — `rl session unarchive {sid}` to bring it back")
 
 
+def _qualified(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
+    if ":" not in query:
+        return None
+    try:
+        thread = registry.find_session(reg, query)
+    except ValueError:
+        return None
+    return thread if thread is not None and resume.eligible(thread) else None
+
+
 def _hit(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
+    qualified = _qualified(reg, query)
+    if qualified is not None:
+        return qualified
     direct = _by_id(_eligible(reg), query)
     if direct is None:
         _check_archived(reg, query)

@@ -1,7 +1,10 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+import pytest
 from ringleader import gui
+from ringleader.decisions import Outcome
+from ringleader.revalidate import Seen
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 NOW = NOW_DT.isoformat()
@@ -206,3 +209,74 @@ def test_tails_and_error_payloads():
     assert set(tails) == {"version", "kind", "items"}
     assert (tails["kind"], tails["items"]) == ("tails", items)
     assert gui.error_payload("boom") == {"version": 1, "kind": "error", "message": "boom"}
+
+
+def test_normalize_until_converts_an_offset_to_utc():
+    assert gui.normalize_until("2026-10-20T09:00:00+02:00", NOW_DT) == "2026-10-20T07:00:00+00:00"
+
+
+def test_normalize_until_accepts_a_zulu_suffix():
+    assert gui.normalize_until("2026-10-20T09:00:00Z", NOW_DT) == "2026-10-20T09:00:00+00:00"
+
+
+def test_normalize_until_rejects_a_naive_time():
+    with pytest.raises(ValueError, match="timezone offset"):
+        gui.normalize_until("2026-10-20T09:00:00", NOW_DT)
+
+
+def test_normalize_until_rejects_a_past_time():
+    with pytest.raises(ValueError, match="in the future"):
+        gui.normalize_until("2026-10-14T09:00:00+00:00", NOW_DT)
+
+
+def test_normalize_until_rejects_text_that_is_not_a_time():
+    with pytest.raises(ValueError, match="not an ISO 8601 time"):
+        gui.normalize_until("next tuesday", NOW_DT)
+
+
+SEEN = Seen(("claude-code", "s1"), "s1-title", NOW, None)
+
+
+def test_from_outcome_reports_the_first_refusal_reason():
+    outcome = Outcome(
+        ok=False,
+        message="s1-title: changed since you looked",
+        wrote=False,
+        refused=((SEEN, "changed since you looked"),),
+    )
+    result = gui.from_outcome(outcome)
+    assert (result.status, result.reason) == ("refused", "changed since you looked")
+
+
+def test_from_outcome_reports_a_partial_write_as_failed():
+    outcome = Outcome(ok=False, message="archived x on disk, but …", wrote=True, path="/a/x")
+    result = gui.from_outcome(outcome)
+    assert (result.status, result.wrote, result.path) == ("failed", True, "/a/x")
+
+
+def test_from_outcome_copies_an_ok_outcome():
+    outcome = Outcome(ok=True, message="archived x", wrote=True, warnings=("w",), path="/a/x")
+    assert gui.from_outcome(outcome) == gui.GuiOutcome(
+        "ok", None, "archived x", True, "/a/x", ("w",)
+    )
+
+
+def test_refused_defaults_its_message_to_the_reason():
+    assert gui.refused("gone") == gui.GuiOutcome("refused", "gone", "gone")
+
+
+def test_outcome_payload_has_exactly_the_contract_keys():
+    doc = gui.outcome_payload("archive", "claude-code:s1", gui.GuiOutcome("ok", None, "m", True))
+    assert set(doc) == {
+        "version",
+        "kind",
+        "action",
+        "id",
+        "status",
+        "reason",
+        "message",
+        "wrote",
+        "path",
+        "warnings",
+    }
+    assert (doc["kind"], doc["action"], doc["warnings"]) == ("outcome", "archive", [])

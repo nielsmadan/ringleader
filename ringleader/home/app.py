@@ -46,6 +46,7 @@ from ..decisions import (
     SingleOp,
     SnoozeOp,
     StampRoundupOp,
+    lifecycle_reason,
 )
 from ..enrichment import Classified
 from ..models import Model, ModelTask, active_model, proc
@@ -188,16 +189,6 @@ def decision_op(decision: Decision, seen: Seen, until: str | None) -> SingleOp:
         case "snooze" if until is not None:
             return SnoozeOp(seen, until)
     raise ValueError(f"{decision} is not a single-step decision")
-
-
-def lifecycle_reason(thread: dict[str, Any], decision: Decision) -> str | None:
-    if decision not in ("archive", "delete", "harvest"):
-        return None
-    try:
-        scanner.filesystem_path(thread, decision)
-    except RuntimeError as error:
-        return str(error)
-    return None
 
 
 class _HostedPicker(PickerScreen):

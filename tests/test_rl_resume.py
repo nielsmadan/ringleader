@@ -550,6 +550,43 @@ def test_an_id_the_registry_learns_only_on_the_rescan_still_resumes(tmp_path):
     assert picker.calls == []
 
 
+class FailingPicker:
+    def __call__(self, *_args) -> None:
+        pytest.fail("the picker must not open for a qualified id")
+
+
+def test_a_qualified_id_resumes_without_the_picker(tmp_path, capsys):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"), _session(tmp_path, "bbb222"))
+    runner = Runner()
+
+    assert (
+        _run(
+            ["claude-code:aaa111", "--dry-run", "--registry", reg],
+            runner=runner,
+            picker=FailingPicker(),
+        )
+        == 0
+    )
+    assert "claude --resume aaa111" in capsys.readouterr().out
+    assert runner.calls == []
+
+
+def test_an_unknown_qualified_id_scans_once_then_refuses(tmp_path, capsys):
+    reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
+    rescan = Rescanner()
+
+    assert (
+        _run(
+            ["claude-code:does-not-exist", "--dry-run", "--registry", reg],
+            picker=FailingPicker(),
+            refresher=rescan,
+        )
+        != 0
+    )
+    assert "no session matches" in capsys.readouterr().err
+    assert rescan.calls == [reg]
+
+
 def test_an_archived_id_names_the_command_that_brings_it_back(tmp_path, capsys):
     reg = _registry(tmp_path, archived=[{"sessionId": "zzz999"}])
     runner, picker, rescan = Runner(), Picker(), Rescanner()
@@ -1557,4 +1594,15 @@ def test_picker_fork_refuses_missing_launch_requirements(tmp_path, problem, caps
     )
     expected = "codex is not installed" if problem == "binary" else "no longer exists"
     assert expected in capsys.readouterr().err
+    assert runner.calls == []
+
+
+def test_a_qualified_archived_id_names_the_command_that_brings_it_back(tmp_path, capsys):
+    reg = _registry(tmp_path, archived=[{"sessionId": "zzz999"}])
+    runner, picker, rescan = Runner(), Picker(), Rescanner()
+
+    args = ["claude-code:zzz999", "--registry", reg]
+    assert _run(args, runner=runner, picker=picker, refresher=rescan) == 1
+    assert "rl session unarchive zzz999" in capsys.readouterr().err
+    assert rescan.calls == []
     assert runner.calls == []

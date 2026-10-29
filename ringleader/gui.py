@@ -3,13 +3,15 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final, Literal
 
 from . import overview, registry, resume, roundup_clock, scanner
 from .agents import source_of
 from .home import state as home_state
 
 if TYPE_CHECKING:
+    from . import decisions
+    from .decisions import Decision
     from .revalidate import Identity
 
 CONTRACT_VERSION: Final = 1
@@ -18,6 +20,8 @@ TAIL_MIN_CHARS: Final = 1_000
 TAIL_MAX_CHARS: Final = 2_000_000
 TAIL_MAX_IDS: Final = 16
 LIST_TEXT_MAX_CHARS: Final = 500
+type OutcomeStatus = Literal["ok", "refused", "empty", "failed"]
+
 SESSION_ROW_KEYS: Final[tuple[str, ...]] = (
     "age_days",
     "age_human",
@@ -60,6 +64,16 @@ SESSION_ROW_KEYS: Final[tuple[str, ...]] = (
 class PresenceView:
     live: frozenset[Identity] | None
     problem: str | None
+
+
+@dataclass(frozen=True)
+class GuiOutcome:
+    status: OutcomeStatus
+    reason: str | None
+    message: str
+    wrote: bool = False
+    path: str | None = None
+    warnings: tuple[str, ...] = ()
 
 
 def clip(text: str | None, limit: int) -> str | None:
@@ -227,3 +241,49 @@ def error_payload(message: str) -> dict[str, Any]:
 
 def encode_document(doc: dict[str, Any]) -> bytes:
     return (json.dumps(doc, ensure_ascii=False) + "\n").encode("utf-8", "replace")
+
+
+def refused(reason: str, message: str | None = None) -> GuiOutcome:
+    return GuiOutcome("refused", reason, reason if message is None else message)
+
+
+def _status(outcome: decisions.Outcome) -> tuple[OutcomeStatus, str | None]:
+    if outcome.ok:
+        return "ok", None
+    if outcome.refused:
+        return "refused", outcome.refused[0][1]
+    return "failed", None
+
+
+def from_outcome(outcome: decisions.Outcome) -> GuiOutcome:
+    status, reason = _status(outcome)
+    return GuiOutcome(
+        status, reason, outcome.message, outcome.wrote, outcome.path, outcome.warnings
+    )
+
+
+def outcome_payload(action: Decision, qualified: str, result: GuiOutcome) -> dict[str, Any]:
+    return {
+        "version": CONTRACT_VERSION,
+        "kind": "outcome",
+        "action": action,
+        "id": qualified,
+        "status": result.status,
+        "reason": result.reason,
+        "message": result.message,
+        "wrote": result.wrote,
+        "path": result.path,
+        "warnings": list(result.warnings),
+    }
+
+
+def normalize_until(text: str, now: datetime) -> str:
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(f"--until is not an ISO 8601 time: {text!r}") from None
+    if parsed.tzinfo is None:
+        raise ValueError("--until needs a timezone offset")
+    if parsed <= now:
+        raise ValueError("snooze time must be in the future")
+    return parsed.astimezone(UTC).isoformat()

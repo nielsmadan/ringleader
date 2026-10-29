@@ -142,8 +142,9 @@ Validates, then execs exactly once. Order matters — every check runs before an
 because after `execvpe` there is no recovering:
 
 1. resolve the target agent name (`claude` → `claude-code`)
-2. resolve the session — `--last` takes the newest candidate in scope, an exact id or an
-   unambiguous prefix of at least four characters skips the picker, and anything else pre-fills
+2. resolve the session — `--last` takes the newest candidate in scope, an exact id (bare, or
+   qualified as `<source>:<sessionId>`) or an unambiguous prefix of at least four characters
+   skips the picker, and anything else pre-fills
    it. Both non-interactive paths earn one scan on a miss, then refuse; neither falls back to the
    picker. `--last` also rescans its scope *before* choosing, through `refresh.scoped_refresh`
    (see [scanning and refresh](scanning-and-refresh.md#refresh)): the session just left is the
