@@ -156,7 +156,9 @@ cached parse for that source at once, which is the intended way to ship a parser
 ### Reconcile
 
 `reconcile(reg, scanned, now_iso, *, unavailable_sources, partial)` is the one function that merges
-a scan into the registry:
+a scan into an independent registry snapshot. It deep-copies the input before building
+the reconciled buckets, so later edits to returned records or nested values leave the
+original snapshot unchanged:
 
 1. Index existing threads by `(source, sessionId)`.
 2. For each scanned session: refresh the metadata group, conditionally refresh the git group,

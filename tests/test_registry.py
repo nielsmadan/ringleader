@@ -1,4 +1,5 @@
 import json
+from copy import deepcopy
 
 import pytest
 from ringleader import registry
@@ -250,6 +251,52 @@ def test_reconcile_does_not_mutate_input_registry():
     assert reg2["threads"][0]["mtime"] == "2026-06-05T00:00:00+00:00"
     # the original dict must be untouched
     assert original_thread["mtime"] == original_mtime
+
+
+@pytest.mark.parametrize("bucket", ["archived", "deleted"])
+def test_reconcile_owns_returned_tombstones(bucket):
+    reg = empty_registry()
+    reg[bucket] = [
+        {
+            "sessionId": "s1",
+            "source": "claude-code",
+            "harvestPath": ["old.md"],
+            "thread": {"sessionId": "s1", "source": "claude-code", "tags": ["original"]},
+        }
+    ]
+    before = deepcopy(reg)
+
+    result = reconcile(reg, [], NOW)
+    reconcile_harvest_paths(result, {"claude-code:s1": ["new.md"]})
+    result[bucket][0]["thread"]["tags"].append("new")
+
+    assert result[bucket][0]["harvestPath"] == ["new.md"]
+    assert result[bucket][0]["thread"]["tags"] == ["original", "new"]
+    assert reg == before
+
+
+@pytest.mark.parametrize("mode", ["scanned", "partial", "unavailable", "gc", "resurrected"])
+def test_reconcile_owns_nested_thread_values(mode):
+    reg = reconcile(empty_registry(), [_meta("s1", NOW)], NOW)
+    reg["threads"][0].update(tags=["original"], harvestPath=["old.md"])
+    if mode == "resurrected":
+        reg = reconcile(reg, [], NOW)
+    before = deepcopy(reg)
+
+    result = reconcile(
+        reg,
+        [_meta("s1", NOW)] if mode in {"scanned", "resurrected"} else [],
+        NOW,
+        partial=mode == "partial",
+        unavailable_sources={"claude-code"} if mode == "unavailable" else set(),
+    )
+    thread = result["deleted"][0]["thread"] if mode == "gc" else result["threads"][0]
+    thread["tags"].append("new")
+    thread["harvestPath"].append("new.md")
+
+    assert thread["tags"] == ["original", "new"]
+    assert thread["harvestPath"] == ["old.md", "new.md"]
+    assert reg == before
 
 
 def test_apply_classification_does_not_overwrite_user_fields():

@@ -681,6 +681,7 @@ def reconcile(  # noqa: PLR0912
     so a thread it did not see is kept rather than tombstoned and no clock moves. Otherwise
     each available source in `scanned_sources` gets `now_iso` in `sourcesScannedAt`, the
     baseline a later partial scan trusts, so `now_iso` must be read before discovery."""
+    reg = deepcopy(reg)
     scanned_dicts = [_as_dict(m) for m in scanned]
     by_id = {_key(t): t for t in reg["threads"]}
     for tombstone in reg.get("deleted", []):
@@ -739,8 +740,7 @@ def reconcile(  # noqa: PLR0912
             }
         )
 
-    result = deepcopy(reg)
-    result.update(
+    reg.update(
         version=REGISTRY_VERSION,
         lastScan=reg.get("lastScan") if partial else now_iso,
         sourcesScannedAt=(reg.get("sourcesScannedAt") or {})
@@ -753,9 +753,9 @@ def reconcile(  # noqa: PLR0912
         archived=archived,
         deleted=deleted,
     )
-    if isinstance(result, Registry):
-        result.scanned = True
-    return result
+    if isinstance(reg, Registry):
+        reg.scanned = True
+    return reg
 
 
 def needs_classification(thread: dict[str, Any]) -> bool:
