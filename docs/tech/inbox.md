@@ -172,7 +172,7 @@ toasts instead of starting.
 
 ### Screens and keys
 
-App-wide (non-priority, so a focused `Input` still receives them as text):
+App-wide (non-priority except `ctrl+c`, so a focused `Input` still receives ordinary typing):
 
 | Key | Does |
 |---|---|
@@ -182,6 +182,7 @@ App-wide (non-priority, so a focused `Input` still receives them as text):
 | `ctrl+r` | rescan (queued when one is running) |
 | `ctrl+p` | command palette (off while a modal is open) |
 | `escape` | back, on every screen but Home |
+| `ctrl+c` | cancel the current dialog or go back like Escape; on Home, leave through the same barrier as `q` |
 
 Lists move with `ctrl+j`/`ctrl+k` or the arrows, and bare `j`/`k` wherever no `Input` is on the
 screen.

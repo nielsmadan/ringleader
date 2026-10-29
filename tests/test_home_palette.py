@@ -154,13 +154,14 @@ async def test_a_next_step_hit_activates_it(tmp_path):
         await until(pilot, lambda: isinstance(app.screen, TriageScreen))
 
 
-async def test_brackets_in_a_session_derived_hit_render_literally(tmp_path):
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_brackets_in_a_session_derived_hit_render_literally(tmp_path, key):
     path = _write(tmp_path / "registry.json", _thread("a", days=30, gitProjectLabel="[cadet-city]"))
     app = _app(path)
     async with app.run_test(size=(100, 30)) as pilot:
         await _type(pilot, app, "cadet")
         await until(pilot, lambda: "[cadet-city]" in screen_text(app))
-        await pilot.press("escape")
+        await pilot.press(key)
         await until(pilot, lambda: isinstance(app.screen, HomeScreen))
 
 

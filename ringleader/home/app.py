@@ -219,6 +219,7 @@ class InboxApp(App[ExitIntent | None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         *(_target_binding(str(index), target) for index, target in enumerate(ScreenTarget, 1)),
         Binding("q", "quit", "quit"),
+        Binding("ctrl+c", "cancel", "cancel", show=False, priority=True),
         Binding("u", "undo", "undo"),
         Binding("ctrl+r", "rescan", "rescan"),
     ]
@@ -902,6 +903,12 @@ class InboxApp(App[ExitIntent | None]):
             self._toast("leaving — that choice was not applied", warning=True)
             return
         self._leave(intent)
+
+    async def action_cancel(self) -> None:
+        if isinstance(self.screen, HomeScreen):
+            await self.action_quit()
+        else:
+            self.simulate_key("escape")
 
     async def action_quit(self) -> None:
         if self._leaving:

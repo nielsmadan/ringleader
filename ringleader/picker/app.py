@@ -494,6 +494,9 @@ class PickerScreen(Screen[Choice | None]):
 
 class PickerApp(App[Choice | None]):
     TITLE = "rl resume"
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("ctrl+c", "app.simulate_key('escape')", show=False, priority=True),
+    ]
 
     def __init__(  # noqa: PLR0913 -- injection points the suite drives
         self,

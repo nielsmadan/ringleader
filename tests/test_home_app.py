@@ -7,6 +7,7 @@ import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
+import pytest
 from ringleader import refresh, registry, revalidate
 from ringleader.decisions import ArchiveOp, KeepOp, Outcome, ReloadOp
 from ringleader.harvests import Harvest
@@ -18,7 +19,7 @@ from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.roundup import RoundupScreen
 from ringleader.picker.app import Choice, PickerScreen
 from ringleader.resume import launchable_agents
-from ringleader.tui.modals import ConfirmModal
+from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_fixture import build_fixture
 from scripts.tui_shot import settle_inbox
@@ -200,14 +201,15 @@ async def test_three_opens_the_hosted_picker_and_choosing_exits_with_a_resume_in
     )
 
 
-async def test_escape_returns_home_from_the_picker(tmp_path):
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_escape_returns_home_from_the_picker(tmp_path, key):
     path = _write(tmp_path / "registry.json", _thread("a", days=2))
     app = _app(path)
     async with app.run_test(size=(100, 30)) as pilot:
         await until(pilot, lambda: app.idle)
         await pilot.press("3")
         await until(pilot, lambda: isinstance(app.screen, PickerScreen))
-        await pilot.press("escape")
+        await pilot.press(key)
         await until(pilot, lambda: isinstance(app.screen, HomeScreen))
         assert app.is_running
 
@@ -229,17 +231,19 @@ async def test_one_pops_back_to_home(tmp_path):
         assert app.screen_stack[1:] == [app.screen]
 
 
-async def test_q_when_idle_exits_with_nothing(tmp_path):
+@pytest.mark.parametrize("key", ["q", "ctrl+c"])
+async def test_q_when_idle_exits_with_nothing(tmp_path, key):
     path = _write(tmp_path / "registry.json", _thread("a", days=2))
     app = _app(path)
     async with app.run_test(size=(100, 30)) as pilot:
         await until(pilot, lambda: app.idle)
-        await pilot.press("q")
+        await pilot.press(key)
         await until(pilot, lambda: _exited(app))
     assert app.return_value is None
 
 
-async def test_q_while_a_change_is_written_waits_for_it_then_exits(tmp_path):
+@pytest.mark.parametrize("key", ["q", "ctrl+c"])
+async def test_q_while_a_change_is_written_waits_for_it_then_exits(tmp_path, key):
     thread = _thread("a", days=2)
     path = _write(tmp_path / "registry.json", thread)
     execute = FakeExecute()
@@ -250,7 +254,7 @@ async def test_q_while_a_change_is_written_waits_for_it_then_exits(tmp_path):
             await until(pilot, lambda: not app.scans.running)
             app.submit([ArchiveOp(_seen(thread))], label="archive")
             await until(pilot, lambda: len(execute.started) == 1)
-            await pilot.press("q")
+            await pilot.press(key)
             await until(pilot, lambda: "finishing 1 change" in screen_text(app))
             assert app.is_running
             assert not app._exit
@@ -699,3 +703,18 @@ async def test_hosted_picker_reports_unavailable_sources(tmp_path):
                 == "Partially refreshed — cached sources: opencode"
             ),
         )
+
+
+async def test_ctrl_c_cancels_a_dialog_with_focused_input(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a", days=2))
+    app = _app(path)
+    results = []
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        modal = SnoozeModal(lambda: NOW_DT)
+        app.push_screen(modal, callback=results.append)
+        await until(pilot, lambda: app.screen is modal)
+        await pilot.press("3", "d", "ctrl+c")
+        await until(pilot, lambda: isinstance(app.screen, HomeScreen))
+        assert results == [None]
+        assert app.is_running

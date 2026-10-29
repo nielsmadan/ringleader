@@ -895,14 +895,15 @@ async def test_two_choices_dispatched_at_once_exit_the_app_once(tmp_path):
     assert app.return_value.target == "codex"
 
 
-async def test_escape_in_the_agent_modal_returns_to_the_list(tmp_path):
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_escape_in_the_agent_modal_returns_to_the_list(tmp_path, key):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         await pilot.press("enter")
         await pilot.pause()
         assert isinstance(app.screen, AgentModal)
-        await pilot.press("escape")
+        await pilot.press(key)
         await pilot.pause()
         assert isinstance(app.screen, PickerScreen)
         assert app.is_running
@@ -924,11 +925,12 @@ async def test_the_scope_keys_stay_inert_while_the_agent_modal_is_open(tmp_path)
         assert isinstance(app.screen, AgentModal)
 
 
-async def test_escape_on_the_list_exits_without_a_choice(tmp_path):
+@pytest.mark.parametrize("key", ["escape", "ctrl+c"])
+async def test_escape_on_the_list_exits_without_a_choice(tmp_path, key):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        await pilot.press("escape")
+        await pilot.press(key)
         await pilot.pause()
     assert app.return_value is None
     assert app.is_running is False
@@ -951,7 +953,7 @@ async def test_a_running_session_is_badged_and_confirmed_before_it_is_resumed(tm
     assert app.return_value.confirmed is True
 
 
-@pytest.mark.parametrize("key", ["n", "escape"])
+@pytest.mark.parametrize("key", ["n", "escape", "ctrl+c"])
 async def test_declining_the_running_confirmation_returns_to_the_list(tmp_path, key):
     app = _app(tmp_path, presence=lambda: frozenset({("claude", "s0")}))
     async with app.run_test() as pilot:
