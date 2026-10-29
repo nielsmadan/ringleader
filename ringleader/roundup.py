@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-from . import enrichment, lifecycle, overview, paths, prune, registry, stateio
+from . import enrichment, lifecycle, overview, paths, prune, registry, roundup_clock, stateio
 from .batch import Txn, run_batch
 from .enrichment import EnrichOutcome
 from .models import describe
@@ -31,11 +31,12 @@ ENRICH_WARN_THRESHOLD = 25
 RECENT_DAYS = 7
 PRUNE_BATCH = prune.DELETE_BATCH
 
-_HOURS_PER_DAY = 24
 _SECONDS_PER_MINUTE = 60
 _MINUTES_PER_HOUR = 60
 
 ROUNDUP_BUSY = "another roundup is running"
+
+is_stale = roundup_clock.is_stale
 
 
 class RoundupBusy(RuntimeError):
@@ -98,16 +99,6 @@ class RoundupResult:
     phases: PhasesResult
     enrich: EnrichOutcome | None
     stamped: bool
-
-
-def is_stale(reg: dict[str, Any], now_iso: str, stale_hours: int) -> bool:
-    last = reg.get("lastRoundupAt")
-    if not isinstance(last, str) or not last:
-        return True
-    try:
-        return overview.age_days(last, now_iso) * _HOURS_PER_DAY >= stale_hours
-    except ValueError:
-        return True
 
 
 def _identities(threads: Sequence[dict[str, Any]]) -> set[Identity]:

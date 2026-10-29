@@ -15,6 +15,7 @@ UNDOCUMENTED_BY_DESIGN = {
     "update hooks": "hook lifecycle; the user runs it directly",
     "uninstall hooks": "hook lifecycle; the user runs it directly",
     "uninstall statusline": "statusline lifecycle; the user runs it directly",
+    "gui": "machine contract for the circus desktop app; no skill drives it",
 }
 
 

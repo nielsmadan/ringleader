@@ -4,9 +4,7 @@ import os
 import sys
 from typing import Any, TextIO
 
-from . import commands, registry, session_env
-
-TABLE = commands.TABLE
+from . import gui_cli, registry, session_env
 
 _FLAT = (
     "overview",
@@ -24,8 +22,20 @@ _FLAT = (
     "update",
     "uninstall",
 )
-_GROUPS = ("session", "mem", "data", "workspace")
+_GROUPS = ("session", "mem", "data", "workspace", "gui")
 _RESERVED: set[str] = set()
+
+
+def _table() -> dict[str, Any]:
+    from . import commands  # noqa: PLC0415 -- keeps rl gui startup fast
+
+    return commands.TABLE
+
+
+def __getattr__(name: str) -> object:
+    if name == "TABLE":
+        return _table()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def _leaf_names(node: object, group: str = "") -> str:
@@ -56,7 +66,7 @@ def _usage(stream: TextIO | None = None) -> None:
     print("bare `rl` in a terminal opens the inbox\n", file=stream)
     print("commands: " + "  ".join(_FLAT), file=stream)
     for g in _GROUPS:
-        node = TABLE.get(g)
+        node = _table().get(g)
         subs = _leaf_names(node, g) if isinstance(node, dict) else "(coming soon)"
         print(f"  {g}: {subs}", file=stream)
 
@@ -78,16 +88,7 @@ def _quiet_stdout() -> None:
         os.close(devnull)
 
 
-def main(argv: list[str] | None = None) -> int:
-    argv = sys.argv[1:] if argv is None else list(argv)
-    if not argv and _opens_inbox():
-        argv = ["inbox"]
-    if not argv or argv[0] in ("-h", "--help", "help"):
-        _usage()
-        return 0
-    node: dict[str, Any] = TABLE
-    crumbs: list[str] = []
-    rest = argv
+def _walk(node: dict[str, Any], crumbs: list[str], rest: list[str]) -> int:
     while rest:
         tok, rest = rest[0], rest[1:]
         entry = node.get(tok)
@@ -112,3 +113,15 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     _group_usage(crumbs, node, sys.stdout)
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if not argv and _opens_inbox():
+        argv = ["inbox"]
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        _usage()
+        return 0
+    if argv[0] == "gui":
+        return _walk(gui_cli.GUI_COMMANDS, ["gui"], argv[1:])
+    return _walk(_table(), [], argv)

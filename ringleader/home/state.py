@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-from .. import overview, registry, resume, roundup
+from .. import overview, registry, resume, roundup_clock
 from ..agents import source_of
 from ..revalidate import Identity
 
@@ -199,7 +199,7 @@ def build_home_state(
         projects=project_queue(visible, now_iso),
         pending_harvests=pending_harvests,
         last_roundup_at=reg.get("lastRoundupAt"),
-        roundup_stale=roundup.is_stale(reg, now_iso, stale_hours),
+        roundup_stale=roundup_clock.is_stale(reg, now_iso, stale_hours),
     )
 
 

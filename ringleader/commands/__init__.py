@@ -76,6 +76,12 @@ _SESSION = {
         "cleaned": Lazy("cleaned", "cmd_cleaned"),
     },
 }
+# gui_cli sits beside this package so `rl gui` can dispatch it without importing it
+_GUI = {
+    "list": Lazy(".gui_cli", "cmd_gui_list"),
+    "scan": Lazy(".gui_cli", "cmd_gui_scan"),
+    "tail": Lazy(".gui_cli", "cmd_gui_tail"),
+}
 _MEM = {
     "refresh": Lazy("mem_scan", "cmd_mem_scan"),
     "prune": Lazy("mem_prune", "cmd_mem_prune"),
@@ -126,6 +132,7 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
+    "gui": _GUI,
     "config": Lazy("config", "cmd_config"),
 }
 
