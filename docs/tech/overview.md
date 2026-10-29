@@ -35,6 +35,8 @@ go deeper, per subsystem.
   dormant session and handing the process to an agent.
 - [tui-testing.md](tui-testing.md) — `tui/snapshot.py`, `scripts/tui_fixture.py`,
   `scripts/tui_shot.py`, `tests/tui_e2e.py`: golden screens, text shots, and pty end-to-end runs.
+- [gui-contract.md](gui-contract.md) — `gui.py`, `gui_cli.py`, `gui_decide.py`: the versioned
+  `rl gui` JSON contract the circus desktop app talks to, its goldens and synthetic world.
 - `search.py` / `searchview.py` / `tty.py` — `rl session search`: the matcher (tiers,
   scope, archived-tombstone fallbacks) is kept apart from the renderer that colours it,
   so `jsonout.py` never depends on terminal formatting. `tty.py` owns the `--color`

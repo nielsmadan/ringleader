@@ -538,6 +538,25 @@ def test_removing_a_source_without_a_file_lifecycle_is_refused(decide_world, cap
     assert doc["reason"].startswith(f"cannot {action}")
 
 
+@pytest.mark.parametrize("roots", [{"store": "relative/store"}, {"root": "/elsewhere"}])
+@pytest.mark.parametrize("action", ["archive", "delete", "harvest"])
+def test_a_row_with_corrupt_native_roots_is_refused_with_its_lifecycle_block(
+    decide_world, capsys, monkeypatch, action, roots
+):
+    _model(monkeypatch, FakeModel(HARVEST_ANSWER))
+    row_id = _target(decide_world, capsys)["id"]
+
+    def corrupt(data):
+        thread = next(t for t in data["threads"] if registry.qualified_id(t) == row_id)
+        thread["nativeRoots"] = roots
+
+    _edit_registry(decide_world, corrupt)
+    row = next(r for r in _list(decide_world, capsys)["sessions"] if r["id"] == row_id)
+    doc = _decide(decide_world, capsys, *_stamped(row, action))
+    assert (doc["status"], doc["reason"]) == ("refused", row["lifecycle_block"])
+    assert Path(row["file"]).exists()
+
+
 @pytest.mark.parametrize("action", ["archive", "harvest"])
 def test_a_transcript_that_grew_after_the_gui_looked_is_refused(
     decide_world, capsys, monkeypatch, action

@@ -29,6 +29,7 @@ rl
 ├── session <sub>               session plumbing (see below)
 ├── mem <sub>                   memory plumbing (see below)
 ├── data <sub>                  export | tokens | migrate | presence
+├── gui <sub>                   machine interface for the circus app (see below)
 └── workspace <sub>             move | retarget
 ```
 
@@ -176,6 +177,18 @@ Presence installation and uninstallation require `--yes` when combined with `--j
 `just install` and `just install-editable` also run presence
 installation after installing Ringleader. A direct `uv tool install .` leaves activation
 to the explicit presence command or onboarding skill.
+
+## `rl gui`
+
+| Command | Does |
+|---|---|
+| `rl gui list` | The inbox as one JSON document. |
+| `rl gui scan` | Rescan sources; report sessions added and removed. |
+| `rl gui tail <id>…` | The last part of up to 16 transcripts. `--max-chars` |
+| `rl gui decide <action> <id>` | Apply one decision. `--mtime` (required), `--fingerprint`, `--until` |
+
+`rl gui` is the machine interface of the circus desktop app: JSON on stdout, versioned, not for
+hand use. See [tech/gui-contract.md](../tech/gui-contract.md).
 
 ## `rl workspace`
 

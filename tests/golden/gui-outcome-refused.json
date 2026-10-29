@@ -1,0 +1,12 @@
+{
+  "action": "archive",
+  "id": "claude-code:70ac06ac-df70-3017-04c9-d78d82b33599",
+  "kind": "outcome",
+  "message": "picker refactor refactor 15: changed since you looked",
+  "path": null,
+  "reason": "changed since you looked",
+  "status": "refused",
+  "version": 1,
+  "warnings": [],
+  "wrote": false
+}

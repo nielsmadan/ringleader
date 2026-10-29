@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import fcntl
 import os
+import signal
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -19,6 +20,15 @@ def publish_lock() -> Iterator[None]:
             yield
         finally:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+@contextmanager
+def sigterm_deferred() -> Iterator[None]:
+    previous = signal.pthread_sigmask(signal.SIG_BLOCK, {signal.SIGTERM})
+    try:
+        yield
+    finally:
+        signal.pthread_sigmask(signal.SIG_SETMASK, previous)
 
 
 @contextmanager

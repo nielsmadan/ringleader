@@ -571,19 +571,17 @@ def test_a_qualified_id_resumes_without_the_picker(tmp_path, capsys):
     assert runner.calls == []
 
 
-def test_an_unknown_qualified_id_scans_once_then_refuses(tmp_path, capsys):
+@pytest.mark.parametrize("query", ["claude-code:does-not-exist", "codex:does-not-exist"])
+def test_an_unknown_qualified_id_scans_once_then_refuses(tmp_path, capsys, query):
     reg = _registry(tmp_path, _session(tmp_path, "aaa111"))
     rescan = Rescanner()
 
     assert (
-        _run(
-            ["claude-code:does-not-exist", "--dry-run", "--registry", reg],
-            picker=FailingPicker(),
-            refresher=rescan,
-        )
-        != 0
+        _run([query, "--dry-run", "--registry", reg], picker=FailingPicker(), refresher=rescan) != 0
     )
-    assert "no session matches" in capsys.readouterr().err
+    assert capsys.readouterr().err == (
+        f"rl-resume: no session matches '{query}' on this machine, even after a fresh scan\n"
+    )
     assert rescan.calls == [reg]
 
 

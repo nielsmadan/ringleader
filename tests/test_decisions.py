@@ -2,12 +2,13 @@ import contextlib
 import fcntl
 import json
 import os
+import signal
 import time
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from ringleader import batch, decisions, harvests, overview, registry, revalidate, stateio
+from ringleader import batch, decisions, gui_cli, harvests, overview, registry, revalidate, stateio
 from ringleader.decisions import (
     ArchiveOp,
     ClassifyOp,
@@ -503,6 +504,57 @@ def test_a_delete_whose_registry_write_fails_reports_the_unlink(tmp_path, monkey
         outcome.message == "deleted s1-title on disk, but the registry was not updated: disk full"
     )
     assert not Path(thread["file"]).exists()
+
+
+@contextlib.contextmanager
+def _gui_sigterm_handler():
+    previous = signal.signal(signal.SIGTERM, gui_cli._terminate)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
+@pytest.mark.parametrize(
+    ("harvest", "step"),
+    [(False, "archive_thread"), (True, "save_harvest_unlocked"), (True, "archive_thread")],
+)
+def test_a_sigterm_between_the_move_and_the_commit_still_records_the_archive(
+    tmp_path, monkeypatch, harvest, step
+):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    owner = decisions.harvesting if step == "save_harvest_unlocked" else decisions.lifecycle
+    real = getattr(owner, step)
+
+    def then_terminate(*args, **kwargs):
+        result = real(*args, **kwargs)
+        os.kill(os.getpid(), signal.SIGTERM)
+        return result
+
+    monkeypatch.setattr(owner, step, then_terminate)
+    op = HarvestSaveOp(_seen(thread), MARKDOWN) if harvest else ArchiveOp(_seen(thread))
+    with _gui_sigterm_handler(), pytest.raises(SystemExit) as exited:
+        decisions.execute(op, _ctx(path, tmp_path))
+    assert exited.value.code == 143
+    assert [a["sessionId"] for a in _load(path)["archived"]] == ["s1"]
+    assert (tmp_path / "archive" / "x" / "s1.jsonl").exists()
+
+
+def test_a_sigterm_as_the_registry_write_starts_still_records_the_archive(tmp_path, monkeypatch):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [thread])
+    write = registry.atomic_write_text
+
+    def terminate_then_write(*args, **kwargs):
+        os.kill(os.getpid(), signal.SIGTERM)
+        write(*args, **kwargs)
+
+    monkeypatch.setattr(registry, "atomic_write_text", terminate_then_write)
+    with _gui_sigterm_handler(), pytest.raises(SystemExit) as exited:
+        decisions.execute(ArchiveOp(_seen(thread)), _ctx(path, tmp_path))
+    assert exited.value.code == 143
+    assert [a["sessionId"] for a in _load(path)["archived"]] == ["s1"]
 
 
 def test_a_programming_error_in_a_bulk_op_is_not_mapped_to_a_refusal(tmp_path, monkeypatch):

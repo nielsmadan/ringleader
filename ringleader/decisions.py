@@ -148,7 +148,7 @@ def lifecycle_reason(thread: dict[str, Any], decision: Decision) -> str | None:
         return None
     try:
         scanner.filesystem_path(thread, decision)
-    except RuntimeError as error:
+    except (RuntimeError, ValueError, KeyError) as error:
         return str(error)
     return None
 
@@ -315,23 +315,24 @@ def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
         )
         if isinstance(thread, Outcome):
             return thread
-        saved: str | None = None
-        if thread.get("decision") != "harvested":
-            if op.markdown is None:
-                reason = "nothing harvested to save"
-                return _refused(op.seen, reason, f"{op.seen.label}: {reason}")
-            try:
-                _, path = harvesting.save_harvest_unlocked(
-                    _selector(op.seen), ctx.registry_path, op.markdown, now_iso=ctx.now_iso()
-                )
-            except registry.RegistryConflict as error:
-                return Outcome(
-                    ok=False,
-                    message=f"harvest saved, but the registry was not updated: {error}",
-                    wrote=True,
-                )
-            saved = str(path)
-        return _archive_harvested(op, ctx, saved)
+        with stateio.sigterm_deferred():
+            saved: str | None = None
+            if thread.get("decision") != "harvested":
+                if op.markdown is None:
+                    reason = "nothing harvested to save"
+                    return _refused(op.seen, reason, f"{op.seen.label}: {reason}")
+                try:
+                    _, path = harvesting.save_harvest_unlocked(
+                        _selector(op.seen), ctx.registry_path, op.markdown, now_iso=ctx.now_iso()
+                    )
+                except registry.RegistryConflict as error:
+                    return Outcome(
+                        ok=False,
+                        message=f"harvest saved, but the registry was not updated: {error}",
+                        wrote=True,
+                    )
+                saved = str(path)
+            return _archive_harvested(op, ctx, saved)
 
 
 def _prune(op: PruneOp, ctx: OpContext) -> Outcome:
@@ -542,9 +543,10 @@ def execute_group(
     if len(marks) == len(ops):
         return _in_one_transaction(marks, ctx, claim, _mark_in, _mark_unrecorded)
     if len(archives) == len(ops):
-        return _in_one_transaction(
-            archives, ctx, claim, _archive_in, _archive_unrecorded, publish=True
-        )
+        with stateio.sigterm_deferred():
+            return _in_one_transaction(
+                archives, ctx, claim, _archive_in, _archive_unrecorded, publish=True
+            )
     if len(deletes) == len(ops):
         return _in_one_transaction(deletes, ctx, claim, _delete_in, _delete_unrecorded)
     results: list[GroupResult | None] = []

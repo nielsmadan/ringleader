@@ -39,8 +39,7 @@ pruning them before the GC clock deletes them.
   the seeded handoff. Either way the source session is never modified. A target agent whose
   installed version was never self-verified on this machine triggers a one-time
   `rl doctor --verify-conversion <agent>` pass first (interactive sessions only; `--dry-run` just
-  reports it would happen). See
-  `docs/decisions/0011-seeded-handoff-over-native-conversion.md` and
+  reports it would happen). See `docs/decisions/0011-seeded-handoff-over-native-conversion.md` and
   `docs/decisions/0013-native-conversion-behind-resume.md`.
 - **Bare `rl` opens the inbox only on an interactive non-agent TTY.** stdin and stdout are TTYs,
   `TERM` is not `dumb`, and `session_env.current_session()` is `None`; anywhere else it prints
@@ -52,9 +51,10 @@ pruning them before the GC clock deletes them.
   it with `scripts/tui_shot.py`, which is read-only on a copy. See `docs/tech/inbox.md`.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
-- **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing,** meant to be
-  called by the skills in `.agents/skills/` (session track) or `.claude/skills/`
-  (`memory-triage`), not by hand.
+- **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing** for the skills
+  in `.agents/skills/` (session track) or `.claude/skills/` (`memory-triage`), not for hand use.
+  `rl gui` is the circus desktop app's versioned contract (JSON-only stdout, `version: 1`):
+  change it only with `docs/tech/gui-contract.md` and the goldens in `tests/golden/`.
 - **`rl analyze` keeps a SQLite index and refreshes it on every run.** It lives at
   `analysis/index-v<FACTS_VERSION>.sqlite` under the state dir. `--no-refresh` reads it as it is
   (exit 3 with no complete index, or one a different rl version built) and `--index DIR` relocates it, its lock and `labels.sqlite`. The

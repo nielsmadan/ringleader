@@ -14,11 +14,17 @@ and starts in the session's directory.
 rl resume                  # picker, sessions recorded in this directory
 rl resume --last           # the most recent session here, no picker
 rl resume 3f2a91c7         # unambiguous id prefix — no picker, straight in
+rl resume codex:<sessionId>    # qualified id — exact match, any directory, no picker
 rl resume auth             # picker, pre-filtered to "auth"
 rl resume 3f2a91c7 --to codex   # hand it to a different agent: native conversion, consented fallback
 rl resume 3f2a91c7 --to codex --markdown   # skip native conversion, go straight to the Markdown handoff
 rl resume 3f2a91c7 --dry-run    # print the directory and argv, launch nothing
 ```
+
+A qualified id, `<source>:<sessionId>` with the full session id (`claude` works for
+`claude-code`), names one session exactly, so it ignores the scope flags and skips the picker.
+One that matches nothing earns one scan, then refuses without suggesting `--recursive` or
+`--all`, since widening the scope cannot help.
 
 ## The most recent one
 

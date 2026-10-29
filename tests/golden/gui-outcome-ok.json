@@ -1,0 +1,12 @@
+{
+  "action": "keep_going",
+  "id": "claude-code:5e8766ed-88da-f401-6b40-13ef254b0c4e",
+  "kind": "outcome",
+  "message": "kept going: cache schema docs 6",
+  "path": null,
+  "reason": null,
+  "status": "ok",
+  "version": 1,
+  "warnings": [],
+  "wrote": true
+}

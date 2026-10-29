@@ -1,0 +1,33 @@
+{
+  "items": [
+    {
+      "file_fingerprint": "1:16:26172:1782124689000000000:1782124689000000000",
+      "id": "claude-code:c5b2e75a-0acd-8be1-46e4-099030f97058",
+      "max_chars": 200000,
+      "mtime": "2026-06-22T10:38:09+00:00",
+      "text": "",
+      "truncated": false,
+      "unavailable": "transcript not found"
+    },
+    {
+      "file_fingerprint": "1:6:4068:1783324476000000000:1783324476000000000",
+      "id": "claude-code:5e8766ed-88da-f401-6b40-13ef254b0c4e",
+      "max_chars": 200000,
+      "mtime": "2026-07-06T07:54:36+00:00",
+      "text": "",
+      "truncated": false,
+      "unavailable": "transcript not found"
+    },
+    {
+      "file_fingerprint": null,
+      "id": "claude-code:does-not-exist",
+      "max_chars": 200000,
+      "mtime": null,
+      "text": "",
+      "truncated": false,
+      "unavailable": "no longer in the registry"
+    }
+  ],
+  "kind": "tails",
+  "version": 1
+}

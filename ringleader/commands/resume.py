@@ -242,6 +242,12 @@ def _qualified(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
     return thread if thread is not None and resume.eligible(thread) else None
 
 
+def _names_a_source(query: str) -> bool:
+    source, _, session_id = query.partition(":")
+    names = {source_type.name for source_type in scanner.SOURCE_TYPES}
+    return bool(session_id) and resume.source_name(source) in names
+
+
 def _hit(reg: dict[str, Any], query: str) -> dict[str, Any] | None:
     qualified = _qualified(reg, query)
     if qualified is not None:
@@ -268,6 +274,8 @@ def _for_query(
     direct = _hit(reg, args.query)
     if direct is not None or _matches(reg, args.query, scope, cwd):
         return direct, reg
+    if _names_a_source(args.query):
+        raise _Abort(f"no session matches '{args.query}' on this machine, even after a fresh scan")
     raise _Abort(
         f"no session matches '{args.query}' {_where(scope, cwd)}, "
         f"even after a fresh scan{_WIDEN[scope]}"
