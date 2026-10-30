@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from typing import Any
 
-from .. import lifecycle, registry
+from .. import guard_args, lifecycle, registry
 from . import default_registry, unarchive
 
 
@@ -27,7 +27,12 @@ def cmd_keep(argv: list[str]) -> int:
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--yes", "-y", action="store_true", help="skip confirmation prompts")
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(ap, args, action="keep", verb="keep", rejected=())
 
     reg = registry.load_registry(args.registry)
     t = registry.find_session(reg, args.id)

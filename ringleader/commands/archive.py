@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import lifecycle, registry
+from .. import guard_args, lifecycle, registry
 from ..paths import archive_root
 from ..stateio import publish_lock
 from . import default_registry
@@ -15,13 +15,20 @@ def cmd_archive(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session archive")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--archive-root", default=str(archive_root()))
+    ap.add_argument("--archive-root", default=None)
     ap.add_argument(
         "--summary-file",
         default=None,
         help="markdown summary to store next to the archived transcript",
     )
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(
+            ap, args, action="archive", verb="archive", rejected=("archive_root", "summary_file")
+        )
 
     with publish_lock():
         reg = registry.load_registry(args.registry)
@@ -34,7 +41,9 @@ def cmd_archive(argv: list[str]) -> int:
             result = lifecycle.archive_thread(
                 reg,
                 t,
-                archive_root_path=args.archive_root,
+                archive_root_path=str(archive_root())
+                if args.archive_root is None
+                else args.archive_root,
                 now_iso=datetime.now(UTC).isoformat(),
                 summary_file=args.summary_file,
             )

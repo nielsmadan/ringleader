@@ -29,7 +29,6 @@ rl
 ├── session <sub>               session plumbing (see below)
 ├── mem <sub>                   memory plumbing (see below)
 ├── data <sub>                  export | tokens | migrate | presence
-├── gui <sub>                   machine interface for the circus app (see below)
 └── workspace <sub>             move | retarget
 ```
 
@@ -40,7 +39,7 @@ rl
 | Command | Does | Key flags |
 |---|---|---|
 | `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (optionally into a worktree with `--worktree`), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--worktree`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
-| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry` |
+| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
@@ -122,21 +121,35 @@ export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `c
 
 | Command | Does |
 |---|---|
-| `rl session harvest [<id>\|--current]` | Distill a session into markdown and mark it harvested. `--from-file <path\|->` stores agent-authored markdown as-is; `--dry-run` prints instead of writing. |
+| `rl session harvest [<id>\|--current]` | Distill a session into markdown and mark it harvested. `--from-file <path\|->` stores agent-authored markdown as-is; `--dry-run` prints instead of writing. `--archive` (guarded only) also archives once saved. Guard flags. |
 | `rl session finish [<id>\|--current]` | Mark `finishOnExit` — leaves triage now, archives when `sweep` finds the transcript quiet. Refuses an unharvested session unless `--force`. **Archives nothing itself.** |
 | `rl session sweep` | Archive every `finishOnExit` thread whose transcript stopped changing. `--session <id>`, `--from-hook`, `--current`, `--grace` |
 | `rl session complete <id>` | Harvest, then archive. No archive if the harvest was a no-op. |
-| `rl session archive <id>` | Move the transcript to `archive/`, out of the resume picker. `--summary-file`, `--archive-root` |
+| `rl session archive <id>` | Move the transcript to `archive/`, out of the resume picker. `--summary-file`, `--archive-root`. Guard flags. |
 | `rl session unarchive <id>` | Undo an archive; the session is resumable again. |
-| `rl session delete <id>` | Delete one session's files, leaving a `deleted` record. |
+| `rl session delete <id>` | Delete one session's files, leaving a `deleted` record. Guard flags. |
+
+**Guard flags.** `archive`, `delete`, `harvest`, `snooze`, `keep` and `mark reviewed` take a guard
+that makes the call a guarded decision for programs such as the circus desktop app:
+`--if-mtime <mtime>` (the mtime the caller saw, compared as an exact string; required for the
+guard; `archive`, `delete` and `harvest` revalidate it and check presence, while `snooze`, `keep`
+and `mark reviewed` take it as the stamp only, and `mark reviewed` records it),
+`--if-fingerprint <fp>` (needed by `archive`, `delete` and `harvest`, which refuse without it;
+ignored by the others) and `--json` (print the outcome as one JSON document: exit 0 whatever its
+status, exit 1 with an `error` document when the call itself fails, exit 2 on a usage error). Any of the three
+selects the guarded path; `--json` or `--if-fingerprint` alone needs `--if-mtime`. The guarded
+`harvest` needs `--archive` and saves then archives; `snooze` needs `--until`. Without the guard
+the verbs are unchanged. A guarded call without `--json` prints the message, and on refusal or
+failure prints `rl-<verb>: <message>` to stderr and exits 1. See
+[tech/json-contract.md](../tech/json-contract.md).
 
 **Park and pin**
 
 | Command | Does |
 |---|---|
-| `rl session snooze <id>` | Hide from the default view but keep it live. `--until <iso>`, `--for <days>` |
+| `rl session snooze <id>` | Hide from the default view but keep it live. `--until <iso>`, `--for <days>` (not with the guard). Guard flags. |
 | `rl session wake <id>` | Un-snooze. |
-| `rl session keep <id>` | Keep long-term: stays live, leaves triage for good. `--yes` |
+| `rl session keep <id>` | Keep long-term: stays live, leaves triage for good. `--yes`. Guard flags. |
 | `rl session unkeep <id>` | Undo a keep; back to the triage inbox. |
 
 **Bookkeeping**
@@ -144,7 +157,7 @@ export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `c
 | Command | Does |
 |---|---|
 | `rl session mark harvested <id>` | Record a session as harvested. `--paths a,b` records the docs. |
-| `rl session mark reviewed <id>` | Skip an open session until it changes. |
+| `rl session mark reviewed <id>` | Skip an open session until it changes. Guard flags. |
 | `rl session mark cleaned <selector>` | Record a project as just-triaged. `--at <iso>` |
 | `rl session relocate <id> <path>` | Re-point one session at a directory it moved to: its record and the agent's session storage, so it stays resumable. `--registry-only` |
 | `rl session whoami` | Print the source and session id `rl` resolves for the session it's running inside. Backs `--current`. |
@@ -166,7 +179,7 @@ Backs the `memory-triage` skill.
 
 | Command | Does |
 |---|---|
-| `rl data export <id>` | Render a session to markdown. `--out` |
+| `rl data export <id>…` | Render a session to markdown. `--out`. With `--json`, print the end of up to 16 transcripts as one JSON document; `--max-chars` sets the cap per transcript. |
 | `rl data tokens` | `rl usage` pinned to `--source claude`; same flags otherwise. |
 | `rl data migrate [<old_dir>]` | One-time move of legacy repo-root state into `~/.local/share/ringleader/`. Safe to re-run. |
 | `rl data presence install` | Register Ringleader with Hooklinesinker and install status hooks. Confirms first; `--agent` is repeatable and defaults to detected agents. `--yes`, `--json` |
@@ -177,18 +190,6 @@ Presence installation and uninstallation require `--yes` when combined with `--j
 `just install` and `just install-editable` also run presence
 installation after installing Ringleader. A direct `uv tool install .` leaves activation
 to the explicit presence command or onboarding skill.
-
-## `rl gui`
-
-| Command | Does |
-|---|---|
-| `rl gui list` | The inbox as one JSON document. |
-| `rl gui scan` | Rescan sources; report sessions added and removed. |
-| `rl gui tail <id>…` | The last part of up to 16 transcripts. `--max-chars` |
-| `rl gui decide <action> <id>` | Apply one decision. `--mtime` (required), `--fingerprint`, `--until` |
-
-`rl gui` is the machine interface of the circus desktop app: JSON on stdout, versioned, not for
-hand use. See [tech/gui-contract.md](../tech/gui-contract.md).
 
 ## `rl workspace`
 

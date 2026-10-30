@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Any, TextIO
 
-from . import contract_io, registry, session_env
+from . import registry, session_env
 
 _FLAT = (
     "overview",
@@ -22,12 +22,12 @@ _FLAT = (
     "update",
     "uninstall",
 )
-_GROUPS = ("session", "mem", "data", "workspace", "gui")
+_GROUPS = ("session", "mem", "data", "workspace")
 _RESERVED: set[str] = set()
 
 
 def _table() -> dict[str, Any]:
-    from . import commands  # noqa: PLC0415 -- keeps rl gui startup fast
+    from . import commands  # noqa: PLC0415 -- keeps importing cli light
 
     return commands.TABLE
 
@@ -122,6 +122,4 @@ def main(argv: list[str] | None = None) -> int:
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
         return 0
-    if argv[0] == "gui":
-        return _walk(contract_io.GUI_COMMANDS, ["gui"], argv[1:])
     return _walk(_table(), [], argv)

@@ -252,6 +252,8 @@ requires each to be in exactly one of the two.
 `rl inbox --read-only` scans without persisting, refuses every write, starts no model call, and
 turns exit intents into a dry run: `rl resume --dry-run` for a resume, the directory and argv for
 a handoff. `scripts/tui_shot.py --registry PATH` always runs read-only on a copy.
+`cmd_inbox` handles `--json` (and `--scan`) before the Textual check and rejects `--json` with
+`--read-only`; that machine mode is specified in `json-contract.md`.
 
 ### Print capture
 

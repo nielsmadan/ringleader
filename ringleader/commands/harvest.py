@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import export, harvesting, registry
+from .. import export, guard_args, harvesting, registry
 from ..config import load_config
 from ..models import active_model
 from ..models.base import ModelError
@@ -63,7 +63,21 @@ def cmd_harvest(argv: list[str]) -> int:
     ap.add_argument("--from-file", help="markdown to store as-is ('-' for stdin); skips the model")
     ap.add_argument("--registry", default=str(default_registry()))
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument(
+        "--archive",
+        action="store_true",
+        help="with --if-mtime, also archive the session once the harvest is saved",
+    )
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(
+            ap, args, action="harvest", verb="harvest", rejected=("current", "from_file", "dry_run")
+        )
+    if args.archive:
+        ap.error("--archive needs --if-mtime")
 
     session_id = args.id
     if args.current:

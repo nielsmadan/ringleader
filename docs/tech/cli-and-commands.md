@@ -65,6 +65,12 @@ convention throughout:
 - Take `--registry` wherever state is touched, defaulting to `paths.default_registry()`. Tests
   pass a temp path.
 - Return an int exit code; print user-facing output to stdout and diagnostics to stderr.
+- A verb with a guarded (machine) mode calls `guard_args.add_guard_args(ap)` for `--json`,
+  `--if-mtime` and `--if-fingerprint`, and dispatches as the first statement after
+  `parse_args`: `if guard_args.guarded_requested(args): return contract_io.run_guarded(...)`.
+  `contract_io` is imported inside that branch, so a plain invocation never loads it, `guarded`
+  or `decisions`. The verb passes the contract action, its `rl-<verb>` name and the argparse dests
+  that the guarded path rejects. See [json-contract.md](json-contract.md).
 
 Two handlers do their own sub-dispatch instead of nesting in `TABLE`: `usage` (`session`,
 `windows`, `export`) and `config` (`show`, `set`). Both predate the group convention and
@@ -73,6 +79,7 @@ hand-roll the check on `argv[0]`.
 ## Key entry points
 
 - `cli.main()` — the router.
+- `guard_args.py` / `contract_io.run_guarded` — the guarded path of the session verbs.
 - `commands.TABLE` — the whole surface, one literal.
 - `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` — the groups.
 - `cli._FLAT` / `cli._GROUPS` — help ordering.

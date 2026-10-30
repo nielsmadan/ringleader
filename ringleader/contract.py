@@ -151,7 +151,10 @@ def _instant(iso: str) -> datetime:
 
 
 def _inbox_order(thread: dict[str, Any]) -> tuple[datetime, str]:
-    return _instant(thread["mtime"]), registry.qualified_id(thread)
+    mtime = thread.get("mtime")
+    if isinstance(mtime, str):
+        return _instant(mtime), registry.qualified_id(thread)
+    raise ValueError(f"session {registry.qualified_id(thread)} has no string mtime")
 
 
 def inbox_threads(reg: dict[str, Any], now_iso: str) -> list[dict[str, Any]]:
@@ -247,8 +250,8 @@ def encode_document(doc: dict[str, Any]) -> bytes:
     return (json.dumps(doc, ensure_ascii=False) + "\n").encode("utf-8", "replace")
 
 
-def refused(reason: str, message: str | None = None) -> GuiOutcome:
-    return GuiOutcome("refused", reason, reason if message is None else message)
+def refused(reason: str) -> GuiOutcome:
+    return GuiOutcome("refused", reason, reason)
 
 
 def _status(outcome: decisions.Outcome) -> tuple[OutcomeStatus, str | None]:

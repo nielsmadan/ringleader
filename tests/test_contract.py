@@ -1,8 +1,11 @@
+import ast
+import inspect
 import json
+import textwrap
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ringleader import contract
+from ringleader import contract, resume
 from ringleader.decisions import Outcome
 from ringleader.revalidate import Seen
 
@@ -301,3 +304,29 @@ def test_outcome_payload_has_exactly_the_contract_keys():
         "warnings",
     }
     assert (doc["kind"], doc["action"], doc["warnings"]) == ("outcome", "archive", [])
+
+
+ROW_BADGES = {"filtered", "snoozed", "kept", "finishing", "harvested", "abandoned", "drifted"}
+
+
+def test_list_row_badges_come_from_a_closed_set():
+    tree = ast.parse(textwrap.dedent(inspect.getsource(resume.badges)))
+    appended = [
+        node.args[0]
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "append"
+    ]
+    literals = {arg.value for arg in appended if isinstance(arg, ast.Constant)}
+    narrowed = {
+        element.value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Compare)
+        for options in node.comparators
+        if isinstance(options, ast.Tuple)
+        for element in options.elts
+        if isinstance(element, ast.Constant)
+    }
+    assert all(isinstance(arg, ast.Constant | ast.Name) for arg in appended)
+    assert literals | narrowed == ROW_BADGES

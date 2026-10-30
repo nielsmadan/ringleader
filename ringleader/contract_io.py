@@ -8,12 +8,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from types import FrameType
-from typing import Any, Final, NoReturn
+from typing import TYPE_CHECKING, Any, NoReturn
 
-from . import config, contract, export, paths, presence, refresh, registry
+from . import config, contract, export, presence, refresh, registry
+
+if TYPE_CHECKING:
+    from .decisions import Decision
 
 _EXPECTED = (OSError, ValueError, KeyError, RuntimeError)
-_ACTIONS = ("harvest", "archive", "delete", "snooze", "keep", "keep_going")
 _SIGTERM_EXIT = 143
 
 
@@ -72,8 +74,6 @@ def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str,
         thread = registry.find_session(reg, qualified)
     except registry.AmbiguousSession:
         return contract.tail_item(qualified, None, None, max_chars, "ambiguous session id")
-    except ValueError:
-        thread = None
     if thread is None:
         return contract.tail_item(qualified, None, None, max_chars, "no longer in the registry")
     try:
@@ -91,52 +91,90 @@ def tails_doc(registry_path: str, ids: list[str], max_chars: int) -> dict[str, A
     return contract.tails_payload([_tail_item(reg, qualified, max_chars) for qualified in ids])
 
 
-def _parser(name: str) -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog=f"rl gui {name}")
-    ap.add_argument("--registry", default=str(paths.default_registry()))
-    return ap
-
-
-def _parse(ap: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
-    with contextlib.redirect_stdout(sys.stderr):
-        return ap.parse_args(argv)
-
-
-def _decide_args(argv: list[str]) -> argparse.Namespace:
-    ap = _parser("decide")
-    ap.add_argument("action", choices=_ACTIONS)
-    ap.add_argument("id", metavar="ID")
-    ap.add_argument("--mtime", required=True)
-    ap.add_argument("--fingerprint", default=None)
-    ap.add_argument("--until", default=None)
-    args = _parse(ap, argv)
-    if args.action == "snooze" and args.until is None:
-        ap.error("snooze needs --until")
-    if args.action != "snooze" and args.until is not None:
-        ap.error(f"--until applies only to snooze, not {args.action}")
-    if ":" not in args.id:
-        ap.error("ID must be qualified as <source>:<sessionId>")
-    return args
-
-
 def _terminate(_signum: int, _frame: FrameType | None) -> NoReturn:
     raise SystemExit(_SIGTERM_EXIT)
 
 
-def cmd_gui_decide(argv: list[str]) -> int:
-    args = _decide_args(argv)
-    from . import guarded  # noqa: PLC0415 -- keeps the json read paths fast
+def _flag(ap: argparse.ArgumentParser, dest: str) -> str:
+    return next(a.option_strings[0] for a in ap._actions if a.dest == dest)
 
+
+def _validate_guarded(
+    ap: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    action: Decision,
+    rejected: tuple[str, ...],
+) -> None:
+    for dest in rejected:
+        value = getattr(args, dest)
+        if value is not None and value is not False:
+            ap.error(f"{_flag(ap, dest)} cannot be combined with --json or --if-*")
+    if args.if_mtime is None:
+        given = (("--json", args.json), ("--if-fingerprint", args.if_fingerprint is not None))
+        flags = [flag for flag, on in given if on]
+        ap.error(f"{' and '.join(flags)} {'needs' if len(flags) == 1 else 'need'} --if-mtime")
+    if not args.id:
+        ap.error("the guarded path needs a session ID")
+    if ":" not in args.id:
+        ap.error("ID must be qualified as <source>:<sessionId>")
+    if action == "harvest" and not args.archive:
+        ap.error("a guarded harvest saves and archives, so it needs --archive")
+    if action == "snooze" and args.until is None:
+        ap.error("a guarded snooze needs --until")
+
+
+def _run_human(verb: str, work: Callable[[], contract.GuiOutcome]) -> int:
+    try:
+        with contextlib.redirect_stdout(sys.stderr):
+            result = work()
+    except _EXPECTED as error:
+        print(f"rl-{verb}: {error}", file=sys.stderr)
+        return 1
+    for warning in result.warnings:
+        print(f"rl-{verb}: {warning}", file=sys.stderr)
+    if result.status not in ("ok", "empty"):
+        print(f"rl-{verb}: {result.message}", file=sys.stderr)
+        if result.path:
+            print(result.path, file=sys.stderr)
+        return 1
+    print(result.message)
+    if result.path and result.path not in result.message:
+        print(result.path)
+    return 0
+
+
+def run_guarded(
+    ap: argparse.ArgumentParser,
+    args: argparse.Namespace,
+    *,
+    action: Decision,
+    verb: str,
+    rejected: tuple[str, ...],
+) -> int:
+    _validate_guarded(ap, args, action, rejected)
     previous = signal.signal(signal.SIGTERM, _terminate)
     try:
-        return run_json(
-            lambda: contract.outcome_payload(args.action, args.id, guarded.decide(args, _now_dt))
-        )
+        from . import guarded  # noqa: PLC0415 -- keeps inbox --json and export --json off the decision stack
+
+        def work() -> contract.GuiOutcome:
+            return guarded.decide(
+                action,
+                args.id,
+                registry_path=args.registry,
+                mtime=args.if_mtime,
+                fingerprint=args.if_fingerprint,
+                until=getattr(args, "until", None),
+                now=_now_dt,
+            )
+
+        if args.json:
+            return run_json(lambda: contract.outcome_payload(action, args.id, work()))
+        return _run_human(verb, work)
     finally:
-        guarded.proc.kill_all_children()
-        signal.signal(signal.SIGTERM, previous)
+        try:
+            if "ringleader.guarded" in sys.modules:
+                from .models import proc  # noqa: PLC0415
 
-
-GUI_COMMANDS: Final[dict[str, Callable[[list[str]], int]]] = {
-    "decide": cmd_gui_decide,
-}
+                proc.kill_all_children()
+        finally:
+            signal.signal(signal.SIGTERM, previous)

@@ -85,7 +85,7 @@ def test_list_over_two_thousand_threads_meets_its_budget(monkeypatch, tmp_path, 
     assert len(doc["sessions"]) >= 1000
 
 
-DECIDE_SCRIPT = """
+GUARDED_SCRIPT = """
 import contextlib, json, os, sys
 import ringleader.cli
 from ringleader import presence
@@ -93,17 +93,54 @@ presence.PresenceClient.require_running_session_ids = lambda self: frozenset()
 reg, row_id, mtime = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
     code = ringleader.cli.main(
-        ["gui", "decide", "keep_going", row_id, f"--mtime={mtime}", "--registry", reg]
+        ["session", "mark", "reviewed", row_id, "--json", f"--if-mtime={mtime}", "--registry", reg]
     )
 print(json.dumps([code, "ringleader.guarded" in sys.modules]), file=sys.stderr)
 """
 
+DECISION_STACK = ("ringleader.contract_io", "ringleader.guarded", "ringleader.decisions")
+PLAIN_SCRIPT = f"""
+import contextlib, json, os, sys
+import ringleader.cli
+reg, notes, *ids = sys.argv[1:]
+verbs = [
+    ["session", "archive"],
+    ["session", "delete"],
+    ["session", "harvest"],
+    ["session", "snooze"],
+    ["session", "keep"],
+    ["session", "mark", "reviewed"],
+    ["data", "export"],
+]
+extra = {{"harvest": ["--from-file", notes], "snooze": ["--for=3"]}}
+steps = []
+for verb, row_id in zip(verbs, ids, strict=True):
+    with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
+        argv = [*verb, row_id, *extra.get(verb[-1], []), "--registry", reg]
+        code = ringleader.cli.main(argv)
+    steps.append([" ".join(verb), code, sorted(set(sys.modules) & set({DECISION_STACK!r}))])
+print(json.dumps(steps), file=sys.stderr)
+"""
+PLAIN_VERBS = (
+    "session archive",
+    "session delete",
+    "session harvest",
+    "session snooze",
+    "session keep",
+    "session mark reviewed",
+    "data export",
+)
 
-def test_decide_loads_its_stack_on_demand(monkeypatch, tmp_path):
+
+def _first_thread(fixture):
+    return registry.load_registry(fixture.registry_path)["threads"][0]
+
+
+def test_a_guarded_verb_loads_its_stack_on_demand(monkeypatch, tmp_path):
     fixture = gui_world(monkeypatch, tmp_path, threads=4, transcripts=False)
-    thread = registry.load_registry(fixture.registry_path)["threads"][0]
+    thread = _first_thread(fixture)
     result = _run(
-        DECIDE_SCRIPT,
+        GUARDED_SCRIPT,
         subprocess_env(fixture),
         str(fixture.registry_path),
         registry.qualified_id(thread),
@@ -111,3 +148,21 @@ def test_decide_loads_its_stack_on_demand(monkeypatch, tmp_path):
     )
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stderr.strip().splitlines()[-1]) == [0, True]
+
+
+def test_plain_verbs_stay_off_the_decision_stack(monkeypatch, tmp_path):
+    fixture = gui_world(monkeypatch, tmp_path, threads=20, transcripts=True)
+    threads = registry.load_registry(fixture.registry_path)["threads"]
+    ids = [registry.qualified_id(t) for t in threads if t.get("source") == "claude-code"]
+    notes = tmp_path / "notes.md"
+    notes.write_text("# notes\n", encoding="utf-8")
+    result = _run(
+        PLAIN_SCRIPT,
+        subprocess_env(fixture),
+        str(fixture.registry_path),
+        str(notes),
+        *ids[: len(PLAIN_VERBS)],
+    )
+    assert result.returncode == 0, result.stderr
+    steps = json.loads(result.stderr.strip().splitlines()[-1])
+    assert steps == [[verb, 0, []] for verb in PLAIN_VERBS]

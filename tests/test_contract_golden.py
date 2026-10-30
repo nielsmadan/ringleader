@@ -67,30 +67,35 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
     )
     idle = next(r for r in rows if r["running"] is False)
     ok = _run(
-        contract_io.cmd_gui_decide,
+        cli.main,
         capsys,
-        "keep_going",
+        "session",
+        "mark",
+        "reviewed",
         idle["id"],
-        f"--mtime={idle['mtime']}",
-        f"--fingerprint={idle['file_fingerprint']}",
+        "--json",
+        f"--if-mtime={idle['mtime']}",
+        f"--if-fingerprint={idle['file_fingerprint']}",
         *reg_arg,
     )
     other = next(r for r in rows if r["running"] is False and r["id"] != idle["id"])
     refused = _run(
-        contract_io.cmd_gui_decide,
+        cli.main,
         capsys,
+        "session",
         "archive",
         other["id"],
-        f"--mtime={STALE_MTIME}",
-        f"--fingerprint={other['file_fingerprint']}",
+        "--json",
+        f"--if-mtime={STALE_MTIME}",
+        f"--if-fingerprint={other['file_fingerprint']}",
         *reg_arg,
     )
 
     assert (ok["status"], refused["status"]) == ("ok", "refused")
     for name, doc in (
-        ("gui-list.json", listing),
-        ("gui-tails.json", tails),
-        ("gui-outcome-ok.json", ok),
-        ("gui-outcome-refused.json", refused),
+        ("contract-list.json", listing),
+        ("contract-tails.json", tails),
+        ("contract-outcome-ok.json", ok),
+        ("contract-outcome-refused.json", refused),
     ):
         _check(name, doc, roots)

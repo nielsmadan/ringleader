@@ -20,7 +20,7 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
   behavior reference for contributors and agents. Owned by the `doc` skill.
 - [tech/](tech/overview.md): module internals, the scan/reconcile data flow, and the
   cross-cutting patterns (the `Source` seam, the registry-as-cache contract, timestamps at the
-  edge), including the [`rl gui` contract](tech/gui-contract.md) for the circus desktop app.
+  edge), including the [JSON contract](tech/json-contract.md) for the circus desktop app.
   Owned by the `doc` skill.
 - [decisions/](decisions/overview.md): append-only records of cross-cutting choices and their
   tradeoffs. Current behavior remains in `features/` and `tech/`.

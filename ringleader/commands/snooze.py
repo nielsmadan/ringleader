@@ -4,7 +4,7 @@ import argparse
 import sys
 from datetime import UTC, datetime, timedelta
 
-from .. import registry
+from .. import guard_args, registry
 from . import default_registry
 
 
@@ -18,7 +18,14 @@ def cmd_snooze(argv: list[str]) -> int:
     ap.add_argument("--until", help="ISO timestamp to auto-wake at")
     ap.add_argument("--for", dest="for_days", type=int, help="auto-wake after N days")
     ap.add_argument("--registry", default=str(default_registry()))
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(
+            ap, args, action="snooze", verb="snooze", rejected=("for_days",)
+        )
 
     reg = registry.load_registry(args.registry)
     when = datetime.now(UTC).isoformat()

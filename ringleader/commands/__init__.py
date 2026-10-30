@@ -76,10 +76,6 @@ _SESSION = {
         "cleaned": Lazy("cleaned", "cmd_cleaned"),
     },
 }
-# contract_io sits beside this package so `rl gui` can dispatch it without importing it
-_GUI = {
-    "decide": Lazy(".contract_io", "cmd_gui_decide"),
-}
 _MEM = {
     "refresh": Lazy("mem_scan", "cmd_mem_scan"),
     "prune": Lazy("mem_prune", "cmd_mem_prune"),
@@ -130,7 +126,6 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
     "session": _SESSION,
     "mem": _MEM,
     "data": _DATA,
-    "gui": _GUI,
     "config": Lazy("config", "cmd_config"),
 }
 

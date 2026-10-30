@@ -4,7 +4,7 @@ import argparse
 import sys
 from datetime import UTC, datetime
 
-from .. import registry, scanner
+from .. import guard_args, registry, scanner
 from . import default_registry
 
 
@@ -16,7 +16,12 @@ def cmd_delete(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session delete")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(ap, args, action="delete", verb="delete", rejected=())
 
     reg = registry.load_registry(args.registry)
     t = registry.find_session(reg, args.id)

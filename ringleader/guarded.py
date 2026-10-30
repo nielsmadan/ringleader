@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import argparse
 from collections.abc import Callable
 from datetime import datetime
 from typing import Any
@@ -18,10 +17,8 @@ from . import (
     revalidate,
 )
 from .decisions import ArchiveOp, DeleteOp, HarvestSaveOp, KeepGoingOp, KeepOp, OpContext, SnoozeOp
-from .models import Model, ModelError, proc
+from .models import Model, ModelError
 from .revalidate import Seen
-
-__all__ = ["decide", "proc"]
 
 _STAMPED = ("archive", "delete", "harvest")
 _GONE = "no longer in the registry"
@@ -100,31 +97,44 @@ def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> contr
     return _run(HarvestSaveOp(seen, markdown), ctx)
 
 
-def _seen(qualified: str, thread: dict[str, Any] | None, args: argparse.Namespace) -> Seen:
+def _seen(
+    qualified: str, thread: dict[str, Any] | None, mtime: str, fingerprint: str | None
+) -> Seen:
     source, session_id = qualified.split(":", 1)
     return Seen(
         identity=(agents.canonical_agent(source), session_id),
         label=resume.label(thread) if thread is not None else qualified,
-        mtime=args.mtime,
-        fingerprint=args.fingerprint,
+        mtime=mtime,
+        fingerprint=fingerprint,
     )
 
 
-def decide(args: argparse.Namespace, now: Callable[[], datetime]) -> contract.GuiOutcome:
-    if args.action in _STAMPED and revalidate.content_stamp(args.fingerprint) is None:
+def decide(  # noqa: PLR0913 -- the shared guarded-decision signature
+    action: decisions.Decision,
+    qualified: str,
+    *,
+    registry_path: str,
+    mtime: str,
+    fingerprint: str | None,
+    until: str | None,
+    now: Callable[[], datetime],
+) -> contract.GuiOutcome:
+    if action in _STAMPED and revalidate.content_stamp(fingerprint) is None:
         return contract.refused(revalidate.NO_STAMP)
-    thread = registry.find_session(registry.load_registry(args.registry), args.id)
-    seen = _seen(args.id, thread, args)
-    ctx = _context(args.registry, now)
-    match args.action:
+    thread = registry.find_session(registry.load_registry(registry_path), qualified)
+    seen = _seen(qualified, thread, mtime, fingerprint)
+    ctx = _context(registry_path, now)
+    match action:
         case "archive" | "delete":
-            return _remove(args.action, thread, seen, ctx)
+            return _remove(action, thread, seen, ctx)
         case "keep_going":
             return _run(KeepGoingOp(seen), ctx)
         case "keep":
             return _run(KeepOp(seen), ctx)
         case "snooze":
-            return _snooze(seen, args.until, now, ctx)
+            if until is None:
+                raise ValueError("snooze needs an until time")
+            return _snooze(seen, until, now, ctx)
         case "harvest":
             return _harvest(thread, seen, ctx)
-    raise ValueError(f"unknown decision {args.action!r}")
+    raise ValueError(f"unknown decision {action!r}")

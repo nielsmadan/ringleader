@@ -19,9 +19,9 @@ def _json_tails(ap: argparse.ArgumentParser, args: argparse.Namespace) -> int:
             f"--max-chars must be between {contract.TAIL_MIN_CHARS} and {contract.TAIL_MAX_CHARS}"
         )
     if len(args.ids) > contract.TAIL_MAX_IDS:
-        ap.error(f"at most {contract.TAIL_MAX_IDS} ids per call")
+        ap.error(f"at most {contract.TAIL_MAX_IDS} IDs per call")
     if len(set(args.ids)) != len(args.ids):
-        ap.error("each id may appear only once")
+        ap.error("each ID may appear only once")
     return contract_io.run_json(lambda: contract_io.tails_doc(args.registry, args.ids, max_chars))
 
 

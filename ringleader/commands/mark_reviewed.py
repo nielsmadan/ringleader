@@ -5,7 +5,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from .. import registry
+from .. import guard_args, registry
 from . import default_registry
 
 
@@ -13,7 +13,14 @@ def cmd_mark_reviewed(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl session mark reviewed")
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(
+            ap, args, action="keep_going", verb="mark-reviewed", rejected=()
+        )
 
     reg = registry.load_registry(args.registry)
     t = registry.find_session(reg, args.id)

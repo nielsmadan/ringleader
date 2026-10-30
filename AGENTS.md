@@ -53,8 +53,9 @@ pruning them before the GC clock deletes them.
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing** for the skills
   in `.agents/skills/` (session track) or `.claude/skills/` (`memory-triage`), not for hand use.
-  `rl gui` is the circus desktop app's versioned contract (JSON-only stdout, `version: 1`):
-  change it only with `docs/tech/gui-contract.md` and the goldens in `tests/golden/`.
+  `--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs is the circus desktop
+  app's versioned contract (JSON-only stdout, `version: 1`): change it only with
+  `docs/tech/json-contract.md` and the goldens in `tests/golden/`.
 - **`rl analyze` keeps a SQLite index and refreshes it on every run.** It lives at
   `analysis/index-v<FACTS_VERSION>.sqlite` under the state dir. `--no-refresh` reads it as it is
   (exit 3 with no complete index, or one a different rl version built) and `--index DIR` relocates it, its lock and `labels.sqlite`. The
