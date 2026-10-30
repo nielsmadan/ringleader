@@ -29,62 +29,42 @@ def _presence() -> contract.PresenceView:
     return contract.PresenceView(live, None)
 
 
-def _emit(doc: dict[str, Any]) -> None:
+def emit(doc: dict[str, Any]) -> None:
     sys.stdout.flush()
     sys.stdout.buffer.write(contract.encode_document(doc))
     sys.stdout.flush()
 
 
-def _parser(name: str) -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(prog=f"rl gui {name}")
-    ap.add_argument("--registry", default=str(paths.default_registry()))
-    return ap
-
-
-def _parse(ap: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
-    with contextlib.redirect_stdout(sys.stderr):
-        return ap.parse_args(argv)
-
-
-def _run(work: Callable[[], dict[str, Any]]) -> int:
+def run_json(work: Callable[[], dict[str, Any]]) -> int:
     try:
         with contextlib.redirect_stdout(sys.stderr):
             doc = work()
     except _EXPECTED as error:
-        _emit(contract.error_payload(str(error)))
+        emit(contract.error_payload(str(error)))
         return 1
-    _emit(doc)
+    emit(doc)
     return 0
 
 
-def _list_doc(registry_path: str) -> dict[str, Any]:
-    now_iso = _now_dt().isoformat()
-    reg = registry.load_registry(registry_path)
+def _scan(registry_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    scanned_at = _now_dt().isoformat()
+    before = {registry.identity(t) for t in registry.load_registry(registry_path)["threads"]}
+    refreshed = refresh.refresh_registry(registry_path, scanned_at)
+    after = {registry.identity(t) for t in refreshed.reg["threads"]}
+    summary = contract.scan_summary(scanned_at, before, after, refreshed.unavailable_sources)
+    return refreshed.reg, summary
+
+
+def list_doc(registry_path: str, *, scan: bool) -> dict[str, Any]:
+    reg, summary = _scan(registry_path) if scan else (registry.load_registry(registry_path), None)
     return contract.list_payload(
         reg,
-        now_iso,
+        _now_dt().isoformat(),
         registry_path=str(Path(registry_path).resolve()),
         presence=_presence(),
         stale_hours=config.load_config().roundup_stale_hours,
+        scan=summary,
     )
-
-
-def cmd_gui_list(argv: list[str]) -> int:
-    args = _parse(_parser("list"), argv)
-    return _run(lambda: _list_doc(args.registry))
-
-
-def _scan_doc(registry_path: str) -> dict[str, Any]:
-    now_iso = _now_dt().isoformat()
-    before = {registry.identity(t) for t in registry.load_registry(registry_path)["threads"]}
-    refreshed = refresh.refresh_registry(registry_path, now_iso)
-    after = {registry.identity(t) for t in refreshed.reg["threads"]}
-    return contract.scan_payload(now_iso, before, after, refreshed.unavailable_sources)
-
-
-def cmd_gui_scan(argv: list[str]) -> int:
-    args = _parse(_parser("scan"), argv)
-    return _run(lambda: _scan_doc(args.registry))
 
 
 def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str, Any]:
@@ -106,25 +86,20 @@ def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str,
     return contract.tail_item(qualified, thread, text, max_chars, None)
 
 
-def _tails_doc(registry_path: str, ids: list[str], max_chars: int) -> dict[str, Any]:
+def tails_doc(registry_path: str, ids: list[str], max_chars: int) -> dict[str, Any]:
     reg = registry.load_registry(registry_path)
     return contract.tails_payload([_tail_item(reg, qualified, max_chars) for qualified in ids])
 
 
-def cmd_gui_tail(argv: list[str]) -> int:
-    ap = _parser("tail")
-    ap.add_argument("ids", nargs="+", metavar="ID")
-    ap.add_argument("--max-chars", type=int, default=contract.TAIL_DEFAULT_CHARS)
-    args = _parse(ap, argv)
-    if not contract.TAIL_MIN_CHARS <= args.max_chars <= contract.TAIL_MAX_CHARS:
-        ap.error(
-            f"--max-chars must be between {contract.TAIL_MIN_CHARS} and {contract.TAIL_MAX_CHARS}"
-        )
-    if len(args.ids) > contract.TAIL_MAX_IDS:
-        ap.error(f"at most {contract.TAIL_MAX_IDS} ids per call")
-    if len(set(args.ids)) != len(args.ids):
-        ap.error("each id may appear only once")
-    return _run(lambda: _tails_doc(args.registry, args.ids, args.max_chars))
+def _parser(name: str) -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog=f"rl gui {name}")
+    ap.add_argument("--registry", default=str(paths.default_registry()))
+    return ap
+
+
+def _parse(ap: argparse.ArgumentParser, argv: list[str]) -> argparse.Namespace:
+    with contextlib.redirect_stdout(sys.stderr):
+        return ap.parse_args(argv)
 
 
 def _decide_args(argv: list[str]) -> argparse.Namespace:
@@ -150,11 +125,11 @@ def _terminate(_signum: int, _frame: FrameType | None) -> NoReturn:
 
 def cmd_gui_decide(argv: list[str]) -> int:
     args = _decide_args(argv)
-    from . import guarded  # noqa: PLC0415 -- keeps rl gui list/scan/tail startup fast
+    from . import guarded  # noqa: PLC0415 -- keeps the json read paths fast
 
     previous = signal.signal(signal.SIGTERM, _terminate)
     try:
-        return _run(
+        return run_json(
             lambda: contract.outcome_payload(args.action, args.id, guarded.decide(args, _now_dt))
         )
     finally:
@@ -163,8 +138,5 @@ def cmd_gui_decide(argv: list[str]) -> int:
 
 
 GUI_COMMANDS: Final[dict[str, Callable[[list[str]], int]]] = {
-    "list": cmd_gui_list,
-    "scan": cmd_gui_scan,
-    "tail": cmd_gui_tail,
     "decide": cmd_gui_decide,
 }

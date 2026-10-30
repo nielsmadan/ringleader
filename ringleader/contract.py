@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final, Literal
@@ -183,6 +184,7 @@ def list_payload(
     registry_path: str,
     presence: PresenceView,
     stale_hours: int,
+    scan: dict[str, Any] | None,
 ) -> dict[str, Any]:
     return {
         "version": CONTRACT_VERSION,
@@ -195,16 +197,18 @@ def list_payload(
             "problem": presence.problem,
         },
         "roundup": _roundup(reg, now_iso, stale_hours),
+        "scan": scan,
         "sessions": [session_row(t, now_iso, presence.live) for t in inbox_threads(reg, now_iso)],
     }
 
 
-def scan_payload(
-    scanned_at: str, before: set[Identity], after: set[Identity], unavailable: frozenset[str]
+def scan_summary(
+    scanned_at: str,
+    before: AbstractSet[Identity],
+    after: AbstractSet[Identity],
+    unavailable: AbstractSet[str],
 ) -> dict[str, Any]:
     return {
-        "version": CONTRACT_VERSION,
-        "kind": "scan",
         "scanned_at": scanned_at,
         "added": len(after - before),
         "removed": len(before - after),

@@ -51,6 +51,7 @@ def _list_rows(reg):
         registry_path="x",
         presence=contract.PresenceView(None, None),
         stale_hours=24,
+        scan=None,
     )["sessions"]
 
 

@@ -2,9 +2,9 @@ import json
 import os
 from pathlib import Path
 
-from ringleader import contract, contract_io, presence, registry
+from ringleader import cli, contract, contract_io, presence, registry
 from ringleader.slug import slugify
-from tests.test_rl_gui import NOW_DT, gui_world
+from tests.test_json_commands import NOW_DT, gui_world
 
 GOLDEN = Path(__file__).parent / "golden"
 STALE_MTIME = "2000-01-01T00:00:00+00:00"
@@ -52,14 +52,17 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
     monkeypatch.setattr(presence.PresenceClient, "require_running_session_ids", lambda self: live)
     roots = [str(tmp_path), str(tmp_path.resolve())]
 
-    listing = _run(contract_io.cmd_gui_list, capsys, *reg_arg)
+    listing = _run(cli.main, capsys, "inbox", "--json", *reg_arg)
     rows = listing["sessions"]
     tails = _run(
-        contract_io.cmd_gui_tail,
+        cli.main,
         capsys,
+        "data",
+        "export",
         rows[0]["id"],
         rows[1]["id"],
         "claude-code:does-not-exist",
+        "--json",
         *reg_arg,
     )
     idle = next(r for r in rows if r["running"] is False)

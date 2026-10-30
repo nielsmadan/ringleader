@@ -3,13 +3,12 @@ import subprocess
 import sys
 import time
 
-from ringleader import contract, contract_io, registry
-from tests.test_rl_gui import gui_world, subprocess_env
+from ringleader import cli, contract, registry
+from tests.test_json_commands import gui_world, subprocess_env
 
 FORBIDDEN = {
     "textual",
     "ringleader.portability",
-    "ringleader.commands",
     "ringleader.commands.conversion",
     "ringleader.home.app",
     "ringleader.roundup",
@@ -32,8 +31,9 @@ import ringleader.cli
 reg, row_id = sys.argv[1], sys.argv[2]
 with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
     codes = [
-        ringleader.cli.main(["gui", "list", "--registry", reg]),
-        ringleader.cli.main(["gui", "tail", row_id, "--registry", reg]),
+        ringleader.cli.main(["inbox", "--json", "--registry", reg]),
+        ringleader.cli.main(["inbox", "--json", "--scan", "--registry", reg]),
+        ringleader.cli.main(["data", "export", row_id, "--json", "--registry", reg]),
     ]
 print(json.dumps(codes), file=sys.stderr)
 print(json.dumps(sorted(set(sys.modules) & set({FORBIDDEN_SET}))), file=sys.stderr)
@@ -57,13 +57,13 @@ def test_importing_contract_io_stays_off_the_heavy_modules(monkeypatch, tmp_path
     assert json.loads(result.stdout) == []
 
 
-def test_gui_dispatch_stays_off_the_heavy_modules(monkeypatch, tmp_path):
+def test_json_dispatch_stays_off_the_heavy_modules(monkeypatch, tmp_path):
     fixture = gui_world(monkeypatch, tmp_path, threads=40, transcripts=True)
     row_id = registry.qualified_id(registry.load_registry(fixture.registry_path)["threads"][0])
     result = _run(DISPATCH_SCRIPT, subprocess_env(fixture), str(fixture.registry_path), row_id)
     assert result.returncode == 0, result.stderr
     *_, codes, loaded = result.stderr.strip().splitlines()
-    assert json.loads(codes) == [0, 0]
+    assert json.loads(codes) == [0, 0, 0]
     assert json.loads(loaded) == []
 
 
@@ -78,7 +78,7 @@ def test_list_over_two_thousand_threads_meets_its_budget(monkeypatch, tmp_path, 
     times = []
     for _ in range(3):
         start = time.perf_counter()
-        assert contract_io.cmd_gui_list(["--registry", str(fixture.registry_path)]) == 0
+        assert cli.main(["inbox", "--json", "--registry", str(fixture.registry_path)]) == 0
         times.append(time.perf_counter() - start)
         doc = json.loads(capsysbinary.readouterr().out)
     assert min(times) <= LIST_BUDGET_SECONDS

@@ -13,6 +13,7 @@
     "stale": true,
     "stale_hours": 8
   },
+  "scan": null,
   "sessions": [
     {
       "age_days": 115.1,

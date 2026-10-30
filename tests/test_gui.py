@@ -120,7 +120,12 @@ NO_ONE_LIVE = contract.PresenceView(frozenset(), None)
 
 def _payload(reg, presence=NO_ONE_LIVE, stale_hours=8):
     return contract.list_payload(
-        reg, NOW, registry_path="/fixture/registry.json", presence=presence, stale_hours=stale_hours
+        reg,
+        NOW,
+        registry_path="/fixture/registry.json",
+        presence=presence,
+        stale_hours=stale_hours,
+        scan=None,
     )
 
 
@@ -133,6 +138,7 @@ def test_list_payload_flags_recent_and_woke_rows():
     assert [rows[s]["in_recent"] for s in ("recent", "woke", "old")] == [True, False, False]
     assert [rows[s]["woke"] for s in ("recent", "woke", "old")] == [False, True, False]
     assert doc["presence"] == {"state": "ok", "problem": None}
+    assert doc["scan"] is None
 
 
 def test_list_payload_reports_unknown_presence():
@@ -158,17 +164,28 @@ def test_list_payload_without_a_roundup_has_no_age():
     assert roundup == {"last_at": None, "age_human": None, "stale": True, "stale_hours": 8}
 
 
-def test_scan_payload_counts_membership_changes():
+def test_scan_summary_counts_membership_changes():
     a, b, c = ("claude-code", "a"), ("claude-code", "b"), ("claude-code", "c")
-    doc = contract.scan_payload(NOW, {a, b}, {b, c}, frozenset({"pi", "codex"}))
-    assert doc == {
-        "version": 1,
-        "kind": "scan",
+    summary = contract.scan_summary(NOW, {a, b}, {b, c}, frozenset({"pi", "codex"}))
+    assert summary == {
         "scanned_at": NOW,
         "added": 1,
         "removed": 1,
         "unavailable_sources": ["codex", "pi"],
     }
+
+
+def test_list_payload_carries_the_scan_summary_it_was_given():
+    summary = contract.scan_summary(NOW, set(), set(), frozenset())
+    doc = contract.list_payload(
+        _reg([]),
+        NOW,
+        registry_path="/fixture/registry.json",
+        presence=NO_ONE_LIVE,
+        stale_hours=8,
+        scan=summary,
+    )
+    assert doc["scan"] == {"scanned_at": NOW, "added": 0, "removed": 0, "unavailable_sources": []}
 
 
 def test_encode_document_replaces_lone_surrogates():
