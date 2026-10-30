@@ -27,4 +27,4 @@ pi        65d ago     ?           charlie  [abandoned]  last prompt for charlie
 
 
 
- ^a everywhere  ⏎ resume  ^r this tree  esc quit                                        ▏^p palette
+ ^a everywhere  ⏎ resume  ^t this tree  ^r refresh  esc quit                            ▏^p palette

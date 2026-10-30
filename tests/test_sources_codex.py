@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from ringleader.sources.base import (
+    DiscoveryCacheSource,
     NameApplyingSource,
     PickerHidingSource,
     RawRef,
@@ -91,11 +92,13 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(src, WorkspaceRebindingSource)
     assert isinstance(src, SessionLaunchingSource)
     assert isinstance(src, ScopedDiscoverySource)
+    assert isinstance(src, DiscoveryCacheSource)
     assert src.name == "codex"
     assert src.capabilities == frozenset(
         {
             "applies_names",
             "discovers_scoped",
+            "seeds_discovery",
             "filesystem_lifecycle",
             "hides_from_picker",
             "shows_in_picker",

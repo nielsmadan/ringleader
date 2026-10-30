@@ -825,3 +825,85 @@ def test_refreshes_sharing_a_pool_reread_only_the_codex_headers_that_changed(tmp
         )
 
     assert reads == ["c1.jsonl"]
+
+
+@pytest.mark.parametrize("warm", [False, True])
+def test_workspace_refresh_finds_an_old_fork_and_preserves_the_full_scan_clock(tmp_path, warm):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    elsewhere = _claude_session(root, "/Users/me/other", "elsewhere")
+    path = _fully_scanned(tmp_path, root) if warm else _registry(tmp_path, [])
+    before = registry.load_registry(path)
+    fork = _claude_session(root, "/Users/me/proj", "fork")
+    os.utime(fork, (1, 1))
+    elsewhere.unlink()
+    result = refresh.workspace_refresh(
+        path,
+        "2026-07-20T00:00:00+00:00",
+        "/Users/me/proj",
+        False,
+        sources=[ClaudeCodeSource(projects_dir=root)],
+        git_resolver=lambda cwd: None,
+        name_filters=[],
+    )
+    assert sorted(t["sessionId"] for t in result.reg["threads"]) == (
+        ["elsewhere", "fork", "s1"] if warm else ["fork", "s1"]
+    )
+    assert result.reg["lastScan"] == before["lastScan"]
+    assert result.reg["sourcesScannedAt"] == before.get("sourcesScannedAt", {})
+    assert result.reg["deleted"] == before["deleted"]
+
+
+@pytest.mark.parametrize("recursive", [False, True])
+def test_workspace_refresh_scopes_discovery_and_reuses_unchanged_parses(tmp_path, recursive):
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    _claude_session(root, "/Users/me/proj/sub", "child")
+    _claude_session(root, "/Users/me/elsewhere", "elsewhere")
+    calls = []
+
+    class CountingClaude(ClaudeCodeSource):
+        def parse(self, ref):
+            calls.append(ref.source_ref)
+            return super().parse(ref)
+
+    path = _registry(tmp_path, [])
+    for _ in range(2):
+        result = refresh.workspace_refresh(
+            path,
+            "2026-07-20T00:00:00+00:00",
+            "/Users/me/proj",
+            recursive,
+            sources=[CountingClaude(projects_dir=root)],
+            git_resolver=lambda cwd: None,
+            name_filters=[],
+        )
+    expected = ["child", "s1"] if recursive else ["s1"]
+    assert sorted(calls) == expected
+    assert sorted(t["sessionId"] for t in result.reg["threads"]) == expected
+
+
+def test_workspace_refresh_defers_unscoped_sources_and_can_leave_disk_unchanged(tmp_path):
+    class Unscoped:
+        name = "pi"
+        capabilities = frozenset()
+
+        def discover(self):
+            raise AssertionError("the preview must not discover an unscoped source")
+
+    root = tmp_path / "projects"
+    _claude_session(root, "/Users/me/proj", "s1")
+    path = _registry(tmp_path, [])
+    before = path.read_bytes()
+    result = refresh.workspace_refresh(
+        path,
+        "2026-07-20T00:00:00+00:00",
+        "/Users/me/proj",
+        False,
+        sources=[ClaudeCodeSource(projects_dir=root), Unscoped()],
+        git_resolver=lambda cwd: None,
+        name_filters=[],
+        persist=False,
+    )
+    assert [t["sessionId"] for t in result.reg["threads"]] == ["s1"]
+    assert path.read_bytes() == before

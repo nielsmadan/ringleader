@@ -17,6 +17,7 @@ from ringleader.home.intents import AgentHandoffIntent, ResumeIntent
 from ringleader.home.screens.home import HomeScreen
 from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.roundup import RoundupScreen
+from ringleader.home.writer import Snapshot
 from ringleader.picker.app import Choice, PickerScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
@@ -666,6 +667,99 @@ async def test_hosted_picker_tracks_a_pending_scan_until_it_finishes(tmp_path):
             gate.release.set()
 
 
+async def test_hosted_refresh_announces_each_scan_once(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    calls = 0
+
+    def rescan(path, now):
+        nonlocal calls
+        calls += 1
+        return registry.load_registry(path), f"scan {calls}"
+
+    app = _app(path, refresher=rescan)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        await until(pilot, lambda: not app.screen._refreshing)
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: calls == 2 and not app.screen._refreshing)
+        assert _toasts(app) == [("scan 1", "information"), ("scan 2", "information")]
+
+
+@pytest.mark.parametrize("hard_failure", [False, True])
+async def test_hosted_retry_reports_failure_once_and_retains_rows(tmp_path, hard_failure):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    fail = False
+
+    def rescan(path, now):
+        if fail:
+            raise OSError("unreadable store")
+        return registry.load_registry(path), None
+
+    app = _app(path, refresher=rescan)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        picker = app.screen
+        await until(pilot, lambda: not picker._refreshing)
+        fail = True
+        if hard_failure:
+            path.write_text("invalid json")
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: app.idle and not picker._refreshing)
+        assert str(picker.query_one("#refresh-status", Label).render()).startswith("Refresh failed")
+        assert [t["sessionId"] for t in picker._rows] == ["a"]
+        assert app._scan_failed is True
+        toasts = _toasts(app)
+        assert len(toasts) == 1
+        assert toasts[0][0].startswith("scan failed:")
+        assert toasts[0][1] == "warning"
+
+
+@pytest.mark.parametrize("key", ["ctrl+r", "f5"])
+async def test_hosted_queued_refresh_survives_leaving_resume(tmp_path, key):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    gate = Gate()
+    app = _app(path, refresher=gate)
+    async with app.run_test(size=(100, 30)) as pilot:
+        try:
+            await until(pilot, lambda: gate.calls == 1)
+            await pilot.press("3")
+            await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+            await pilot.press(key, "escape")
+            await until(pilot, lambda: isinstance(app.screen, HomeScreen))
+        finally:
+            gate.release.set()
+        await until(pilot, lambda: app.idle)
+        assert gate.calls == 2
+
+
+async def test_hosted_refresh_applies_current_decisions_on_the_ui_thread(tmp_path, monkeypatch):
+    path = _write(tmp_path / "registry.json", _thread("a"), _thread("b"))
+    app = _app(path)
+    ui_thread = threading.get_ident()
+    readers = []
+    decided_view = app._decided_view
+
+    def view(landed):
+        readers.append(threading.get_ident())
+        return decided_view(landed)
+
+    monkeypatch.setattr(app, "_decided_view", view)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        current = {**registry.empty_registry(), "threads": [_thread("b")]}
+        app._adopt(Snapshot(current, generation=1, scanned=True, taken_at=0))
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        picker = app.screen
+        await until(pilot, lambda: not picker._refreshing)
+        assert [t["sessionId"] for t in picker._rows] == ["b"]
+        assert readers == [ui_thread, ui_thread]
+
+
 async def test_hosted_picker_reports_a_failed_inbox_scan(tmp_path):
     def fail(path, now):
         raise OSError("unreadable store")
@@ -680,7 +774,7 @@ async def test_hosted_picker_reports_a_failed_inbox_scan(tmp_path):
             pilot,
             lambda: (
                 str(app.screen.query_one("#refresh-status", Label).render())
-                == "Refresh failed — showing cached results"
+                == "Refresh failed — keeping displayed results; ctrl+r or F5 to retry"
             ),
         )
         assert app.screen.query_one("#rows", OptionList).option_count == 1
@@ -705,6 +799,31 @@ async def test_hosted_picker_reports_unavailable_sources(tmp_path):
         )
 
 
+async def test_hosted_failed_presence_refresh_clears_previous_badges(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    available = True
+
+    def presence():
+        if not available:
+            raise OSError("presence offline")
+        return frozenset({("claude", "a")})
+
+    app = _app(path)
+    app.scans._presence = presence
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        picker = app.screen
+        await until(pilot, lambda: not picker._refreshing)
+        assert picker._is_running(picker._rows[0])
+        available = False
+        await pilot.press("ctrl+r")
+        await until(pilot, lambda: app.idle and not picker._refreshing)
+        assert [t["sessionId"] for t in picker._rows] == ["a"]
+        assert picker._live_ids == frozenset()
+
+
 async def test_ctrl_c_cancels_a_dialog_with_focused_input(tmp_path):
     path = _write(tmp_path / "registry.json", _thread("a", days=2))
     app = _app(path)
@@ -718,3 +837,57 @@ async def test_ctrl_c_cancels_a_dialog_with_focused_input(tmp_path):
         await until(pilot, lambda: isinstance(app.screen, HomeScreen))
         assert results == [None]
         assert app.is_running
+
+
+@pytest.mark.parametrize("key", ["ctrl+r", "f5"])
+@pytest.mark.parametrize("read_only", [False, True])
+async def test_hosted_refresh_waits_for_a_new_scan(tmp_path, key, read_only):
+    path = _write(tmp_path / "registry.json", _thread("a"))
+    gate = Gate()
+    gate.release.set()
+    app = _app(path, refresher=gate, read_only=read_only)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        picker = app.screen
+        await until(pilot, lambda: not picker._refreshing)
+        gate.release.clear()
+        gate.result = registry.load_registry(path)
+        gate.result["threads"].append(_thread("fork"))
+        before = path.read_bytes()
+        try:
+            await pilot.press(key)
+            await until(pilot, lambda: gate.calls == 2)
+            assert [t["sessionId"] for t in picker._rows] == ["a"]
+            assert str(picker.query_one("#refresh-status", Label).render()) == (
+                "Refreshing sessions… showing cached results"
+            )
+        finally:
+            gate.release.set()
+        await until(pilot, lambda: len(picker._rows) == 2)
+        assert {t["sessionId"] for t in picker._rows} == {"a", "fork"}
+        assert path.read_bytes() == before
+
+
+async def test_hosted_refresh_keeps_pending_decisions_hidden(tmp_path):
+    first, second = _thread("a"), _thread("b")
+    path = _write(tmp_path / "registry.json", first, second)
+    execute = FakeExecute()
+    execute.gate.clear()
+    app = _app(path, execute=execute)
+    async with app.run_test(size=(100, 30)) as pilot:
+        try:
+            await until(pilot, lambda: app.idle)
+            app.submit([ArchiveOp(_seen(first))], label="archive")
+            await until(pilot, lambda: len(execute.started) == 1)
+            await pilot.press("3")
+            await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+            picker = app.screen
+            await until(pilot, lambda: not picker._refreshing)
+            await pilot.press("ctrl+r")
+            await until(pilot, lambda: not picker._refreshing)
+            assert [t["sessionId"] for t in picker._rows] == ["b"]
+        finally:
+            execute.gate.set()
+        await until(pilot, lambda: app.idle)

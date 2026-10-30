@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import textwrap
@@ -22,6 +23,8 @@ from ringleader.picker.app import (
 from ringleader.presence import PresenceUnavailable
 from ringleader.resume import Scope
 from ringleader.sources.base import SessionLaunchingSource
+from ringleader.sources.claude_code import ClaudeCodeSource
+from ringleader.sources.codex import CodexSource
 from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Label, ListView, OptionList
@@ -33,7 +36,7 @@ NOW = "2026-05-05T00:00:00+00:00"
 SCANNED = "2026-05-05T12:00:00+00:00"
 
 
-@pytest.mark.parametrize("blocked", ["refresh", "presence"])
+@pytest.mark.parametrize("blocked", ["workspace", "refresh", "presence"])
 @pytest.mark.parametrize("action", ["choose", "quit"])
 def test_app_run_returns_while_background_work_is_blocked(tmp_path, blocked, action):
     reg_path = _seed(tmp_path, [_thread("s0", title="alpha")])
@@ -44,6 +47,7 @@ def test_app_run_returns_while_background_work_is_blocked(tmp_path, blocked, act
         import threading
         from pathlib import Path
         from ringleader.picker.app import PickerApp, AgentModal
+        from ringleader.refresh import Refreshed
 
         path, blocked, action = sys.argv[1:]
         started = threading.Event()
@@ -54,6 +58,12 @@ def test_app_run_returns_while_background_work_is_blocked(tmp_path, blocked, act
                 started.set()
                 gate.wait()
             return json.loads(Path(path).read_text()), None
+
+        def workspace(path, now, cwd, recursive):
+            if blocked == "workspace":
+                started.set()
+                gate.wait()
+            return Refreshed(json.loads(Path(path).read_text()), None, frozenset())
 
         def presence():
             if blocked == "presence":
@@ -71,7 +81,8 @@ def test_app_run_returns_while_background_work_is_blocked(tmp_path, blocked, act
             else:
                 await pilot.press("escape")
 
-        app = PickerApp(path, "/work/repo", refresher=refresh, presence=presence)
+        app = PickerApp(path, "/work/repo", refresher=refresh,
+                        workspace_refresher=workspace, presence=presence)
         result = app.run(headless=True, auto_pilot=choose)
         if action == "choose":
             assert result.thread["sessionId"] == "s0"
@@ -254,11 +265,11 @@ async def test_ctrl_a_switches_to_all_scope_without_moving_the_input_cursor(tmp_
         assert filter_input.value == "al"
 
 
-async def test_ctrl_r_switches_to_recursive_scope_and_picks_up_a_subdirectory(tmp_path):
+async def test_ctrl_t_switches_to_recursive_scope_and_picks_up_a_subdirectory(tmp_path):
     app = _app(tmp_path)
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        await pilot.press("ctrl+r")
+        await pilot.press("ctrl+t")
         assert _screen(app)._scope is Scope.RECURSIVE
         assert _ids(app) == ["s0", "s1", "s2"]
 
@@ -589,9 +600,6 @@ async def test_a_scan_that_drops_the_highlighted_session_falls_back_to_the_first
 
 
 async def test_a_recently_scanned_registry_is_still_scanned_again(tmp_path):
-    """The session most worth resuming is the one just left, which a scan seconds old can
-    already have missed. There is no manual-refresh key, so skipping the scan on a young
-    `lastScan` would leave that session unreachable until something else rescanned."""
     scans = []
 
     def refresher(path, now_iso):
@@ -628,7 +636,7 @@ async def test_a_scan_that_blows_up_warns_and_keeps_the_rows_read_from_disk(tmp_
         assert _ids(app) == ["s0", "s1"]
         assert [n.severity for n in app._notifications] == ["warning"]
         assert _rendered(_screen(app).query_one("#refresh-status", Label)) == (
-            "Refresh failed — showing cached results"
+            "Refresh failed — keeping displayed results; ctrl+r or F5 to retry"
         )
         assert app.is_running
 
@@ -668,6 +676,29 @@ async def test_a_presence_probe_that_fails_outright_still_renders_every_row(tmp_
         assert _ids(app) == ["s0", "s1"]
         assert all("running" not in text for text in labels)
         assert app.is_running
+
+
+async def test_failed_presence_refresh_clears_previous_running_badges(tmp_path):
+    available = True
+
+    def presence():
+        if not available:
+            raise PresenceUnavailable("presence offline")
+        return frozenset({("claude", "s0")})
+
+    app = _app(tmp_path, presence=presence)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert "running" in _row_labels(app)[0]
+        available = False
+        await pilot.press("ctrl+r")
+        await _settle(app, pilot)
+        assert _ids(app) == ["s0", "s1"]
+        assert all("running" not in label for label in _row_labels(app))
+        available = True
+        await pilot.press("f5")
+        await _settle(app, pilot)
+        assert "running" in _row_labels(app)[0]
 
 
 async def test_only_the_agent_presence_names_is_badged_when_two_sessions_share_an_id(tmp_path):
@@ -918,7 +949,7 @@ async def test_the_scope_keys_stay_inert_while_the_agent_modal_is_open(tmp_path)
         await pilot.pause()
         assert isinstance(app.screen, AgentModal)
         await pilot.press("ctrl+a")
-        await pilot.press("ctrl+r")
+        await pilot.press("ctrl+t")
         await pilot.pause()
         assert _screen(app)._scope is Scope.CWD
         assert _ids(app) == ["s0", "s1"]
@@ -1199,7 +1230,9 @@ async def test_default_refresh_reports_sources_that_still_use_cached_rows(tmp_pa
     monkeypatch.setattr(
         refresh,
         "refresh_registry",
-        lambda path, now: refresh.Refreshed(_scanned(path), None, frozenset({"opencode"})),
+        lambda path, now, **kwargs: refresh.Refreshed(
+            _scanned(path), None, frozenset({"opencode"})
+        ),
     )
     app = PickerApp(path, CWD, presence=frozenset)
     async with app.run_test() as pilot:
@@ -1210,7 +1243,307 @@ async def test_default_refresh_reports_sources_that_still_use_cached_rows(tmp_pa
         assert _ids(app) == ["s0", "s1"]
 
 
+@pytest.mark.parametrize("persist", [False, True])
+async def test_default_refresh_honors_registry_persistence(tmp_path, monkeypatch, persist):
+    path = _seed(tmp_path, [])
+    before = path.read_bytes()
+    projects = tmp_path / "projects"
+    workspace = projects / "-work-repo"
+    workspace.mkdir(parents=True)
+    source = ClaudeCodeSource(projects_dir=projects)
+    monkeypatch.setattr(scanner, "active_sources", lambda **kwargs: [source])
+    app = PickerApp(path, CWD, persist=persist, presence=frozenset)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        for key, sid in [("ctrl+r", "fork-one"), ("f5", "fork-two")]:
+            (workspace / f"{sid}.jsonl").write_text(
+                json.dumps({"sessionId": sid, "cwd": CWD, "type": "user"}) + "\n"
+            )
+            await pilot.press(key)
+            await _settle(app, pilot)
+            assert sid in _ids(app)
+        if persist:
+            saved = json.loads(path.read_bytes())
+            assert {t["sessionId"] for t in saved["threads"]} == {"fork-one", "fork-two"}
+        else:
+            assert path.read_bytes() == before
+
+
+async def test_dry_run_retry_retains_full_results_and_reuses_parsed_sessions(tmp_path, monkeypatch):
+    path = _seed(tmp_path, [])
+    before = path.read_bytes()
+    projects = tmp_path / "projects"
+    for sid, cwd, directory in [("local", CWD, "-work-repo"), ("remote", "/other", "-other")]:
+        workspace = projects / directory
+        workspace.mkdir(parents=True)
+        (workspace / f"{sid}.jsonl").write_text(
+            json.dumps({"sessionId": sid, "cwd": cwd, "type": "user"}) + "\n"
+        )
+    monkeypatch.setattr(
+        scanner, "active_sources", lambda **kwargs: [ClaudeCodeSource(projects_dir=projects)]
+    )
+    parsed = []
+    original_parse = ClaudeCodeSource.parse
+
+    def parse(source, ref):
+        parsed.append(ref.file)
+        return original_parse(source, ref)
+
+    monkeypatch.setattr(ClaudeCodeSource, "parse", parse)
+    original_full = refresh.refresh_registry
+    fail = False
+
+    def full(*args, **kwargs):
+        if fail:
+            raise OSError("full refresh unavailable")
+        return original_full(*args, **kwargs)
+
+    monkeypatch.setattr(refresh, "refresh_registry", full)
+    app = PickerApp(path, CWD, scope=Scope.ALL, persist=False, presence=frozenset)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert set(_ids(app)) == {"local", "remote"}
+        screen = _screen(app)
+        screen._list_view().highlighted = _ids(app).index("remote")
+        fail = True
+        await pilot.press("ctrl+r")
+        await _settle(app, pilot)
+        assert set(_ids(app)) == {"local", "remote"}
+        assert screen._highlighted_id() == ("claude-code", "remote")
+        assert _refresh_status(app).startswith("Refresh failed")
+        assert len(parsed) == 2
+        assert path.read_bytes() == before
+
+
+async def test_default_picker_reuses_discovery_across_stages_and_refreshes(tmp_path, monkeypatch):
+    from ringleader.sources import codex
+
+    path = _seed(tmp_path, [])
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+
+    def rollout(sid, cwd, source="cli"):
+        file = sessions / f"{sid}.jsonl"
+        file.write_text(
+            json.dumps(
+                {
+                    "type": "session_meta",
+                    "payload": {"session_id": sid, "cwd": cwd, "source": source},
+                }
+            )
+            + "\n"
+        )
+        os.utime(file, (1, 1))
+        return file
+
+    rollout("local", CWD)
+    outside = rollout("outside", "/other")
+    background = rollout("background", CWD, "exec")
+    refresh.refresh_registry(
+        path, NOW, sources=[CodexSource(sessions_dir=sessions)], git_resolver=lambda cwd: None
+    )
+    monkeypatch.setattr(
+        scanner, "active_sources", lambda **kwargs: [CodexSource(sessions_dir=sessions)]
+    )
+    reads = []
+    original_header = codex._header
+
+    def header(file):
+        reads.append(file)
+        return original_header(file)
+
+    monkeypatch.setattr(codex, "_header", header)
+    app = PickerApp(path, CWD, presence=frozenset)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert _ids(app) == ["local"]
+        assert reads == [background]
+        fork = rollout("fork", CWD)
+        await pilot.press("ctrl+r")
+        await _settle(app, pilot)
+        assert set(_ids(app)) == {"local", "fork"}
+        assert reads == [background, fork]
+        rollout("outside", CWD)
+        await pilot.press("f5")
+        await _settle(app, pilot)
+        assert set(_ids(app)) == {"local", "fork", "outside"}
+        assert reads == [background, fork, outside]
+
+
+async def test_refresh_errors_display_bracketed_text_literally(tmp_path):
+    from ringleader.tui.snapshot import screen_text
+
+    def fail(path, now):
+        raise OSError("unreadable [/tmp/registry.json]")
+
+    app = _app(tmp_path, refresher=fail)
+    async with app.run_test(size=(100, 30), notifications=True) as pilot:
+        await _settle(app, pilot)
+        await until(pilot, lambda: "unreadable [/tmp/registry.json]" in screen_text(app))
+
+
 @pytest.mark.parametrize("started_at", [None, 42, {}, "invalid"])
 def test_row_shows_unknown_for_invalid_start(started_at):
     text = row_text({**_thread("s0"), "startedAt": started_at}, NOW).plain
     assert text[22:34].strip() == "?"
+
+
+def _refresh_status(app):
+    return _rendered(_screen(app).query_one("#refresh-status", Label))
+
+
+@pytest.mark.parametrize("scope", [Scope.CWD, Scope.RECURSIVE, Scope.ALL])
+async def test_workspace_results_arrive_before_the_full_scan(tmp_path, scope):
+    gate = threading.Event()
+    calls = []
+    local = [*_default_threads(), _thread("fork", title="alpha fork")]
+
+    def workspace(path, now, cwd, recursive):
+        calls.append((cwd, recursive))
+        return refresh.Refreshed(_scanned(path, local), None, frozenset())
+
+    app = _app(
+        tmp_path,
+        scope=scope,
+        workspace_refresher=workspace,
+        refresher=_gated_refresher(gate, local),
+    )
+    async with app.run_test() as pilot:
+        try:
+            await until(pilot, lambda: "fork" in _ids(app))
+            await pilot.pause()
+            assert _refresh_status(app) == "Workspace results ready — refreshing all sessions…"
+            assert calls == [(CWD, scope is Scope.RECURSIVE)]
+            assert _screen(app)._refreshing
+        finally:
+            gate.set()
+        await _settle(app, pilot)
+        assert _refresh_status(app) == "Sessions refreshed"
+
+
+@pytest.mark.parametrize("key", ["ctrl+r", "f5"])
+async def test_manual_refresh_finds_a_new_session_and_preserves_query_and_selection(tmp_path, key):
+    later = _default_threads()
+    app = _app(tmp_path, refresher=lambda path, now: (_scanned(path, list(later)), None))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("a")
+        await _filtered(app, pilot)
+        await pilot.press("down")
+        selected = _highlighted_id(app)
+        later.append(_thread("fork", title="alpha fork"))
+        await pilot.press(key)
+        await until(pilot, lambda: "fork" in _ids(app))
+        await _settle(app, pilot)
+        assert _screen(app).query_one("#filter", Input).value == "a"
+        assert _screen(app)._scope is Scope.CWD
+        assert _highlighted_id(app) == selected
+
+
+async def test_refresh_requests_coalesce_without_overlapping_scans(tmp_path):
+    gate = threading.Event()
+    calls = []
+
+    def full(path, now):
+        calls.append(len(calls) + 1)
+        gate.wait(5)
+        return _scanned(path), None
+
+    app = _app(tmp_path, refresher=full)
+    async with app.run_test() as pilot:
+        try:
+            await until(pilot, lambda: calls == [1])
+            await pilot.press("ctrl+r", "f5", "ctrl+r")
+            assert calls == [1]
+            assert "refresh queued" in _refresh_status(app)
+        finally:
+            gate.set()
+        await _settle(app, pilot)
+        assert calls == [1, 2]
+        assert _refresh_status(app) == "Sessions refreshed"
+
+
+async def test_full_refresh_failure_keeps_workspace_results_and_can_be_retried(tmp_path):
+    calls = []
+    local = [*_default_threads(), _thread("fork")]
+
+    def full(path, now):
+        calls.append(now)
+        if len(calls) == 1:
+            raise OSError("offline")
+        return _scanned(path, [*local, _thread("newer")]), None
+
+    app = _app(
+        tmp_path,
+        refresher=full,
+        workspace_refresher=lambda path, now, cwd, recursive: refresh.Refreshed(
+            _scanned(path, local), None, frozenset()
+        ),
+    )
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert "fork" in _ids(app)
+        assert _refresh_status(app) == (
+            "Refresh failed — keeping displayed results; ctrl+r or F5 to retry"
+        )
+        await pilot.press("ctrl+r")
+        await _settle(app, pilot)
+        assert "newer" in _ids(app)
+        assert _refresh_status(app) == "Sessions refreshed"
+
+
+async def test_workspace_failure_still_runs_the_full_refresh(tmp_path):
+    def workspace(*args):
+        raise OSError("workspace unavailable")
+
+    app = _app(tmp_path, workspace_refresher=workspace)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        assert _ids(app) == ["s0", "s1"]
+        assert _refresh_status(app) == "Sessions refreshed"
+        assert [n.message for n in app._notifications] == ["workspace unavailable"]
+
+
+async def test_session_results_do_not_wait_for_presence(tmp_path):
+    gate = threading.Event()
+
+    def presence():
+        gate.wait()
+        return frozenset({("claude", "fork")})
+
+    app = _app(
+        tmp_path,
+        presence=presence,
+        refresher=lambda path, now: (_scanned(path, [_thread("fork")]), None),
+    )
+    async with app.run_test() as pilot:
+        try:
+            await until(pilot, lambda: _ids(app) == ["fork"])
+            assert _refresh_status(app) == "Sessions refreshed"
+        finally:
+            gate.set()
+        await _settle(app, pilot)
+        assert "running" in _row_labels(app)[0]
+
+
+@pytest.mark.parametrize("key", ["ctrl+r", "f5"])
+async def test_refresh_keys_stay_inert_in_agent_and_confirmation_modals(tmp_path, key):
+    calls = []
+
+    def full(path, now):
+        calls.append(now)
+        return _scanned(path), None
+
+    app = _app(tmp_path, refresher=full, presence=lambda: frozenset({("claude", "s0")}))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        assert isinstance(app.screen, AgentModal)
+        await pilot.press(key)
+        assert len(calls) == 1
+        await pilot.press("enter")
+        assert isinstance(app.screen, ConfirmModal)
+        await pilot.press(key)
+        assert len(calls) == 1
+        await pilot.press("escape")
+        assert isinstance(app.screen, PickerScreen)

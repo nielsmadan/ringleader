@@ -4,7 +4,7 @@ import json
 import os
 import sqlite3
 import sys
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -157,6 +157,7 @@ class CodexSource:
             {
                 "applies_names",
                 "discovers_scoped",
+                "seeds_discovery",
                 "filesystem_lifecycle",
                 "hides_from_picker",
                 "shows_in_picker",
@@ -208,6 +209,19 @@ class CodexSource:
 
         # rollouts are filed by date: mtime first, since it skips the oversized meta read
         return self._refs(lambda p: changed_since(p, since), in_scope)
+
+    def seed_discovery(self, sessions: Iterable[NormalizedSession]) -> None:
+        self._headers = {
+            **{
+                session.file: (
+                    session.file_fingerprint,
+                    (session.session_id, True, session.cwd),
+                )
+                for session in sessions
+                if session.file is not None and session.file_fingerprint is not None
+            },
+            **self._headers,
+        }
 
     def _refs(
         self,

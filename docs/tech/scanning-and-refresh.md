@@ -110,6 +110,16 @@ skips git for cache hits. A source with no baseline yet is discovered whole; a r
 source has one gets the full scan instead, and says so in its return value so `rl resume --last`
 does not scan everything twice. Both refreshes share one private `_refresh()` pipeline.
 
+`workspace_refresh()` supplies the standalone picker's early results. It uses scoped discovery
+only, deferring other sources to the full scan, and enumerates all matching files so a copied
+fork with an old mtime is still found. Fingerprints avoid reparsing unchanged files. The pass
+reconciles partially, preserving unvisited records and full-scan clocks even on a cold cache.
+The picker shares a `SourcePool` between workspace and full passes and subsequent requests.
+Codex seeds its discovery headers from version-matched registry records, checked against each
+file's fingerprint, so unchanged sessions outside the workspace need no header read. Unknown
+and changed files still get inspected even with an old mtime. Nonpersistent picker scans pass
+their previous snapshot as `initial` to retain both rows and parse caches between stages.
+
 ### Roundup
 
 `roundup.py` is the roundup as a function API, so the CLI and the inbox share one

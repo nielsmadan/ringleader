@@ -80,14 +80,15 @@ to notify, push modals and check that the app is running. Its row renderer is `_
 so tests reach the picker through the `PickerScreen` on `app.screen_stack`.
 The picker labels separate Last active (`mtime`, the source modification time) and Started
 (`startedAt`, the first recorded timestamp or source creation timestamp) columns. Unknown starts
-show `?`. A persistent refresh status distinguishes cached results from a completed, partial, or failed scan.
+show `?`. A persistent refresh status distinguishes cached results, workspace results while the
+full scan runs, queued refreshes, completion, unavailable sources, and failure.
 Partial refreshes name the unavailable sources whose cached rows remain. Hosted pickers keep
 showing refresh progress until the inbox scan finishes.
 Source parser versions invalidate older caches once to populate start times.
 For Claude Code, Droid and Pi, Started follows the first valid recorded timestamp, including
 inherited history in copied transcripts. It does not measure when a fork was made.
-The picker's structured `full_refresher` returns `Refreshed` on completion, `None` while
-pending, and raises on failure; unavailable sources travel with the completed result.
+The picker's structured `full_refresher` returns `Refreshed` on completion and raises on
+failure; unavailable sources travel with the completed result.
 
 The result list holds Rich text options, avoiding a widget per match. It keeps every result,
 clips long rows with an ellipsis, and preserves the highlighted `(source, sessionId)` across
@@ -100,12 +101,27 @@ of each slug-keyed source from `resume.slug_sources()` for the whole drift check
 alone. `scripts/benchmark_picker.py` measures result replacement on a fixed workload.
 
 The screen's `on_mount` renders **synchronously from the registry**, then starts an async Textual worker
-which receives the scan and presence result through a queue from a daemon thread. It always
-scans, including when `lastScan` is recent, so sessions just left can appear. Only the async
+which receives staged results through a queue from a daemon thread. Standalone `PickerApp`
+runs `workspace_refresh()` first, publishes its result, then runs the full scan. Recursive
+scope includes descendants; everywhere scope still prioritizes the launch directory. The full
+result is published before the presence probe, so badge lookup cannot hold back new sessions.
+With `--dry-run`, both stages update the displayed results without saving the registry. The
+picker carries the last scan snapshot between stages and cycles, preserving unvisited rows
+and reusing parsed sessions even when the disk registry remains unchanged.
+It always scans on open, including when `lastScan` is recent. Only the async
 worker touches widgets; cancelling it on exit drops late results and signals the thread to
 skip any presence probe it has not started. The scan can outlive the UI, but cannot hold up
 resume or process exit. Using Textual's `@work(thread=True)` here would put it in asyncio's
 default executor, whose shutdown waits for running threads even after worker cancellation.
+
+`ctrl+r` and `F5` request another refresh; `ctrl+t` widens to this tree and `ctrl+a` to
+everywhere. Refreshes run serially and repeated requests during one cycle coalesce into one
+rerun. The hosted picker forwards requests immediately to the inbox scan service, so a queued
+scan survives leaving Resume. It polls the service's current attempt outcome on the UI thread;
+the last usable snapshot remains separate from a failed attempt. It applies the current
+generation and decision overlay when displaying the result. Failure keeps the latest
+displayed rows; a failed workspace pass still proceeds to the full scan.
+The inbox owns scan notifications, so its picker does not repeat the scan's delta note.
 
 Presence comes from `PresenceClient.require_running_session_ids()`, matched on the
 `(agent, session_id)` **pair** — presence names agents `claude` where the registry says

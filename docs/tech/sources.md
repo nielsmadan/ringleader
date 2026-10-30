@@ -67,6 +67,7 @@ the set says the source opts in, the `isinstance` satisfies the type checker.
 | Protocol | Capability | Methods |
 |---|---|---|
 | `CachedMetadataSource` | — | `refresh_cached_metadata()` — update display fields even on a cache hit |
+| `DiscoveryCacheSource` | `seeds_discovery` | `seed_discovery()` — prime discovery from version-matched cached sessions; Codex reuses headers only while the file fingerprint matches |
 | `CompanionFileSource` | `companion_files` | `companion_paths()` — the per-transcript state that must travel with it |
 | `ConversationRenderingSource` | `renders_conversation` | `render_conversation()` — render a source-owned session without assuming JSONL |
 | `NameApplyingSource` | `applies_names` | `apply_name()` — write a name into the agent's own store |

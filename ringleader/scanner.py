@@ -15,6 +15,7 @@ from .sources.base import (
     AvailabilitySource,
     CachedMetadataSource,
     CompanionFileSource,
+    DiscoveryCacheSource,
     IndexUpdate,
     NormalizedSession,
     PickerHidingSource,
@@ -306,6 +307,23 @@ def scoped_refs(
     return (ref for ref in src.discover() if datetime.fromisoformat(ref.mtime) >= since)
 
 
+def _cached_sessions(src: Source, threads: Iterable[dict[str, Any]]) -> Iterable[NormalizedSession]:
+    for thread in threads:
+        if source_of(thread) != src.name:
+            continue
+        ref = RawRef(
+            source=src.name,
+            file=thread.get("file"),
+            mtime=thread.get("mtime") or "",
+            size_bytes=thread.get("sizeBytes") or 0,
+            fingerprint=thread.get("fileFingerprint"),
+            source_ref=thread.get("sourceRef"),
+        )
+        session = registry.cached_session(thread, ref, getattr(src, "parser_version", None))
+        if session is not None:
+            yield session
+
+
 def scan(  # noqa: PLR0913
     sources: Iterable[Source] | None = None,
     git_resolver: GitResolver | None = None,
@@ -333,6 +351,8 @@ def scan(  # noqa: PLR0913
     resolve: list[NormalizedSession] = []
     for src in sources:
         try:
+            if supports(src, "seeds_discovery", DiscoveryCacheSource):
+                cast(DiscoveryCacheSource, src).seed_discovery(_cached_sessions(src, threads))
             for ref in refs_of(src) if refs_of is not None else src.discover():
                 session, cached = _load_session(src, ref, threads_by_ref)
                 if session is None:

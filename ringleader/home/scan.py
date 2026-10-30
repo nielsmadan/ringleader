@@ -64,6 +64,7 @@ class ScanService:
         self._running = False
         self._rerun = False
         self._latest: ScanLanded | None = None
+        self._outcome: Done[ScanLanded] | Failed | None = None
         self._harvests: HarvestSnapshot | None = None
 
     def request(self) -> bool:
@@ -86,6 +87,10 @@ class ScanService:
         if landed is None or max_age is None:
             return landed
         return landed if self._monotonic() - landed.snapshot.taken_at <= max_age else None
+
+    def outcome(self) -> Done[ScanLanded] | Failed | None:
+        with self._cond:
+            return None if self._running else self._outcome
 
     def wait(self, timeout: float | None = None) -> ScanLanded | None:
         with self._cond:
@@ -145,6 +150,7 @@ class ScanService:
 
     def _landed(self, result: Done[ScanLanded] | Failed) -> None:
         with self._cond:
+            self._outcome = result
             if isinstance(result, Done):
                 self._latest = result.value
             rerun, self._rerun = self._rerun, False

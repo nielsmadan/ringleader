@@ -4,13 +4,13 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from . import registry, scanner
 from .agents import source_of
 from .config import load_config
 from .gitinfo import GitResolver
-from .sources.base import RawRef, Source, in_workspace
+from .sources.base import RawRef, ScopedDiscoverySource, Source, in_workspace
 from .sources.claude_code import ClaudeCodeSource
 
 
@@ -78,6 +78,7 @@ def refresh_registry(  # noqa: PLR0913
     name_filters: Iterable[str] | None = None,
     persist: bool = True,
     pool: scanner.SourcePool | None = None,
+    initial: dict[str, Any] | None = None,
 ) -> Refreshed:
     """Scan installed sources, reconcile into the registry, persist, and report the
     membership delta. Read commands run this before rendering; an unavailable source
@@ -90,7 +91,7 @@ def refresh_registry(  # noqa: PLR0913
         if claude_projects_dir is not None:
             raise ValueError("pass claude_projects_dir, not both")
         claude_projects_dir = projects_root
-    reg = registry.load_registry(registry_path)
+    reg = registry.load_registry(registry_path) if initial is None else initial
     before = {registry.identity(t) for t in reg["threads"]}
     if sources is None and claude_projects_dir is not None:
         sources = [ClaudeCodeSource(tail_turns=tail, projects_dir=claude_projects_dir)]
@@ -158,6 +159,48 @@ def scoped_refresh(  # noqa: PLR0913
         refs_of=refs_of,
     )
     return scoped, False
+
+
+def workspace_refresh(  # noqa: PLR0913
+    registry_path: str | Path,
+    now_iso: str,
+    cwd: str,
+    recursive: bool,
+    *,
+    git_resolver: GitResolver | None = None,
+    sources: Iterable[Source] | None = None,
+    name_filters: Iterable[str] | None = None,
+    persist: bool = True,
+    pool: scanner.SourcePool | None = None,
+    initial: dict[str, Any] | None = None,
+) -> Refreshed:
+    reg = registry.load_registry(registry_path) if initial is None else initial
+    before = {registry.identity(t) for t in reg["threads"]}
+    known = _known_files(reg["threads"], cwd, recursive=recursive)
+
+    def refs_of(src: Source) -> Iterable[RawRef]:
+        if not scanner.supports(src, "discovers_scoped", ScopedDiscoverySource):
+            return ()
+        return cast(ScopedDiscoverySource, src).discover_scoped(
+            cwd,
+            recursive=recursive,
+            since=datetime.min.replace(tzinfo=UTC),
+            known=known.get(src.name, frozenset()),
+        )
+
+    reg, unavailable = _refresh(
+        reg,
+        registry_path,
+        now_iso,
+        sources=sources,
+        git_resolver=git_resolver,
+        name_filters=name_filters,
+        persist=persist,
+        refs_of=refs_of,
+        pool=pool,
+    )
+    after = {registry.identity(t) for t in reg["threads"]}
+    return Refreshed(reg, delta_note(len(after - before), len(before - after)), unavailable)
 
 
 def _known_files(

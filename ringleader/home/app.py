@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import threading
 import time
@@ -8,7 +9,7 @@ from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
-from typing import Any, ClassVar, Protocol, runtime_checkable
+from typing import Any, ClassVar, Protocol, cast, runtime_checkable
 
 from rich.text import Text
 from textual import events, work
@@ -50,7 +51,7 @@ from ..decisions import (
 )
 from ..enrichment import Classified
 from ..models import Model, ModelTask, active_model, proc
-from ..picker.app import Choice, PickerScreen, ask_resume_choice, live_session_ids
+from ..picker.app import Choice, PickerScreen, RefreshResult, ask_resume_choice, live_session_ids
 from ..progress import CancelCheck
 from ..resume import Scope
 from ..revalidate import Identity, Seen
@@ -193,6 +194,37 @@ def decision_op(decision: Decision, seen: Seen, until: str | None) -> SingleOp:
 
 class _HostedPicker(PickerScreen):
     BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "leave", "back")]
+
+    def action_refresh(self) -> None:
+        cast(InboxApp, self.app).rescan()
+        if self._refreshing:
+            self._refresh_status = "Refreshing sessions… refresh queued"
+            self._show_refresh_status()
+        else:
+            self._start_refresh()
+
+    async def _receive_refresh(self) -> None:
+        inbox = cast(InboxApp, self.app)
+        while self._alive():
+            outcome = inbox.scans.outcome()
+            if outcome is None:
+                await asyncio.sleep(0.02)
+                continue
+            if isinstance(outcome, Done) and outcome.value.snapshot.scanned:
+                landed = outcome.value
+                result = RefreshResult(
+                    inbox._decided_view(landed),
+                    landed.live_ids or frozenset(),
+                    None,
+                    None,
+                    landed.unavailable_sources,
+                )
+            else:
+                result = RefreshResult(None, None, None, "inbox session scan failed")
+            self._refresh_status = self._result_status(result)
+            self._show_refresh_status()
+            self._adopt(result.reg, result.running, None)
+            return
 
 
 def _default_models(task: ModelTask) -> Model | None:
@@ -527,7 +559,7 @@ class InboxApp(App[ExitIntent | None]):
     def on_scan_message(self, message: ScanMessage) -> None:
         self._delivered()
         landed = message.landed
-        self._scan_failed = False
+        self._scan_failed = not landed.snapshot.scanned
         if landed.snapshot.scanned:
             self._scanned_at = self._now()
         if not self._adopt(landed.snapshot) and not self._leaving:
@@ -596,7 +628,6 @@ class InboxApp(App[ExitIntent | None]):
             self.registry_path,
             self._cwd,
             scope=Scope.ALL,
-            full_refresher=self._picker_registry,
             presence=self._presence,
             now=self._now,
             initial=self._decided_view(None),
@@ -604,23 +635,14 @@ class InboxApp(App[ExitIntent | None]):
         self.push_screen(picker, callback=self._resume_chosen)
 
     def _decided_view(self, landed: ScanLanded | None) -> dict[str, Any]:
-        current = self._state.snapshot
+        state = self._state
+        current = state.snapshot
         base = (
             landed.snapshot
             if landed and landed.snapshot.generation >= current.generation
             else current
         )
-        return overlay.visible(base.reg, self._state.overlay)
-
-    def _picker_registry(self, _path: str, _now_iso: str) -> refresh.Refreshed | None:
-        if self.scans.running:
-            return None
-        landed = self.scans.latest()
-        if landed is None or not landed.snapshot.scanned:
-            raise RuntimeError("inbox session scan failed")
-        return refresh.Refreshed(
-            self._decided_view(landed), landed.note, landed.unavailable_sources
-        )
+        return overlay.visible(base.reg, state.overlay)
 
     def _resume_chosen(self, choice: Choice | None) -> None:
         if choice is not None:

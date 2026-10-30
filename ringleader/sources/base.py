@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from enum import Enum
@@ -186,6 +186,11 @@ def memo_by_fingerprint[T](
 @runtime_checkable
 class CachedMetadataSource(Protocol):
     def refresh_cached_metadata(self, session: NormalizedSession) -> None: ...
+
+
+@runtime_checkable
+class DiscoveryCacheSource(Source, Protocol):
+    def seed_discovery(self, sessions: Iterable[NormalizedSession]) -> None: ...
 
 
 @runtime_checkable

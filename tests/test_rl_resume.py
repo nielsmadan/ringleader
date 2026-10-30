@@ -518,6 +518,24 @@ def test_a_dry_run_with_no_match_does_not_persist_its_scan(tmp_path, monkeypatch
     assert persisted == [False]
 
 
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_interactive_picker_receives_the_scan_persistence_setting(tmp_path, monkeypatch, dry_run):
+    reg = _registry(tmp_path)
+    persisted = []
+
+    class FakeApp:
+        def __init__(self, *args, persist, **kwargs):
+            persisted.append(persist)
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr("ringleader.picker.app.PickerApp", FakeApp)
+    flags = ["--dry-run"] if dry_run else []
+    assert resume_cmd.cmd_resume(["--registry", reg, *flags]) == 0
+    assert persisted == [not dry_run]
+
+
 def test_a_query_the_registry_already_answers_opens_the_picker_without_scanning(tmp_path):
     """Opening instantly is the feature: only a query nothing answers pays for a scan."""
     thread = _session(tmp_path, "aaa111", title="fix the login bug")

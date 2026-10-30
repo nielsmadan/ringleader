@@ -47,12 +47,23 @@ empty scope earns one full scan before it gives up, and `--last` cannot be combi
 | Key | Flag | Shows |
 |---|---|---|
 | — | (default) | sessions recorded at exactly this directory |
-| `ctrl+r` | `--recursive` | this directory and everything beneath it |
+| `ctrl+t` | `--recursive` | this directory and everything beneath it |
 | `ctrl+a` | `--all` | every session on the machine |
 
 Scope is a **path** comparison, directory-boundary aware — `/w/api` does not match `/w/apiary`.
 It is not the git-project matching `rl overview <selector>` uses, because resuming is about the
 directory the agent will start in, not about which repo the work belongs to.
+
+## Refreshing the picker
+
+The picker shows cached sessions immediately, then refreshes this workspace before scanning
+all sources. Its status line shows when workspace results are ready and when the full scan
+finishes. Sources without scoped discovery join in the full scan.
+
+Press `ctrl+r` or `F5` to discover new sessions without reopening the picker. Repeated presses
+during a refresh queue one more pass. The filter, scope and highlighted session are preserved.
+A failed scan keeps the last displayed results and can be retried with the same keys. There is
+no periodic refresh. In the inbox, Resume uses the inbox scan service.
 
 ## What appears
 

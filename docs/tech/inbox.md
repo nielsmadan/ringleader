@@ -154,7 +154,10 @@ while an enrich job is still draining.
 `ScanService` runs at most one scan thread. `ctrl+r` during a scan queues one rerun. A scan runs
 `refresh.auto_refresh` (with `persist=False` in read-only mode), reads presence and resolves model
 labels, then posts `ScanLanded`. The hosted Resume picker and the Roundup screen wait on the
-service instead of scanning. A scan newer than `SCAN_FRESH_SECONDS` (120 s) is reused. The
+service instead of scanning. In Resume, `ctrl+r`/`F5` requests a new service scan and the picker
+waits for that attempt's outcome before replacing its rows. Requests survive leaving Resume;
+the picker resolves the current generation and decision overlay on the UI thread. The inbox
+owns scan notifications, including failures. A scan newer than `SCAN_FRESH_SECONDS` (120 s) is reused. The
 subtitle shows the scan's age, `scanning…` or `scan failed`, and `presence unknown` when it could
 not tell. Each scan passes the previous `HarvestSnapshot` to `harvests.snapshot_harvests`, which
 reuses a harvest whose file still has the same `(mtime_ns, size)` and rereads the rest.
@@ -192,7 +195,7 @@ screen.
 | Home | `enter` runs the highlighted step or resumes the highlighted in-flight session; `tab` moves between the two lists |
 | Projects | `enter` opens a project's triage; `t` triage it with an agent |
 | Triage | `a` archive · `h` harvest and archive · `g` keep going · `s` snooze · `K` keep long-term · `d` delete · `space` mark · `*`/`A` mark all · `enter` detail · `r` resume · `t` triage with an agent |
-| Resume | the picker; `enter` picks, `ctrl+r` widens to this tree |
+| Resume | the picker; `enter` picks, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh |
 | Roundup | `enter` run (or, when finished, plan again) · `c` stop |
 | Prune | `D` delete the listed candidates · `c` stop |
 | Harvests | `enter` read · `p` publish the group with an agent · `P` publish all |
@@ -285,7 +288,8 @@ second by `home/prints.py::PrintCoalescer`.
   after a push or resume syncs once more. With the memoized view that second sync draws nothing.
 - **Modals own their keys.** App bindings do not fire under a `ModalScreen`, so each modal binds
   its own `y`/`n`/`escape`/digits, and the palette is disabled over one.
-- **`ctrl+r` on the Resume screen means "this tree"**, the picker's meaning, not rescan.
+- **Resume refreshes through the inbox scan service.** Its priority `ctrl+r`/`F5` bindings
+  work from the filter input; `ctrl+t` widens to the directory tree.
 - **Navigate with `pop_screen()` in a loop.** `pop_until_active()` defers its pops and would pop
   the screen just pushed.
 - **`app.query_one` searches the default screen**; query `app.screen` in tests and later code.

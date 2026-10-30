@@ -5,6 +5,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 from ringleader.tui.runner import run_rl
 
@@ -93,12 +94,22 @@ def test_output_beyond_the_cap_is_truncated_with_a_marker(tmp_path, monkeypatch)
     assert run.output.count("x") <= 50
 
 
-def test_a_child_past_the_deadline_is_stopped_and_marked(tmp_path):
-    python = _script(tmp_path, "echo started\nexec sleep 60\n")
-    run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python, timeout=0.3)
+def test_a_child_past_the_deadline_is_stopped_and_marked(tmp_path, monkeypatch):
+    ready = tmp_path / "ready"
+    python = _script(tmp_path, f"echo started\necho $$ > {ready}\nexec sleep 60\n")
+
+    def clock():
+        started = ready.exists() and ready.read_text().endswith("\n")
+        return time.monotonic() + (5.0 if started else 0.0)
+
+    monkeypatch.setattr(
+        "ringleader.tui.runner.time", SimpleNamespace(monotonic=clock, sleep=time.sleep)
+    )
+    run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python, timeout=5.0)
     assert run.returncode is None
     assert run.output.startswith("started")
-    assert run.output.endswith("[timed out after 0s]")
+    assert run.output.endswith("[timed out after 5s]")
+    assert _wait_gone(int(ready.read_text()))
 
 
 def test_non_utf8_bytes_are_replaced_not_fatal(tmp_path):

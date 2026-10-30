@@ -8,6 +8,7 @@ import sys
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from functools import partial
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any
@@ -112,7 +113,13 @@ def _interactive() -> bool:
 
 
 def _run_picker(
-    registry_path: str, cwd: str, scope: Scope, query: str, target: str | None
+    registry_path: str,
+    cwd: str,
+    scope: Scope,
+    query: str,
+    target: str | None,
+    *,
+    persist: bool = True,
 ) -> Choice | None:
     try:
         import textual  # noqa: F401, PLC0415 -- core dep; imported lazily to keep startup fast
@@ -123,7 +130,9 @@ def _run_picker(
 
     from ..picker.app import PickerApp  # noqa: PLC0415 -- only importable once textual is present
 
-    return PickerApp(registry_path, cwd, scope=scope, query=query, target=target).run()
+    return PickerApp(
+        registry_path, cwd, scope=scope, query=query, target=target, persist=persist
+    ).run()
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -617,7 +626,11 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
         )
 
     try:
-        plan = _resolve(args, picker or _run_picker, (scoper or _scan_scope, refresher or _scan))
+        plan = _resolve(
+            args,
+            picker or partial(_run_picker, persist=not args.dry_run),
+            (scoper or _scan_scope, refresher or _scan),
+        )
         if plan is None:
             return 0
         binary = plan.argv[0]

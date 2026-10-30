@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from queue import Empty, SimpleQueue
 from threading import Event, Thread
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, Literal, cast
 
 from rich.text import Text
 from textual import work
@@ -19,7 +19,7 @@ from textual.timer import Timer
 from textual.widgets import Footer, Header, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
-from .. import overview, refresh, registry, resume
+from .. import overview, refresh, registry, resume, scanner
 from ..agents import source_of
 from ..presence import PresenceClient
 from ..resume import Haystack, Scope, SessionAction, agent_name, launchable_agents
@@ -45,10 +45,11 @@ __all__ = [
 
 FILTER_DELAY = 0.12
 
-type FullRefresher = Callable[[str, str], refresh.Refreshed | None]
+type FullRefresher = Callable[[str, str], refresh.Refreshed]
+type WorkspaceRefresher = Callable[[str, str, str, bool], refresh.Refreshed]
 
 _WIDEN_HINTS: dict[Scope, tuple[str, ...]] = {
-    Scope.CWD: ("ctrl+r for this tree", "ctrl+a for everywhere"),
+    Scope.CWD: ("ctrl+t for this tree", "ctrl+a for everywhere"),
     Scope.RECURSIVE: ("ctrl+a for everywhere",),
     Scope.ALL: (),
 }
@@ -70,6 +71,7 @@ class RefreshResult:
     note: str | None
     error: str | None
     unavailable_sources: frozenset[str] = frozenset()
+    stage: Literal["workspace", "full", "presence"] = "full"
 
 
 @dataclass
@@ -206,7 +208,8 @@ class PickerScreen(Screen[Choice | None]):
         # arrive as priority bindings
         *nav_bindings(priority=True),
         Binding("ctrl+a", "scope_all", "everywhere", priority=True),
-        Binding("ctrl+r", "scope_recursive", "this tree", priority=True),
+        Binding("ctrl+t", "scope_recursive", "this tree", priority=True),
+        Binding("ctrl+r,f5", "refresh", "refresh", priority=True),
         Binding("enter", "choose", "resume", priority=True),
         Binding("escape", "leave", "quit"),
     ]
@@ -219,8 +222,10 @@ class PickerScreen(Screen[Choice | None]):
         scope: Scope = Scope.CWD,
         query: str = "",
         target: str | None = None,
+        persist: bool = True,
         refresher: Refresher | None = None,
         full_refresher: FullRefresher | None = None,
+        workspace_refresher: WorkspaceRefresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
         initial: dict[str, Any] | None = None,
@@ -237,7 +242,16 @@ class PickerScreen(Screen[Choice | None]):
         self._query = query
         self._target = target
         self._refresher = refresher
-        self._full_refresher = full_refresher or refresh.refresh_registry
+        self._persist = persist
+        self._pool = scanner.SourcePool()
+        self._scan_baseline: dict[str, Any] | None = None
+        self._full_refresher = full_refresher or self._full_refresh
+        self._workspace_refresher = workspace_refresher
+        if refresher is None and full_refresher is None:
+            self._workspace_refresher = workspace_refresher or self._workspace_refresh
+        self._refreshing = False
+        self._refresh_queued = False
+        self._refresh_status = "Refreshing sessions… showing cached results"
         self._presence: Presence = presence or live_session_ids
         self._now: Clock = now or (lambda: datetime.now(UTC))
         self._reg: dict[str, Any] = registry.empty_registry()
@@ -266,17 +280,70 @@ class PickerScreen(Screen[Choice | None]):
         filter_input.value = self._query
         filter_input.focus()
         await self._render_rows()
-        self._converge()
+        self._start_refresh()
+
+    def _full_refresh(self, path: str, now_iso: str) -> refresh.Refreshed:
+        return refresh.refresh_registry(
+            path,
+            now_iso,
+            pool=self._pool,
+            persist=self._persist,
+            initial=None if self._persist else self._scan_baseline,
+        )
+
+    def _workspace_refresh(
+        self, path: str, now_iso: str, cwd: str, recursive: bool
+    ) -> refresh.Refreshed:
+        return refresh.workspace_refresh(
+            path,
+            now_iso,
+            cwd,
+            recursive,
+            pool=self._pool,
+            persist=self._persist,
+            initial=None if self._persist else self._scan_baseline,
+        )
 
     def _alive(self) -> bool:
         return self.is_attached and self.app.is_running
 
+    def action_refresh(self) -> None:
+        self._start_refresh()
+
+    def _start_refresh(self) -> None:
+        if self._refreshing:
+            self._refresh_queued = True
+            self._show_refresh_status()
+            return
+        self._refreshing = True
+        self._converge()
+
+    def _show_refresh_status(self) -> None:
+        suffix = " · refresh queued" if self._refresh_queued else ""
+        self.query_one("#refresh-status", Label).update(self._refresh_status + suffix)
+
     @work
     async def _converge(self) -> None:
+        try:
+            while self._alive():
+                self._refresh_status = "Refreshing sessions… showing cached results"
+                self._show_refresh_status()
+                await self._receive_refresh()
+                if not self._refresh_queued:
+                    return
+                self._refresh_queued = False
+        finally:
+            self._refreshing = False
+
+    async def _receive_refresh(self) -> None:
         results: SimpleQueue[RefreshResult] = SimpleQueue()
         stopped = Event()
         # The default executor joins scan threads at App.run() exit, delaying resume.
-        Thread(target=self._refresh, args=(results, stopped), daemon=True).start()
+        Thread(
+            target=self._refresh,
+            args=(results, stopped, self._scope is Scope.RECURSIVE),
+            daemon=True,
+        ).start()
         try:
             while self._alive():
                 try:
@@ -284,24 +351,49 @@ class PickerScreen(Screen[Choice | None]):
                 except Empty:
                     await asyncio.sleep(0.02)
                     continue
-                self.query_one("#refresh-status", Label).update(
-                    "Refresh failed — showing cached results"
-                    if result.error
-                    else (
-                        "Partially refreshed — cached sources: "
-                        + ", ".join(sorted(result.unavailable_sources))
-                        if result.unavailable_sources
-                        else "Sessions refreshed"
-                    )
-                )
+                if result.stage == "presence":
+                    self._adopt(None, result.running, None)
+                    return
+                self._refresh_status = self._result_status(result)
+                self._show_refresh_status()
                 if result.error:
-                    self.app.notify(result.error, title="rl resume", severity="warning")
+                    self.app.notify(
+                        result.error, title="rl resume", severity="warning", markup=False
+                    )
                 self._adopt(result.reg, result.running, result.note)
-                return
         finally:
             stopped.set()
 
-    def _refresh(self, results: SimpleQueue[RefreshResult], stopped: Event) -> None:
+    def _result_status(self, result: RefreshResult) -> str:
+        if result.stage == "workspace":
+            status = "Workspace refresh failed" if result.error else "Workspace results ready"
+            return status + " — refreshing all sessions…"
+        if result.error:
+            return "Refresh failed — keeping displayed results; ctrl+r or F5 to retry"
+        if result.unavailable_sources:
+            return "Partially refreshed — cached sources: " + ", ".join(
+                sorted(result.unavailable_sources)
+            )
+        return "Sessions refreshed"
+
+    def _refresh(
+        self, results: SimpleQueue[RefreshResult], stopped: Event, recursive: bool
+    ) -> None:
+        if self._workspace_refresher is not None:
+            try:
+                local = self._workspace_refresher(
+                    self.registry_path, self._now().isoformat(), self.cwd, recursive
+                )
+                self._scan_baseline = local.reg
+                results.put(
+                    RefreshResult(
+                        local.reg, None, local.note, None, local.unavailable_sources, "workspace"
+                    )
+                )
+            except Exception as error:  # noqa: BLE001 -- the full scan can still recover
+                results.put(RefreshResult(None, None, None, str(error), stage="workspace"))
+        if stopped.is_set():
+            return
         reg: dict[str, Any] | None = None
         note: str | None = None
         warning: str | None = None
@@ -310,23 +402,21 @@ class PickerScreen(Screen[Choice | None]):
             if self._refresher is not None:
                 reg, note = self._refresher(self.registry_path, self._now().isoformat())
             else:
-                while not stopped.is_set():
-                    refreshed = self._full_refresher(self.registry_path, self._now().isoformat())
-                    if refreshed is not None:
-                        reg, note = refreshed.reg, refreshed.note
-                        unavailable_sources = refreshed.unavailable_sources
-                        break
-                    stopped.wait(0.1)
+                refreshed = self._full_refresher(self.registry_path, self._now().isoformat())
+                reg, note = refreshed.reg, refreshed.note
+                unavailable_sources = refreshed.unavailable_sources
         except Exception as error:  # noqa: BLE001 -- report in the UI, do not crash it
             warning = f"scan failed: {error}"
         if stopped.is_set():
             return
-        running: frozenset[tuple[str, str]] | None = None
+        if reg is not None:
+            self._scan_baseline = reg
+        results.put(RefreshResult(reg, None, note, warning, unavailable_sources))
         try:
             running = self._presence()
         except Exception:  # noqa: BLE001 -- no presence means no live sessions
-            running = None
-        results.put(RefreshResult(reg, running, note, warning, unavailable_sources))
+            running = frozenset()
+        results.put(RefreshResult(None, running, None, None, stage="presence"))
 
     def _adopt(
         self,
@@ -344,7 +434,7 @@ class PickerScreen(Screen[Choice | None]):
         if running is not None:
             self._live_ids = running
         if note:
-            self.app.notify(note, title="rl resume")
+            self.app.notify(note, title="rl resume", markup=False)
         self.call_next(self._render_rows)
 
     # -- rendering ---------------------------------------------------------
@@ -506,8 +596,10 @@ class PickerApp(App[Choice | None]):
         scope: Scope = Scope.CWD,
         query: str = "",
         target: str | None = None,
+        persist: bool = True,
         refresher: Refresher | None = None,
         full_refresher: FullRefresher | None = None,
+        workspace_refresher: WorkspaceRefresher | None = None,
         presence: Presence | None = None,
         now: Clock | None = None,
         filter_delay: float = FILTER_DELAY,
@@ -519,8 +611,10 @@ class PickerApp(App[Choice | None]):
             scope=scope,
             query=query,
             target=target,
+            persist=persist,
             refresher=refresher,
             full_refresher=full_refresher,
+            workspace_refresher=workspace_refresher,
             presence=presence,
             now=now,
             filter_delay=filter_delay,

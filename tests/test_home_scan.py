@@ -5,6 +5,7 @@ from ringleader import harvests, registry
 from ringleader.home.scan import ScanService
 from ringleader.presence import PresenceUnavailable
 from ringleader.refresh import Refreshed
+from ringleader.tui.background import Done, Failed
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -190,6 +191,28 @@ def test_a_scan_that_raises_outright_is_reported_as_failed(tmp_path):
     service.request()
     assert service.wait(5) is None
     assert len(failures) == 1
+
+
+def test_outcome_distinguishes_a_failed_attempt_from_the_last_usable_scan(tmp_path):
+    path = tmp_path / "registry.json"
+    path.write_text("{}")
+    service = ScanService(
+        str(path),
+        refresher=lambda path, now: (registry.load_registry(path), None),
+        presence=frozenset,
+        models=lambda task: None,
+        clock=lambda: NOW,
+        generation=lambda: 0,
+        deliver=lambda landed: None,
+    )
+    service.request()
+    good = service.wait(5)
+    assert isinstance(service.outcome(), Done)
+    path.write_text("invalid json")
+    service.request()
+    service.wait(5)
+    assert isinstance(service.outcome(), Failed)
+    assert service.latest() is good
 
 
 def test_the_full_refresher_reports_which_sources_were_unavailable():
