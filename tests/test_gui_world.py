@@ -3,8 +3,7 @@ import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
-from ringleader import gui as gui_api
-from ringleader import harvesting, presence, registry
+from ringleader import contract, harvesting, presence, registry
 from scripts import gui_world
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
@@ -46,11 +45,11 @@ def test_fake_hooklinesinker_reports_one_running_visible_session(tmp_path):
 
 
 def _list_rows(reg):
-    return gui_api.list_payload(
+    return contract.list_payload(
         reg,
         NOW_DT.isoformat(),
         registry_path="x",
-        presence=gui_api.PresenceView(None, None),
+        presence=contract.PresenceView(None, None),
         stale_hours=24,
     )["sessions"]
 

@@ -2,7 +2,7 @@ import json
 from datetime import UTC, datetime, timedelta
 
 import pytest
-from ringleader import gui
+from ringleader import contract
 from ringleader.decisions import Outcome
 from ringleader.revalidate import Seen
 
@@ -49,15 +49,15 @@ def _ids(threads):
 
 
 def test_session_row_has_exactly_the_contract_keys():
-    row = gui.session_row(_thread("a", title="named"), NOW, frozenset())
-    assert set(row) == set(gui.SESSION_ROW_KEYS)
-    assert list(gui.SESSION_ROW_KEYS) == sorted(gui.SESSION_ROW_KEYS)
+    row = contract.session_row(_thread("a", title="named"), NOW, frozenset())
+    assert set(row) == set(contract.SESSION_ROW_KEYS)
+    assert list(contract.SESSION_ROW_KEYS) == sorted(contract.SESSION_ROW_KEYS)
 
 
 def test_session_row_maps_registry_fields():
-    titled = gui.session_row(_thread("a", title="named"), NOW, frozenset())
-    ai = gui.session_row(_thread("b", aiTitle="ai named"), NOW, frozenset())
-    git = gui.session_row(_thread("c", gitProjectLabel="juggler"), NOW, frozenset())
+    titled = contract.session_row(_thread("a", title="named"), NOW, frozenset())
+    ai = contract.session_row(_thread("b", aiTitle="ai named"), NOW, frozenset())
+    git = contract.session_row(_thread("c", gitProjectLabel="juggler"), NOW, frozenset())
     assert (titled["label"], ai["label"], git["project_label"]) == ("named", "ai named", "juggler")
     assert titled["id"] == "claude-code:a"
     assert (titled["source"], titled["agent"]) == ("claude-code", "claude")
@@ -65,26 +65,26 @@ def test_session_row_maps_registry_fields():
 
 
 def test_session_row_clips_long_text():
-    row = gui.session_row(_thread("a", lastPrompt="x" * 2000), NOW, frozenset())
-    assert len(row["last_prompt"]) == gui.LIST_TEXT_MAX_CHARS
+    row = contract.session_row(_thread("a", lastPrompt="x" * 2000), NOW, frozenset())
+    assert len(row["last_prompt"]) == contract.LIST_TEXT_MAX_CHARS
     assert row["last_prompt"].endswith("…")
 
 
 def test_clip_keeps_none_and_short_text():
-    assert gui.clip(None, 5) is None
-    assert gui.clip("short", 5) == "short"
-    assert gui.clip("longer", 5) == "long…"
+    assert contract.clip(None, 5) is None
+    assert contract.clip("short", 5) == "short"
+    assert contract.clip("longer", 5) == "long…"
 
 
 def test_is_running_reads_the_live_set():
     thread = _thread("s1")
-    assert gui.is_running(thread, frozenset({("claude", "s1")})) is True
-    assert gui.is_running(thread, frozenset({("claude", "other")})) is False
-    assert gui.is_running(thread, None) is None
+    assert contract.is_running(thread, frozenset({("claude", "s1")})) is True
+    assert contract.is_running(thread, frozenset({("claude", "other")})) is False
+    assert contract.is_running(thread, None) is None
 
 
 def test_lifecycle_block_names_sources_without_a_filesystem_lifecycle():
-    block = gui.lifecycle_block(_thread("o", source="opencode", file="/x/o.json"))
+    block = contract.lifecycle_block(_thread("o", source="opencode", file="/x/o.json"))
     assert block is not None
     assert "no filesystem transcript lifecycle" in block
 
@@ -102,12 +102,12 @@ def test_inbox_threads_selects_and_orders_the_triage_inbox():
         ),
         _thread("hidden", filteredBy="zz*"),
     ]
-    assert _ids(gui.inbox_threads(_reg(threads), NOW)) == ["oldest", "woke", "recent"]
+    assert _ids(contract.inbox_threads(_reg(threads), NOW)) == ["oldest", "woke", "recent"]
 
 
 def test_inbox_threads_breaks_mtime_ties_by_qualified_id():
     threads = [_thread("b"), _thread("a", source="codex"), _thread("a")]
-    ordered = gui.inbox_threads(_reg(threads), NOW)
+    ordered = contract.inbox_threads(_reg(threads), NOW)
     assert [(t.get("source"), t["sessionId"]) for t in ordered] == [
         ("claude-code", "a"),
         ("claude-code", "b"),
@@ -115,11 +115,11 @@ def test_inbox_threads_breaks_mtime_ties_by_qualified_id():
     ]
 
 
-NO_ONE_LIVE = gui.PresenceView(frozenset(), None)
+NO_ONE_LIVE = contract.PresenceView(frozenset(), None)
 
 
 def _payload(reg, presence=NO_ONE_LIVE, stale_hours=8):
-    return gui.list_payload(
+    return contract.list_payload(
         reg, NOW, registry_path="/fixture/registry.json", presence=presence, stale_hours=stale_hours
     )
 
@@ -136,7 +136,7 @@ def test_list_payload_flags_recent_and_woke_rows():
 
 
 def test_list_payload_reports_unknown_presence():
-    doc = _payload(_reg([_thread("a"), _thread("b")]), presence=gui.PresenceView(None, "x"))
+    doc = _payload(_reg([_thread("a"), _thread("b")]), presence=contract.PresenceView(None, "x"))
     assert [row["running"] for row in doc["sessions"]] == [None, None]
     assert doc["presence"] == {"state": "unknown", "problem": "x"}
 
@@ -160,7 +160,7 @@ def test_list_payload_without_a_roundup_has_no_age():
 
 def test_scan_payload_counts_membership_changes():
     a, b, c = ("claude-code", "a"), ("claude-code", "b"), ("claude-code", "c")
-    doc = gui.scan_payload(NOW, {a, b}, {b, c}, frozenset({"pi", "codex"}))
+    doc = contract.scan_payload(NOW, {a, b}, {b, c}, frozenset({"pi", "codex"}))
     assert doc == {
         "version": 1,
         "kind": "scan",
@@ -172,14 +172,14 @@ def test_scan_payload_counts_membership_changes():
 
 
 def test_encode_document_replaces_lone_surrogates():
-    encoded = gui.encode_document({"t": "a\ud83db"})
+    encoded = contract.encode_document({"t": "a\ud83db"})
     assert json.loads(encoded.decode("utf-8")) == {"t": "a?b"}
     assert encoded.endswith(b"\n")
 
 
 def test_tail_item_carries_the_thread_stamp():
     thread = _thread("a", fileFingerprint="1:2:3:4:5")
-    item = gui.tail_item("claude-code:a", thread, "xyz", 1000, None)
+    item = contract.tail_item("claude-code:a", thread, "xyz", 1000, None)
     assert set(item) == TAIL_ITEM_KEYS
     assert item == {
         "id": "claude-code:a",
@@ -193,45 +193,47 @@ def test_tail_item_carries_the_thread_stamp():
 
 
 def test_tail_item_for_a_missing_session_is_empty():
-    item = gui.tail_item("claude-code:a", None, None, 1000, "no longer in the registry")
+    item = contract.tail_item("claude-code:a", None, None, 1000, "no longer in the registry")
     assert (item["text"], item["mtime"], item["file_fingerprint"]) == ("", None, None)
     assert item["unavailable"] == "no longer in the registry"
 
 
 def test_tail_item_marks_a_full_window_as_truncated():
-    item = gui.tail_item("claude-code:a", _thread("a"), "x" * 1000, 1000, None)
+    item = contract.tail_item("claude-code:a", _thread("a"), "x" * 1000, 1000, None)
     assert item["truncated"] is True
 
 
 def test_tails_and_error_payloads():
-    items = [gui.tail_item("claude-code:a", None, None, 1000, "no longer in the registry")]
-    tails = gui.tails_payload(items)
+    items = [contract.tail_item("claude-code:a", None, None, 1000, "no longer in the registry")]
+    tails = contract.tails_payload(items)
     assert set(tails) == {"version", "kind", "items"}
     assert (tails["kind"], tails["items"]) == ("tails", items)
-    assert gui.error_payload("boom") == {"version": 1, "kind": "error", "message": "boom"}
+    assert contract.error_payload("boom") == {"version": 1, "kind": "error", "message": "boom"}
 
 
 def test_normalize_until_converts_an_offset_to_utc():
-    assert gui.normalize_until("2026-10-20T09:00:00+02:00", NOW_DT) == "2026-10-20T07:00:00+00:00"
+    assert (
+        contract.normalize_until("2026-10-20T09:00:00+02:00", NOW_DT) == "2026-10-20T07:00:00+00:00"
+    )
 
 
 def test_normalize_until_accepts_a_zulu_suffix():
-    assert gui.normalize_until("2026-10-20T09:00:00Z", NOW_DT) == "2026-10-20T09:00:00+00:00"
+    assert contract.normalize_until("2026-10-20T09:00:00Z", NOW_DT) == "2026-10-20T09:00:00+00:00"
 
 
 def test_normalize_until_rejects_a_naive_time():
     with pytest.raises(ValueError, match="timezone offset"):
-        gui.normalize_until("2026-10-20T09:00:00", NOW_DT)
+        contract.normalize_until("2026-10-20T09:00:00", NOW_DT)
 
 
 def test_normalize_until_rejects_a_past_time():
     with pytest.raises(ValueError, match="in the future"):
-        gui.normalize_until("2026-10-14T09:00:00+00:00", NOW_DT)
+        contract.normalize_until("2026-10-14T09:00:00+00:00", NOW_DT)
 
 
 def test_normalize_until_rejects_text_that_is_not_a_time():
     with pytest.raises(ValueError, match="not an ISO 8601 time"):
-        gui.normalize_until("next tuesday", NOW_DT)
+        contract.normalize_until("next tuesday", NOW_DT)
 
 
 SEEN = Seen(("claude-code", "s1"), "s1-title", NOW, None)
@@ -244,29 +246,31 @@ def test_from_outcome_reports_the_first_refusal_reason():
         wrote=False,
         refused=((SEEN, "changed since you looked"),),
     )
-    result = gui.from_outcome(outcome)
+    result = contract.from_outcome(outcome)
     assert (result.status, result.reason) == ("refused", "changed since you looked")
 
 
 def test_from_outcome_reports_a_partial_write_as_failed():
     outcome = Outcome(ok=False, message="archived x on disk, but …", wrote=True, path="/a/x")
-    result = gui.from_outcome(outcome)
+    result = contract.from_outcome(outcome)
     assert (result.status, result.wrote, result.path) == ("failed", True, "/a/x")
 
 
 def test_from_outcome_copies_an_ok_outcome():
     outcome = Outcome(ok=True, message="archived x", wrote=True, warnings=("w",), path="/a/x")
-    assert gui.from_outcome(outcome) == gui.GuiOutcome(
+    assert contract.from_outcome(outcome) == contract.GuiOutcome(
         "ok", None, "archived x", True, "/a/x", ("w",)
     )
 
 
 def test_refused_defaults_its_message_to_the_reason():
-    assert gui.refused("gone") == gui.GuiOutcome("refused", "gone", "gone")
+    assert contract.refused("gone") == contract.GuiOutcome("refused", "gone", "gone")
 
 
 def test_outcome_payload_has_exactly_the_contract_keys():
-    doc = gui.outcome_payload("archive", "claude-code:s1", gui.GuiOutcome("ok", None, "m", True))
+    doc = contract.outcome_payload(
+        "archive", "claude-code:s1", contract.GuiOutcome("ok", None, "m", True)
+    )
     assert set(doc) == {
         "version",
         "kind",

@@ -3,8 +3,7 @@ import subprocess
 import sys
 import time
 
-from ringleader import gui as gui_api
-from ringleader import gui_cli, registry
+from ringleader import contract, contract_io, registry
 from tests.test_rl_gui import gui_world, subprocess_env
 
 FORBIDDEN = {
@@ -23,7 +22,7 @@ LIST_BUDGET_SECONDS = 0.4
 
 IMPORT_SCRIPT = f"""
 import json, sys
-import ringleader.gui_cli
+import ringleader.contract_io
 print(json.dumps(sorted(set(sys.modules) & set({FORBIDDEN_SET}))))
 """
 
@@ -51,7 +50,7 @@ def _run(script, env, *args):
     )
 
 
-def test_importing_gui_cli_stays_off_the_heavy_modules(monkeypatch, tmp_path):
+def test_importing_contract_io_stays_off_the_heavy_modules(monkeypatch, tmp_path):
     fixture = gui_world(monkeypatch, tmp_path, threads=4, transcripts=False)
     result = _run(IMPORT_SCRIPT, subprocess_env(fixture))
     assert result.returncode == 0, result.stderr
@@ -74,12 +73,12 @@ def test_list_over_two_thousand_threads_meets_its_budget(monkeypatch, tmp_path, 
         tmp_path,
         threads=2000,
         transcripts=False,
-        presence=gui_api.PresenceView(frozenset(), None),
+        presence=contract.PresenceView(frozenset(), None),
     )
     times = []
     for _ in range(3):
         start = time.perf_counter()
-        assert gui_cli.cmd_gui_list(["--registry", str(fixture.registry_path)]) == 0
+        assert contract_io.cmd_gui_list(["--registry", str(fixture.registry_path)]) == 0
         times.append(time.perf_counter() - start)
         doc = json.loads(capsysbinary.readouterr().out)
     assert min(times) <= LIST_BUDGET_SECONDS
@@ -96,7 +95,7 @@ with open(os.devnull, "w") as sink, contextlib.redirect_stdout(sink):
     code = ringleader.cli.main(
         ["gui", "decide", "keep_going", row_id, f"--mtime={mtime}", "--registry", reg]
     )
-print(json.dumps([code, "ringleader.gui_decide" in sys.modules]), file=sys.stderr)
+print(json.dumps([code, "ringleader.guarded" in sys.modules]), file=sys.stderr)
 """
 
 

@@ -4,7 +4,7 @@ import os
 import sys
 from typing import Any, TextIO
 
-from . import gui_cli, registry, session_env
+from . import contract_io, registry, session_env
 
 _FLAT = (
     "overview",
@@ -123,5 +123,5 @@ def main(argv: list[str] | None = None) -> int:
         _usage()
         return 0
     if argv[0] == "gui":
-        return _walk(gui_cli.GUI_COMMANDS, ["gui"], argv[1:])
+        return _walk(contract_io.GUI_COMMANDS, ["gui"], argv[1:])
     return _walk(_table(), [], argv)

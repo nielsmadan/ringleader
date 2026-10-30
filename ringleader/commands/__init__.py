@@ -76,12 +76,12 @@ _SESSION = {
         "cleaned": Lazy("cleaned", "cmd_cleaned"),
     },
 }
-# gui_cli sits beside this package so `rl gui` can dispatch it without importing it
+# contract_io sits beside this package so `rl gui` can dispatch it without importing it
 _GUI = {
-    "list": Lazy(".gui_cli", "cmd_gui_list"),
-    "scan": Lazy(".gui_cli", "cmd_gui_scan"),
-    "tail": Lazy(".gui_cli", "cmd_gui_tail"),
-    "decide": Lazy(".gui_cli", "cmd_gui_decide"),
+    "list": Lazy(".contract_io", "cmd_gui_list"),
+    "scan": Lazy(".contract_io", "cmd_gui_scan"),
+    "tail": Lazy(".contract_io", "cmd_gui_tail"),
+    "decide": Lazy(".contract_io", "cmd_gui_decide"),
 }
 _MEM = {
     "refresh": Lazy("mem_scan", "cmd_mem_scan"),

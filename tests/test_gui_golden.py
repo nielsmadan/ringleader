@@ -2,8 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from ringleader import gui as gui_api
-from ringleader import gui_cli, presence, registry
+from ringleader import contract, contract_io, presence, registry
 from ringleader.slug import slugify
 from tests.test_rl_gui import NOW_DT, gui_world
 
@@ -46,17 +45,17 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
     reg_arg = ["--registry", str(fixture.registry_path)]
     reg = registry.load_registry(fixture.registry_path)
     first_claude = next(
-        t for t in gui_api.inbox_threads(reg, NOW_DT.isoformat()) if t["source"] == "claude-code"
+        t for t in contract.inbox_threads(reg, NOW_DT.isoformat()) if t["source"] == "claude-code"
     )
     live = frozenset({("claude", first_claude["sessionId"])})
-    monkeypatch.setattr(gui_cli, "_presence", lambda: gui_api.PresenceView(live, None))
+    monkeypatch.setattr(contract_io, "_presence", lambda: contract.PresenceView(live, None))
     monkeypatch.setattr(presence.PresenceClient, "require_running_session_ids", lambda self: live)
     roots = [str(tmp_path), str(tmp_path.resolve())]
 
-    listing = _run(gui_cli.cmd_gui_list, capsys, *reg_arg)
+    listing = _run(contract_io.cmd_gui_list, capsys, *reg_arg)
     rows = listing["sessions"]
     tails = _run(
-        gui_cli.cmd_gui_tail,
+        contract_io.cmd_gui_tail,
         capsys,
         rows[0]["id"],
         rows[1]["id"],
@@ -65,7 +64,7 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
     )
     idle = next(r for r in rows if r["running"] is False)
     ok = _run(
-        gui_cli.cmd_gui_decide,
+        contract_io.cmd_gui_decide,
         capsys,
         "keep_going",
         idle["id"],
@@ -75,7 +74,7 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
     )
     other = next(r for r in rows if r["running"] is False and r["id"] != idle["id"])
     refused = _run(
-        gui_cli.cmd_gui_decide,
+        contract_io.cmd_gui_decide,
         capsys,
         "archive",
         other["id"],

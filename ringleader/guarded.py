@@ -5,8 +5,18 @@ from collections.abc import Callable
 from datetime import datetime
 from typing import Any
 
-from . import agents, config, decisions, models, paths, presence, registry, resume, revalidate
-from . import gui as gui_api
+from . import (
+    agents,
+    config,
+    contract,
+    decisions,
+    models,
+    paths,
+    presence,
+    registry,
+    resume,
+    revalidate,
+)
 from .decisions import ArchiveOp, DeleteOp, HarvestSaveOp, KeepGoingOp, KeepOp, OpContext, SnoozeOp
 from .models import Model, ModelError, proc
 from .revalidate import Seen
@@ -38,41 +48,41 @@ def _context(registry_path: str, now: Callable[[], datetime]) -> OpContext:
     )
 
 
-def _run(op: decisions.Op, ctx: OpContext) -> gui_api.GuiOutcome:
-    return gui_api.from_outcome(decisions.execute(op, ctx))
+def _run(op: decisions.Op, ctx: OpContext) -> contract.GuiOutcome:
+    return contract.from_outcome(decisions.execute(op, ctx))
 
 
 def _remove(
     action: decisions.Decision, thread: dict[str, Any] | None, seen: Seen, ctx: OpContext
-) -> gui_api.GuiOutcome:
+) -> contract.GuiOutcome:
     blocked = None if thread is None else decisions.lifecycle_reason(thread, action)
     if blocked is not None:
-        return gui_api.refused(blocked)
+        return contract.refused(blocked)
     return _run(ArchiveOp(seen) if action == "archive" else DeleteOp(seen), ctx)
 
 
 def _snooze(
     seen: Seen, until: str, now: Callable[[], datetime], ctx: OpContext
-) -> gui_api.GuiOutcome:
+) -> contract.GuiOutcome:
     try:
-        when = gui_api.normalize_until(until, now())
+        when = contract.normalize_until(until, now())
     except ValueError as error:
-        return gui_api.refused(str(error))
+        return contract.refused(str(error))
     return _run(SnoozeOp(seen, when), ctx)
 
 
-def _harvest_gate(thread: dict[str, Any], seen: Seen, ctx: OpContext) -> gui_api.GuiOutcome | None:
+def _harvest_gate(thread: dict[str, Any], seen: Seen, ctx: OpContext) -> contract.GuiOutcome | None:
     reason = (
         decisions.lifecycle_reason(thread, "harvest")
         or revalidate.changed_reason(thread, seen)
         or revalidate.running_reason(thread, ctx.presence(), "refuse")
     )
-    return None if reason is None else gui_api.refused(reason)
+    return None if reason is None else contract.refused(reason)
 
 
-def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> gui_api.GuiOutcome:
+def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> contract.GuiOutcome:
     if thread is None:
-        return gui_api.refused(_GONE)
+        return contract.refused(_GONE)
     blocked = _harvest_gate(thread, seen, ctx)
     if blocked is not None:
         return blocked
@@ -80,13 +90,13 @@ def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> gui_a
     if thread.get("decision") != "harvested":
         model = _harvest_model()
         if model is None:
-            return gui_api.refused("no harvest model configured — run rl config")
+            return contract.refused("no harvest model configured — run rl config")
         try:
             markdown = decisions.harvest_markdown(thread, model)
         except (ModelError, RuntimeError, OSError) as error:
-            return gui_api.GuiOutcome("failed", None, f"harvest {seen.label} failed: {error}")
+            return contract.GuiOutcome("failed", None, f"harvest {seen.label} failed: {error}")
         if markdown is None:
-            return gui_api.GuiOutcome("empty", None, "nothing worth harvesting")
+            return contract.GuiOutcome("empty", None, "nothing worth harvesting")
     return _run(HarvestSaveOp(seen, markdown), ctx)
 
 
@@ -100,9 +110,9 @@ def _seen(qualified: str, thread: dict[str, Any] | None, args: argparse.Namespac
     )
 
 
-def decide(args: argparse.Namespace, now: Callable[[], datetime]) -> gui_api.GuiOutcome:
+def decide(args: argparse.Namespace, now: Callable[[], datetime]) -> contract.GuiOutcome:
     if args.action in _STAMPED and revalidate.content_stamp(args.fingerprint) is None:
-        return gui_api.refused(revalidate.NO_STAMP)
+        return contract.refused(revalidate.NO_STAMP)
     thread = registry.find_session(registry.load_registry(args.registry), args.id)
     seen = _seen(args.id, thread, args)
     ctx = _context(args.registry, now)

@@ -8,7 +8,16 @@ from dataclasses import replace
 from pathlib import Path
 
 import pytest
-from ringleader import batch, decisions, gui_cli, harvests, overview, registry, revalidate, stateio
+from ringleader import (
+    batch,
+    contract_io,
+    decisions,
+    harvests,
+    overview,
+    registry,
+    revalidate,
+    stateio,
+)
 from ringleader.decisions import (
     ArchiveOp,
     ClassifyOp,
@@ -508,7 +517,7 @@ def test_a_delete_whose_registry_write_fails_reports_the_unlink(tmp_path, monkey
 
 @contextlib.contextmanager
 def _gui_sigterm_handler():
-    previous = signal.signal(signal.SIGTERM, gui_cli._terminate)
+    previous = signal.signal(signal.SIGTERM, contract_io._terminate)
     try:
         yield
     finally:

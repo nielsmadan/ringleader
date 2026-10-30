@@ -14,8 +14,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from ringleader import gui as gui_api
-from ringleader import registry, resume
+from ringleader import contract, registry, resume
 from ringleader.agents import source_of
 from scripts.tui_fixture import build_fixture
 
@@ -67,7 +66,7 @@ def _structured(payload: dict[str, object]) -> str:
 
 def _running_thread(reg: dict[str, object], now: datetime) -> dict[str, object]:
     visible = [
-        t for t in gui_api.inbox_threads(reg, now.isoformat()) if source_of(t) == "claude-code"
+        t for t in contract.inbox_threads(reg, now.isoformat()) if source_of(t) == "claude-code"
     ]
     if not visible:
         raise RuntimeError("the fixture produced no visible claude-code session")

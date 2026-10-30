@@ -1,7 +1,7 @@
 # GUI contract (`rl gui`, version 1)
 
-Modules: `ringleader/gui.py` (pure documents), `ringleader/gui_cli.py` (list, scan, tail and
-argument parsing for decide), `ringleader/gui_decide.py` (decide's work),
+Modules: `ringleader/contract.py` (pure documents), `ringleader/contract_io.py` (list, scan, tail and
+argument parsing for decide), `ringleader/guarded.py` (decide's work),
 `scripts/gui_world.py` (a synthetic world for development and QA).
 
 ## Purpose
@@ -57,11 +57,11 @@ rl gui decide ACTION ID --mtime=MTIME [--fingerprint=FP] [--until=ISO] [--regist
 
 The app calls `rl gui list` often, so the read path stays cheap.
 
-- `cli.main` dispatches `argv[0] == "gui"` to `gui_cli.GUI_COMMANDS` before the command table is
+- `cli.main` dispatches `argv[0] == "gui"` to `contract_io.GUI_COMMANDS` before the command table is
   imported (`cli._table()` imports `ringleader.commands` on first use).
-- `gui_cli.py` and `gui_decide.py` live in the top-level package, not in `ringleader/commands/`:
+- `contract_io.py` and `guarded.py` live in the top-level package, not in `ringleader/commands/`:
   importing any module there runs `commands/__init__.py`, which imports every command.
-- `decide` imports `gui_decide` (and with it `decisions`, `revalidate`, `agents`, `models`) on
+- `decide` imports `guarded` (and with it `decisions`, `revalidate`, `agents`, `models`) on
   demand inside `cmd_gui_decide`. `list|scan|tail` never load them.
 - `home/state.py` needs only `roundup_clock.is_stale`, so `is_stale` lives in the light module
   `ringleader/roundup_clock.py` (`roundup.py` re-exports it).

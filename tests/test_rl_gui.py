@@ -7,8 +7,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from ringleader import cli, gui_cli, gui_decide, presence, registry
-from ringleader import gui as gui_api
+from ringleader import cli, contract, contract_io, guarded, presence, registry
 from ringleader.models import proc
 from scripts.tui_fixture import Fixture, build_fixture
 
@@ -21,15 +20,15 @@ def gui_world(
     *,
     threads: int,
     transcripts: bool,
-    presence: gui_api.PresenceView | None = None,
+    presence: contract.PresenceView | None = None,
 ) -> Fixture:
     fixture = build_fixture(root, threads=threads, now=NOW_DT, transcripts=transcripts)
     for name, value in fixture.env.items():
         monkeypatch.setenv(name, value)
     monkeypatch.delenv("OPENCODE_DB", raising=False)
-    monkeypatch.setattr(gui_cli, "_now_dt", lambda: NOW_DT)
-    view = presence if presence is not None else gui_api.PresenceView(frozenset(), None)
-    monkeypatch.setattr(gui_cli, "_presence", lambda: view)
+    monkeypatch.setattr(contract_io, "_now_dt", lambda: NOW_DT)
+    view = presence if presence is not None else contract.PresenceView(frozenset(), None)
+    monkeypatch.setattr(contract_io, "_presence", lambda: view)
     return fixture
 
 
@@ -49,12 +48,12 @@ def _reg_arg(fixture):
 
 
 def _list(fixture, capsys):
-    assert gui_cli.cmd_gui_list(_reg_arg(fixture)) == 0
+    assert contract_io.cmd_gui_list(_reg_arg(fixture)) == 0
     return json.loads(capsys.readouterr().out)
 
 
 def _tail(fixture, capsys, *args):
-    assert gui_cli.cmd_gui_tail([*args, *_reg_arg(fixture)]) == 0
+    assert contract_io.cmd_gui_tail([*args, *_reg_arg(fixture)]) == 0
     return json.loads(capsys.readouterr().out)
 
 
@@ -133,7 +132,7 @@ def test_tail_replaces_lone_surrogates(world, capsysbinary):
     broken = json.dumps(last_user).replace('"SURROGATE"', '"broken \\ud83d emoji"')
     with path.open("a", encoding="utf-8") as fh:
         fh.write(broken + "\n")
-    assert gui_cli.cmd_gui_tail([row["id"], *_reg_arg(world)]) == 0
+    assert contract_io.cmd_gui_tail([row["id"], *_reg_arg(world)]) == 0
     raw = capsysbinary.readouterr().out
     doc = json.loads(raw.decode("utf-8", errors="strict"))
     assert "broken ? emoji" in doc["items"][0]["text"]
@@ -150,7 +149,7 @@ def test_tail_replaces_lone_surrogates(world, capsysbinary):
 )
 def test_tail_usage_errors_exit_2_without_stdout(world, capsys, args):
     with pytest.raises(SystemExit) as raised:
-        gui_cli.cmd_gui_tail([*args, *_reg_arg(world)])
+        contract_io.cmd_gui_tail([*args, *_reg_arg(world)])
     assert raised.value.code == 2
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -159,7 +158,7 @@ def test_tail_usage_errors_exit_2_without_stdout(world, capsys, args):
 
 def test_scan_reports_added_sessions_as_one_document(world, capsys):
     _edit_registry(world, lambda data: data.update(threads=[]))
-    assert gui_cli.cmd_gui_scan(_reg_arg(world)) == 0
+    assert contract_io.cmd_gui_scan(_reg_arg(world)) == 0
     out = capsys.readouterr().out
     doc = json.loads(out)
     assert doc["kind"] == "scan"
@@ -170,7 +169,7 @@ def test_scan_reports_added_sessions_as_one_document(world, capsys):
 def test_list_on_a_corrupt_registry_prints_an_error_document(world, tmp_path, capsys):
     bad = tmp_path / "corrupt.json"
     bad.write_text("{not json", encoding="utf-8")
-    assert gui_cli.cmd_gui_list(["--registry", str(bad)]) == 1
+    assert contract_io.cmd_gui_list(["--registry", str(bad)]) == 1
     doc = json.loads(capsys.readouterr().out)
     assert (doc["version"], doc["kind"]) == (1, "error")
     assert doc["message"]
@@ -199,7 +198,7 @@ def test_bare_gui_lists_its_subcommands(capsys):
 
 def test_the_command_table_lists_the_gui_dispatch_table():
     assert {name: entry.resolve() for name, entry in cli.TABLE["gui"].items()} == (
-        gui_cli.GUI_COMMANDS
+        contract_io.GUI_COMMANDS
     )
 
 
@@ -267,7 +266,7 @@ def decide_world(world, monkeypatch, kills):
 
 
 def _model(monkeypatch, model):
-    monkeypatch.setattr(gui_decide, "_harvest_model", lambda: model)
+    monkeypatch.setattr(guarded, "_harvest_model", lambda: model)
 
 
 def _target(fixture, capsys):
@@ -283,7 +282,7 @@ def _target(fixture, capsys):
 
 
 def _decide(fixture, capsys, *args):
-    code = gui_cli.cmd_gui_decide([*args, *_reg_arg(fixture)])
+    code = contract_io.cmd_gui_decide([*args, *_reg_arg(fixture)])
     out = capsys.readouterr().out
     assert code == 0
     doc = json.loads(out)
@@ -335,7 +334,7 @@ def test_archive_with_another_mtime_is_refused(decide_world, capsys):
 def test_a_destructive_decision_without_a_fingerprint_is_refused(
     decide_world, capsys, monkeypatch, action
 ):
-    monkeypatch.setattr(gui_decide, "_harvest_model", lambda: pytest.fail("model resolved"))
+    monkeypatch.setattr(guarded, "_harvest_model", lambda: pytest.fail("model resolved"))
     row = _target(decide_world, capsys)
     doc = _decide(decide_world, capsys, action, row["id"], f"--mtime={row['mtime']}")
     assert (doc["status"], doc["reason"]) == (
@@ -424,7 +423,7 @@ def test_snooze_into_the_past_is_refused(decide_world, capsys):
 )
 def test_decide_usage_errors_exit_2_without_stdout(decide_world, capsys, args):
     with pytest.raises(SystemExit) as raised:
-        gui_cli.cmd_gui_decide([*args, *_reg_arg(decide_world)])
+        contract_io.cmd_gui_decide([*args, *_reg_arg(decide_world)])
     assert raised.value.code == 2
     captured = capsys.readouterr()
     assert captured.out == ""
@@ -585,7 +584,7 @@ def test_sigterm_during_a_harvest_exits_143_and_reaps_the_model(
     row = _target(decide_world, capsys)
     before = signal.getsignal(signal.SIGTERM)
     with pytest.raises(SystemExit) as exited:
-        gui_cli.cmd_gui_decide([*_stamped(row, "harvest"), *_reg_arg(decide_world)])
+        contract_io.cmd_gui_decide([*_stamped(row, "harvest"), *_reg_arg(decide_world)])
     assert exited.value.code == 143
     assert capsys.readouterr().out == ""
     assert kills == [1]

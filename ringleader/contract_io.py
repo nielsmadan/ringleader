@@ -10,8 +10,7 @@ from pathlib import Path
 from types import FrameType
 from typing import Any, Final, NoReturn
 
-from . import config, export, paths, presence, refresh, registry
-from . import gui as gui_api
+from . import config, contract, export, paths, presence, refresh, registry
 
 _EXPECTED = (OSError, ValueError, KeyError, RuntimeError)
 _ACTIONS = ("harvest", "archive", "delete", "snooze", "keep", "keep_going")
@@ -22,17 +21,17 @@ def _now_dt() -> datetime:
     return datetime.now(UTC)
 
 
-def _presence() -> gui_api.PresenceView:
+def _presence() -> contract.PresenceView:
     try:
         live = presence.PresenceClient().require_running_session_ids()
     except (presence.PresenceUnavailable, OSError) as error:
-        return gui_api.PresenceView(None, str(error))
-    return gui_api.PresenceView(live, None)
+        return contract.PresenceView(None, str(error))
+    return contract.PresenceView(live, None)
 
 
 def _emit(doc: dict[str, Any]) -> None:
     sys.stdout.flush()
-    sys.stdout.buffer.write(gui_api.encode_document(doc))
+    sys.stdout.buffer.write(contract.encode_document(doc))
     sys.stdout.flush()
 
 
@@ -52,7 +51,7 @@ def _run(work: Callable[[], dict[str, Any]]) -> int:
         with contextlib.redirect_stdout(sys.stderr):
             doc = work()
     except _EXPECTED as error:
-        _emit(gui_api.error_payload(str(error)))
+        _emit(contract.error_payload(str(error)))
         return 1
     _emit(doc)
     return 0
@@ -61,7 +60,7 @@ def _run(work: Callable[[], dict[str, Any]]) -> int:
 def _list_doc(registry_path: str) -> dict[str, Any]:
     now_iso = _now_dt().isoformat()
     reg = registry.load_registry(registry_path)
-    return gui_api.list_payload(
+    return contract.list_payload(
         reg,
         now_iso,
         registry_path=str(Path(registry_path).resolve()),
@@ -80,7 +79,7 @@ def _scan_doc(registry_path: str) -> dict[str, Any]:
     before = {registry.identity(t) for t in registry.load_registry(registry_path)["threads"]}
     refreshed = refresh.refresh_registry(registry_path, now_iso)
     after = {registry.identity(t) for t in refreshed.reg["threads"]}
-    return gui_api.scan_payload(now_iso, before, after, refreshed.unavailable_sources)
+    return contract.scan_payload(now_iso, before, after, refreshed.unavailable_sources)
 
 
 def cmd_gui_scan(argv: list[str]) -> int:
@@ -92,37 +91,37 @@ def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str,
     try:
         thread = registry.find_session(reg, qualified)
     except registry.AmbiguousSession:
-        return gui_api.tail_item(qualified, None, None, max_chars, "ambiguous session id")
+        return contract.tail_item(qualified, None, None, max_chars, "ambiguous session id")
     except ValueError:
         thread = None
     if thread is None:
-        return gui_api.tail_item(qualified, None, None, max_chars, "no longer in the registry")
+        return contract.tail_item(qualified, None, None, max_chars, "no longer in the registry")
     try:
         text = export.render_tail(thread, max_chars)
     except FileNotFoundError:
-        return gui_api.tail_item(qualified, thread, None, max_chars, "transcript not found")
+        return contract.tail_item(qualified, thread, None, max_chars, "transcript not found")
     except Exception as error:  # noqa: BLE001 - one bad transcript must not fail the batch
         reason = f"could not read the transcript ({type(error).__name__})"
-        return gui_api.tail_item(qualified, thread, None, max_chars, reason)
-    return gui_api.tail_item(qualified, thread, text, max_chars, None)
+        return contract.tail_item(qualified, thread, None, max_chars, reason)
+    return contract.tail_item(qualified, thread, text, max_chars, None)
 
 
 def _tails_doc(registry_path: str, ids: list[str], max_chars: int) -> dict[str, Any]:
     reg = registry.load_registry(registry_path)
-    return gui_api.tails_payload([_tail_item(reg, qualified, max_chars) for qualified in ids])
+    return contract.tails_payload([_tail_item(reg, qualified, max_chars) for qualified in ids])
 
 
 def cmd_gui_tail(argv: list[str]) -> int:
     ap = _parser("tail")
     ap.add_argument("ids", nargs="+", metavar="ID")
-    ap.add_argument("--max-chars", type=int, default=gui_api.TAIL_DEFAULT_CHARS)
+    ap.add_argument("--max-chars", type=int, default=contract.TAIL_DEFAULT_CHARS)
     args = _parse(ap, argv)
-    if not gui_api.TAIL_MIN_CHARS <= args.max_chars <= gui_api.TAIL_MAX_CHARS:
+    if not contract.TAIL_MIN_CHARS <= args.max_chars <= contract.TAIL_MAX_CHARS:
         ap.error(
-            f"--max-chars must be between {gui_api.TAIL_MIN_CHARS} and {gui_api.TAIL_MAX_CHARS}"
+            f"--max-chars must be between {contract.TAIL_MIN_CHARS} and {contract.TAIL_MAX_CHARS}"
         )
-    if len(args.ids) > gui_api.TAIL_MAX_IDS:
-        ap.error(f"at most {gui_api.TAIL_MAX_IDS} ids per call")
+    if len(args.ids) > contract.TAIL_MAX_IDS:
+        ap.error(f"at most {contract.TAIL_MAX_IDS} ids per call")
     if len(set(args.ids)) != len(args.ids):
         ap.error("each id may appear only once")
     return _run(lambda: _tails_doc(args.registry, args.ids, args.max_chars))
@@ -151,15 +150,15 @@ def _terminate(_signum: int, _frame: FrameType | None) -> NoReturn:
 
 def cmd_gui_decide(argv: list[str]) -> int:
     args = _decide_args(argv)
-    from . import gui_decide  # noqa: PLC0415 -- keeps rl gui list/scan/tail startup fast
+    from . import guarded  # noqa: PLC0415 -- keeps rl gui list/scan/tail startup fast
 
     previous = signal.signal(signal.SIGTERM, _terminate)
     try:
         return _run(
-            lambda: gui_api.outcome_payload(args.action, args.id, gui_decide.decide(args, _now_dt))
+            lambda: contract.outcome_payload(args.action, args.id, guarded.decide(args, _now_dt))
         )
     finally:
-        gui_decide.proc.kill_all_children()
+        guarded.proc.kill_all_children()
         signal.signal(signal.SIGTERM, previous)
 
 
