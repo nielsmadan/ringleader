@@ -11,6 +11,9 @@ OpenCode storage: verified 2026-08-31 against opencode 1.18.25.
 
 Droid storage and CLI: verified 2026-09-23 against droid 0.218.2.
 
+For worktree creation, setup, isolation, session binding, and cleanup, see
+[Agent worktree management](agent-worktrees.md), surveyed separately on 2026-11-01.
+
 ## Summary
 
 | | Claude Code | Codex | Droid | OpenCode | Pi |

@@ -19,6 +19,7 @@ rl resume auth             # picker, pre-filtered to "auth"
 rl resume 3f2a91c7 --to codex   # hand it to a different agent: native conversion, consented fallback
 rl resume 3f2a91c7 --to codex --markdown   # skip native conversion, go straight to the Markdown handoff
 rl resume 3f2a91c7 --dry-run    # print the directory and argv, launch nothing
+rl resume 3f2a91c7 --worktree   # fork into a separate checkout with its own agent
 ```
 
 A qualified id, `<source>:<sessionId>` with the full session id (`claude` works for
@@ -113,6 +114,40 @@ lineage. `rl session fork` remains the separate intermediate-format, journaled o
 Use the picker to fork (`rl resume`, optionally with a text filter). An exact ID, `--last`, or
 `--to` bypasses the action menu. `rl resume --dry-run` lets you select a fork and prints its
 command without launching it.
+
+**Fork into a worktree** — the third own-agent entry, or `--worktree` with a query or
+`--last`. This always forks the conversation in its original agent and requires a Git
+checkout with a commit. `--to` and `--markdown` cannot be combined with the flag.
+
+| Agent | Creation and lifecycle |
+|---|---|
+| Claude Code | Native fork plus `--worktree`; Claude owns its hooks, naming, isolation, and cleanup |
+| Codex | `codex fork <id> --worktree`; Codex owns the managed checkout |
+| Droid | `droid resume <id> --fork --worktree`; Droid owns the checkout |
+| OpenCode v2 | Native API creates the worktree, forks history, and moves the fork; rl verifies the directory before launch |
+| Pi | rl creates a persistent branch/checkout at committed `HEAD`, then invokes `pi --fork <absolute-transcript>` there |
+
+Names, destinations, base revisions, and setup follow the native harness settings. There is
+no worktree-name argument. Pi's fallback uses a generated `rl-…` branch and a sibling
+`<main-checkout-name>.worktrees/rl-…` directory. It launches at that checkout's root, copies
+no uncommitted or ignored files, runs no setup script, and leaves cleanup to the user.
+Submodules and separate Git directories use their working checkout, never their administrative
+storage. For linked checkouts where Git cannot identify a valid main working checkout, the
+destination is beside the current checkout instead.
+
+Dry-run reports the owner and intended commands without creating a checkout, session, or
+API request. Unsupported harness versions refuse before creation. Preparation errors report
+any known retained resources; rl never automatically removes them. Repeating the action
+requests another fork and follows the harness's own checkout reuse policy.
+
+OpenCode's API returns the new identity before launch, so rl caches it for immediate resume.
+Its v2 storage is not understood by the existing v1 scanner: cached rows remain available
+while that source reports unavailable, but discovery and transcript-based lifecycle operations
+for v2 need separate source support. Other harness forks enter the registry on the next scan.
+Use `--all` to find a session whose new directory is outside the original picker scope.
+
+See [agent worktrees](../reference/agent-worktrees.md) for the verified CLI surfaces and
+upstream lifecycle differences. CLI delegation does not promise desktop-only features.
 
 **A different agent** — `--to <agent>` tries a **native conversion** first: a fresh session in
 the target agent, built from the source's visible history and active model context, that

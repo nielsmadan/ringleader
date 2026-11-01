@@ -13,7 +13,7 @@ from .agents import canonical_agent, display_agent, source_of
 from .search import BLURB_FIELDS
 from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource, in_workspace
 
-SessionAction = Literal["resume", "fork"]
+SessionAction = Literal["resume", "fork", "worktree"]
 
 _UNKNOWN = "(unknown)"
 

@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from ringleader import export, paths, slug
+from ringleader import export, paths, scanner, slug
 from ringleader.commands import resume as resume_cmd
 from ringleader.picker.app import Choice
 from ringleader.portability.capabilities import RunRequest
@@ -1621,4 +1621,122 @@ def test_a_qualified_archived_id_names_the_command_that_brings_it_back(tmp_path,
     assert _run(args, runner=runner, picker=picker, refresher=rescan) == 1
     assert "rl session unarchive zzz999" in capsys.readouterr().err
     assert rescan.calls == []
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("via_picker", [False, True])
+def test_worktree_action_delegates_fork_without_presence(tmp_path, monkeypatch, via_picker):
+    from ringleader import worktrees
+
+    thread = _session(tmp_path, "aaa111", source="codex")
+    reg = _registry(tmp_path, thread)
+    value = worktrees.WorktreePlan(
+        scanner.source_by_name("codex"),
+        "aaa111",
+        Path(thread["project"]),
+        ("codex", "fork", "aaa111", "--worktree"),
+        "codex",
+    )
+    monkeypatch.setattr(worktrees, "plan", lambda *_, **__: value)
+    monkeypatch.setattr(
+        worktrees, "prepare", lambda _: worktrees.PreparedWorktree(value.argv, value.cwd)
+    )
+    runner = Runner()
+    picker = Picker(Choice(thread, "codex", action="worktree"))
+    args = [] if via_picker else ["aaa111", "--worktree"]
+    assert (
+        _run(
+            [*args, "--registry", reg],
+            runner=runner,
+            picker=picker,
+            presence=lambda: pytest.fail("fork must not probe presence"),
+        )
+        == 0
+    )
+    assert runner.argv == ("codex", "fork", "aaa111", "--worktree")
+    assert runner.cwd == thread["project"]
+
+
+@pytest.mark.parametrize("conflict", [["--to", "pi"], ["--markdown"]])
+def test_worktree_incompatible_flags_refuse_before_picker(conflict, capsys):
+    picker = Picker()
+    assert _run(["--worktree", *conflict], picker=picker) == 1
+    assert "cannot be combined" in capsys.readouterr().err
+    assert picker.calls == []
+
+
+def test_opencode_worktree_fork_is_registered_for_immediate_resume(tmp_path, monkeypatch):
+    from ringleader import worktrees
+
+    thread = _session(tmp_path, "aaa111", source="opencode", messageCount=8)
+    reg = _registry(tmp_path, thread)
+    destination = tmp_path / "worktree"
+    destination.mkdir()
+    value = worktrees.WorktreePlan(
+        scanner.source_by_name("opencode"),
+        "aaa111",
+        Path(thread["project"]),
+        ("opencode", "--session", "aaa111"),
+        "opencode",
+    )
+    monkeypatch.setattr(worktrees, "plan", lambda *_, **__: value)
+    monkeypatch.setattr(
+        worktrees,
+        "prepare",
+        lambda _: worktrees.PreparedWorktree(
+            ("opencode", "--session", "fork111"), destination, "fork111"
+        ),
+    )
+    assert _run(["aaa111", "--worktree", "--registry", reg]) == 0
+    stored = json.loads(Path(reg).read_text())
+    assert {t["sessionId"] for t in stored["threads"]} == {"aaa111", "fork111"}
+    fork = next(t for t in stored["threads"] if t["sessionId"] == "fork111")
+    assert fork["project"] == str(destination)
+    assert fork["messageCount"] == 8
+    runner = Runner()
+    assert _run(["fork111", "--registry", reg], runner=runner) == 0
+    assert (runner.argv, runner.cwd) == (("opencode", "--session", "fork111"), str(destination))
+
+
+@pytest.mark.parametrize("source", ["pi", "opencode"])
+def test_worktree_dry_run_does_not_create_or_launch(tmp_path, monkeypatch, capsys, source):
+    from ringleader import worktrees
+
+    thread = _session(tmp_path, "aaa111", source=source)
+    root = thread["project"]
+    subprocess.run(["git", "init", root], check=True, capture_output=True)
+    subprocess.run(
+        [
+            "git",
+            "-C",
+            root,
+            "-c",
+            "user.name=QA",
+            "-c",
+            "user.email=qa@example.invalid",
+            "commit",
+            "--allow-empty",
+            "-m",
+            "fixture",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    reg = _registry(tmp_path, thread)
+    before = Path(reg).read_bytes()
+    inventory = subprocess.check_output(["git", "-C", root, "worktree", "list", "--porcelain"])
+    monkeypatch.setattr(
+        worktrees, "prepare", lambda _: pytest.fail("dry-run must not prepare native resources")
+    )
+    runner = Runner()
+    assert _run(["aaa111", "--worktree", "--dry-run", "--registry", reg], runner=runner) == 0
+    out = capsys.readouterr().out
+    assert "no worktree or session created" in out
+    assert (
+        "API: worktree.create" if source == "opencode" else "local changes are not copied"
+    ) in out
+    assert Path(reg).read_bytes() == before
+    assert (
+        subprocess.check_output(["git", "-C", root, "worktree", "list", "--porcelain"]) == inventory
+    )
     assert runner.calls == []

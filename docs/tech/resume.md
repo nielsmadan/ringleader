@@ -131,7 +131,7 @@ produce a false badge. Any failure degrades to no badges and never fails the app
 `Choice(thread, target, threads, confirmed, action)` is the result; quitting exits `None`. `threads` is
 the registry the picker converged on, and `confirmed` records that the user already answered the
 running-session modal, so the command does not ask a second time. `action` is `resume` (default)
-or `fork`. `AgentModal` returns an `AgentChoice(target, action)`, with resume and fork entries
+or `fork` or `worktree`. `AgentModal` returns an `AgentChoice(target, action)`, with resume, fork, and worktree entries
 for the original agent followed by other-agent handoffs. The modal half of choosing lives in
 `ask_resume_choice(screen, thread, *, target, running, threads)` — a preset target skips the agent
 modal, a same-agent resume of a running session asks `ConfirmModal` — so any screen can reuse it
@@ -148,6 +148,27 @@ keep=)` rebuilds an `OptionList` keyed by option id and restores the highlight �
 else the previous index clamped — since `set_options` resets it.
 
 ### The command (`commands/resume.py`)
+
+Worktree choices dispatch through `worktrees.py` after Textual releases the terminal. The
+shared action is conversation fork plus separate checkout; native naming, setup, base revision,
+and cleanup remain with each harness. Claude, Codex, and Droid receive native CLI flags.
+OpenCode v2 uses its API, obtains the project ID from the source session, and waits for
+`session.move` to become visible before launch, bounding each poll by the remaining deadline.
+Preparation returns the created session identity separately from launch argv. Its returned
+fork is registered by partial reconciliation without advancing scan clocks, resolving Git
+identity at the new checkout. Pi uses a persistent Git checkout and an
+absolute transcript path so cwd-scoped lookup cannot choose another session.
+
+The `--worktree` flag supplies the action to the picker before selection, so it asks only for
+the session and never shows a contradictory resume/handoff menu or live-resume confirmation.
+The fallback name is generated at the command boundary and passed into planning. Native argv
+comes from `SessionLaunchingSource`; worktree code adds the native flag without duplicating
+the harness's fork syntax.
+
+Preparation checks harness help before mutations. Dry-run performs Git inspection only;
+it does not contact OpenCode's server. Partial failures retain checkout/session resources and
+report their known identities. A launch failure cannot trigger cleanup because the harness may
+already have written work. No exit-time cleanup runs after exec.
 
 `--last` prints flushed status lines to stderr before loading the registry, refreshing,
 checking live sessions, and launching the agent. Refresh completion includes elapsed time;

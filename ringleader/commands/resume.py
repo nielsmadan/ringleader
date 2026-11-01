@@ -6,18 +6,19 @@ import shlex
 import shutil
 import sys
 from collections.abc import Callable, Iterable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from time import monotonic
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
-from .. import export, paths, refresh, registry, resume, scanner
+from .. import export, gitinfo, paths, refresh, registry, resume, scanner, worktrees
 from ..agents import source_of
 from ..presence import PresenceClient
 from ..resume import Scope, SessionAction
-from ..sources.base import SessionLaunchingSource
+from ..sources.base import NormalizedSession, SessionLaunchingSource
 from ..stateio import atomic_write_text
 from . import default_registry
 
@@ -47,6 +48,12 @@ _WIDEN = {
 
 class _Abort(Exception):
     pass
+
+
+@dataclass(frozen=True)
+class _PickerOptions:
+    persist: bool = True
+    action: SessionAction | None = None
 
 
 @dataclass(frozen=True)
@@ -119,8 +126,9 @@ def _run_picker(
     query: str,
     target: str | None,
     *,
-    persist: bool = True,
+    options: _PickerOptions | None = None,
 ) -> Choice | None:
+    options = options or _PickerOptions()
     try:
         import textual  # noqa: F401, PLC0415 -- core dep; imported lazily to keep startup fast
     except ImportError as error:
@@ -131,7 +139,13 @@ def _run_picker(
     from ..picker.app import PickerApp  # noqa: PLC0415 -- only importable once textual is present
 
     return PickerApp(
-        registry_path, cwd, scope=scope, query=query, target=target, persist=persist
+        registry_path,
+        cwd,
+        scope=scope,
+        query=query,
+        target=target,
+        persist=options.persist,
+        action=options.action,
     ).run()
 
 
@@ -145,6 +159,11 @@ def _parser() -> argparse.ArgumentParser:
         "asking, across every agent.",
     )
     ap.add_argument("query", nargs="?", default="", help="session id, id prefix, or picker filter")
+    ap.add_argument(
+        "--worktree",
+        action="store_true",
+        help="fork the conversation into a worktree managed by its agent (persistent Git checkout for Pi)",
+    )
     ap.add_argument(
         "--last", action="store_true", help="resume the most recent session in scope, no picker"
     )
@@ -391,9 +410,9 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
         )
     cwd = _launch_dir(thread, pick.threads)
     if target_source == source:
-        argv = src.fork_argv(session_id) if pick.action == "fork" else src.resume_argv(session_id)
+        argv = src.fork_argv(session_id) if pick.action != "resume" else src.resume_argv(session_id)
         return _Plan(thread, argv, cwd, None, pick.confirmed, target_source, pick.action)
-    if pick.action == "fork":
+    if pick.action != "resume":
         raise _Abort("native fork requires the session's original agent")
     path = _handoff_path(session_id)
     argv = tuple(src.launch_argv(_prompt(thread, path)))
@@ -584,6 +603,10 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
 def _resolve(
     args: argparse.Namespace, picker: Picker, refreshers: tuple[ScopedRefresher, Refresher]
 ) -> _Plan | None:
+    if args.worktree and (args.to or args.markdown):
+        raise _Abort(
+            "--worktree forks in the original agent; it cannot be combined with --to or --markdown"
+        )
     requested = _requested_target(args.to)
     if args.last:
         _progress("Loading session registry…")
@@ -594,7 +617,92 @@ def _resolve(
     pick = _choose(args, reg, cwd, picker, refreshers, requested)
     if pick is None:
         return None
+    if args.worktree:
+        pick = replace(pick, action="worktree", target=source_of(pick.thread))
     return _plan(pick, requested or pick.target or source_of(pick.thread))
+
+
+def _remember_worktree_fork(path: str, plan: _Plan, session_id: str, cwd: Path) -> None:
+    now = datetime.now(UTC).isoformat()
+    git = gitinfo.resolve_git_project(str(cwd))
+    metadata = NormalizedSession(
+        source=plan.target,
+        session_id=session_id,
+        source_ref=session_id,
+        cwd=str(cwd),
+        mtime=now,
+        started_at=now,
+        size_bytes=plan.thread.get("sizeBytes") or 0,
+        message_count=plan.thread.get("messageCount") or 0,
+        custom_title=f"{resume.label(plan.thread)} (worktree fork)",
+        summary=None,
+        last_prompt=plan.thread.get("lastPrompt"),
+        file=None,
+        git_project_key=git.key if git else None,
+        git_project_label=git.label if git else None,
+        git_root=git.root if git else None,
+        git_remote=git.remote if git else None,
+        git_clone_url=git.clone_url if git else None,
+    )
+    registry.mutate_registry(
+        path, lambda reg: reg.update(registry.reconcile(reg, [metadata], now, partial=True))
+    )
+
+
+def _worktree(plan: _Plan, *, args: argparse.Namespace, runner: Runner, absent: bool) -> int:
+    try:
+        source = _launchable(plan.target)
+        if source is None:
+            raise worktrees.WorktreeError(f"{plan.target} cannot launch sessions")
+        value = worktrees.plan(
+            source,
+            str(plan.thread["sessionId"]),
+            Path(plan.cwd),
+            plan.thread.get("file"),
+            name=f"rl-{uuid4().hex[:12]}",
+        )
+        if args.dry_run:
+            print("dry run — no worktree or session created")
+            print(f"  owner: {value.owner}")
+            print(f"  launch directory: {value.destination or value.cwd}")
+            if value.source.name == "opencode":
+                print("  API: worktree.create → session.fork → session.move → launch fork")
+            else:
+                print(f"  argv: {shlex.join(value.argv)}")
+            if value.destination:
+                print(
+                    f"  Git: create {value.branch} at {value.commit}; local changes are not copied"
+                )
+            else:
+                print("  naming, starting revision, setup and cleanup follow the harness settings")
+            if absent:
+                print(f"  note: {value.argv[0]} is not installed")
+            return 0
+        print(f"Preparing worktree with {value.owner}…", file=sys.stderr, flush=True)
+        prepared = worktrees.prepare(value)
+        argv, cwd = prepared.argv, prepared.cwd
+        if prepared.session_id is not None:
+            try:
+                _remember_worktree_fork(args.registry, plan, prepared.session_id, cwd)
+            except (OSError, ValueError) as exc:
+                raise worktrees.WorktreeError(
+                    f"Cannot register fork {prepared.session_id} in {cwd}: {exc}; worktree and fork are retained"
+                ) from exc
+        print(f"Worktree owner: {value.owner}", file=sys.stderr, flush=True)
+        if value.destination:
+            print(
+                f"Persistent checkout: {cwd}; local changes were not copied",
+                file=sys.stderr,
+                flush=True,
+            )
+        try:
+            return runner(argv, str(cwd))
+        except OSError as exc:
+            raise worktrees.WorktreeError(
+                f"Launch failed in {cwd}: {exc}; any created worktree is retained"
+            ) from exc
+    except worktrees.WorktreeError as exc:
+        return _fail(str(exc))
 
 
 def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
@@ -628,7 +736,13 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     try:
         plan = _resolve(
             args,
-            picker or partial(_run_picker, persist=not args.dry_run),
+            picker
+            or partial(
+                _run_picker,
+                options=_PickerOptions(
+                    persist=not args.dry_run, action="worktree" if args.worktree else None
+                ),
+            ),
             (scoper or _scan_scope, refresher or _scan),
         )
         if plan is None:
@@ -647,6 +761,8 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
         native or _native_resume,
         launch or _exec_request,
     )
+    if plan.action == "worktree":
+        return _worktree(plan, args=args, runner=seams.runner, absent=absent)
     if converting:
         return _native(args, plan, binary if absent else None, seams)
     if args.dry_run:

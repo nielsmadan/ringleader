@@ -159,9 +159,14 @@ async def ask_resume_choice(
     target: str | None,
     running: bool,
     threads: tuple[dict[str, Any], ...],
+    action: SessionAction | None = None,
 ) -> Choice | None:
     choice = (
-        AgentChoice(target) if target else await screen.app.push_screen_wait(AgentModal(thread))
+        AgentChoice(source_of(thread), action)
+        if action is not None
+        else AgentChoice(target)
+        if target
+        else await screen.app.push_screen_wait(AgentModal(thread))
     )
     if choice is None:
         return None
@@ -222,6 +227,7 @@ class PickerScreen(Screen[Choice | None]):
         scope: Scope = Scope.CWD,
         query: str = "",
         target: str | None = None,
+        action: SessionAction | None = None,
         persist: bool = True,
         refresher: Refresher | None = None,
         full_refresher: FullRefresher | None = None,
@@ -241,6 +247,7 @@ class PickerScreen(Screen[Choice | None]):
         self._scope = scope
         self._query = query
         self._target = target
+        self._requested_action = action
         self._refresher = refresher
         self._persist = persist
         self._pool = scanner.SourcePool()
@@ -574,6 +581,7 @@ class PickerScreen(Screen[Choice | None]):
             target=self._target,
             running=self._is_running(thread),
             threads=threads,
+            action=self._requested_action,
         )
         if choice is not None and self._alive():
             self.dismiss(choice)
@@ -596,6 +604,7 @@ class PickerApp(App[Choice | None]):
         scope: Scope = Scope.CWD,
         query: str = "",
         target: str | None = None,
+        action: SessionAction | None = None,
         persist: bool = True,
         refresher: Refresher | None = None,
         full_refresher: FullRefresher | None = None,
@@ -611,6 +620,7 @@ class PickerApp(App[Choice | None]):
             scope=scope,
             query=query,
             target=target,
+            action=action,
             persist=persist,
             refresher=refresher,
             full_refresher=full_refresher,

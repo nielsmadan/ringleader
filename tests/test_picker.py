@@ -330,7 +330,7 @@ async def test_a_burst_of_keystrokes_filters_once_on_the_final_query(tmp_path, m
 
 
 async def test_a_keystroke_that_keeps_the_same_results_leaves_the_rows_alone(tmp_path, monkeypatch):
-    app = _app(tmp_path)
+    app = _app(tmp_path, now=lambda: datetime.fromisoformat(NOW))
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         rows = _screen(app).query_one("#rows", OptionList)
@@ -351,7 +351,7 @@ async def test_a_keystroke_that_keeps_the_same_results_leaves_the_rows_alone(tmp
 
 
 async def test_a_row_built_for_one_query_is_reused_by_the_next(tmp_path):
-    app = _app(tmp_path)
+    app = _app(tmp_path, now=lambda: datetime.fromisoformat(NOW))
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         rows = _screen(app).query_one("#rows", OptionList)
@@ -730,6 +730,7 @@ async def test_enter_opens_the_agent_modal_with_the_sessions_own_agent_first(tmp
         assert modal._choices == [
             AgentChoice("codex"),
             AgentChoice("codex", "fork"),
+            AgentChoice("codex", "worktree"),
             AgentChoice("claude-code"),
             AgentChoice("droid"),
             AgentChoice("opencode"),
@@ -828,7 +829,7 @@ async def test_choosing_another_agent_exits_as_a_handoff_to_that_agent(tmp_path)
         await pilot.press("ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("ctrl+j", "ctrl+j")
+        await pilot.press("ctrl+j", "ctrl+j", "ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
     assert app.return_value.thread["sessionId"] == "s1"
@@ -842,7 +843,7 @@ async def test_handing_a_running_session_to_another_agent_needs_no_confirmation(
         assert "running" in _row_labels(app)[0]
         await pilot.press("enter")
         await pilot.pause()
-        await pilot.press("ctrl+j", "ctrl+j")
+        await pilot.press("ctrl+j", "ctrl+j", "ctrl+j")
         await pilot.press("enter")
         await pilot.pause()
     assert app.return_value.thread["sessionId"] == "s0"
@@ -1547,3 +1548,28 @@ async def test_refresh_keys_stay_inert_in_agent_and_confirmation_modals(tmp_path
         assert len(calls) == 1
         await pilot.press("escape")
         assert isinstance(app.screen, PickerScreen)
+
+
+async def test_worktree_fork_choice_avoids_running_confirmation(tmp_path):
+    app = _app(tmp_path, presence=lambda: frozenset({("claude", "s0")}))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("ctrl+j", "ctrl+j", "enter")
+        await pilot.pause()
+    assert app.return_value.thread["sessionId"] == "s0"
+    assert app.return_value.target == "claude-code"
+    assert app.return_value.action == "worktree"
+
+
+async def test_preset_worktree_action_skips_action_and_running_modals(tmp_path):
+    app = _app(tmp_path, action="worktree", presence=lambda: frozenset({("claude", "s0")}))
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        await pilot.pause()
+    assert app.return_value.thread["sessionId"] == "s0"
+    assert app.return_value.action == "worktree"
+    assert app.return_value.target == "claude-code"
+    assert app.return_value.confirmed is False

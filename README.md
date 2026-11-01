@@ -67,6 +67,7 @@ rl install             # skills, session-end hook, statusline capture
   → [Archives and retention](docs/user/archives-and-retention.md)
 - **Resume** — `rl resume` is one picker over every agent's sessions, filtered as you type.
   Pick one to resume it or fork a new session with that agent, in the right directory,
+  including a fork into a separate worktree with `--worktree`,
   or hand it to a *different* agent via a native conversion (falling back to a Markdown
   transcript of the old session only if that's refused, or if you pass `--markdown`).
   → [Resuming sessions](docs/features/resuming-sessions.md)
@@ -109,6 +110,7 @@ rl uninstall skills    # remove only what this tool created
 ```sh
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl resume --last                    # re-enter the most recent session here, no picker
+rl resume --last --worktree         # fork it into a separate checkout with its own agent
 rl inbox [--read-only]              # the daily home TUI; bare `rl` in a terminal opens it
 rl roundup [--enrich all|recent|none] [--preview] [--yes] # refresh + sweep + prune (deletes) + enrich, plan first
 rl overview [<selector>] [--json]   # the view; project rollup by default

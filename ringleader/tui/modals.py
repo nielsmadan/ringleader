@@ -38,6 +38,8 @@ def agent_row_text(choice: AgentChoice, *, original: bool) -> Text:
     suffix = "resume existing" if original else "hand off"
     if choice.action == "fork":
         suffix = "fork into new session"
+    elif choice.action == "worktree":
+        suffix = "fork into new worktree"
     return Text(f"{agent_name(choice.target):<9} ({suffix})")
 
 
@@ -61,7 +63,11 @@ class AgentModal(ModalScreen[AgentChoice | None]):
         self._source = source_of(thread)
         agents = launchable_agents()
         own = (
-            [AgentChoice(self._source), AgentChoice(self._source, "fork")]
+            [
+                AgentChoice(self._source),
+                AgentChoice(self._source, "fork"),
+                AgentChoice(self._source, "worktree"),
+            ]
             if self._source in agents
             else []
         )
