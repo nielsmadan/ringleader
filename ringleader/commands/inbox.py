@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import shutil
 
+from ..launch import exec_agent
 from . import default_registry
 
 
@@ -63,6 +64,6 @@ def cmd_inbox(argv: list[str]) -> int:
         args.registry,
         dry_run=args.read_only,
         resume_command=commands.resume.cmd_resume,
-        runner=commands.resume.exec_agent,
+        runner=exec_agent,
         which=shutil.which,
     )

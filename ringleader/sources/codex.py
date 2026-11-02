@@ -190,7 +190,9 @@ class CodexSource:
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("codex", "fork", session_id)
 
-    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+    def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
+        if prompt is None:
+            return ("codex",)
         return ("codex", prompt)
 
     def _session_index_path(self) -> Path:

@@ -65,6 +65,10 @@ rl install             # skills, session-end hook, statusline capture
 - **Archive, don't delete** — for file-backed sources, archiving *moves* the transcript out of the agent's store, so
   `claude --resume` can't see it, and `rl session unarchive` puts it back.
   → [Archives and retention](docs/user/archives-and-retention.md)
+- **Start** — `rl start <agent>` opens a fresh conversation in the current directory.
+  Add `--worktree` for a separate checkout: native agent worktrees where supported,
+  or a persistent Git checkout for Pi.
+  → [Starting a fresh session](docs/user/cli.md#starting-a-fresh-session)
 - **Resume** — `rl resume` is one picker over every agent's sessions, filtered as you type.
   Pick one to resume it or fork a new session with that agent, in the right directory,
   including a fork into a separate worktree with `--worktree`,
@@ -108,6 +112,8 @@ rl uninstall skills    # remove only what this tool created
 ## Commands
 
 ```sh
+rl start <agent>                    # fresh conversation here: claude, codex, droid, opencode, pi
+rl start <agent> --worktree         # fresh conversation in a separate checkout
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl resume --last                    # re-enter the most recent session here, no picker
 rl resume --last --worktree         # fork it into a separate checkout with its own agent

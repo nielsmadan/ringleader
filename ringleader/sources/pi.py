@@ -139,7 +139,9 @@ class PiSource:
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("pi", "--fork", session_id)
 
-    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+    def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
+        if prompt is None:
+            return ("pi",)
         # without the terminator pi reads a leading `-` as a flag
         return ("pi", "--", prompt)
 

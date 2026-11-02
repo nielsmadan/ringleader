@@ -261,7 +261,9 @@ class OpenCodeSource:
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("opencode", "--session", session_id, "--fork")
 
-    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+    def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
+        if prompt is None:
+            return ("opencode",)
         return ("opencode", "--prompt", prompt)
 
     def available(self) -> bool:

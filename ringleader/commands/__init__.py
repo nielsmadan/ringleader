@@ -117,6 +117,7 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
     "doctor": Lazy("doctor", "cmd_doctor"),
     "harvests": Lazy("harvests", "cmd_harvests"),
     "resume": Lazy("resume", "cmd_resume"),
+    "start": Lazy("start", "cmd_start"),
     "inbox": Lazy("inbox", "cmd_inbox"),
     "install": Lazy("setup", "cmd_install"),
     "update": Lazy("setup", "cmd_update"),

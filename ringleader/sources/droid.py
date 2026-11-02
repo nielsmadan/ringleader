@@ -178,7 +178,9 @@ class DroidSource:
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("droid", "resume", session_id, "--fork")
 
-    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+    def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
+        if prompt is None:
+            return ("droid",)
         return ("droid", prompt)
 
     def storage_for(self, cwd: str) -> Path:

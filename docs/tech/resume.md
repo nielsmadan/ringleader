@@ -1,7 +1,11 @@
-# Resume
+# Resume and fresh starts
 
-`resume.py`, `picker/app.py`, `commands/resume.py`: selecting a dormant session and handing the
-process to an agent.
+`resume.py`, `picker/app.py`, `commands/resume.py`, `commands/start.py`: selecting a dormant
+session or starting a fresh one, then handing the process to an agent through `launch.py`.
+
+Contents: [selection](#selection-resumepy) · [picker](#the-picker-pickerapppy) ·
+[resume command](#the-command-commandsresumepy) · [fresh starts](#fresh-starts-commandsstartpy) ·
+[native conversion](#native-conversion-_native-in-commandsresumepy) · [gotchas](#gotchas)
 
 ## Purpose
 
@@ -11,8 +15,8 @@ Three layers, split so the two interesting ones are testable without a terminal:
   and launch-directory resolution. No Textual, no disk, no subprocess.
 - **`picker/app.py`** — the Textual TUI. Renders, filters, and **returns a `Choice`**. It never
   execs.
-- **`commands/resume.py`** — argument parsing, validation, the handoff write, and the single
-  `chdir` + `execvpe`.
+- **`commands/resume.py`** — argument parsing, validation, the handoff write, and launch
+  dispatch. `commands/start.py` shares the final `launch.exec_agent` boundary for fresh starts.
 
 The split exists because the process is replaced. Nothing may exec until Textual has released the
 terminal, so the app returns a decision and the command carries it out.
@@ -150,7 +154,7 @@ else the previous index clamped — since `set_options` resets it.
 ### The command (`commands/resume.py`)
 
 Worktree choices dispatch through `worktrees.py` after Textual releases the terminal. The
-shared action is conversation fork plus separate checkout; native naming, setup, base revision,
+resume action is conversation fork plus separate checkout; native naming, setup, base revision,
 and cleanup remain with each harness. Claude, Codex, and Droid receive native CLI flags.
 OpenCode v2 uses its API, obtains the project ID from the source session, and waits for
 `session.move` to become visible before launch, bounding each poll by the remaining deadline.
@@ -165,9 +169,10 @@ The fallback name is generated at the command boundary and passed into planning.
 comes from `SessionLaunchingSource`; worktree code adds the native flag without duplicating
 the harness's fork syntax.
 
-Preparation checks harness help before mutations. Dry-run performs Git inspection only;
-it does not contact OpenCode's server. Partial failures retain checkout/session resources and
-report their known identities. A launch failure cannot trigger cleanup because the harness may
+Preparation checks required harness CLI capabilities before mutations. Dry-run performs Git
+inspection only; it does not contact OpenCode's server. Partial failures retain checkout/session
+resources and report their known identities, including when OpenCode preparation is cancelled
+with Ctrl+C (exit 130). A launch failure cannot trigger cleanup because the harness may
 already have written work. No exit-time cleanup runs after exec.
 
 `--last` prints flushed status lines to stderr before loading the registry, refreshing,
@@ -204,6 +209,34 @@ because after `execvpe` there is no recovering:
 The running-session guard lives here rather than only in the picker, because `rl resume <id>` and
 `rl resume <id> --to <its own agent>` never construct one. A probe that cannot answer
 (`PresenceUnavailable`) degrades to not asking, never to "nothing is running".
+
+### Fresh starts (`commands/start.py`)
+
+`rl start <agent>` resolves the required agent name or alias and launches in the current cwd.
+With no arguments it prints help. It calls the source's promptless `launch_argv()` and the shared
+`launch.exec_agent`, which changes directory, flushes stdout and stderr, and replaces the
+process with the inherited environment. This path needs no registry, picker, scan, presence
+lookup, or source session.
+Explicit opening prompts remain available to the seeded-handoff path.
+
+`--worktree` uses the same `worktrees.plan` and `prepare` seam as resume. A plan with
+`session_id=None` starts fresh; a string identifies an existing conversation to fork. Claude,
+Codex, and Droid add `--worktree` to the fresh launch argv and retain native ownership. Pi
+creates the same persistent Git checkout as the resume path, then launches bare `pi`; it needs
+neither a transcript nor the CLI's `--fork` capability.
+
+For a fresh OpenCode session, `_project_id` calls `location.get` with an explicit
+`location[directory]` query parameter. It reads `project.id`, passes it to
+`worktree.create`, and launches bare `opencode` in the returned directory. Only the existing
+session path calls `session.fork` and `session.move` and reconciles the returned fork into the
+registry. Fresh starts leave session creation and later discovery to the agent and scanner.
+
+`--dry-run` prints the argv and ownership plan. Worktree previews inspect Git but skip harness
+help and OpenCode API calls; native destination, setup, and cleanup therefore remain governed
+by the harness at launch. A missing binary is reported without preventing the preview. Real
+preparation and launch failures retain any created worktree. Ctrl+C before launch exits 130;
+Pi reports its planned checkout path, and OpenCode reports any resource identity already
+returned by its API. Once exec succeeds, the harness handles cancellation.
 
 ### Native conversion (`_native()` in `commands/resume.py`)
 
@@ -258,6 +291,7 @@ chdirs or prompts the test process.
   `picker.app.ask_resume_choice`
 - `tui/modals.py`, `tui/rows.py:set_rows`
 - `commands.resume.cmd_resume`
+- `commands.start.cmd_start`, `launch.exec_agent`, `worktrees.plan`, `worktrees.prepare`
 - `tui/keys.py:nav_bindings(priority=)` — the ctrl+j/ctrl+k motions every ringleader TUI carries
 
 ## Gotchas

@@ -75,7 +75,9 @@ class ClaudeCodeSource:
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("claude", "--resume", session_id, "--fork-session")
 
-    def launch_argv(self, prompt: str) -> tuple[str, ...]:
+    def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
+        if prompt is None:
+            return ("claude",)
         return ("claude", prompt)
 
     def storage_for(self, cwd: str) -> Path:

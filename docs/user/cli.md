@@ -9,6 +9,8 @@ agent session it prints usage.
 
 ```
 rl
+├── start <agent>               fresh conversation here, optionally in a worktree
+├── resume [<query>]            find and continue a session in its agent or another
 ├── inbox                       TUI home: triage, resume, roundup, prune, harvests, usage
 ├── roundup                     refresh + sweep + prune + enrich, plan first
 ├── overview [<selector>]       the view: project rollup, or a deep-dive
@@ -38,6 +40,7 @@ rl
 
 | Command | Does | Key flags |
 |---|---|---|
+| `rl start <agent>` | Start a fresh conversation in the current directory. Choose `claude` (or `claude-code`), `codex`, `droid`, `opencode`, or `pi`. Bare `rl start` prints help. See [Starting a fresh session](#starting-a-fresh-session) for worktree behavior. | `--worktree`, `--dry-run` |
 | `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (optionally into a worktree with `--worktree`), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--worktree`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
 | `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
@@ -83,6 +86,35 @@ is `missing`, `mismatch`, `unreadable` or `unwritable`.
 `--index DIR` points the index, its lock and the labels at another directory; saved reports and
 the Codex start cache stay under the state dir. For a trial run on real data, pair `--index` with a
 temporary `XDG_DATA_HOME`.
+
+## Starting a fresh session
+
+```sh
+rl start claude                   # open Claude Code here
+rl start codex --worktree         # start fresh in a native Codex worktree
+rl start pi --worktree --dry-run  # preview a persistent Git checkout
+```
+
+Choose the agent explicitly; the command has no picker, opening-prompt argument, or
+pass-through flags. It launches the agent without conversation history, without scanning
+sessions or writing the registry. A plain start works outside Git. The selected agent must
+be installed on `PATH`.
+
+`--worktree` requires a Git checkout with at least one commit. Claude Code, Codex, and Droid
+use their native `--worktree` flag; OpenCode v2 creates a native worktree through its API and
+opens a fresh session there. Naming, base revision, setup, and cleanup follow each agent's
+settings. Pi gets a persistent checkout at committed `HEAD`, on a generated `rl-…` branch
+under a sibling `<main-checkout-name>.worktrees/` directory. Pi's checkout starts at its root,
+copies no uncommitted or ignored files, runs no setup script, and needs manual cleanup.
+
+`--dry-run` prints the intended launch and worktree owner without creating a checkout,
+calling the OpenCode API, or launching a session. It also notes a missing agent binary.
+A real worktree launch rejects unsupported native versions before creating anything;
+if preparation or launch fails after creating a checkout, that checkout is retained.
+
+New sessions become visible through later scans where the source supports discovery.
+OpenCode v2 discovery remains unsupported, and starting one does not register it immediately.
+To continue an existing conversation in a new checkout, use `rl resume --worktree`.
 
 ## Setup
 

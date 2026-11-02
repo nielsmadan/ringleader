@@ -15,8 +15,8 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
   the `inbox` home TUI, git-project grouping, selectors, and `roundup`.
 - [harvest-and-publish.md](harvest-and-publish.md) — distilling a session into durable markdown,
   the pending queue, and the guarded path that writes it into a repo.
-- [resuming-sessions.md](resuming-sessions.md) — `rl resume`: the cross-agent picker, the
-  three directory scopes, and handing a session to a different agent.
+- [resuming-sessions.md](resuming-sessions.md) — fresh starts with `rl start`, the `rl resume`
+  picker and its directory scopes, worktrees, and handing a session to a different agent.
 - [pruning-and-retention.md](pruning-and-retention.md) — deleting tiny/stale sessions, archive
   retention, and tombstones. Which verbs preview and which delete.
 - [usage-analytics.md](usage-analytics.md) — token spend across five harnesses, per-session

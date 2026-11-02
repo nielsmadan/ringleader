@@ -3,16 +3,16 @@ from __future__ import annotations
 import os
 import shlex
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from typing import Protocol
 
 from .. import scanner
+from ..launch import Runner
 from ..picker.app import Choice
 from ..resume import Scope
 from ..sources.base import SessionLaunchingSource
 from .intents import AgentHandoffIntent, ExitIntent, ResumeIntent
 
-type Runner = Callable[[Sequence[str], str], int]
 type Which = Callable[[str], str | None]
 
 

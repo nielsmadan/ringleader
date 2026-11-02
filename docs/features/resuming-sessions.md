@@ -1,7 +1,32 @@
-# Resuming sessions
+# Starting and resuming sessions
 
-`rl resume` — find a dormant session from any agent and re-enter it, in its own agent or another
-one.
+`rl start` opens a fresh conversation; `rl resume` finds an existing session and re-enters it,
+in its own agent or another one.
+
+## Starting fresh
+
+`rl start <agent> [--worktree] [--dry-run]` requires an explicit agent: `claude` (or
+`claude-code`), `codex`, `droid`, `opencode`, or `pi`. No arguments prints help. It launches
+from the current directory with no history or opening prompt, and has no picker or
+pass-through flags. It neither scans nor writes the registry. Plain launch needs no Git
+checkout; the agent binary must be on `PATH`.
+
+With `--worktree`, a committed Git checkout is required. Claude Code, Codex, and Droid
+receive their native `--worktree` flag on a fresh launch. OpenCode v2 resolves the current
+directory with `location.get`, creates a native worktree with `worktree.create`, and launches
+bare `opencode` in the returned directory. Native naming, base revision, setup, and cleanup
+remain the harness's responsibility. Pi uses the persistent Git fallback described under
+[Ways to continue](#ways-to-continue), starting at committed `HEAD` with bare `pi`.
+
+Dry-run reports the intended launch and owner, notes a missing binary, and creates no
+checkout, session, or API request. Real launches reject unsupported native worktree versions
+before creation. Any checkout created before a preparation or launch failure is retained.
+
+Fresh sessions enter the registry through later supported scans. OpenCode v2 discovery is
+still unsupported; this path has no session identity to cache for immediate resume.
+`rl resume --worktree` continues to fork existing conversation history.
+
+Entry point: `ringleader/commands/start.py:61`; shared planning: `ringleader/worktrees.py:76`.
 
 ## What it does
 

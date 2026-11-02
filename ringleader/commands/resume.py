@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from .. import export, gitinfo, paths, refresh, registry, resume, scanner, worktrees
 from ..agents import source_of
+from ..launch import Runner, exec_agent
 from ..presence import PresenceClient
 from ..resume import Scope, SessionAction
 from ..sources.base import NormalizedSession, SessionLaunchingSource
@@ -28,7 +29,6 @@ if TYPE_CHECKING:
     from ..portability.model import Identity
     from ..portability.native_resume import NativeResume
 
-Runner = Callable[[Sequence[str], str], int]
 Picker = Callable[[str, str, Scope, str, "str | None"], "Choice | None"]
 Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
 ScopedRefresher = Callable[[str, str, str, Scope], tuple[dict[str, Any], bool]]
@@ -92,12 +92,6 @@ def _fail(message: str) -> int:
 
 def _live_session_ids() -> frozenset[tuple[str, str]]:
     return PresenceClient().require_running_session_ids()
-
-
-def exec_agent(argv: Sequence[str], cwd: str) -> int:
-    # an agent resolves a session id against the directory it starts in
-    os.chdir(cwd)
-    os.execvpe(argv[0], list(argv), os.environ)
 
 
 def _native_resume(*args: Any, **kwargs: Any) -> NativeResume:
@@ -703,6 +697,12 @@ def _worktree(plan: _Plan, *, args: argparse.Namespace, runner: Runner, absent: 
             ) from exc
     except worktrees.WorktreeError as exc:
         return _fail(str(exc))
+    except KeyboardInterrupt as exc:
+        print(
+            f"rl-resume: {str(exc) or 'cancelled; any created worktree is retained'}",
+            file=sys.stderr,
+        )
+        return 130
 
 
 def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives

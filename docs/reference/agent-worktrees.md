@@ -12,8 +12,8 @@ Contents: [ownership](#entry-points-and-ownership) · [Claude](#claude-code) ·
 | Agent | Locally checked interface | Worktree owner |
 |---|---|---|
 | Claude Code | `--worktree [name]`, `--resume ID --fork-session` | Claude |
-| Codex | `fork ID --worktree` | Codex; CLI does not accept a worktree name |
-| Droid | `resume ID --fork --worktree [name]` | Droid |
+| Codex | `--worktree`, `fork ID --worktree` | Codex; CLI does not accept a worktree name |
+| Droid | `--worktree [name]`, `resume ID --fork --worktree [name]` | Droid |
 | OpenCode v2 | `api OPERATION --data JSON`, no top-level worktree flag | OpenCode server/selected strategy |
 | Pi | `--fork PATH_OR_ID`, no core worktree creation flag | External Git workflow or extension |
 
@@ -21,6 +21,11 @@ Forking conversation history and creating a checkout are separate capabilities. 
 agent in an externally created checkout does not establish native worktree ownership. A common
 ringleader interface should preserve the native owner where possible, and disclose the smaller
 feature set of an external fallback. Desktop behavior must not be inferred from a CLI flag.
+
+**Help-checked 2026-11-02:** Claude Code 2.1.316, codex-cli 0.166.0, and Droid 1.1.0 expose
+`--worktree` on their top-level interactive commands, so a fresh start can request it without
+resume or fork arguments. Codex describes it as “Run the session in a new managed Git worktree”.
+This check establishes the CLI surface; startup probes are described separately below.
 
 ## Claude Code
 
@@ -80,6 +85,10 @@ restored fixture history, created a detached managed checkout under isolated `CO
 and recorded the new cwd and `forked_from_id`. Source bytes stayed unchanged; no prompt was
 submitted. The interactive Droid combination remains help-checked, not startup-verified.
 
+**Verified 2026-11-02, Codex 0.166.0:** a promptless fresh launch with `--worktree`
+created a detached managed checkout and opened an empty composer with a new session ID.
+The offline probe isolated `CODEX_HOME` and used `--no-daemon`; no prompt was submitted.
+
 ## Droid and Factory App
 
 [CLI worktrees](https://docs.factory.com/droid-cli/cli-reference#git-worktrees) create or reuse
@@ -109,6 +118,21 @@ Inventory refresh discovers and reconciles worktrees across known checkout roots
 which would bypass setup and strategy selection. Worktree management does not itself establish
 a filesystem sandbox. Automatic merge-back was not established by this survey.
 
+**Documented, checked 2026-11-02:** [`location.get`](https://opencode.ai/v2/docs/api#location.get)
+says “Resolve the requested location or the server default location.” Its `location` query
+object accepts `directory`, and the response exposes `project.id`. This supplies the project
+identity for a fresh worktree without an existing session; `worktree.create` accepts that
+identity as `projectID` and the launch directory as `from`.
+
+**Verified 2026-11-02, OpenCode 2.2.5:** the API CLI requires
+`--param 'location[directory]=<cwd>'` to address a specific checkout. Passing `location`
+as a JSON string returns HTTP 400; dotted `location.directory` or a plain `directory`
+parameter can silently resolve the server's default directory. The bracket form was
+checked with the server rooted outside the requested Git repository.
+The subsequent `worktree.create` returned a checkout containing the committed source tree;
+the native executable launched there without prompt, fork, or resume arguments. The probe
+verified API preparation and launch, not a fully rendered terminal session or a model turn.
+
 **Verified 2026-11-01, OpenCode 2.2.5:** an isolated loopback server created a native worktree,
 forked an imported fixture, and moved the fork while preserving the source directory.
 `worktree.create` requires `projectID`; `from` alone fails. `session.move` returns 204 before
@@ -133,3 +157,6 @@ session-ID lookup after changing directories.
 directories created a fresh session whose cwd was the external worktree, preserved all four
 history messages including a tool exchange, and left the original transcript bytes unchanged.
 No model request was made.
+
+**Verified 2026-11-02, Pi 1.4.0:** a fresh offline RPC launch in an external worktree
+reported that checkout as its cwd, an empty message history, and zero token usage.

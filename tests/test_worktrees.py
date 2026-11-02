@@ -165,6 +165,85 @@ def test_opencode_failure_reports_retained_resources(repo, tmp_path):
     assert str(destination) in str(error.value)
 
 
+@pytest.mark.parametrize("during", ["session.fork", "session.move", "poll"])
+def test_opencode_cancellation_reports_known_retained_resources(repo, tmp_path, during):
+    destination = tmp_path / "native-worktree"
+    destination.mkdir()
+
+    def run(argv, cwd, *, timeout=120):
+        if "--help" in argv:
+            return "--param --data"
+        operation = (
+            "poll" if argv[-1] == "sessionID=forked" and argv[2] == "session.get" else argv[2]
+        )
+        if operation == during:
+            raise KeyboardInterrupt
+        if operation == "session.get":
+            return '{"data":{"projectID":"project"}}'
+        if operation == "worktree.create":
+            return json.dumps({"directory": str(destination)})
+        if operation == "session.fork":
+            return '{"data":{"id":"forked"}}'
+        return ""
+
+    value = worktrees.plan(
+        scanner.source_by_name("opencode"), "source", repo, None, name="rl-fixed"
+    )
+    with pytest.raises(KeyboardInterrupt, match="preparation cancelled") as error:
+        worktrees.prepare(value, run=run)
+    assert f"worktree retained at {destination}" in str(error.value)
+    if during != "session.fork":
+        assert "fork retained as forked" in str(error.value)
+
+
+def test_pi_preparation_failure_names_planned_destination(repo):
+    value = worktrees.plan(scanner.source_by_name("pi"), None, repo, None, name="rl-fixed")
+
+    def fail(*_):
+        raise worktrees.WorktreeError("git refused")
+
+    with pytest.raises(worktrees.WorktreeError) as error:
+        worktrees.prepare(value, run=fail)
+    assert f"planned destination {value.destination}" in str(error.value)
+    assert "git refused" in str(error.value)
+
+
+def test_opencode_fresh_worktree_resolves_location_without_session(repo, tmp_path):
+    destination = tmp_path / "fresh"
+    destination.mkdir()
+    calls = []
+
+    def run(argv, cwd, *, timeout=120):
+        calls.append(tuple(argv))
+        if "--help" in argv:
+            return "--param --data"
+        if argv[2] == "location.get":
+            assert argv[-1] == f"location[directory]={repo}"
+            return '{"project":{"id":"new-project"}}'
+        assert argv[2] == "worktree.create"
+        assert json.loads(argv[-1]) == {"projectID": "new-project", "from": str(repo)}
+        return json.dumps({"directory": str(destination)})
+
+    value = worktrees.plan(scanner.source_by_name("opencode"), None, repo, None, name="rl-fixed")
+    assert worktrees.prepare(value, run=run) == worktrees.PreparedWorktree(
+        ("opencode",), destination
+    )
+    assert [args[2] for args in calls[1:]] == ["location.get", "worktree.create"]
+
+
+def test_opencode_fresh_start_rejects_invalid_project_before_creation(repo):
+    calls = []
+
+    def run(argv, cwd, *, timeout=120):
+        calls.append(tuple(argv))
+        return "--param --data" if "--help" in argv else '{"project":null}'
+
+    value = worktrees.plan(scanner.source_by_name("opencode"), None, repo, None, name="rl-fixed")
+    with pytest.raises(worktrees.WorktreeError, match=r"project\.id"):
+        worktrees.prepare(value, run=run)
+    assert [args[2] for args in calls[1:]] == ["location.get"]
+
+
 def test_pi_old_binary_refuses_before_git_mutation(repo, tmp_path):
     transcript = tmp_path / "session.jsonl"
     transcript.write_text("history")

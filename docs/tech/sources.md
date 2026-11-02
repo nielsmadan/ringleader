@@ -112,13 +112,16 @@ picker on — so a move relocates nothing and rewrites that one entry instead. N
 and no transcript path changes, which is why it is a separate protocol rather than a branch
 inside the relocating one. Miss it and the session stays reachable only by its id.
 
-**Session launching** is what `rl resume` dispatches through. `resume_argv()` re-enters an
-existing session; `fork_argv()` creates and launches a native fork; `launch_argv()` starts a
-fresh one carrying an opening prompt, which is how a cross-agent handoff seeds the target.
+**Session launching** is what `rl resume` and `rl start` dispatch through. `resume_argv()`
+re-enters an existing session; `fork_argv()` creates and launches a native fork; `launch_argv()`
+starts a fresh one. Its default `prompt=None` returns the bare agent command for `rl start`;
+an explicit prompt preserves the seeded cross-agent handoff, including an explicitly empty
+string. OpenCode uses `--prompt` and Pi uses `--` for that prompted form.
 All return argv whose first element is the binary, and none carries a directory — every agent
 resolves a session id relative to the directory it is launched in, so the caller chdirs first and a path in argv would be a second, conflicting answer.
 All five sources opt in, including OpenCode, whose read-only store does not stop its CLI being
-launched.
+launched. `worktrees.py` composes worktree flags and preparation around these argv builders;
+[resume and fresh starts](resume.md) describes the shared launch boundary.
 
 All three index writers (`hide_from_picker`, `show_in_picker`, `rebind_workspace`) return an
 **`IndexUpdate`**, not a bool: `NO_INDEX` (this source keeps no index here) and `NO_ENTRY` (it

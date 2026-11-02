@@ -27,8 +27,8 @@ pruning them before the GC clock deletes them.
   `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not in this repo.
   `rl data migrate` (run automatically by `just install`) moves any legacy repo-root
   state there once.
-- **`rl resume` replaces the `rl` process.** It `chdir`s to the session's directory and
-  `execvpe`s the agent, so anything after it in a shell script never runs. `--dry-run` prints the
+- **`rl resume` and `rl start` replace the `rl` process.** They `chdir` to the launch directory
+  and `execvpe` the agent, so ringleader cannot run cleanup after the agent exits. `--dry-run` prints the
   directory and the argv and launches nothing. Resuming in a *different* agent (`--to`) tries a
   **native conversion** first — a fresh session in the target agent that genuinely continues the
   source, via `rl session convert`/`fork` under the hood — and only on refusal asks before
@@ -168,6 +168,7 @@ pruning them before the GC clock deletes them.
 ## Commands
 
 ```sh
+rl start <agent> [--worktree]        # fresh conversation here or in a new worktree; --dry-run previews
 rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
 rl resume --last                    # re-enter the most recent session in scope, no picker
 rl                                  # bare, on an interactive non-agent TTY: opens rl inbox

@@ -17,6 +17,7 @@ _FLAT = (
     "harvests",
     "config",
     "resume",
+    "start",
     "inbox",
     "install",
     "update",

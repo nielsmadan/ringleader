@@ -45,6 +45,11 @@ def test_launch_argv_carries_the_prompt(name):
     assert _sources()[name].launch_argv("read the file") == LAUNCH[name]
 
 
+@pytest.mark.parametrize("name", sorted(LAUNCH))
+def test_launch_without_prompt_starts_fresh(name):
+    assert _sources()[name].launch_argv() == (LAUNCH[name][0],)
+
+
 def test_pi_terminates_its_options_so_a_prompt_is_not_read_as_a_flag():
     """`pi [options] [--] [@files...] [messages...]` — without the terminator a prompt
     opening with `-` is read as a flag. `@files` follow `--`, so it does not shield those."""
