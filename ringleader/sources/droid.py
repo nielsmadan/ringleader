@@ -48,10 +48,18 @@ def session_start(path: Path) -> dict[str, Any]:
 
 
 def _is_own_session(start: dict[str, Any]) -> bool:
-    """Droid writes a transcript per thread: the interactive session and every
-    subagent it spawns alike. Only a thread with no caller is one a human owns and
-    can resume, which is also what `droid resume` lists."""
     return bool(start) and start.get("callingSessionId") is None
+
+
+def _is_exec(path: Path) -> bool:
+    try:
+        settings = json.loads(path.with_suffix(".settings.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    tags = settings.get("tags") if isinstance(settings, dict) else None
+    return isinstance(tags, list) and any(
+        isinstance(tag, dict) and tag.get("name") == "exec" for tag in tags
+    )
 
 
 def _header(path: Path) -> tuple[bool, object]:
@@ -153,6 +161,10 @@ class DroidSource:
         default_factory=dict, init=False, repr=False, compare=False
     )
 
+    _exec_tags: FingerprintMemo[bool] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
+
     def __post_init__(self) -> None:
         self.sessions_dir = Path(self.sessions_dir)
 
@@ -200,6 +212,18 @@ class DroidSource:
             shutil.move(str(sidecar), str(dst_dir / sidecar.name))
         return str(dst)
 
+    def excludes_session(self, file: str) -> bool:
+        path = Path(file)
+        try:
+            fingerprint = stat_fingerprint(path.with_suffix(".settings.json").stat())
+        except OSError:
+            self._exec_tags.pop(file, None)
+            return False
+        self._exec_tags[file] = entry = memo_by_fingerprint(
+            self._exec_tags, path, fingerprint, _is_exec
+        )
+        return entry[1]
+
     def discover(self) -> Iterator[RawRef]:
         if not self.sessions_dir.exists():
             return iter(())
@@ -218,7 +242,19 @@ class DroidSource:
             *(p for d in dirs for p in d.glob("*.jsonl")),
             *existing_files(known),
         }
-        return self._refs(sorted(p for p in files if changed_since(p, since)), complete=False)
+        return self._refs(
+            sorted(
+                p
+                for p in files
+                if str(p) not in known
+                or changed_since(p, since)
+                or (
+                    p.with_suffix(".settings.json").is_file()
+                    and changed_since(p.with_suffix(".settings.json"), since)
+                )
+            ),
+            complete=False,
+        )
 
     def _refs(self, files: Iterable[Path], *, complete: bool) -> Iterator[RawRef]:
         seen: set[str] = set()
@@ -236,7 +272,7 @@ class DroidSource:
                 print(f"skipped {p}: {e}", file=sys.stderr)
                 continue
             own, session_id = entry[1]
-            if not own:
+            if not own or self.excludes_session(str(p)):
                 continue
             if not isinstance(session_id, str) or not session_id:
                 print(f"skipped {p}: session_start has no usable id", file=sys.stderr)
@@ -253,6 +289,8 @@ class DroidSource:
                 fingerprint=fingerprint,
             )
         self._headers = headers if complete else {**self._headers, **headers}
+        if complete:
+            self._exec_tags = {p: entry for p, entry in self._exec_tags.items() if p in headers}
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = ref.file_path()

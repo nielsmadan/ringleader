@@ -77,7 +77,7 @@ APIs release the lock on failure. `persist=False` refreshes create no file or lo
 |---|---|
 | `threads` | live sessions — the working set |
 | `archived` | archived sessions, each with the full thread record for restore |
-| `deleted` | tombstones for transcripts that are gone |
+| `deleted` | tombstones for removed or excluded sessions; excluded transcripts remain on disk |
 | `conversionLineage` | authoritative operation-keyed source/target conversion and fork relations |
 | `memoryEntries` | the memory track's parallel working set |
 | `projectsCleanedAt` / `memoryProjectsCleanedAt` | per-project "last triaged" stamps |
@@ -168,7 +168,9 @@ original snapshot unchanged:
    archive ([0005](../decisions/0005-archive-by-moving-not-deleting.md)).
 4. Threads not seen in the scan move to `deleted`, keeping their decision and harvest pointers —
    unless their source was unavailable, or the scan was `partial` (it looked at only part of each
-   source, so not seeing a thread proves nothing). A partial scan moves no clock. Otherwise each
+   source, so not seeing a thread proves nothing). Explicit source exclusions retire cached
+   entries within the requested scope even during partial scans, with reason `excluded`
+   and the prior thread preserved. A partial scan moves no clock. Otherwise each
    source the caller names in `scanned_sources` gets `now_iso` in `sourcesScannedAt` — except an
    unavailable one, whose writes meanwhile went unseen.
 

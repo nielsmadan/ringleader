@@ -128,7 +128,7 @@ def test_scoped_discovery_skips_transcripts_unchanged_since_the_last_scan(tmp_pa
     fresh = _session(tmp_path, [_start(id=CALLER_ID)], session_id=CALLER_ID)
     os.utime(stale, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
 
-    assert _scoped(tmp_path, CWD) == [str(fresh)]
+    assert _scoped(tmp_path, CWD, known=frozenset({str(stale)})) == [str(fresh)]
 
 
 def test_scoped_discovery_includes_fresh_top_level_transcripts(tmp_path):
@@ -138,7 +138,7 @@ def test_scoped_discovery_includes_fresh_top_level_transcripts(tmp_path):
     stale.write_text(json.dumps(_start(id=OTHER_ID)) + "\n", encoding="utf-8")
     os.utime(stale, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
 
-    assert _scoped(tmp_path, CWD) == [str(fresh)]
+    assert _scoped(tmp_path, CWD, known=frozenset({str(stale)})) == [str(fresh)]
 
 
 def test_scoped_discovery_includes_a_known_transcript_filed_elsewhere(tmp_path):
@@ -582,3 +582,80 @@ def test_droid_lifecycle_uses_recorded_store_for_confinement(tmp_path, monkeypat
     outside = _session(tmp_path / "outside", [_start()])
     with pytest.raises(RuntimeError, match="outside the droid session store"):
         scanner.filesystem_path({**thread, "file": str(outside)}, operation)
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+@pytest.mark.parametrize(
+    "settings,expected",
+    [
+        ({"tags": [{"name": "exec"}]}, []),
+        ({"tags": [{"name": "other"}, {"name": "exec"}]}, []),
+        ({"tags": [{"name": "mission-session"}]}, [SESSION_ID]),
+        ({"tags": [None, "exec", 42]}, [SESSION_ID]),
+        ({"tags": "exec"}, [SESSION_ID]),
+        ({}, [SESSION_ID]),
+        ([], [SESSION_ID]),
+        (None, [SESSION_ID]),
+        ("broken json", [SESSION_ID]),
+    ],
+)
+def test_discovery_excludes_only_explicit_exec_tags(tmp_path, scoped, settings, expected):
+    path = _session(tmp_path, [_start()])
+    path.with_suffix(".settings.json").write_text(
+        settings if isinstance(settings, str) else json.dumps(settings)
+    )
+    source = DroidSource(sessions_dir=tmp_path)
+    refs = (
+        source.discover_scoped(CWD, recursive=False, since=LAST_SCAN, known=frozenset())
+        if scoped
+        else source.discover()
+    )
+    assert [ref.source_ref for ref in refs] == expected
+
+
+def test_sidecar_changes_are_observed_with_a_cached_header(tmp_path):
+    path = _session(tmp_path, [_start()])
+    source = DroidSource(sessions_dir=tmp_path)
+    assert [ref.source_ref for ref in source.discover()] == [SESSION_ID]
+    sidecar = path.with_suffix(".settings.json")
+    sidecar.write_text(json.dumps({"tags": [{"name": "exec"}]}))
+    assert list(source.discover()) == []
+    sidecar.unlink()
+    assert [ref.source_ref for ref in source.discover()] == [SESSION_ID]
+
+
+def test_scoped_discovery_observes_a_new_sidecar_on_an_old_transcript(tmp_path):
+    path = _session(tmp_path, [_start()])
+    os.utime(path, (1, 1))
+    path.with_suffix(".settings.json").write_text('{"tags": []}')
+    source = DroidSource(sessions_dir=tmp_path)
+    refs = source.discover_scoped(
+        CWD, recursive=False, since=LAST_SCAN, known=frozenset({str(path)})
+    )
+    assert [ref.source_ref for ref in refs] == [SESSION_ID]
+
+
+def test_exec_tags_are_cached_only_while_the_sidecar_fingerprint_matches(tmp_path, monkeypatch):
+    from ringleader.sources import droid
+
+    path = _session(tmp_path, [_start()])
+    sidecar = path.with_suffix(".settings.json")
+    sidecar.write_text('{"tags": []}')
+    source = DroidSource(sessions_dir=tmp_path)
+    reads = []
+    original = droid._is_exec
+
+    def read(file):
+        reads.append(file)
+        return original(file)
+
+    monkeypatch.setattr(droid, "_is_exec", read)
+    assert [ref.source_ref for ref in source.discover()] == [SESSION_ID]
+    assert [ref.source_ref for ref in source.discover()] == [SESSION_ID]
+    assert reads == [path]
+    sidecar.write_text('{"tags": [{"name": "exec"}]}')
+    assert list(source.discover()) == []
+    assert reads == [path, path]
+    path.unlink()
+    assert list(source.discover()) == []
+    assert source._exec_tags == {}

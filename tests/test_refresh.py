@@ -2,6 +2,7 @@ import json
 import os
 from datetime import UTC, datetime, timedelta
 from functools import partial
+from pathlib import Path
 
 import pytest
 from ringleader import refresh, registry, scanner
@@ -907,3 +908,118 @@ def test_workspace_refresh_defers_unscoped_sources_and_can_leave_disk_unchanged(
     )
     assert [t["sessionId"] for t in result.reg["threads"]] == ["s1"]
     assert path.read_bytes() == before
+
+
+@pytest.mark.parametrize("mode", ["full", "scoped", "workspace"])
+def test_refresh_retires_cached_droid_exec_runs_without_deleting_files(tmp_path, mode):
+    from ringleader.sources.droid import DroidSource
+
+    source = DroidSource(sessions_dir=tmp_path / "droid")
+    workspace = source.storage_for("/work/repo")
+    workspace.mkdir(parents=True)
+    for sid in ("interactive", "exec"):
+        (workspace / f"{sid}.jsonl").write_text(
+            json.dumps({"type": "session_start", "id": sid, "cwd": "/work/repo"}) + "\n"
+        )
+    path = tmp_path / "registry.json"
+    kwargs = {"sources": [source], "git_resolver": lambda cwd: None, "name_filters": []}
+    refresh.auto_refresh(path, "2026-11-01T00:00:00+00:00", **kwargs)
+    sidecar = workspace / "exec.settings.json"
+    sidecar.write_text(
+        json.dumps(
+            {"tags": [{"name": "exec"}], "tokenUsage": {"inputTokens": 1200, "outputTokens": 300}}
+        )
+    )
+    for file in workspace.iterdir():
+        os.utime(file, (1, 1))
+    before = {file.name: file.read_bytes() for file in workspace.iterdir()}
+    now = "2026-11-02T00:00:00+00:00"
+    if mode == "full":
+        result, _ = refresh.auto_refresh(path, now, **kwargs)
+    elif mode == "scoped":
+        result, _ = refresh.scoped_refresh(path, now, cwd="/work/repo", recursive=False, **kwargs)
+    else:
+        result = refresh.workspace_refresh(path, now, "/work/repo", False, **kwargs).reg
+    assert [thread["sessionId"] for thread in result["threads"]] == ["interactive"]
+    assert [(row["sessionId"], row["reason"]) for row in result["deleted"]] == [
+        ("exec", "excluded")
+    ]
+    assert {file.name: file.read_bytes() for file in workspace.iterdir()} == before
+    assert registry.load_registry(path)["threads"] == result["threads"]
+    from ringleader.usage.droid import DroidUsageReader
+
+    usage = list(DroidUsageReader(sessions_dir=source.sessions_dir).records())
+    assert [(r.session_id, r.input, r.output, r.total) for r in usage] == [
+        ("exec", 1200, 300, 1500)
+    ]
+    sidecar.write_text('{"tags": []}')
+    restored, _ = refresh.auto_refresh(path, now, **kwargs)
+    assert {thread["sessionId"] for thread in restored["threads"]} == {"interactive", "exec"}
+
+
+@pytest.mark.parametrize("mode", ["scoped", "workspace"])
+def test_partial_refresh_exclusions_stay_in_workspace(tmp_path, monkeypatch, mode):
+    from ringleader.sources.droid import DroidSource
+
+    source = DroidSource(sessions_dir=tmp_path / "sessions")
+    for sid in ("here", "elsewhere"):
+        folder = source.storage_for("/work/" + sid)
+        folder.mkdir(parents=True)
+        (folder / f"{sid}.jsonl").write_text(
+            json.dumps({"type": "session_start", "id": sid, "cwd": "/work/" + sid}) + "\n"
+        )
+    path = tmp_path / "registry.json"
+    kwargs = {"sources": [source], "git_resolver": lambda cwd: None, "name_filters": []}
+    now = "2026-11-02T00:00:00+00:00"
+    refresh.auto_refresh(path, now, **kwargs)
+    for sid in ("here", "elsewhere"):
+        (source.storage_for("/work/" + sid) / f"{sid}.settings.json").write_text(
+            '{"tags": [{"name": "exec"}]}'
+        )
+    checked = []
+    original = source.excludes_session
+
+    def excluding(file):
+        checked.append(file)
+        return original(file)
+
+    monkeypatch.setattr(source, "excludes_session", excluding)
+    if mode == "scoped":
+        result, _ = refresh.scoped_refresh(path, now, cwd="/work/here", recursive=False, **kwargs)
+    else:
+        result = refresh.workspace_refresh(path, now, "/work/here", False, **kwargs).reg
+    assert [t["sessionId"] for t in result["threads"]] == ["elsewhere"]
+    assert {Path(file).stem for file in checked} == {"here"}
+
+
+@pytest.mark.parametrize("registered", [False, True])
+@pytest.mark.parametrize("change", ["remove", "malformed", "untag"])
+def test_scoped_refresh_restores_an_excluded_run_when_settings_stop_excluding_it(
+    tmp_path, change, registered
+):
+    from ringleader.sources.droid import DroidSource
+
+    source = DroidSource(sessions_dir=tmp_path / "sessions")
+    folder = source.storage_for("/work/repo")
+    folder.mkdir(parents=True)
+    transcript = folder / "session.jsonl"
+    transcript.write_text(
+        json.dumps({"type": "session_start", "id": "session", "cwd": "/work/repo"}) + "\n"
+    )
+    os.utime(transcript, (1, 1))
+    path = tmp_path / "registry.json"
+    now = "2026-11-02T00:00:00+00:00"
+    kwargs = {"sources": [source], "git_resolver": lambda cwd: None, "name_filters": []}
+    if registered:
+        refresh.auto_refresh(path, now, **kwargs)
+    sidecar = transcript.with_suffix(".settings.json")
+    sidecar.write_text('{"tags": [{"name": "exec"}]}')
+    excluded, _ = refresh.auto_refresh(path, now, **kwargs)
+    assert excluded["threads"] == []
+    if change == "remove":
+        sidecar.unlink()
+    else:
+        sidecar.write_text("broken" if change == "malformed" else '{"tags": []}')
+        os.utime(sidecar, (1, 1))
+    restored, _ = refresh.scoped_refresh(path, now, cwd="/work/repo", recursive=False, **kwargs)
+    assert [t["sessionId"] for t in restored["threads"]] == ["session"]

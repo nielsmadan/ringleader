@@ -233,9 +233,13 @@ Messages share **Pi's** shape — `{"type":"message","message":{"role":…,"cont
 why the generic JSONL exporter renders a droid session with no droid-specific code, and why
 `DroidSource` declines `renders_conversation`.
 
-**217 of the 257 local sessions are subagent runs.** A subagent transcript carries a
-`callingSessionId`; a top-level one has it null. Only the 40 top-level ones are sessions a human
-owns and can resume, so discovery excludes the rest — the same exclusion Codex's subagent rows get.
+A subagent transcript carries a `callingSessionId`; top-level runs omit it or set it to null.
+Top-level runs also include non-interactive `droid exec` invocations. Their `.settings.json`
+sidecar carries `"tags": [{"name": "exec"}]`, including the read-only consultation runs
+observed in the local store on 2026-11-02 (transcript format version 2; originating CLI
+versions are not recorded). `interactionMode: "auto"` appears in both interactive and exec
+sessions, so it does not distinguish them. Ringleader excludes child sessions and explicitly
+exec-tagged runs; missing or malformed settings do not establish an exec run.
 
 ### What the picker shows
 

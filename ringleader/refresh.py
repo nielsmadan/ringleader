@@ -10,7 +10,13 @@ from . import registry, scanner
 from .agents import source_of
 from .config import load_config
 from .gitinfo import GitResolver
-from .sources.base import RawRef, ScopedDiscoverySource, Source, in_workspace
+from .sources.base import (
+    RawRef,
+    ScopedDiscoverySource,
+    SessionExclusionSource,
+    Source,
+    in_workspace,
+)
 from .sources.claude_code import ClaudeCodeSource
 
 
@@ -140,12 +146,31 @@ def scoped_refresh(  # noqa: PLR0913
         return full[0], True
     known = _known_files(reg["threads"], cwd, recursive=recursive)
 
+    excluded = _known_files(
+        (row["thread"] for row in reg["deleted"] if row.get("reason") == "excluded"),
+        cwd,
+        recursive=recursive,
+    )
+
     def refs_of(src: Source) -> Iterable[RawRef]:
         since = baselines.get(src.name)
         if since is None:
             return src.discover()
+        recovered = (
+            frozenset(
+                file
+                for file in excluded.get(src.name, frozenset())
+                if Path(file).is_file() and not src.excludes_session(file)
+            )
+            if isinstance(src, SessionExclusionSource)
+            else frozenset()
+        )
         return scanner.scoped_refs(
-            src, cwd, recursive=recursive, since=since, known=known.get(src.name, frozenset())
+            src,
+            cwd,
+            recursive=recursive,
+            since=datetime.min.replace(tzinfo=UTC) if recovered else since,
+            known=known.get(src.name, frozenset()) | recovered,
         )
 
     scoped, _ = _refresh(
@@ -157,6 +182,7 @@ def scoped_refresh(  # noqa: PLR0913
         name_filters=name_filters,
         persist=persist,
         refs_of=refs_of,
+        exclusion_files=frozenset(file for files in known.values() for file in files),
     )
     return scoped, False
 
@@ -198,6 +224,7 @@ def workspace_refresh(  # noqa: PLR0913
         persist=persist,
         refs_of=refs_of,
         pool=pool,
+        exclusion_files=frozenset(file for files in known.values() for file in files),
     )
     after = {registry.identity(t) for t in reg["threads"]}
     return Refreshed(reg, delta_note(len(after - before), len(before - after)), unavailable)
@@ -223,6 +250,7 @@ def _refresh(  # noqa: PLR0913 -- one keyword per stage of the pipeline both ref
     name_filters: Iterable[str] | None,
     persist: bool,
     refs_of: Callable[[Source], Iterable[RawRef]] | None = None,
+    exclusion_files: frozenset[str] | None = None,
     pool: scanner.SourcePool | None = None,
 ) -> tuple[dict[str, Any], frozenset[str]]:
     """Scan, reconcile, filter and persist. `refs_of` narrows each source's discovery,
@@ -252,6 +280,16 @@ def _refresh(  # noqa: PLR0913 -- one keyword per stage of the pipeline both ref
         unavailable_sources=unavailable_sources,
         partial=partial,
         scanned_sources=[src.name for src in active],
+        excluded_sessions=frozenset(
+            registry.identity(thread)
+            for src in active
+            if src.name not in unavailable_sources and isinstance(src, SessionExclusionSource)
+            for thread in reg["threads"]
+            if source_of(thread) == src.name
+            and thread.get("file")
+            and (exclusion_files is None or thread["file"] in exclusion_files)
+            and src.excludes_session(thread["file"])
+        ),
     )
     registry.apply_name_filters(
         reg, load_config().session_filters if name_filters is None else name_filters

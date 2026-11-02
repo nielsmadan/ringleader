@@ -668,7 +668,7 @@ def _key(rec: dict[str, Any]) -> tuple[str, str]:
     return identity(rec)
 
 
-def reconcile(  # noqa: PLR0912
+def reconcile(  # noqa: PLR0912, PLR0913
     reg: dict[str, Any],
     scanned: Iterable[NormalizedSession],
     now_iso: str,
@@ -676,9 +676,10 @@ def reconcile(  # noqa: PLR0912
     unavailable_sources: set[str] | frozenset[str] = frozenset(),
     partial: bool = False,
     scanned_sources: Iterable[str] = (),
+    excluded_sessions: frozenset[tuple[str, str]] = frozenset(),
 ) -> dict[str, Any]:
     """Fold a scan into the registry. A `partial` scan looked at only part of each source,
-    so a thread it did not see is kept rather than tombstoned and no clock moves. Otherwise
+    so an unseen thread is kept unless explicitly excluded, and no clock moves. Otherwise
     each available source in `scanned_sources` gets `now_iso` in `sourcesScannedAt`, the
     baseline a later partial scan trusts, so `now_iso` must be read before discovery."""
     reg = deepcopy(reg)
@@ -726,14 +727,14 @@ def reconcile(  # noqa: PLR0912
         key = _key(t)
         if key in seen or key in gone:
             continue
-        if partial or key[0] in unavailable_sources:
+        if (partial and key not in excluded_sessions) or key[0] in unavailable_sources:
             threads.append(dict(t))
             continue
         deleted.append(
             {
                 "sessionId": sid,
                 "deletedAt": now_iso,
-                "reason": "gc",
+                "reason": "excluded" if key in excluded_sessions else "gc",
                 "source": key[0],
                 "thread": dict(t),
                 "harvestPath": t.get("harvestPath"),

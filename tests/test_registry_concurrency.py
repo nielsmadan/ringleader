@@ -474,3 +474,21 @@ def test_search_distinguishes_sources_while_collapsing_same_source_duplicates():
         (("codex", "same"), False),
         (("claude-code", "same"), True),
     }
+
+
+def test_a_concurrent_lifecycle_action_does_not_revive_a_source_exclusion(tmp_path):
+    path = seed(tmp_path)
+    stale = registry.load_registry(path)
+    excluded = registry.reconcile(
+        registry.load_registry(path),
+        [],
+        LATER,
+        partial=True,
+        excluded_sessions=frozenset({("claude-code", "same")}),
+    )
+    registry.commit_registry(path, excluded)
+    registry.prune_session(stale, "same", LATER)
+    with pytest.raises(registry.RegistryConflict, match="session lifecycle changed concurrently"):
+        registry.commit_registry(path, stale)
+    saved = registry.load_registry(path)
+    assert [(row["sessionId"], row["reason"]) for row in saved["deleted"]] == [("same", "excluded")]

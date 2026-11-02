@@ -61,11 +61,12 @@ refs and `parse()` runs only for refs the registry's fingerprint check rejects.
 
 ### Capability protocols
 
-Each is `@runtime_checkable` and gated by a string in `capabilities`. Callers check **both** —
-the set says the source opts in, the `isinstance` satisfies the type checker.
+Each is `@runtime_checkable`. Protocols with a named capability require both the string in
+`capabilities` and an `isinstance` check; rows marked `—` use structural opt-in alone.
 
 | Protocol | Capability | Methods |
 |---|---|---|
+| `SessionExclusionSource` | — | `excludes_session(file)` — positive evidence that a cached transcript should leave session discovery |
 | `CachedMetadataSource` | — | `refresh_cached_metadata()` — update display fields even on a cache hit |
 | `DiscoveryCacheSource` | `seeds_discovery` | `seed_discovery()` — prime discovery from version-matched cached sessions; Codex reuses headers only while the file fingerprint matches |
 | `CompanionFileSource` | `companion_files` | `companion_paths()` — the per-transcript state that must travel with it |
@@ -163,6 +164,14 @@ does, and the session is not in it) need opposite handling from the caller, and
   the global root (`sessions/<uuid>.jsonl`), and `sessions/btw/` for a fork. `discover()` reads the
   first two and skips forks, which are never re-filed under a slug. A session at the
   global root has no slug to compare a cwd against, so `resume.drifted()` never badges one.
+- **Droid exec runs have a sidecar tag.** Discovery reads `.settings.json` tags independently
+  of the memoized transcript header, caching tags by the sidecar's own stat fingerprint.
+  Sidecar-only changes take effect, and unknown transcripts are reconsidered even if old.
+  Only a tag object with `name: exec` excludes a run; missing, unreadable or malformed settings retain it.
+  Refresh also checks cached entries through `SessionExclusionSource`, so partial scans can
+  retire a previously discovered exec run within their requested scope. A formerly excluded
+  session becoming eligible triggers rediscovery of its workspace, including known displaced
+  files. Its transcript and usage data remain on disk.
 - **Droid's title is on line 1, so it declines `applies_names`.** `session_start` carries `title`
   and there is no later override record; renaming would mean rewriting the first line of a file
   the agent may still be appending to.

@@ -149,6 +149,11 @@ class Source(Protocol):
 
 
 @runtime_checkable
+class SessionExclusionSource(Protocol):
+    def excludes_session(self, file: str) -> bool: ...
+
+
+@runtime_checkable
 class StoredSource(Source, Protocol):
     @property
     def root(self) -> Path: ...
