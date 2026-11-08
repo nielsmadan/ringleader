@@ -290,12 +290,26 @@ just sync-playbook     # re-sync the bundled skill playbooks
 Hooks are defined in `lefthook.yml`: pre-commit lints and format-checks staged `*.py`;
 pre-push runs `ruff check`, `mypy`, and the suite.
 
-**Releasing.** `pyproject.toml`'s `version` is the only version. Bump it, get `just check`
-green, commit, then push a tag `vX.Y.Z` naming that version. `.github/workflows/release.yml`
-refuses a tag that does not match, vendors the pinned hooklinesinker (failing, unlike `just
-vendor`, when the download does), runs `just check` and builds the wheel in a read-only job,
-then a separate job holding the only write token publishes a GitHub release with `ringleader-X.Y.Z-py3-none-any.whl`, `contract-golden.tar.gz` (the
-`tests/golden/contract-*.json` documents, flat) and `SHA256SUMS`, assembled and checked by
-`scripts/release.py`.
+**Releasing.** Install [curtaincall](https://github.com/nielsmadan/curtaincall), so `curtains` is
+on `PATH`, then from a clean, pushed `main`:
+
+```sh
+just release --dry-run   # the proposed version and the commits it covers
+just release             # check, prepare, confirm, tag and push
+just release minor       # or patch, major, or an explicit X.Y.Z
+```
+
+`scripts/release.json` is the policy. The first release is `0.2.0`; later ones are proposed from
+the commit types since the last tag. `just release` runs `just check`, sets `pyproject.toml`'s
+`version` (the only version), relocks, regenerates `CHANGELOG.md` with git-cliff, commits
+`chore: release X.Y.Z`, then pushes `main` and an annotated `vX.Y.Z` tag together.
+
+The tag starts `.github/workflows/release.yml`. It validates the tag, refuses one that does not
+match the version, vendors the pinned hooklinesinker (failing, unlike `just vendor`, when the
+download does), runs `just check` and builds the wheel in a read-only job. A separate job, holding
+the only write token, publishes a GitHub release with `ringleader-X.Y.Z-py3-none-any.whl`,
+`contract-golden.tar.gz` (the `tests/golden/contract-*.json` documents, flat) and `SHA256SUMS`,
+assembled and checked by `scripts/release.py`. If publishing fails after the tag is pushed, fix
+`main` if needed and rerun it with `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
 
 See `AGENTS.md` for contributor and agent guidance.

@@ -1,0 +1,23 @@
+{
+  "name": "Ringleader",
+  "repository": "nielsmadan/ringleader",
+  "workflow": "release.yml",
+  "branch": "main",
+  "initial_version": "0.2.0",
+  "tag_prefix": "v",
+  "tools": ["git", "uv", "uvx", "just"],
+  "checks": [["just", "check"]],
+  "stages": [
+    {
+      "files": ["pyproject.toml", "uv.lock", "CHANGELOG.md"],
+      "commands": [
+        ["uv", "run", "--locked", "python", "scripts/release.py", "prepare", "{version}"],
+        ["uv", "lock"],
+        ["just", "changelog", "{version}"]
+      ],
+      "checks": [["uv", "run", "--locked", "python", "scripts/release.py", "check-tag", "v{version}"]],
+      "message": "chore: release {version}"
+    }
+  ],
+  "publication": "GitHub Actions verifies the tagged source and publishes a GitHub release with the wheel, contract-golden.tar.gz and SHA256SUMS."
+}

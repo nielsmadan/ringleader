@@ -93,6 +93,15 @@ check-hooklinesinker:
 uninstall:
     @uv tool uninstall ringleader
 
+# Cut a release with curtains: --dry-run, patch|minor|major or X.Y.Z, --yes.
+# The policy's checks already ran `just check`, so the release commit and push skip the hooks.
+release *ARGS:
+    @LEFTHOOK=0 curtains {{ARGS}}
+
+# Regenerate CHANGELOG.md as if VERSION were tagged.
+changelog VERSION:
+    @env UV_TOOL_DIR="$PWD/.uv/tools" UV_CACHE_DIR="$PWD/.uv/cache" UV_PYTHON_INSTALL_DIR="$PWD/.uv/python" uvx git-cliff@2.13.1 --config cliff.toml --tag 'v{{VERSION}}' -o CHANGELOG.md
+
 # Enter the throwaway skill-testing world without resetting its state.
 sandbox:
     @uv run rl install skills --yes

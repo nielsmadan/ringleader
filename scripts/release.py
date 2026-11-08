@@ -4,6 +4,7 @@ import argparse
 import gzip
 import hashlib
 import io
+import re
 import shutil
 import sys
 import tarfile
@@ -26,6 +27,9 @@ REQUIRED_IN_WHEEL = (
     "ringleader/devtools/tui_fixture.py",
 )
 
+VERSION_LINE = re.compile(r'^version = "([^"]*)"$', re.MULTILINE)
+CANONICAL_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
+
 type NamedBytes = tuple[str, bytes]
 
 
@@ -38,6 +42,16 @@ def project_version(pyproject: Path = ROOT / "pyproject.toml") -> str:
 def tag_problem(tag: str, version: str) -> str | None:
     expected = f"v{version}"
     return None if tag == expected else f"tag {tag!r} does not match pyproject version {expected!r}"
+
+
+def with_version(pyproject_text: str, version: str) -> str:
+    if CANONICAL_VERSION.fullmatch(version) is None:
+        raise ValueError(f"{version!r} is not a MAJOR.MINOR.PATCH version")
+    current = tomllib.loads(pyproject_text)["project"]["version"]
+    matches = VERSION_LINE.findall(pyproject_text)
+    if matches != [current]:
+        raise ValueError("expected exactly one version line, the [project] one")
+    return VERSION_LINE.sub(f'version = "{version}"', pyproject_text)
 
 
 def wheel_name(version: str) -> str:
@@ -79,6 +93,17 @@ def _check_tag(args: argparse.Namespace) -> int:
     return 0
 
 
+def _prepare(args: argparse.Namespace) -> int:
+    pyproject = ROOT / "pyproject.toml"
+    try:
+        updated = with_version(pyproject.read_text(encoding="utf-8"), args.version)
+    except ValueError as error:
+        print(f"release: {error}", file=sys.stderr)
+        return 1
+    pyproject.write_text(updated, encoding="utf-8")
+    return 0
+
+
 def _assets(args: argparse.Namespace) -> int:
     version = project_version()
     wheel = Path(args.dist) / wheel_name(version)
@@ -107,6 +132,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     tag = sub.add_parser("check-tag", help="fail unless TAG is v<pyproject version>")
     tag.add_argument("tag")
     tag.set_defaults(run=_check_tag)
+    prepare = sub.add_parser("prepare", help="set the pyproject version to VERSION")
+    prepare.add_argument("version")
+    prepare.set_defaults(run=_prepare)
     assets = sub.add_parser("assets", help="verify the wheel and write the release assets")
     assets.add_argument("--dist", required=True, help="directory holding the built wheel")
     assets.add_argument("--out", required=True, help="directory to write the release assets into")

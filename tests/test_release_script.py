@@ -7,6 +7,7 @@ import zipfile
 from importlib.metadata import version
 from pathlib import Path
 
+import pytest
 from ringleader import cli
 
 REPO = Path(__file__).resolve().parent.parent
@@ -110,3 +111,37 @@ def test_assets_writes_the_wheel_the_goldens_and_their_checksums(tmp_path):
         f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}"
         for name in sorted((wheel.name, release.GOLDEN_TARBALL))
     ]
+
+
+PYPROJECT = """[project]
+name = "ringleader"
+version = "0.2.0"
+
+[tool.example]
+target-version = "py313"
+"""
+
+
+def test_prepare_rewrites_only_the_project_version():
+    assert release.with_version(PYPROJECT, "0.3.0") == PYPROJECT.replace(
+        'version = "0.2.0"', 'version = "0.3.0"'
+    )
+
+
+def test_prepare_refuses_a_version_that_is_not_major_minor_patch():
+    for bad in ("0.3", "v0.3.0", "0.03.0", "0.3.0rc1"):
+        with pytest.raises(ValueError, match=r"is not a MAJOR\.MINOR\.PATCH version"):
+            release.with_version(PYPROJECT, bad)
+
+
+def test_prepare_refuses_a_second_version_line():
+    doubled = PYPROJECT + '\n[tool.other]\nversion = "9.9.9"\n'
+    with pytest.raises(ValueError, match="exactly one version line"):
+        release.with_version(doubled, "0.3.0")
+
+
+def test_prepare_command_reports_a_bad_version_and_leaves_pyproject_alone(capsys):
+    before = (REPO / "pyproject.toml").read_bytes()
+    assert release.main(["prepare", "1.0"]) == 1
+    assert capsys.readouterr().err == "release: '1.0' is not a MAJOR.MINOR.PATCH version\n"
+    assert (REPO / "pyproject.toml").read_bytes() == before

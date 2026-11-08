@@ -19,3 +19,5 @@ build/
 # vendored hooklinesinker release artifacts (staged by scripts/vendor-hooklinesinker.sh)
 ringleader/_vendor/*
 !ringleader/_vendor/.gitkeep
+# uv tool cache for `just changelog`
+.uv/

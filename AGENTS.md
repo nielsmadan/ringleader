@@ -165,11 +165,17 @@ pruning them before the GC clock deletes them.
   genuinely offline (loopback HTTP, no real inference) and safe to run unattended — droid's uses
   `droid exec --fork`, never interactive `droid`.
 
-- **A release is a pushed `vX.Y.Z` tag.** `pyproject.toml`'s `version` is the only version;
-  `.github/workflows/release.yml` refuses a tag that does not match it and publishes the wheel,
-  `contract-golden.tar.gz` and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job
-  and publishes from a separate one; its actions are pinned by commit SHA. The circus app pins a release
-  by version and wheel hash, so bump the version for anything it should pick up.
+- **`just release` cuts a release; never tag by hand.** It runs `curtains` (installed globally,
+  not a dependency) against `scripts/release.json`: `just check`, then `scripts/release.py prepare`
+  sets `pyproject.toml`'s `version` (the only version), `uv lock`, `just changelog` regenerates
+  `CHANGELOG.md` from feat/fix commits (`cliff.toml`), and it commits `chore: release X.Y.Z`,
+  creates an annotated `vX.Y.Z` tag and pushes branch and tag atomically. Agents cannot push, so the
+  user runs it. The tag starts `.github/workflows/release.yml`, which validates the tag with
+  `curtains ci`, checks it matches the version, and publishes the wheel, `contract-golden.tar.gz`
+  and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job and publishes from a
+  separate one; its actions are pinned by commit SHA. A failed publish is retried with
+  `gh workflow run release.yml --ref main -f tag=vX.Y.Z`, never by re-tagging. The circus app pins a
+  release by version and wheel hash, so release for anything it should pick up.
   `ringleader/devtools/` (the synthetic worlds: `tui_fixture`, `gui_world`) ships in the wheel and
   is type-checked like the rest of the package; it is for tests and QA, never for live data.
 
@@ -215,6 +221,7 @@ just doctor                         # verify tools and hook installation
 just install                        # install or replace the current-source CLI snapshot
 just install-editable               # link the installed CLI to this checkout
 just uninstall                      # remove the installed CLI, preserving user data
+just release [--dry-run] [patch|minor|major|X.Y.Z] # cut a release: tag, push, CI publishes
 ```
 
 From a source checkout without installing, prefix each `rl` call with `uv run` (`uv run rl overview`).
