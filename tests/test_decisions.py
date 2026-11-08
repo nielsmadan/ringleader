@@ -127,6 +127,7 @@ def test_archive_refuses_a_transcript_that_gained_a_line(tmp_path):
         "s1-title: changed since you looked",
     )
     assert outcome.refused == ((_seen(thread), "changed since you looked"),)
+    assert outcome.code == "changed"
     assert Path(thread["file"]).exists()
     assert [t["sessionId"] for t in _load(path)["threads"]] == ["s1"]
 
@@ -350,6 +351,17 @@ def test_an_archive_collision_after_the_save_reports_harvested_not_archived(tmp_
     assert outcome.message.startswith("harvested, not archived: ")
     assert stored["decision"] == "harvested"
     assert Path(thread["file"]).exists()
+
+
+@pytest.mark.parametrize(("saved", "code"), [("/h/s1.md", "failed"), (None, "gone")])
+def test_a_session_that_left_before_its_archive_is_gone_only_if_nothing_was_written(
+    tmp_path, saved, code
+):
+    thread = _thread(tmp_path)
+    path = _write(tmp_path, [])
+    op = HarvestSaveOp(_seen(thread), MARKDOWN)
+    outcome = decisions._archive_harvested(op, _ctx(path, tmp_path), saved)
+    assert (outcome.ok, outcome.wrote, outcome.code) == (False, saved is not None, code)
 
 
 def test_harvest_save_refuses_a_running_session_before_saving(tmp_path):

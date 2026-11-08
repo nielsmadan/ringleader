@@ -30,7 +30,7 @@ from .. import (
     scanner,
 )
 from ..agents import source_of
-from ..config import load_config
+from ..config import key_preset, load_config
 from ..decisions import (
     ArchiveOp,
     ClassifyOp,
@@ -72,6 +72,7 @@ from .jobs import (
     JobMessage,
     harvest_job,
 )
+from .keymap import Keymap, keymap_for, with_bindings
 from .palette import InboxCommands
 from .policy import DELETE_GRACE_SECONDS
 from .prints import PrintCoalescer
@@ -243,8 +244,6 @@ class InboxApp(App[ExitIntent | None]):
         *(_target_binding(str(index), target) for index, target in enumerate(ScreenTarget, 1)),
         Binding("q", "quit", "quit"),
         Binding("ctrl+c", "cancel", "cancel", show=False, priority=True),
-        Binding("u", "undo", "undo"),
-        Binding("ctrl+r", "rescan", "rescan"),
     ]
 
     def __init__(  # noqa: PLR0913 -- injection points the suite drives
@@ -260,8 +259,16 @@ class InboxApp(App[ExitIntent | None]):
         cwd: str | Path | None = None,
         delete_grace: float = DELETE_GRACE_SECONDS,
         strict: bool = False,
+        keymap: Keymap | None = None,
     ) -> None:
         super().__init__()
+        config = load_config()
+        self.keymap = keymap or keymap_for(key_preset(config.inbox_keys))
+        # bound here, after the preset's undo, so the footer keeps undo before rescan
+        self._bindings = with_bindings(
+            self._bindings,
+            (Binding(self.keymap.undo, "undo", "undo"), Binding("ctrl+r", "rescan", "rescan")),
+        )
         self.registry_path = str(registry_path)
         self.read_only = read_only
         self._strict = strict
@@ -269,7 +276,7 @@ class InboxApp(App[ExitIntent | None]):
         self._presence: Presence = presence or live_session_ids
         self._models: ModelResolver = models or _default_models
         self._cwd = str(cwd) if cwd is not None else os.getcwd()
-        self._stale_hours = load_config().roundup_stale_hours
+        self._stale_hours = config.roundup_stale_hours
         pool = scanner.SourcePool()
         default_refresher: Refresher = partial(
             refresh.auto_refresh, persist=not read_only, pool=pool
@@ -671,7 +678,7 @@ class InboxApp(App[ExitIntent | None]):
     def open_triage(self, scope: TriageScope) -> None:
         self.go(ScreenTarget.HOME)
         if isinstance(self.screen, HomeScreen):
-            self.push_screen(TriageScreen(scope))
+            self.push_screen(TriageScreen(scope, self.keymap))
 
     def resume_thread(self, thread: dict[str, Any]) -> None:
         self._resume_flow(thread)
@@ -767,7 +774,7 @@ class InboxApp(App[ExitIntent | None]):
             return False
         self._decided += len(ops)
         if decision == "delete":
-            self._toast(f"deleting {what} in {self._delete_grace:g} s — u to undo")
+            self._toast(f"deleting {what} in {self._delete_grace:g} s — {self.keymap.undo} to undo")
         return True
 
     def harvest(self, thread: dict[str, Any]) -> None:

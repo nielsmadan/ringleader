@@ -42,7 +42,7 @@ rl
 |---|---|---|
 | `rl start <agent>` | Start a fresh conversation in the current directory. Choose `claude` (or `claude-code`), `codex`, `droid`, `opencode`, or `pi`. Bare `rl start` prints help. See [Starting a fresh session](#starting-a-fresh-session) for worktree behavior. | `--worktree`, `--dry-run` |
 | `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (optionally into a worktree with `--worktree`), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--worktree`, `--to claude\|codex\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
-| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
+| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. These are the default `vim` keys; `rl config set inbox.keys circus` switches to the circus app's (see [the triage workflow](triage-workflow.md#triage-in-the-inbox)). | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
@@ -234,6 +234,12 @@ to the explicit presence command or onboarding skill.
 | `rl workspace move <old> <new>` | Move the directory, its session storage, and the registry. Confirms first; **refuses rather than merges** into a destination that already holds session storage. `--dry-run`, `--yes`, `--allow-empty`, `--no-scan`. Scans first so a session forked since the last scan is not left behind. Build artifacts inside the tree are reported, never rewritten. |
 | `rl workspace retarget <old> <new>` | The last two halves, for a directory you already moved by hand. Makes `move` re-runnable after a partial failure. `--dry-run`, `--yes`, `--no-scan` |
 
+## `rl handoff`
+
+| Command | Does |
+|---|---|
+| `rl handoff triage --project <key> --agent <agent>` | Launch an agent in the project's directory to triage it with the `ringleader-triage` skill, the same handoff as `t` in `rl inbox`. `<key>` is a project key from `rl inbox --json`, or a project label that only one waiting project has; it must have sessions waiting for triage. Replaces the `rl` process, like `rl resume`. `--dry-run` prints the directory and argv; `--json` (with `--dry-run`) prints them as one JSON document. `--registry` |
+
 ## `rl config`
 
 `rl config show` prints the current values and the resolved enrich, harvest and analyze models.
@@ -248,6 +254,7 @@ to the explicit presence command or onboarding skill.
 | `analyze.model` | model for `rl analyze` labels; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
 | `archive.retention_days` | non-negative int; `0` = keep archives and handoff exports forever. Above `0`, `prune --delete` and `roundup` also remove `handoffs/*.md` exports older than this many days (an unscoped `prune` only) |
+| `inbox.keys` | `vim` (default) \| `circus` — the `rl inbox` triage keys; `circus` matches the circus app's Inbox |
 
 `roundup_stale_hours` (default 8) is read from the same file but **cannot be set with
 `rl config set`** — edit `config.json` under the state dir to change it.

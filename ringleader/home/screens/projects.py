@@ -108,7 +108,9 @@ class ProjectsScreen(InboxScreen):
         event.stop()
         index = event.option_index
         if 0 <= index < len(self._projects):
-            self.app.push_screen(TriageScreen(ProjectScope(self._projects[index])))
+            self.app.push_screen(
+                TriageScreen(ProjectScope(self._projects[index]), self.inbox.keymap)
+            )
 
     def action_handoff(self) -> None:
         project = self._highlighted()

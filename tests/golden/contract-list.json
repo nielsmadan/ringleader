@@ -1,7 +1,140 @@
 {
+  "agents": [
+    {
+      "agent": "claude",
+      "installed": true,
+      "source": "claude-code"
+    },
+    {
+      "agent": "codex",
+      "installed": false,
+      "source": "codex"
+    },
+    {
+      "agent": "droid",
+      "installed": false,
+      "source": "droid"
+    },
+    {
+      "agent": "opencode",
+      "installed": false,
+      "source": "opencode"
+    },
+    {
+      "agent": "pi",
+      "installed": false,
+      "source": "pi"
+    }
+  ],
   "generated_at": "2026-10-15T12:00:00+00:00",
+  "home": {
+    "counts": {
+      "blocked": 1,
+      "kept": 1,
+      "live": 1,
+      "projects": 1,
+      "spread_projects": 1,
+      "stale": 1,
+      "triage_total": 16,
+      "unclassified": 17
+    },
+    "in_flight": [
+      "claude-code:4cbd87ad-5c90-a958-7403-e430ec66a787",
+      "claude-code:1d87cec3-1f72-96ab-7961-fd925d39d0a8",
+      "claude-code:5c9bcf35-873b-e078-f3b7-a50df373ca53"
+    ],
+    "next_steps": [
+      {
+        "costs_model": true,
+        "count": null,
+        "deletes": true,
+        "id": null,
+        "kind": "roundup",
+        "project_key": null
+      },
+      {
+        "costs_model": false,
+        "count": 1,
+        "deletes": false,
+        "id": null,
+        "kind": "woke",
+        "project_key": null
+      },
+      {
+        "costs_model": false,
+        "count": 3,
+        "deletes": false,
+        "id": null,
+        "kind": "recent",
+        "project_key": null
+      },
+      {
+        "costs_model": false,
+        "count": 16,
+        "deletes": false,
+        "id": null,
+        "kind": "project",
+        "project_key": "/fixture/work/proj-00"
+      }
+    ],
+    "pending_harvests": 0,
+    "projects": [
+      {
+        "key": "/fixture/work/proj-00",
+        "label": "…/work/proj-00",
+        "newest_mtime": "2026-10-12T23:59:37+00:00",
+        "oldest_mtime": "2026-06-22T10:38:09+00:00",
+        "pending": 16,
+        "unclassified": 15
+      }
+    ],
+    "rows": [
+      {
+        "age_days": 106.5,
+        "age_human": "106d ago",
+        "agent": "pi",
+        "badges": [
+          "snoozed"
+        ],
+        "decision": null,
+        "file": "/fixture/_pi/-fixture-work-proj-00/85f1115b-b2ff-f17b-3f66-5edef10637ce.jsonl",
+        "file_fingerprint": "1:17:36126:1782868157000000000:1782868157000000000",
+        "finish_on_exit": false,
+        "git_branch": null,
+        "git_project_key": null,
+        "git_project_label": null,
+        "id": "pi:85f1115b-b2ff-f17b-3f66-5edef10637ce",
+        "in_recent": false,
+        "kept_at": null,
+        "label": "schema export hooks 17",
+        "last_prompt": "please schema deploy export refactor picker parser",
+        "lifecycle_block": null,
+        "message_count": 18,
+        "mtime": "2026-07-01T01:09:17+00:00",
+        "project": "/fixture/work/proj-00",
+        "project_key": "/fixture/work/proj-00",
+        "project_label": "…/work/proj-00",
+        "project_short": "…/work/proj-00",
+        "reviewed_at_mtime": null,
+        "running": false,
+        "session_id": "85f1115b-b2ff-f17b-3f66-5edef10637ce",
+        "size_bytes": 36126,
+        "size_human": "35.3KB",
+        "snoozed_at": "2026-10-11T12:00:00+00:00",
+        "snoozed_until": "2026-10-18T01:00:00+00:00",
+        "source": "pi",
+        "status": "unclassified",
+        "what_it_is": null,
+        "woke": false
+      }
+    ],
+    "waking_soon": [
+      "pi:85f1115b-b2ff-f17b-3f66-5edef10637ce"
+    ]
+  },
   "kind": "list",
   "presence": {
+    "code": null,
     "problem": null,
     "state": "ok"
   },

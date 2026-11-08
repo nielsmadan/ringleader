@@ -1,6 +1,6 @@
  ⭘                                 rl inbox — scanned just now
  …/work/proj-01 · 18 waiting · 0 decided this session
- space mark · * mark all · enter detail · r resume · t triage the project with an agent · u undo
+ space mark · */A mark all · enter detail · r resume · t triage the project with an agent · u undo
 ● unclassified claude   115d ago hooks parser flaky 15
   unclassified claude   110d ago release migrate deploy 9
 ● unclassified claude   101d ago refactor cache hooks 37

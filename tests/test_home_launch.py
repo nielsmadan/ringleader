@@ -1,3 +1,4 @@
+from ringleader.handoff import handoff_argv
 from ringleader.home.intents import (
     AgentHandoffIntent,
     ResumeIntent,
@@ -5,7 +6,7 @@ from ringleader.home.intents import (
     publish_prompt,
     triage_prompt,
 )
-from ringleader.home.launch import handoff_argv, run_intent
+from ringleader.home.launch import run_intent
 from ringleader.picker.app import Choice
 
 THREAD = {"sessionId": "s1", "source": "claude-code", "project": "/w/a", "mtime": "2026-10-01"}

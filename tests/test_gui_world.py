@@ -1,10 +1,11 @@
 import json
 import subprocess
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
 from ringleader import contract, harvesting, presence, registry
-from scripts import gui_world
+from ringleader.devtools import gui_world
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -49,9 +50,10 @@ def _list_rows(reg):
         reg,
         NOW_DT.isoformat(),
         registry_path="x",
-        presence=contract.PresenceView(None, None),
-        stale_hours=24,
         scan=None,
+        surroundings=contract.Surroundings(
+            contract.PresenceView.unknown("not probed", "failed"), 24, 0, ()
+        ),
     )["sessions"]
 
 
@@ -135,3 +137,28 @@ def test_too_few_threads_fails_before_touching_the_root(tmp_path):
     (root / "old.txt").write_text("old")
     assert gui_world.main(["--root", str(root), "--threads", "1"]) == 1
     assert (root / "old.txt").read_text() == "old"
+
+
+def test_the_world_builds_as_a_module_of_the_installed_package(tmp_path):
+    root = tmp_path / "w"
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "ringleader.devtools.gui_world",
+            "--root",
+            str(root),
+            "--threads",
+            "4",
+            "--exports",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        cwd=tmp_path,
+    )
+    assert done.returncode == 0, done.stderr
+    exports = done.stdout.splitlines()
+    assert exports[-1] == f'export PATH={root.resolve() / "bin"}:"$PATH"'
+    assert any(line.startswith("export XDG_DATA_HOME=") for line in exports)
+    assert (root / ".gui-world").exists()

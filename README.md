@@ -30,6 +30,19 @@ State (registry, archive, pending harvest queue) lives under `~/.local/share/rin
 
 → [Getting started](docs/user/getting-started.md)
 
+### From a release
+
+Each GitHub release carries `ringleader-X.Y.Z-py3-none-any.whl` (with the presence binaries
+and the skills inside) and a `SHA256SUMS`. Check the wheel against it, then:
+
+```sh
+uv tool install --force ./ringleader-X.Y.Z-py3-none-any.whl
+rl --version                        # rl X.Y.Z
+rl install skills --yes             # the ringleader-* skills, for agent handoffs
+rl install hooks --yes              # the session-end hook that archives finished sessions
+rl data presence install --yes      # live-session presence (see below)
+```
+
 ## Quick start
 
 ```sh
@@ -129,6 +142,7 @@ rl analyze issues                   # error signatures that recur across session
 rl analyze reports [save ...]       # saved findings and recommendations
 rl harvests [--json]                # inbox of harvested knowledge
 rl session search <query>           # find a session by name, id prefix or cached blurb
+rl handoff triage --project K --agent A # an agent triages one project; --dry-run previews
 rl doctor                           # what's linked, registered, and how retention is set
 rl session <sub>                    # session plumbing: refresh, harvest, finish, archive, ...
 rl mem <sub>                        # memory plumbing
@@ -212,8 +226,9 @@ to that binary. `rl doctor` ends with a `presence` section, and
 `hooklinesinker doctor` reports the same checks first-hand.
 
 Working from a source checkout? `just install` stages the artifacts first: it downloads the
-hooklinesinker release pinned in `scripts/hooklinesinker.json`, verifies its `SHA256SUMS` and
-that the binary reports the pinned version, and copies it into `ringleader/_vendor/`. Without
+hooklinesinker release pinned in `scripts/hooklinesinker.json`, verifies each binary against the
+sha256 recorded in the pin and the release's `SHA256SUMS`, checks that the binary reports the
+pinned version, and copies it into `ringleader/_vendor/`. Without
 network access everything else still installs and works — only `rl data presence` reports
 what is missing.
 
@@ -274,5 +289,13 @@ just sync-playbook     # re-sync the bundled skill playbooks
 
 Hooks are defined in `lefthook.yml`: pre-commit lints and format-checks staged `*.py`;
 pre-push runs `ruff check`, `mypy`, and the suite.
+
+**Releasing.** `pyproject.toml`'s `version` is the only version. Bump it, get `just check`
+green, commit, then push a tag `vX.Y.Z` naming that version. `.github/workflows/release.yml`
+refuses a tag that does not match, vendors the pinned hooklinesinker (failing, unlike `just
+vendor`, when the download does), runs `just check` and builds the wheel in a read-only job,
+then a separate job holding the only write token publishes a GitHub release with `ringleader-X.Y.Z-py3-none-any.whl`, `contract-golden.tar.gz` (the
+`tests/golden/contract-*.json` documents, flat) and `SHA256SUMS`, assembled and checked by
+`scripts/release.py`.
 
 See `AGENTS.md` for contributor and agent guidance.

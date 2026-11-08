@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ …/work/proj-01 · 18 waiting · 0 decided this session
+ x mark · * mark all · enter/o resume · v detail · t triage the project with an agent · z undo
+● unclassified claude   115d ago hooks parser flaky 15
+  unclassified claude   110d ago release migrate deploy 9
+● unclassified claude   101d ago refactor cache hooks 37
+  unclassified claude   80d ago  schema bench bench 7
+  unclassified claude   79d ago  search login bench 35
+  finished     claude   73d ago  session-0011  work on login parser search 11
+  unclassified claude   66d ago  refactor fix hooks 31
+  unclassified claude   61d ago  docs flaky export 25
+  unclassified claude   59d ago  login schema login 21
+  unclassified claude   55d ago  fix deploy hooks 23
+  unclassified claude   36d ago  picker flaky login 1
+  unclassified claude   29d ago  deploy docs refactor 3
+  unclassified opencode 26d ago  refactor picker deploy 13
+  unclassified pi       21d ago  picker login deploy 17
+  unclassified claude   6d ago   bench refactor schema 33
+  unclassified claude   5d ago   release refactor flaky 5
+  unclassified claude   2d ago   deploy fix picker 39
+  unclassified codex    6h ago   migrate login refactor 27
+
+
+
+
+
+
+
+
+ esc back  e harvest  E archive  r going  h snooze  s keep  # delete                    ▏^p palette

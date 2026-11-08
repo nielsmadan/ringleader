@@ -3,8 +3,12 @@ from __future__ import annotations
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Final, Literal, get_args
 
 from .paths import config_path
+
+type KeyPreset = Literal["vim", "circus"]
+KEY_PRESETS: Final[tuple[KeyPreset, ...]] = get_args(KeyPreset.__value__)
 
 
 @dataclass
@@ -18,6 +22,14 @@ class Config:
     roundup_stale_hours: int = 8
     archive_retention_days: int = 0  # 0 = keep archived sessions forever
     session_filters: list[str] = field(default_factory=list)
+    inbox_keys: str = "vim"
+
+
+def key_preset(value: object) -> KeyPreset:
+    preset = next((p for p in KEY_PRESETS if p == value), None)
+    if preset is None:
+        raise ValueError(f"inbox.keys is {value!r}; it must be one of {', '.join(KEY_PRESETS)}")
+    return preset
 
 
 def load_config(path: Path | None = None) -> Config:
@@ -38,6 +50,7 @@ def load_config(path: Path | None = None) -> Config:
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
         archive_retention_days=data.get("archive_retention_days", 0),
         session_filters=list(data.get("session_filters", [])),
+        inbox_keys=data.get("inbox_keys", "vim"),
     )
 
 

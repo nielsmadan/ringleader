@@ -2,8 +2,9 @@
 
 Modules: `ringleader/contract.py` (pure documents), `ringleader/contract_io.py` (list, scan, tail,
 the JSON emitter and the guarded-path runner), `ringleader/guarded.py` (the guarded decisions),
-`ringleader/guard_args.py` (the shared `--json` / `--if-*` flags),
-`scripts/gui_world.py` (a synthetic world for development and QA).
+`ringleader/guard_args.py` (the shared `--json` / `--if-*` flags), `ringleader/handoff.py` (the
+agent handoff plan), `ringleader/devtools/gui_world.py` (a synthetic world for development and
+QA, shipped in the wheel).
 
 ## Purpose
 
@@ -16,8 +17,10 @@ presence, lifecycle, locks) in one place.
 ## Commands
 
 ```text
+rl --version
 rl inbox --json [--scan] [--registry=PATH]
 rl data export ID [ID ...] --json [--max-chars=N] [--registry=PATH]
+rl handoff triage --project=KEY --agent=AGENT --dry-run --json [--registry=PATH]
 
 rl session archive       ID GUARD
 rl session delete        ID GUARD
@@ -32,6 +35,9 @@ GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
 `--registry` defaults to the registry under `$XDG_DATA_HOME/ringleader`. IDs are qualified:
 `<source>:<sessionId>` (for example `claude-code:3f2a…`), the same form as `SessionRow.id`.
 
+- **`rl --version`** prints `rl X.Y.Z` (the installed package version, from `pyproject.toml`)
+  and exits 0. It is plain text, not a document. An `rl` older than 0.2.0 exits 2 with `unknown
+  command '--version'`, which a client can read as "needs an update".
 - **`rl inbox --json`** reads the registry once and prints the inbox rows (see Documents). With
   `--scan` it first runs `refresh.refresh_registry` (persisting) and the list it prints carries a
   `scan` summary. Without `--scan` it never scans.
@@ -42,6 +48,10 @@ GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
   `file_fingerprint` at read time (both `null` when the ID is not in the registry). A client caches
   a tail under the item's own `(id, mtime, file_fingerprint)`, so a tail read after a rescan
   changed the thread never poses as the old row's tail.
+- **`rl handoff triage --dry-run --json`** plans the TUI's "triage with an agent" (`t`) for one
+  project and prints the directory and argv without launching anything (see `handoff` below). The
+  client launches the same command without `--dry-run --json` in a terminal: `rl` then `chdir`s
+  to that directory and `execvpe`s the agent, as `rl resume` does.
 - **The six session verbs** apply one decision to one session when called with the guard; see
   Guarded decisions. Without `--json` and without any `--if-*` flag they are the plain verbs and
   behave as they always did.
@@ -51,6 +61,9 @@ GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
 Each violation is a usage error: exit 2, usage on stderr, nothing on stdout.
 
 - `inbox`: `--scan` needs `--json`; `--json` cannot be combined with `--read-only`.
+- `handoff triage`: `--project` and `--agent` are required; `--project` is a `project_key`, or a
+  project label that exactly one waiting project has; `--agent` is one of the launchable agents,
+  by source name or display name (`claude-code` or `claude`); `--json` needs `--dry-run`.
 - `data export`: the positional is `ID [ID ...]`. Two or more IDs without `--json` is
   `more than one ID needs --json`, and `--max-chars` without `--json` is `--max-chars needs
   --json`; a single ID without `--json` is the plain export, unchanged. `--out` cannot be
@@ -106,6 +119,8 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
   selected a machine mode, so plain invocations never load it. `contract_io.run_guarded` imports
   `guarded` (and with it `decisions` and `models`) on demand; `inbox --json` and `export --json`
   never load them.
+- The list counts harvests with `harvests.pending_count`, which lists the harvest directory and
+  reads no file.
 - `home/state.py` needs only `roundup_clock.is_stale`, so `is_stale` lives in the light module
   `ringleader/roundup_clock.py` (`roundup.py` re-exports it).
 - Modules that must not be imported on the `inbox --json`, `inbox --json --scan` and `export
@@ -130,9 +145,11 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
 | `generated_at` | string | `now` as ISO 8601 UTC. |
 | `registry` | string | `str(Path(--registry).resolve())`. |
 | `recent_days` | number | `home.state.RECENT_DAYS` (7). |
-| `presence` | `{state: string, problem: string or null}` | `state` is `"ok"` or `"unknown"` (hooklinesinker could not answer); `problem` is the reason or `null`. |
+| `presence` | `{state: string, problem: string or null, code: string or null}` | `state` is `"ok"` or `"unknown"` (hooklinesinker could not answer); `problem` is the reason or `null`; `code` is `null` when `ok`, else `not_installed` (no hooklinesinker binary at its active path: run `rl data presence install`) or `failed` (installed, but it gave no answer). The set is closed (`contract.PRESENCE_CODES`). |
 | `roundup` | `{last_at: string or null, age_human: string or null, stale: boolean, stale_hours: number}` | `last_at` is the registry's `lastRoundupAt` or `null`; `age_human` is `null` when never run (or unparsable); `stale` is `roundup_clock.is_stale`; `stale_hours` comes from config. |
 | `scan` | `ScanSummary` or null | `null` unless the list was produced by `--scan`; see `scan` below. |
+| `agents` | `Agent[]` | The agents `rl` can launch, in `scanner.SOURCE_TYPES` order: `{source, agent, installed}`. `source` and `agent` are as on `SessionRow`; `installed` is whether the agent's launch binary is on `PATH` (`shutil.which`). It feeds the client's agent picker for `rl handoff`. |
+| `home` | `Home` | The inbox home screen's data; see `home` below. |
 | `sessions` | `SessionRow[]` | See below. |
 
 Membership is `contract.inbox_threads`: `overview.triage_inbox` over `home.state.visible_threads`
@@ -184,6 +201,36 @@ The 500-character clip (`contract.clip`, `LIST_TEXT_MAX_CHARS`) keeps the list s
 than the limit is cut to the first 499 characters plus `…`; `None` stays `None`. The full text
 lives in the tail.
 
+### `home`
+
+The `home` key of the list: the data behind the TUI's Home and Projects screens, computed by the
+same functions (`home.state.build_home_state` and `home.state.next_steps`) so the two UIs cannot
+drift. It carries structure only, never display text: the client writes its own copy.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `counts` | object | `triage_total` (rows in `sessions`), `live`, `unclassified`, `blocked`, `stale`, `kept` (from `overview.compute_metrics` over the visible threads), `projects` (length of `projects` below) and `spread_projects` (projects with live sessions). |
+| `pending_harvests` | number | Harvest files waiting to be published (`harvests.pending_count`, one per `*.md` file). Unlike the TUI's harvest view it does not parse them, so an unreadable file is counted too. |
+| `projects` | `ProjectRef[]` | The triage queue: projects with sessions in `sessions`, oldest activity first (`home.state.project_queue`). `ProjectRef` is `{key, label, pending, unclassified, oldest_mtime, newest_mtime}`; `key` equals `SessionRow.project_key`. |
+| `waking_soon` | string[] | Ids of snoozed sessions whose snooze ends within 7 days, soonest first. |
+| `in_flight` | string[] | Ids of up to 8 sessions active in the last 7 days (live status or unclassified, not finishing, not snoozed), newest first. |
+| `next_steps` | `NextStep[]` | The recommended next steps, in order. |
+| `rows` | `SessionRow[]` | A row for every id in `waking_soon` or `in_flight` that is not in `sessions` (a snoozed session never is), in that order. |
+
+`NextStep` is `{kind, deletes, costs_model, count, project_key, id}`:
+
+| `kind` | When | `count` | `project_key` | `id` |
+|---|---|---|---|---|
+| `roundup` | the roundup is stale (see the list's `roundup` key) | `null` | `null` | `null` |
+| `woke` | snoozes have expired | woke rows | `null` | `null` |
+| `recent` | rows from the last `recent_days` | those rows | `null` | `null` |
+| `publish` | `pending_harvests` > 0 | `pending_harvests` | `null` | `null` |
+| `project` | a backlog beyond the woke and recent rows | the project's `pending` | first queue key | `null` |
+| `resume` | only when nothing else applies and `in_flight` is not empty | `null` | `null` | `in_flight[0]` |
+
+`deletes` and `costs_model` are `true` only for `roundup`. The set of kinds is closed: a new kind
+is a contract change.
+
 ### `scan`
 
 The `scan` key of a list produced by `rl inbox --json --scan`: `{scanned_at: string, added: number,
@@ -217,12 +264,61 @@ The output of a guarded session verb with `--json`.
 | `id` | string | The requested ID. |
 | `status` | string | `ok`, `refused`, `empty` or `failed`. |
 | `reason` | string or null | For `refused`: the first refusal reason. Otherwise `null`. |
+| `code` | string or null | For `refused` and `failed`: a fixed code (see Outcome codes). `null` for `ok` and `empty`. |
 | `message` | string | Human-readable. |
 | `wrote` | boolean | Something changed on disk or in the registry (true even for a partial failure). |
 | `path` | string or null | Archive destination or saved harvest path. |
 | `warnings` | string[] | Non-fatal problems (for example companion files that could not be removed). |
 
+### `handoff`
+
+The output of `rl handoff triage --dry-run --json`.
+
+| Key | Type | Meaning |
+|---|---|---|
+| `version`, `kind` | `1`, `"handoff"` | |
+| `purpose` | `"triage"` | What the agent is handed. |
+| `status` | string | `ok` or `refused`. |
+| `code` | string or null | For `refused`, a fixed code (`handoff.HANDOFF_CODES`, pinned by `tests/test_contract.py`): `nothing_to_triage` (no waiting project has that key, or that label uniquely) or `agent_not_installed` (the launch binary is not on `PATH`). Otherwise `null`. |
+| `reason` | string or null | For `refused`, prose for a terminal; read `code`. Otherwise `null`. |
+| `source`, `agent` | string | As on `SessionRow` and `agents[]`: the source name (`claude-code`) and the display name (`claude`), whichever form was passed. |
+| `project_key` | string | The resolved key when `ok`; the value passed to `--project` when refused. |
+| `cwd` | string or null | Where the agent would start: the newest member session's git root or cwd that still exists, else `$HOME` (`home.intents.handoff_cwd`). `null` when refused. |
+| `argv` | string[] or null | The agent's launch argv with the triage prompt (`home.intents.triage_prompt`). `null` when refused. |
+
+A refusal exits 0 like any printed document. Without `--json`, a refusal prints
+`rl-handoff: <message>` on stderr and exits 1, and `--dry-run` prints the directory and argv for
+humans.
+
 `error` documents are `{version: 1, kind: "error", message: string}`.
+
+### Outcome codes
+
+`reason` and `message` are prose for a terminal; a client that writes its own copy reads `code`.
+The set is closed (`codes.OUTCOME_CODES`, pinned by `tests/test_contract.py`); a new code is a
+contract change.
+
+| `code` | Status | When |
+|---|---|---|
+| `changed` | refused | `--if-mtime` differs from the registry, or the transcript's size or mtime on disk differs from `--if-fingerprint` |
+| `no_fingerprint` | refused | `archive`, `delete` or `harvest` without a valid five-field `--if-fingerprint` |
+| `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `keep_going`, `snooze`) |
+| `transcript_missing` | refused | the stamped transcript is not on disk |
+| `running` | refused | presence reports the session running |
+| `presence_unknown` | refused | presence could not answer, so the session is treated as running |
+| `lifecycle_blocked` | refused | the source has no filesystem lifecycle (OpenCode) or the thread's native roots are corrupt; `reason` is the row's `lifecycle_block` text |
+| `until_invalid` | refused | `--until` is not an ISO 8601 time |
+| `until_naive` | refused | `--until` has no timezone offset |
+| `until_past` | refused | `--until` is not in the future |
+| `no_harvest_model` | refused | `harvest` with no harvest model configured |
+| `harvest_failed` | failed | the harvest model call failed |
+| `failed` | failed | anything else that did not complete, including a partial write (`wrote` says whether something changed) |
+| `other` | refused | free text no code covers, for example an `OSError` while checking the transcript, or a delete of a transcript outside its source's store |
+
+Every code is set where the refusal or failure is produced: `revalidate.changed_refusal` and
+`running_refusal` return a `Refusal(code, text)`, `decisions.Outcome` carries it as `code`, and the
+guarded gates attach their own. Nothing is recovered from the prose, so rewording a message
+never changes a code.
 
 ## Guarded decisions
 
@@ -255,7 +351,7 @@ is produced only by harvest.
   session that left the registry is refused with `no longer in the registry`. When a stamp is
   given, the disk check can also refuse with `transcript is missing`, the `RuntimeError` text of
   `scanner.filesystem_path`, or an `OSError` message, so clients should treat the reason as
-  free text.
+  free text and read `code`.
 - **Fingerprint requirement.** `archive`, `delete` and `harvest` are refused with
   `revalidate.NO_STAMP` (`changed since you looked: no fingerprint, rescan`) when
   `--if-fingerprint` is missing or is not a five-field numeric fingerprint, before the registry
@@ -307,7 +403,8 @@ is produced only by harvest.
 ## What the commands never do
 
 None of them runs a scan except `rl inbox --json --scan`. None of them sweeps, prunes, enriches or
-runs roundup. The list and export modes never write; `--scan` writes only the refreshed registry.
+runs roundup. The list, export and handoff modes never write; `--scan` writes only the refreshed
+registry.
 
 ## Design decisions
 
@@ -346,17 +443,21 @@ changing the type of a key, or changing the meaning of a status, requires `versi
 client that checks it. Key sets are pinned by `contract.SESSION_ROW_KEYS` and the golden
 documents. Change the contract and the circus client (types, Rust envelope, goldens) together.
 
+The `agents` and `home` keys on the list document, the `handoff` document, `code` on the outcome
+document and `presence.code` on the list were added as compatible changes.
+
 The `scan` key on the list document was added as a compatible change, and the standalone `scan`
 document kind was removed when the machine interface moved onto the existing commands; clients
 read the rescan result from the list's `scan` key and treat a missing or `null` value as no scan.
 
 ## Golden documents
 
-`tests/golden/contract-list.json`, `contract-tails.json`, `contract-outcome-ok.json` and
-`contract-outcome-refused.json` are produced in-process by `tests/test_contract_golden.py` from a
+`tests/golden/contract-list.json`, `contract-tails.json`, `contract-outcome-ok.json`,
+`contract-outcome-refused.json` and `contract-handoff.json` are produced in-process by `tests/test_contract_golden.py` from a
 deterministic fixture (`threads=20`, `transcripts=False`) with the temporary root replaced by
 `/fixture` (also inside the Claude project-directory slug). In that fixture the transcripts do
-not exist, so found tail items are `unavailable: "transcript not found"`. Regenerate with:
+not exist, so found tail items are `unavailable: "transcript not found"`. The list's `agents` is
+pinned to Claude Code installed and every other agent not installed. Regenerate with:
 
 ```sh
 RINGLEADER_UPDATE_GOLDEN=1 uv run python -m pytest tests/test_contract_golden.py
@@ -364,10 +465,13 @@ RINGLEADER_UPDATE_GOLDEN=1 uv run python -m pytest tests/test_contract_golden.py
 
 The circus repository keeps byte-identical copies (`just sync-golden` copies, `just
 golden-check` compares), so change a golden only together with the contract and the client.
+Each GitHub release also attaches them as `contract-golden.tar.gz`, flat, so a client pinned to
+a release can check against exactly that release's documents.
 
 ## Synthetic world
 
-`scripts/gui_world.py --root DIR [--threads N] [--exports]` builds a disposable world for
+`python -m ringleader.devtools.gui_world --root DIR [--threads N] [--exports]` builds a
+disposable world for
 development and QA of the app: a `tui_fixture` registry with real Claude transcripts, a
 `claude-settings.json`, and `bin/` stubs (`claude` exits 97, `fake-harvest` answers harvests,
 empty for any project directory ending in `/proj-00`), plus a fake `hooklinesinker` that reports
@@ -376,9 +480,12 @@ inside `~/.local/share`, `~/.claude`, `~/.codex`, `~/.factory` or `~/.pi`, and r
 any existing directory without a `.gui-world` marker, and any path that is not a directory. `--exports` prints `export KEY=value` lines
 for the six data variables, `RINGLEADER_CLAUDE_SETTINGS`, and a `PATH` that puts `bin/` first.
 Source them (and `unset OPENCODE_DB`) before running `rl`; `--registry` alone is not isolation.
+The module ships in the wheel with `devtools/tui_fixture.py`, so a venv holding only a release
+wheel runs it with that venv's `python`.
 
 ## Testing
 
 `tests/test_contract.py` (documents), `tests/test_json_commands.py` (the commands end to end),
-`tests/test_contract_perf.py` (imports and timing), `tests/test_contract_golden.py` (goldens) and
+`tests/test_contract_perf.py` (imports and timing), `tests/test_contract_golden.py` (goldens),
+`tests/test_rl_handoff.py` (`rl handoff triage`) and
 `tests/test_gui_world.py` (the world script).

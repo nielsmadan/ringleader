@@ -2,13 +2,13 @@ import threading
 from datetime import UTC, datetime
 
 from ringleader import registry
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.screens.output import run_commands
 from ringleader.home.screens.usage import UsageScreen
 from ringleader.tui.background import CancelToken
 from ringleader.tui.runner import CommandRun
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.widgets import Log
 
 from tui_helpers import until

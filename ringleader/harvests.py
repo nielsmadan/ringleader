@@ -139,6 +139,11 @@ def _unchanged(
     return (item, current) if stat.S_ISREG(info.st_mode) and current == stamp else None
 
 
+def pending_count() -> int:
+    d = harvests_dir()
+    return sum(1 for _ in d.glob("*.md")) if d.exists() else 0
+
+
 def snapshot_harvests(previous: HarvestSnapshot | None = None) -> HarvestSnapshot:
     d = harvests_dir()
     if not d.exists():

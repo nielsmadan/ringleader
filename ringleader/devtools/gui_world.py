@@ -7,16 +7,14 @@ import os
 import shlex
 import shutil
 import sys
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-
-from ringleader import contract, registry, resume
-from ringleader.agents import source_of
-from scripts.tui_fixture import build_fixture
+from .. import contract, registry, resume
+from ..agents import source_of
+from .tui_fixture import build_fixture
 
 MARKER = ".gui-world"
 MIN_THREADS = 2
@@ -60,7 +58,7 @@ class World:
     running_label: str
 
 
-def _structured(payload: dict[str, object]) -> str:
+def _structured(payload: Mapping[str, object]) -> str:
     return shlex.quote(json.dumps({"structured_output": payload}))
 
 
@@ -173,7 +171,10 @@ def _summary(world: World) -> list[str]:
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="gui_world", description="Build a disposable circus world.")
+    ap = argparse.ArgumentParser(
+        prog="python -m ringleader.devtools.gui_world",
+        description="Build a disposable circus world.",
+    )
     ap.add_argument("--root", required=True, type=Path)
     ap.add_argument("--threads", type=int, default=80)
     ap.add_argument("--exports", action="store_true")

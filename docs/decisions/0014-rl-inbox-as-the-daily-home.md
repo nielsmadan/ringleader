@@ -56,6 +56,11 @@ user saw, so later activity resurfaces the session. Nothing is selected for the 
 app and run the chosen agent CLI in the right directory with a prompt naming the skill. Publish-all
 runs in the common ancestor of the harvests' folders and asks first when that is `$HOME` or above.
 
+*Amended 2026-11-08:* the keys above are the `vim` preset, the default. `rl config set inbox.keys
+circus` switches the triage keys to the circus app's Inbox (`#` delete, `z` undo, `x` mark, `*`
+mark all, `enter` resumes and `v` opens the detail), and `rl handoff triage` makes the triage
+handoff available outside the TUI, with the same launch checks (`ringleader/handoff.py`).
+
 **Model calls are bounded.** Enrich and harvest run as app-owned daemon jobs through
 `models/proc.py`: own process group, per-task timeout, cancellable, reaped on exit. Enrich has its
 own model setting (`rl config set enrich.model`). Its default (`claude` → `haiku`) is provisional

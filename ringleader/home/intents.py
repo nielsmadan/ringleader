@@ -2,15 +2,17 @@ from __future__ import annotations
 
 import os
 import shlex
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from .. import overview
-from ..picker.app import Choice
-from .harvest_view import HarvestGroup
 from .state import ProjectRef
+
+if TYPE_CHECKING:
+    from ..picker.app import Choice
+    from .harvest_view import HarvestGroup
 
 type HandoffPurpose = Literal["triage", "publish"]
 
@@ -48,12 +50,19 @@ def publish_prompt(repo_label: str | None) -> str:
     return f"Use the ringleader-publish skill to publish the pending ringleader harvests{scope}"
 
 
-def handoff_cwd(candidates: Sequence[str | None], home: Path) -> str:
-    return next((c for c in candidates if c and os.path.isdir(c)), str(home))
+def handoff_cwd(
+    candidates: Sequence[str | None], home: Path, is_dir: Callable[[str], bool] = os.path.isdir
+) -> str:
+    return next((c for c in candidates if c and is_dir(c)), str(home))
 
 
 def triage_handoff(
-    agent: str, project: ProjectRef, threads: Sequence[dict[str, Any]], home: Path
+    agent: str,
+    project: ProjectRef,
+    threads: Sequence[dict[str, Any]],
+    home: Path,
+    *,
+    is_dir: Callable[[str], bool] = os.path.isdir,
 ) -> AgentHandoffIntent:
     members = sorted(
         (t for t in threads if overview.group_key(t) == project.key),
@@ -63,7 +72,7 @@ def triage_handoff(
     candidates = [path for t in members for path in (t.get("gitRoot"), t.get("project"))]
     return AgentHandoffIntent(
         agent=agent,
-        cwd=handoff_cwd(candidates, home),
+        cwd=handoff_cwd(candidates, home, is_dir),
         prompt=triage_prompt(project.label, project.key),
         purpose="triage",
         label=project.label,

@@ -17,11 +17,12 @@ from . import (
     stateio,
 )
 from .batch import Txn, run_batch
+from .codes import OutcomeCode
 from .enrichment import Classified
 from .models.base import Model, ModelError
 from .presence import PresenceUnavailable
 from .progress import CancelCheck
-from .revalidate import Identity, PresenceProbe, Seen, UnknownPresence
+from .revalidate import Identity, PresenceProbe, Refusal, Seen, UnknownPresence
 from .roundup import PhasesResult, RoundupPlan, RoundupProgress
 
 type Decision = Literal["archive", "harvest", "keep_going", "snooze", "keep", "delete"]
@@ -111,6 +112,7 @@ class Outcome:
     path: str | None = None
     phases: PhasesResult | None = None
     stale: int = 0
+    code: OutcomeCode | None = None
 
 
 _EXPECTED = (
@@ -157,8 +159,14 @@ def _selector(seen: Seen) -> str:
     return ":".join(seen.identity)
 
 
-def _refused(seen: Seen, reason: str, message: str) -> Outcome:
-    return Outcome(ok=False, message=message, wrote=False, refused=((seen, reason),))
+def _refused(seen: Seen, refusal: Refusal, message: str) -> Outcome:
+    return Outcome(
+        ok=False, message=message, wrote=False, refused=((seen, refusal.text),), code=refusal.code
+    )
+
+
+def _gone(op: Op) -> Outcome:
+    return Outcome(ok=False, message=f"{_label(op)}: {revalidate.GONE}", wrote=False, code="gone")
 
 
 def _revalidated(
@@ -169,12 +177,12 @@ def _revalidated(
     *,
     require_stamp: bool = False,
 ) -> dict[str, Any] | Outcome:
-    changed = revalidate.changed_reason(thread, seen, require_stamp=require_stamp)
+    changed = revalidate.changed_refusal(thread, seen, require_stamp=require_stamp)
     if thread is None or changed is not None:
-        reason = changed or "no longer in the registry"
-        return _refused(seen, reason, f"{seen.label}: {reason}")
-    running = revalidate.running_reason(thread, live(), unknown)
-    return thread if running is None else _refused(seen, running, running)
+        refusal = changed or Refusal("gone", revalidate.GONE)
+        return _refused(seen, refusal, f"{seen.label}: {refusal.text}")
+    running = revalidate.running_refusal(thread, live(), unknown)
+    return thread if running is None else _refused(seen, running, running.text)
 
 
 def _revalidated_in(
@@ -231,7 +239,7 @@ def _delete_in(txn: Txn, op: DeleteOp, ctx: OpContext) -> Outcome:
         scanner.hide_from_picker(thread)
         transcript.unlink(missing_ok=True)
     except (RuntimeError, OSError) as error:
-        return _refused(seen, str(error), f"{seen.label}: {error}")
+        return _refused(seen, Refusal("other", str(error)), f"{seen.label}: {error}")
     warnings: tuple[str, ...] = ()
     try:
         scanner.remove_companions(companions)
@@ -273,9 +281,10 @@ def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> 
     thread = registry.find_session(reg, _selector(op.seen))
     wrote = saved is not None
     if thread is None or thread.get("decision") != "harvested":
-        reason = "no longer in the registry" if thread is None else "the harvest was not recorded"
+        reason = revalidate.GONE if thread is None else "the harvest was not recorded"
         prefix = "harvested, not archived" if wrote else op.seen.label
-        return Outcome(ok=False, message=f"{prefix}: {reason}", wrote=wrote, path=saved)
+        code: OutcomeCode = "gone" if thread is None and not wrote else "failed"
+        return Outcome(ok=False, message=f"{prefix}: {reason}", wrote=wrote, path=saved, code=code)
     try:
         result = lifecycle.archive_thread(
             reg, thread, archive_root_path=ctx.archive_root_path, now_iso=ctx.now_iso()
@@ -319,8 +328,8 @@ def _harvest_save(op: HarvestSaveOp, ctx: OpContext) -> Outcome:
             saved: str | None = None
             if thread.get("decision") != "harvested":
                 if op.markdown is None:
-                    reason = "nothing harvested to save"
-                    return _refused(op.seen, reason, f"{op.seen.label}: {reason}")
+                    reason = Refusal("other", "nothing harvested to save")
+                    return _refused(op.seen, reason, f"{op.seen.label}: {reason.text}")
                 try:
                     _, path = harvesting.save_harvest_unlocked(
                         _selector(op.seen), ctx.registry_path, op.markdown, now_iso=ctx.now_iso()
@@ -441,7 +450,7 @@ def execute(op: Op, ctx: OpContext) -> Outcome:
     except KeyError:
         if isinstance(op, _BULK_OPS):
             raise
-        return Outcome(ok=False, message=f"{_label(op)}: no longer in the registry", wrote=False)
+        return _gone(op)
     except (NotImplementedError, RecursionError):
         raise
     except _EXPECTED as error:
@@ -477,7 +486,7 @@ def _contained(op: Op, run: Callable[[], Outcome]) -> GroupResult:
     try:
         return run()
     except KeyError:
-        return Outcome(ok=False, message=f"{_label(op)}: no longer in the registry", wrote=False)
+        return _gone(op)
     except (NotImplementedError, RecursionError) as error:
         return error
     except _EXPECTED as error:

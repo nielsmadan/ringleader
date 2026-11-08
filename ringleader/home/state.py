@@ -31,6 +31,7 @@ class NextStep:
     costs_model: bool
     project: ProjectRef | None = None
     session: tuple[str, str] | None = None
+    count: int | None = None
 
 
 @dataclass(frozen=True)
@@ -42,7 +43,7 @@ class HomeState:
     blocked_count: int
     stale_count: int
     kept_count: int
-    triage_total: int
+    inbox: tuple[dict[str, Any], ...]
     recent_undecided: tuple[dict[str, Any], ...]
     woke: tuple[dict[str, Any], ...]
     waking_soon: tuple[dict[str, Any], ...]
@@ -51,6 +52,10 @@ class HomeState:
     pending_harvests: int | None
     last_roundup_at: str | None
     roundup_stale: bool
+
+    @property
+    def triage_total(self) -> int:
+        return len(self.inbox)
 
 
 @dataclass(frozen=True)
@@ -138,8 +143,12 @@ def _project_ref(key: str, threads: list[dict[str, Any]]) -> ProjectRef:
 
 
 def project_queue(threads: list[dict[str, Any]], now_iso: str) -> tuple[ProjectRef, ...]:
+    return _queue(overview.triage_inbox(threads, now_iso))
+
+
+def _queue(inbox: list[dict[str, Any]]) -> tuple[ProjectRef, ...]:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for thread in overview.triage_inbox(threads, now_iso):
+    for thread in inbox:
         groups[overview.group_key(thread)].append(thread)
     refs = [_project_ref(key, members) for key, members in groups.items()]
     return tuple(
@@ -191,12 +200,12 @@ def build_home_state(
         blocked_count=metrics["blocked_count"],
         stale_count=metrics["stale_count"],
         kept_count=metrics["kept_count"],
-        triage_total=len(inbox),
+        inbox=tuple(inbox),
         recent_undecided=tuple(_by_mtime(recent, newest_first=True)),
         woke=tuple(_by_mtime(woke, newest_first=False)),
         waking_soon=tuple(soon),
         in_flight=tuple(_by_mtime(flying, newest_first=True)[:IN_FLIGHT_LIMIT]),
-        projects=project_queue(visible, now_iso),
+        projects=_queue(inbox),
         pending_harvests=pending_harvests,
         last_roundup_at=reg.get("lastRoundupAt"),
         roundup_stale=roundup_clock.is_stale(reg, now_iso, stale_hours),
@@ -206,7 +215,10 @@ def build_home_state(
 def _last_run(state: HomeState) -> str:
     if state.last_roundup_at is None:
         return "never run"
-    return f"last run {overview.age_human(state.last_roundup_at, state.now_iso)}"
+    try:
+        return f"last run {overview.age_human(state.last_roundup_at, state.now_iso)}"
+    except ValueError:
+        return "last run unknown"
 
 
 def _roundup_step(state: HomeState) -> NextStep:
@@ -226,6 +238,7 @@ def _woke_step(state: HomeState) -> NextStep:
         detail="their snooze ran out — decide on each again",
         deletes=False,
         costs_model=False,
+        count=len(state.woke),
     )
 
 
@@ -237,6 +250,7 @@ def _recent_step(state: HomeState) -> NextStep:
         detail="archive, keep going, snooze, keep long-term or delete each one",
         deletes=False,
         costs_model=False,
+        count=len(state.recent_undecided),
     )
 
 
@@ -247,6 +261,7 @@ def _publish_step(count: int) -> NextStep:
         detail="hands off to your agent's ringleader-publish skill",
         deletes=False,
         costs_model=False,
+        count=count,
     )
 
 
@@ -259,6 +274,7 @@ def _project_step(project: ProjectRef, now_iso: str) -> NextStep:
         deletes=False,
         costs_model=False,
         project=project,
+        count=project.pending,
     )
 
 

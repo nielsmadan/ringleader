@@ -5,7 +5,7 @@ import sys
 from collections.abc import Callable
 
 from .. import namefilter, registry
-from ..config import load_config, save_config
+from ..config import key_preset, load_config, save_config
 from ..models import active_model, describe
 from . import default_registry
 
@@ -35,6 +35,7 @@ def _show() -> int:
     print(f"llm.provider: {cfg.llm_provider}")
     print(f"archive.retention_days: {cfg.archive_retention_days}")
     print(f"session.filters: {', '.join(cfg.session_filters) or 'none'}")
+    print(f"inbox.keys: {cfg.inbox_keys}")
     for task in ("enrich", "harvest", "analyze"):
         model = active_model(cfg, task)
         print(
@@ -86,6 +87,12 @@ def _set(args: list[str]) -> int:
             )
             return 2
         cfg.archive_retention_days = days
+    elif key == "inbox.keys":
+        try:
+            cfg.inbox_keys = key_preset(value)
+        except ValueError as error:
+            print(f"rl config set: {error}", file=sys.stderr)
+            return 2
     else:
         print(f"rl config set: unknown key '{key}'", file=sys.stderr)
         return 2

@@ -9,9 +9,9 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
-from ringleader import refresh, registry
-from ringleader.slug import droid_slug, slugify
-from ringleader.sources.claude_code import ClaudeCodeSource
+from .. import refresh, registry
+from ..slug import droid_slug, slugify
+from ..sources.claude_code import ClaudeCodeSource
 
 FILTERS = ("zz-hidden*",)
 SOURCE_WEIGHTS = (("claude-code", 64), ("codex", 18), ("opencode", 12), ("pi", 3), ("droid", 3))

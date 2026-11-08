@@ -21,11 +21,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tests"))
 
 from ringleader import prune, registry, revalidate
 from ringleader.decisions import PruneOp
+from ringleader.devtools.tui_fixture import Fixture, build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.triage import TriageScreen
 from ringleader.home.state import project_queue
-from scripts.tui_fixture import Fixture, build_fixture
 from textual import events
 from textual.pilot import Pilot
 from textual.widgets import OptionList, Static

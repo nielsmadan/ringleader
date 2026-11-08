@@ -17,7 +17,7 @@ import subprocess
 import sys
 import tempfile
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
@@ -29,9 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PIN_PATH = ROOT / "scripts" / "hooklinesinker.json"
 CACHE = ROOT / "build" / "hooklinesinker" / "downloads"
 STAGER = ROOT / "scripts" / "vendor-hooklinesinker.sh"
-ARTIFACTS = tuple(
-    f"hooklinesinker-{name}" for name in ("macos-universal", "linux-aarch64", "linux-x86_64")
-)
+ARTIFACTS = tuple(f"hooklinesinker-{name}" for name in presence.VENDOR_PLATFORMS)
 MANIFEST = "SHA256SUMS"
 NOT_FOUND = 404
 CHECKSUM_FIELDS = 2
@@ -43,6 +41,7 @@ Fetch = Callable[[str], bytes]
 class Pin:
     version: str
     protocol: int
+    sha256: dict[str, str] = field(default_factory=dict)
 
 
 def version_tuple(version: str) -> tuple[int, int, int]:
@@ -55,7 +54,7 @@ def version_tuple(version: str) -> tuple[int, int, int]:
 
 def read_pin(path: Path = PIN_PATH) -> Pin:
     raw = json.loads(path.read_text())
-    version, protocol = raw.get("version"), raw.get("protocol")
+    version, protocol, hashes = raw.get("version"), raw.get("protocol"), raw.get("sha256")
     if not isinstance(version, str) or type(protocol) is not int:
         raise ValueError(f"{path} needs a string version and an integer protocol")
     version_tuple(version)
@@ -63,11 +62,17 @@ def read_pin(path: Path = PIN_PATH) -> Pin:
         raise ValueError(
             f"{path} pins protocol {protocol}, but ringleader speaks {presence.PROTOCOL}"
         )
-    return Pin(version, protocol)
+    if not isinstance(hashes, dict) or not all(
+        isinstance(hashes.get(name), str) and re.fullmatch(r"[0-9a-f]{64}", hashes[name])
+        for name in ARTIFACTS
+    ):
+        raise ValueError(f"{path} needs a sha256 for each of {', '.join(ARTIFACTS)}")
+    return Pin(version, protocol, {name: hashes[name] for name in ARTIFACTS})
 
 
 def write_pin(pin: Pin, path: Path = PIN_PATH) -> None:
-    text = json.dumps({"version": pin.version, "protocol": pin.protocol}, indent=2) + "\n"
+    body = {"version": pin.version, "protocol": pin.protocol, "sha256": pin.sha256}
+    text = json.dumps(body, indent=2) + "\n"
     with tempfile.NamedTemporaryFile("w", dir=path.parent, delete=False) as handle:
         handle.write(text)
     os.replace(handle.name, path)
@@ -140,6 +145,17 @@ def verify_checksums(dist: Path) -> None:
             raise ValueError(f"checksum mismatch for {name}")
 
 
+def artifact_hashes(dist: Path) -> dict[str, str]:
+    return {name: hashlib.sha256((dist / name).read_bytes()).hexdigest() for name in ARTIFACTS}
+
+
+def verify_pinned(dist: Path, pin: Pin) -> None:
+    actual = artifact_hashes(dist)
+    for name in ARTIFACTS:
+        if actual[name] != pin.sha256.get(name):
+            raise ValueError(f"{name} does not match the sha256 pinned in {PIN_PATH.name}")
+
+
 def verify_binary(dist: Path, pin: Pin) -> str:
     binary = dist / f"hooklinesinker-{presence.artifact_dir()}"
     binary.chmod(0o755)
@@ -154,11 +170,13 @@ def verify_binary(dist: Path, pin: Pin) -> str:
     return binary.name
 
 
-def fetch_verified(pin: Pin, fetch: Fetch = http_fetch) -> Path:
+def fetch_verified(pin: Pin, fetch: Fetch = http_fetch, *, pinned: bool = True) -> Path:
     temporary = Path(tempfile.mkdtemp(prefix="ringleader-hls-"))
     try:
         download(pin.version, temporary, fetch)
         verify_checksums(temporary)
+        if pinned:
+            verify_pinned(temporary, pin)
         verify_binary(temporary, pin)
     except BaseException:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -171,6 +189,7 @@ def cached_release(pin: Pin, cache: Path = CACHE, fetch: Fetch = http_fetch) -> 
     if target.is_dir():
         try:
             verify_checksums(target)
+            verify_pinned(target, pin)
             verify_binary(target, pin)
         except (OSError, ValueError):
             shutil.rmtree(target)
@@ -202,9 +221,12 @@ def update(version: str | None, pin_path: Path = PIN_PATH, fetch: Fetch = http_f
     if target == current.version:
         print(f"hooklinesinker {target} is already pinned.")
         return
-    candidate = Pin(target, current.protocol)
-    shutil.rmtree(fetch_verified(candidate, fetch))
-    write_pin(candidate, pin_path)
+    fetched = fetch_verified(Pin(target, current.protocol), fetch, pinned=False)
+    try:
+        hashes = artifact_hashes(fetched)
+    finally:
+        shutil.rmtree(fetched)
+    write_pin(Pin(target, current.protocol, hashes), pin_path)
     print(f"Pinned hooklinesinker {current.version} -> {target}.")
     print("Next: just install, check `rl data presence status`, then commit the pin.")
 

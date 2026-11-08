@@ -1,19 +1,15 @@
 from __future__ import annotations
 
 import os
-import shlex
 import sys
 from collections.abc import Callable
 from typing import Protocol
 
-from .. import scanner
+from ..handoff import Which, dry_run_lines, handoff_argv, launch_problem
 from ..launch import Runner
 from ..picker.app import Choice
 from ..resume import Scope
-from ..sources.base import SessionLaunchingSource
-from .intents import AgentHandoffIntent, ExitIntent, ResumeIntent
-
-type Which = Callable[[str], str | None]
+from .intents import ExitIntent, ResumeIntent
 
 
 class ResumeCommand(Protocol):
@@ -30,14 +26,6 @@ class ResumeCommand(Protocol):
 def _fail(message: str) -> int:
     print(f"rl-inbox: {message}", file=sys.stderr)
     return 1
-
-
-def handoff_argv(intent: AgentHandoffIntent) -> tuple[str, ...]:
-    source = scanner.source_by_name(intent.agent)
-    if not scanner.supports(source, "launches_sessions", SessionLaunchingSource):
-        raise ValueError(f"{intent.agent} cannot be launched by rl")
-    argv: tuple[str, ...] = source.launch_argv(intent.prompt)
-    return argv
 
 
 def run_intent(
@@ -61,14 +49,11 @@ def run_intent(
         argv = handoff_argv(intent)
     except ValueError as error:
         return _fail(str(error))
-    if which(argv[0]) is None:
-        return _fail(f"{argv[0]} is not installed — put it on PATH first")
-    if not os.path.isdir(intent.cwd):
-        return _fail(f"{intent.cwd} is not a directory — nothing launched")
+    problem = launch_problem(argv, intent.cwd, which=which, is_dir=os.path.isdir)
+    if problem is not None:
+        return _fail(problem)
     if dry_run:
-        print("dry run — nothing launched")
-        print(f"  directory: {intent.cwd}")
-        print(f"  argv: {shlex.join(argv)}")
+        print("\n".join(dry_run_lines(intent.cwd, argv)))
         return 0
     sys.stdout.flush()
     sys.stderr.flush()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import shutil
+import sys
 
 from ..launch import exec_agent
 from . import default_registry
@@ -44,11 +45,18 @@ def cmd_inbox(argv: list[str]) -> int:
         return 2
 
     from .. import commands  # noqa: PLC0415 -- the package imports this module
+    from ..config import key_preset, load_config  # noqa: PLC0415 -- keeps rl inbox --json light
     from ..home import launch  # noqa: PLC0415 -- only importable once textual is present
     from ..home.app import InboxApp  # noqa: PLC0415 -- only importable once textual is present
+    from ..home.keymap import keymap_for  # noqa: PLC0415 -- only importable once textual is present
     from ..models import proc  # noqa: PLC0415 -- keeps rl inbox --json light
 
-    app = InboxApp(args.registry, read_only=args.read_only)
+    try:
+        keymap = keymap_for(key_preset(load_config().inbox_keys))
+    except ValueError as error:
+        print(f"rl inbox: {error} — set it with rl config set inbox.keys", file=sys.stderr)
+        return 2
+    app = InboxApp(args.registry, read_only=args.read_only, keymap=keymap)
     try:
         intent = app.run()
     finally:

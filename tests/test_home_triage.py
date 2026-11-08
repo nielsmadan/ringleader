@@ -6,9 +6,12 @@ from pathlib import Path
 
 import pytest
 from ringleader import decisions, harvests, registry
+from ringleader.config import Config, save_config
 from ringleader.decisions import ReloadOp
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import NOTHING_TO_HARVEST, InboxApp
 from ringleader.home.intents import ResumeIntent
+from ringleader.home.keymap import CIRCUS, VIM, keymap_for
 from ringleader.home.screens import triage as triage_screen
 from ringleader.home.screens.detail import DetailScreen
 from ringleader.home.screens.home import HomeScreen
@@ -18,7 +21,6 @@ from ringleader.presence import PresenceUnavailable
 from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.widgets import Label, OptionList
 
 from tui_helpers import until
@@ -120,9 +122,10 @@ ANSWER = {"summary": "fixed the parser", "gotchas": ["watch the cache"], "decisi
 EMPTY = {"summary": " ", "gotchas": [], "decisions": [], "whatChanged": []}
 
 
-def _app(path, *, execute=None, presence=frozenset, model=None, cls=InboxApp, **kwargs):
+def _app(path, *, execute=None, presence=frozenset, model=None, cls=InboxApp, keymap=VIM, **kwargs):
     return cls(
         path,
+        keymap=keymap,
         refresher=_reload,
         presence=presence,
         now=lambda: NOW_DT,
@@ -164,8 +167,8 @@ async def _open_triage(app, pilot):
     await until(pilot, lambda: isinstance(app.screen, TriageScreen))
 
 
-async def _snooze(pilot, app):
-    await pilot.press("s")
+async def _snooze(pilot, app, key="s"):
+    await pilot.press(key)
     await until(pilot, lambda: isinstance(app.screen, SnoozeModal))
     await pilot.press("3", "d", "enter")
 
@@ -175,32 +178,58 @@ def _archived(path, sid):
     return sid not in threads and any(a["sessionId"] == sid for a in reg["archived"])
 
 
-async def _press(pilot, app, key):
-    if key == "s":
-        await _snooze(pilot, app)
+async def _press(pilot, app, key, *, snooze_key="s"):
+    if key == snooze_key:
+        await _snooze(pilot, app, key)
     else:
         await pilot.press(key)
 
 
+def _hidden(path):
+    return _archived(path, "s1")
+
+
+def _going(path):
+    return _stored(path)[0]["s1"]["reviewedAtMtime"] == _iso(5)
+
+
+def _kept(path):
+    return _stored(path)[0]["s1"]["decision"] == "keep"
+
+
+def _snoozed(path):
+    return _stored(path)[0]["s1"]["snoozedUntil"].startswith("2026-10-18")
+
+
+def _deleted_s1(path):
+    return any(d["sessionId"] == "s1" for d in _stored(path)[1]["deleted"])
+
+
 @pytest.mark.parametrize(
-    ("key", "check"),
+    ("keymap", "key", "check"),
     [
-        ("a", lambda path: _archived(path, "s1")),
-        ("g", lambda path: _stored(path)[0]["s1"]["reviewedAtMtime"] == _iso(5)),
-        ("K", lambda path: _stored(path)[0]["s1"]["decision"] == "keep"),
-        ("s", lambda path: _stored(path)[0]["s1"]["snoozedUntil"].startswith("2026-10-18")),
-        ("d", lambda path: any(d["sessionId"] == "s1" for d in _stored(path)[1]["deleted"])),
+        (VIM, "a", _hidden),
+        (VIM, "g", _going),
+        (VIM, "K", _kept),
+        (VIM, "s", _snoozed),
+        (VIM, "d", _deleted_s1),
+        (CIRCUS, "E", _hidden),
+        (CIRCUS, "r", _going),
+        (CIRCUS, "s", _kept),
+        (CIRCUS, "h", _snoozed),
+        (CIRCUS, "number_sign", _deleted_s1),
     ],
 )
-async def test_each_key_hides_its_row_before_the_writer_runs(tmp_path, key, check):
+async def test_each_key_hides_its_row_before_the_writer_runs(tmp_path, keymap, key, check):
     path = _write(tmp_path / "registry.json", _thread("s1", days=5), _thread("s2", days=4))
     execute = GatedExecute(gated=True)
-    app = _app(path, execute=execute, delete_grace=0)
+    app = _app(path, execute=execute, delete_grace=0, keymap=keymap)
+    snooze_key = "s" if keymap is VIM else "h"
     async with app.run_test(size=(100, 30)) as pilot:
         try:
             await _open_triage(app, pilot)
             assert _ids(app) == ["claude-code:s1", "claude-code:s2"]
-            await _press(pilot, app, key)
+            await _press(pilot, app, key, snooze_key=snooze_key)
             await until(pilot, lambda: _ids(app) == ["claude-code:s2"])
             assert execute.log == []
         finally:
@@ -362,6 +391,23 @@ async def test_undo_within_the_grace_brings_a_delete_back(tmp_path):
         assert Path(thread["file"]).exists()
 
 
+@pytest.mark.parametrize(
+    ("keymap", "delete", "undo"), [(VIM, "d", "u"), (CIRCUS, "number_sign", "z")]
+)
+async def test_the_preset_undo_key_works_after_leaving_triage(tmp_path, keymap, delete, undo):
+    thread = _thread("s1", days=5)
+    path = _write(tmp_path / "registry.json", thread)
+    app = _app(path, keymap=keymap, delete_grace=30)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press(delete, "1")
+        await until(pilot, lambda: isinstance(app.screen, HomeScreen))
+        await pilot.press(undo)
+        await until(pilot, lambda: "undone: delete title s1" in _toasts(app))
+        await until(pilot, lambda: app.idle)
+        assert Path(thread["file"]).exists()
+
+
 async def test_undo_mid_batch_reports_what_was_already_applied(tmp_path):
     path = _write(
         tmp_path / "registry.json",
@@ -400,13 +446,14 @@ async def test_a_delete_runs_once_the_grace_runs_out(tmp_path):
         assert "s1" not in _stored(path)[0]
 
 
-async def test_harvest_writes_the_harvest_and_archives(tmp_path):
+@pytest.mark.parametrize(("keymap", "key"), [(VIM, "h"), (CIRCUS, "e")])
+async def test_harvest_writes_the_harvest_and_archives(tmp_path, keymap, key):
     path = _write(tmp_path / "registry.json", _thread("s1", days=5))
     model = FakeModel(ANSWER)
-    app = _app(path, model=model)
+    app = _app(path, model=model, keymap=keymap)
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_triage(app, pilot)
-        await pilot.press("h")
+        await pilot.press(key)
         await until(pilot, lambda: _archived(path, "s1"))
         await until(pilot, lambda: app.idle)
     [saved] = harvests.load_harvests()
@@ -609,6 +656,49 @@ async def test_enter_opens_the_detail_and_the_conversation_appears(tmp_path):
         await until(pilot, lambda: isinstance(app.screen, TriageScreen))
 
 
+@pytest.mark.parametrize("key", ["enter", "o"])
+async def test_circus_enter_and_o_resume_the_highlighted_session(tmp_path, key):
+    path = _write(tmp_path / "registry.json", _thread("s1", days=5))
+    app = _app(path, keymap=CIRCUS)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press(key)
+        await until(pilot, lambda: "resume with which agent?" in screen_text(app))
+
+
+async def test_circus_v_opens_the_detail(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("s1", days=5))
+    app = _app(path, keymap=CIRCUS)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("v")
+        await until(pilot, lambda: isinstance(app.screen, DetailScreen))
+
+
+async def test_circus_x_marks_and_z_undoes_a_delete(tmp_path):
+    thread = _thread("s1", days=5)
+    path = _write(tmp_path / "registry.json", thread, _thread("s2", days=4))
+    app = _app(path, keymap=CIRCUS, delete_grace=30)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("x")
+        assert app.screen.marks == {"claude-code:s1"}
+        await pilot.press("number_sign", "z")
+        await until(pilot, lambda: "undone: delete title s1" in _toasts(app))
+        assert "deleting title s1 in 30 s — z to undo" in _toasts(app)
+        assert Path(thread["file"]).exists()
+
+
+@pytest.mark.parametrize("keymap", [VIM, CIRCUS])
+async def test_clicking_a_row_opens_its_detail(tmp_path, keymap):
+    path = _write(tmp_path / "registry.json", _thread("s1", days=5))
+    app = _app(path, keymap=keymap)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.click("#rows", offset=(4, 0))
+        await until(pilot, lambda: isinstance(app.screen, DetailScreen))
+
+
 async def test_detail_wraps_a_long_conversation_line_across_screen_lines(tmp_path):
     thread = _thread("s1", days=5)
     words = " ".join(f"word{k:02d}" for k in range(40))
@@ -670,16 +760,17 @@ async def test_resume_waits_for_a_pending_archive_before_exiting(tmp_path):
     assert app.return_value.choice.thread["sessionId"] == "s2"
 
 
-async def test_the_done_state_offers_the_next_project(tmp_path):
+@pytest.mark.parametrize(("keymap", "keep"), [(VIM, "K"), (CIRCUS, "s")])
+async def test_the_done_state_offers_the_next_project(tmp_path, keymap, keep):
     path = _write(
         tmp_path / "registry.json",
         _thread("s1", days=9, project="/w/first"),
         _thread("s2", days=4, project="/w/second"),
     )
-    app = _app(path)
+    app = _app(path, keymap=keymap)
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_triage(app, pilot)
-        await pilot.press("K")
+        await pilot.press(keep)
         await until(pilot, lambda: "/w/first done." in screen_text(app))
         assert "Next: Triage /w/second (1 waiting) — enter" in screen_text(app)
         await pilot.press("enter")
@@ -687,7 +778,7 @@ async def test_the_done_state_offers_the_next_project(tmp_path):
             pilot,
             lambda: isinstance(app.screen, TriageScreen) and _ids(app) == ["claude-code:s2"],
         )
-        await pilot.press("K")
+        await pilot.press(keep)
         await until(pilot, lambda: "All caught up — escape for Home" in screen_text(app))
 
 
@@ -728,6 +819,15 @@ async def test_golden_triage(tmp_path, golden):
         golden("inbox/triage", screen_text(app), replace={str(tmp_path): "<root>"})
         await pilot.press("space", "down", "down", "space")
         golden("inbox/triage-marked", screen_text(app), replace={str(tmp_path): "<root>"})
+
+
+async def test_golden_triage_circus(tmp_path, golden):
+    fixture = build_fixture(tmp_path, threads=40, now=NOW_DT)
+    app = _app(fixture.registry_path, keymap=CIRCUS)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _open_triage(app, pilot)
+        await pilot.press("x", "down", "down", "x")
+        golden("inbox/triage-circus", screen_text(app), replace={str(tmp_path): "<root>"})
 
 
 async def test_golden_detail(tmp_path, golden, monkeypatch):
@@ -855,3 +955,10 @@ async def test_triage_rows_rebuild_on_a_new_minute_or_presence_not_a_new_second(
         app._set(live_ids=frozenset({("claude-code", "s1")}))
         live = await rerender()
         assert (same_minute, next_minute, live) == (0, 1, 2)
+
+
+def test_the_app_takes_its_keys_from_the_configured_preset(tmp_path):
+    save_config(Config(inbox_keys="circus"))
+    path = _write(tmp_path / "registry.json", _thread("s1", days=5))
+    assert InboxApp(path, presence=frozenset, now=lambda: NOW_DT).keymap is CIRCUS
+    assert keymap_for("vim") is VIM

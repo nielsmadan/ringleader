@@ -67,7 +67,9 @@ highlighted row or the marked rows: `a` archive, `g` keep going, `s` snooze, `K`
 `d` delete, plus `h` harvest and archive through the configured model. `space` marks, `*`/`A`
 marks all, `enter` opens the detail, `r` resumes, `t` triages the project with an agent.
 Keep going marks the session reviewed until it sees new activity. Delete has no prompt: it
-waits 10 s and `u` undoes it. Bulk archive and delete confirm with the count; bulk harvest is
+waits 10 s and `u` undoes it. Those are the default `vim` keys; `rl config set inbox.keys
+circus` switches to the circus app's (`e` harvest, `E` archive, `r` keep going, `h` snooze, `s`
+keep, `#` delete, `x` mark, `enter`/`o` resume, `v` detail, `z` undo). Bulk archive and delete confirm with the count; bulk harvest is
 refused.
 
 Every write goes through one queue that rechecks the session right before it is touched, and a

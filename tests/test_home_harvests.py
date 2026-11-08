@@ -1,6 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from ringleader import harvests, registry
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.intents import AgentHandoffIntent
 from ringleader.home.screens import harvests as harvests_screen
@@ -8,7 +9,6 @@ from ringleader.home.screens.harvests import HarvestContentScreen, HarvestsScree
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 
 from tui_helpers import until
 

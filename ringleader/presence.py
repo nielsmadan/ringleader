@@ -15,7 +15,7 @@ import subprocess
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 PROTOCOL = 1
 TIMEOUT_SECONDS = 2
@@ -31,6 +31,7 @@ _ARTIFACTS = {
     ("Linux", "aarch64"): "linux-aarch64",
     ("Linux", "x86_64"): "linux-x86_64",
 }
+VENDOR_PLATFORMS: Final[tuple[str, ...]] = tuple(dict.fromkeys(_ARTIFACTS.values()))
 
 
 class PresenceUnavailable(RuntimeError):

@@ -2,8 +2,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from ringleader import registry
+from ringleader.devtools.tui_fixture import Fixture, build_fixture
 from ringleader.home.state import project_queue
-from scripts.tui_fixture import Fixture, build_fixture
 
 from tui_e2e import (
     KEY_ENTER,

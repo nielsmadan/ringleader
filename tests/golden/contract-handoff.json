@@ -1,0 +1,16 @@
+{
+  "agent": "claude",
+  "argv": [
+    "claude",
+    "Use the ringleader-triage skill to triage the dormant sessions of the project …/work/proj-00. Work only this project: in the prune step run `rl prune --project /fixture/work/proj-00` (and `--delete` only after the user agrees), and build the inbox with `rl triage --project /fixture/work/proj-00 --json` (no --recent bound), oldest first. If the ringleader-triage skill is not available, say so and stop."
+  ],
+  "code": null,
+  "cwd": "/fixture/work/proj-00",
+  "kind": "handoff",
+  "project_key": "/fixture/work/proj-00",
+  "purpose": "triage",
+  "reason": null,
+  "source": "claude-code",
+  "status": "ok",
+  "version": 1
+}

@@ -28,6 +28,7 @@ TABLE = {
     "mem": _MEM,
     "data": _DATA,
     "workspace": _WORKSPACE,
+    "handoff": _HANDOFF,
 }
 ```
 
@@ -81,7 +82,7 @@ hand-roll the check on `argv[0]`.
 - `cli.main()` — the router.
 - `guard_args.py` / `contract_io.run_guarded` — the guarded path of the session verbs.
 - `commands.TABLE` — the whole surface, one literal.
-- `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` — the groups.
+- `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` / `_HANDOFF` — the groups.
 - `cli._FLAT` / `cli._GROUPS` — help ordering.
 
 ## Gotchas

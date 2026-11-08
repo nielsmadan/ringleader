@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import shutil
 import signal
 import sys
 from collections.abc import Callable
@@ -10,7 +11,18 @@ from pathlib import Path
 from types import FrameType
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from . import config, contract, export, presence, refresh, registry
+from . import (
+    config,
+    contract,
+    export,
+    handoff,
+    harvests,
+    presence,
+    refresh,
+    registry,
+    resume,
+    revalidate,
+)
 
 if TYPE_CHECKING:
     from .decisions import Decision
@@ -24,11 +36,20 @@ def _now_dt() -> datetime:
 
 
 def _presence() -> contract.PresenceView:
+    client = presence.PresenceClient()
     try:
-        live = presence.PresenceClient().require_running_session_ids()
+        live = client.require_running_session_ids()
     except (presence.PresenceUnavailable, OSError) as error:
-        return contract.PresenceView(None, str(error))
-    return contract.PresenceView(live, None)
+        code: contract.PresenceCode = "failed" if client.is_installed() else "not_installed"
+        return contract.PresenceView.unknown(str(error), code)
+    return contract.PresenceView.ok(live)
+
+
+def _agents() -> tuple[contract.AgentView, ...]:
+    return tuple(
+        contract.AgentView(name, handoff.installed(name, shutil.which))
+        for name in resume.launchable_agents()
+    )
 
 
 def emit(doc: dict[str, Any]) -> None:
@@ -59,14 +80,23 @@ def _scan(registry_path: str) -> tuple[dict[str, Any], dict[str, Any]]:
 
 def list_doc(registry_path: str, *, scan: bool) -> dict[str, Any]:
     reg, summary = _scan(registry_path) if scan else (registry.load_registry(registry_path), None)
+    surroundings = contract.Surroundings(
+        presence=_presence(),
+        stale_hours=config.load_config().roundup_stale_hours,
+        pending_harvests=harvests.pending_count(),
+        agents=_agents(),
+    )
     return contract.list_payload(
         reg,
         _now_dt().isoformat(),
         registry_path=str(Path(registry_path).resolve()),
-        presence=_presence(),
-        stale_hours=config.load_config().roundup_stale_hours,
         scan=summary,
+        surroundings=surroundings,
     )
+
+
+def handoff_doc(plan: Callable[[str], handoff.HandoffPlan]) -> dict[str, Any]:
+    return contract.handoff_payload(plan(_now_dt().isoformat()))
 
 
 def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str, Any]:
@@ -75,7 +105,7 @@ def _tail_item(reg: dict[str, Any], qualified: str, max_chars: int) -> dict[str,
     except registry.AmbiguousSession:
         return contract.tail_item(qualified, None, None, max_chars, "ambiguous session id")
     if thread is None:
-        return contract.tail_item(qualified, None, None, max_chars, "no longer in the registry")
+        return contract.tail_item(qualified, None, None, max_chars, revalidate.GONE)
     try:
         text = export.render_tail(thread, max_chars)
     except FileNotFoundError:

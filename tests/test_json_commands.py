@@ -8,9 +8,19 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
-from ringleader import cli, contract, contract_io, guarded, presence, refresh, registry
+from ringleader import (
+    cli,
+    contract,
+    contract_io,
+    guarded,
+    harvests,
+    presence,
+    refresh,
+    registry,
+    scanner,
+)
+from ringleader.devtools.tui_fixture import Fixture, build_fixture
 from ringleader.models import ModelError, proc
-from scripts.tui_fixture import Fixture, build_fixture
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 REAL_PRESENCE = contract_io._presence
@@ -27,9 +37,15 @@ def gui_world(
     fixture = build_fixture(root, threads=threads, now=NOW_DT, transcripts=transcripts)
     for name, value in fixture.env.items():
         monkeypatch.setenv(name, value)
+    agent_bin = root / "agent-bin"
+    agent_bin.mkdir()
+    stub = agent_bin / "claude"
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{agent_bin}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.delenv("OPENCODE_DB", raising=False)
     monkeypatch.setattr(contract_io, "_now_dt", lambda: NOW_DT)
-    view = presence if presence is not None else contract.PresenceView(frozenset(), None)
+    view = presence if presence is not None else contract.PresenceView.ok(frozenset())
     monkeypatch.setattr(contract_io, "_presence", lambda: view)
     return fixture
 
@@ -166,8 +182,48 @@ def test_inbox_json_reports_unknown_presence_when_the_probe_fails(
     monkeypatch.setattr(contract_io, "_presence", REAL_PRESENCE)
     _live(monkeypatch, error)
     doc = _list(world, capsys)
-    assert doc["presence"] == {"state": "unknown", "problem": str(error)}
+    assert doc["presence"] == {"state": "unknown", "problem": str(error), "code": "not_installed"}
     assert {row["running"] for row in doc["sessions"]} == {None}
+
+
+def test_inbox_json_reports_a_failing_installed_presence_as_failed(world, capsys, monkeypatch):
+    monkeypatch.setattr(contract_io, "_presence", REAL_PRESENCE)
+    binary = presence.active_binary_path()
+    binary.parent.mkdir(parents=True)
+    binary.write_text("#!/bin/sh\nexit 3\n", encoding="utf-8")
+    binary.chmod(0o755)
+    presence_view = _list(world, capsys)["presence"]
+    assert (presence_view["state"], presence_view["code"]) == ("unknown", "failed")
+
+
+def test_inbox_json_carries_the_home_block_and_launchable_agents(world, capsys):
+    doc = _list(world, capsys)
+    home = doc["home"]
+    assert set(home) == {
+        "counts",
+        "pending_harvests",
+        "projects",
+        "waking_soon",
+        "in_flight",
+        "next_steps",
+        "rows",
+    }
+    assert home["counts"]["triage_total"] == len(doc["sessions"])
+    assert home["pending_harvests"] == 0
+    claude = next(a for a in doc["agents"] if a["source"] == "claude-code")
+    assert claude == {"source": "claude-code", "agent": "claude", "installed": True}
+
+
+def test_inbox_json_counts_pending_harvests_on_disk(world, capsys):
+    harvests.write_harvest_unlocked(
+        session_id="s1",
+        name="done",
+        folder_path=None,
+        repo_url=None,
+        harvested_at="2026-10-14T00:00:00+00:00",
+        content="- learned a thing",
+    )
+    assert _list(world, capsys)["home"]["pending_harvests"] == 1
 
 
 @pytest.mark.parametrize("mtime", [12345, None])
@@ -444,6 +500,7 @@ def _outcome(action, row_id, status, message, **fields):
         "id": row_id,
         "status": status,
         "reason": None,
+        "code": None,
         "message": message,
         "wrote": False,
         "path": None,
@@ -452,9 +509,9 @@ def _outcome(action, row_id, status, message, **fields):
     }
 
 
-def _refusal(action, row_id, reason, label=None):
+def _refusal(action, row_id, reason, code, label=None):
     message = reason if label is None else f"{label}: {reason}"
-    return _outcome(action, row_id, "refused", message, reason=reason)
+    return _outcome(action, row_id, "refused", message, reason=reason, code=code)
 
 
 def _stamped(row):
@@ -505,7 +562,7 @@ def test_a_guarded_destructive_verb_with_another_mtime_is_refused(
         f"--if-fingerprint={row['file_fingerprint']}",
     )
     label = None if action == "harvest" else row["label"]
-    assert doc == _refusal(action, row["id"], "changed since you looked", label)
+    assert doc == _refusal(action, row["id"], "changed since you looked", "changed", label)
     assert Path(row["file"]).exists()
     assert model.calls == 0
 
@@ -522,7 +579,9 @@ def test_a_guarded_destructive_verb_without_a_fingerprint_is_refused(
     doc = _guarded(
         decide_world, capsys, action, row["id"], f"--if-mtime={row['mtime']}", *fingerprint
     )
-    assert doc == _refusal(action, row["id"], "changed since you looked: no fingerprint, rescan")
+    assert doc == _refusal(
+        action, row["id"], "changed since you looked: no fingerprint, rescan", "no_fingerprint"
+    )
     assert Path(row["file"]).exists()
 
 
@@ -536,7 +595,7 @@ def test_a_guarded_destructive_verb_on_a_running_session_is_refused(
     _live(monkeypatch, frozenset({("claude", row["session_id"])}))
     doc = _guarded(decide_world, capsys, action, row["id"], *_stamped(row))
     reason = f"{row['label']} is running — finish it from inside with the ringleader-finish skill"
-    assert doc == _refusal(action, row["id"], reason)
+    assert doc == _refusal(action, row["id"], reason, "running")
     assert Path(row["file"]).exists()
     assert model.calls == 0
 
@@ -554,7 +613,7 @@ def test_a_guarded_destructive_verb_is_refused_when_presence_cannot_answer(
         f"can't tell whether {row['label']} is running — "
         "install presence with rl data presence install"
     )
-    assert doc == _refusal(action, row["id"], reason)
+    assert doc == _refusal(action, row["id"], reason, "presence_unknown")
     assert Path(row["file"]).exists()
     assert model.calls == 0
 
@@ -570,7 +629,7 @@ def test_a_guarded_destructive_verb_on_a_session_gone_from_the_registry_is_refus
         decide_world, capsys, action, gone, "--if-mtime=2026-10-01", "--if-fingerprint=1:2:3:4:5"
     )
     label = None if action == "harvest" else gone
-    assert doc == _refusal(action, gone, "no longer in the registry", label)
+    assert doc == _refusal(action, gone, "no longer in the registry", "gone", label)
     assert model.calls == 0
 
 
@@ -582,6 +641,27 @@ def test_guarded_delete_removes_the_transcript_and_the_thread(decide_world, caps
     )
     assert not Path(row["file"]).exists()
     assert _registry_thread(decide_world, row["id"]) is None
+
+
+def test_guarded_archive_of_a_vanished_transcript_is_coded_transcript_missing(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    Path(row["file"]).unlink()
+    doc = _guarded(decide_world, capsys, "archive", row["id"], *_stamped(row))
+    assert doc == _refusal(
+        "archive", row["id"], "transcript is missing", "transcript_missing", row["label"]
+    )
+
+
+def test_guarded_delete_that_the_disk_refuses_is_coded_other(decide_world, capsys, monkeypatch):
+    row = _target(decide_world, capsys)
+
+    def refuse(_thread):
+        raise OSError("disk said no")
+
+    monkeypatch.setattr(scanner, "hide_from_picker", refuse)
+    doc = _guarded(decide_world, capsys, "delete", row["id"], *_stamped(row))
+    assert doc == _refusal("delete", row["id"], "disk said no", "other", row["label"])
+    assert Path(row["file"]).exists()
 
 
 @pytest.mark.parametrize("action", ["snooze", "keep", "keep_going"])
@@ -627,7 +707,7 @@ def test_guarded_snooze_into_the_past_is_refused(decide_world, capsys):
         f"--if-mtime={row['mtime']}",
         "--until=2026-10-01T09:00:00+00:00",
     )
-    assert doc == _refusal("snooze", row["id"], "snooze time must be in the future")
+    assert doc == _refusal("snooze", row["id"], "snooze time must be in the future", "until_past")
     assert _registry_thread(decide_world, row["id"]).get("snoozedAt") is None
 
 
@@ -654,7 +734,9 @@ def test_guarded_keep_of_an_archived_session_fails_without_restoring_it(
     _guarded(decide_world, capsys, "archive", row["id"], *_stamped(row))
     monkeypatch.setattr("builtins.input", lambda _prompt: pytest.fail("prompted"))
     doc = _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
-    assert doc == _outcome("keep", row["id"], "failed", f"{row['id']}: no longer in the registry")
+    assert doc == _outcome(
+        "keep", row["id"], "failed", f"{row['id']}: no longer in the registry", code="gone"
+    )
     assert _registry_thread(decide_world, row["id"]) is None
 
 
@@ -667,6 +749,7 @@ def test_guarded_mark_reviewed_on_a_missing_session_fails_without_writing(decide
         "claude-code:does-not-exist",
         "failed",
         "claude-code:does-not-exist: no longer in the registry",
+        code="gone",
     )
 
 
@@ -735,7 +818,11 @@ def test_a_failing_harvest_model_is_a_failed_outcome(decide_world, capsys, monke
     row = _target(decide_world, capsys)
     doc = _guarded(decide_world, capsys, "harvest", row["id"], *_stamped(row))
     assert doc == _outcome(
-        "harvest", row["id"], "failed", f"harvest {row['label']} failed: model crashed"
+        "harvest",
+        row["id"],
+        "failed",
+        f"harvest {row['label']} failed: model crashed",
+        code="harvest_failed",
     )
     assert Path(row["file"]).exists()
 
@@ -744,7 +831,9 @@ def test_guarded_harvest_without_a_model_is_refused(decide_world, capsys, monkey
     _model(monkeypatch, None)
     row = _target(decide_world, capsys)
     doc = _guarded(decide_world, capsys, "harvest", row["id"], *_stamped(row))
-    assert doc == _refusal("harvest", row["id"], "no harvest model configured — run rl config")
+    assert doc == _refusal(
+        "harvest", row["id"], "no harvest model configured — run rl config", "no_harvest_model"
+    )
     assert Path(row["file"]).exists()
 
 
@@ -782,7 +871,7 @@ def test_a_guarded_verb_on_a_source_without_a_file_lifecycle_is_refused(
     reason = doc["reason"]
     assert reason.startswith(f"cannot {action}")
     assert "no filesystem transcript lifecycle" in reason
-    assert doc == _refusal(action, "opencode:oc-1", reason)
+    assert doc == _refusal(action, "opencode:oc-1", reason, "lifecycle_blocked")
 
 
 @pytest.mark.parametrize("roots", [{"store": "relative/store"}, {"root": "/elsewhere"}])
@@ -800,7 +889,7 @@ def test_a_row_with_corrupt_native_roots_is_refused_with_its_lifecycle_block(
     _edit_registry(decide_world, corrupt)
     row = next(r for r in _list(decide_world, capsys)["sessions"] if r["id"] == row_id)
     doc = _guarded(decide_world, capsys, action, row_id, *_stamped(row))
-    assert doc == _refusal(action, row_id, row["lifecycle_block"])
+    assert doc == _refusal(action, row_id, row["lifecycle_block"], "lifecycle_blocked")
     assert Path(row["file"]).exists()
 
 
@@ -814,7 +903,7 @@ def test_a_transcript_that_grew_after_the_caller_looked_is_refused(
         handle.write('{"type":"assistant"}\n')
     doc = _guarded(decide_world, capsys, action, row["id"], *_stamped(row))
     label = None if action == "harvest" else row["label"]
-    assert doc == _refusal(action, row["id"], "changed since you looked", label)
+    assert doc == _refusal(action, row["id"], "changed since you looked", "changed", label)
     assert Path(row["file"]).exists()
 
 
@@ -928,7 +1017,7 @@ def test_guarded_human_empty_harvest_prints_to_stdout_with_exit_0(
 def test_guarded_human_failure_reports_where_the_work_was_saved(capsys, monkeypatch):
     def failed(*_args, **_kwargs):
         return contract.GuiOutcome(
-            "failed", None, "harvested, not archived: boom", True, "/n.md", ()
+            "failed", None, "harvested, not archived: boom", True, "/n.md", (), "failed"
         )
 
     monkeypatch.setattr(guarded, "decide", failed)

@@ -1,6 +1,6 @@
 # TUI testing
 
-`tui/snapshot.py`, `tui/types.py`, `scripts/tui_fixture.py`, `scripts/tui_shot.py`,
+`tui/snapshot.py`, `tui/types.py`, `devtools/tui_fixture.py`, `scripts/tui_shot.py`,
 `tests/conftest.py` (`golden`), `tests/tui_helpers.py`, `tests/tui_e2e.py`: how the Textual apps
 are tested and looked at without a person at a terminal.
 

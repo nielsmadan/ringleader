@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import importlib.util
 import shutil
 import subprocess
 import tomllib
@@ -192,6 +193,18 @@ def test_wheel_carries_every_staged_artifact_and_the_manifest(tmp_path):
     manifest = wheel.read(f"ringleader/_vendor/{presence.CHECKSUM_MANIFEST}").decode()
     for relative, digest in digests.items():
         assert f"{digest}  {relative}" in manifest
+
+
+@needs_uv
+def test_a_built_wheel_has_everything_the_release_requires(tmp_path):
+    spec = importlib.util.spec_from_file_location("release_check", REPO / "scripts" / "release.py")
+    assert spec is not None and spec.loader is not None
+    release = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(release)
+    project = stage_project(tmp_path)
+    stage_artifacts(project)
+
+    assert release.missing_from_wheel(build_wheel(project).namelist()) == []
 
 
 @needs_uv

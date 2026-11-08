@@ -14,6 +14,7 @@ from ...tui.keys import nav_bindings
 from ...tui.modals import ConfirmModal, SnoozeModal
 from ...tui.rows import highlighted_key, set_rows
 from ..base import InboxScreen
+from ..keymap import EnterTarget, Keymap, hint, with_bindings
 from ..policy import CONFIRM_BULK, CONFIRM_EACH_DELETE
 from ..state import (
     ProjectRef,
@@ -29,10 +30,6 @@ from .detail import DetailScreen
 STATUS_WIDTH = 13
 AGENT_WIDTH = 9
 AGE_WIDTH = 9
-KEY_HINT = (
-    "space mark · * mark all · enter detail · r resume · t triage the project with an agent "
-    "· u undo"
-)
 
 _STATUS_STYLES = {
     "unclassified": "dim",
@@ -89,26 +86,17 @@ def done_text(scope: TriageScope, following: ProjectRef | None) -> Text:
     return text
 
 
+_HANDOFF = Binding("t", "handoff", "triage the project with an agent", show=False)
+
+
 class TriageScreen(InboxScreen):
     BINDINGS: ClassVar[list[BindingType]] = [
         *nav_bindings(),
         Binding("j", "cursor_down", "down", show=False),
         Binding("k", "cursor_up", "up", show=False),
-        Binding("a", "archive", "archive"),
-        Binding("h", "harvest", "harvest"),
-        Binding("g", "keep_going", "going"),
-        Binding("s", "snooze", "snooze"),
-        Binding("K", "keep", "keep"),
-        Binding("d", "delete", "delete"),
         Binding("q", "app.quit", "quit", show=False),
-        Binding("u", "app.undo", "undo", show=False),
         Binding("ctrl+r", "app.rescan", "rescan", show=False),
-        Binding("space", "mark", "mark", show=False),
-        Binding("asterisk", "mark_all", "mark all", show=False),
-        Binding("A", "mark_all", "mark all", show=False),
-        Binding("enter", "open", "detail", show=False),
-        Binding("r", "resume", "resume", show=False),
-        Binding("t", "handoff", "agent", show=False),
+        _HANDOFF,
     ]
 
     DEFAULT_CSS = """
@@ -129,9 +117,14 @@ class TriageScreen(InboxScreen):
     }
     """
 
-    def __init__(self, scope: TriageScope) -> None:
+    def __init__(self, scope: TriageScope, keymap: Keymap) -> None:
         super().__init__()
         self.scope = scope
+        self.keymap = keymap
+        self._bindings = with_bindings(
+            self._bindings,
+            (*keymap.triage, Binding(keymap.undo, "app.undo", "undo", show=False)),
+        )
         self._rows: list[dict[str, Any]] = []
         self._marks: frozenset[str] = frozenset()
         self._following: ProjectRef | None = None
@@ -142,7 +135,7 @@ class TriageScreen(InboxScreen):
     def compose(self) -> ComposeResult:
         yield Header()
         yield Static("", id="subtitle")
-        yield Static(Text(KEY_HINT), id="hint")
+        yield Static(Text(hint((*self.keymap.triage, _HANDOFF), self.keymap.undo)), id="hint")
         yield OptionList(id="rows", compact=True)
         yield Static("", id="done")
         yield Footer()
@@ -316,17 +309,22 @@ class TriageScreen(InboxScreen):
         ids = frozenset(registry.qualified_id(t) for t in self._rows)
         self._set_marks(frozenset() if ids and ids <= self._marks else ids)
 
-    def action_open(self) -> None:
-        if self._rows:
-            highlighted = self._highlighted()
-            if highlighted is not None:
-                self.app.push_screen(DetailScreen(highlighted))
+    def action_enter(self, target: EnterTarget) -> None:
+        if self._rows and target == "resume":
+            self.action_resume()
+        elif self._rows:
+            self.action_detail()
         elif self._following is not None:
-            self.app.switch_screen(TriageScreen(ProjectScope(self._following)))
+            self.app.switch_screen(TriageScreen(ProjectScope(self._following), self.keymap))
+
+    def action_detail(self) -> None:
+        highlighted = self._highlighted()
+        if highlighted is not None:
+            self.app.push_screen(DetailScreen(highlighted))
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
         event.stop()
-        self.action_open()
+        self.action_detail()
 
     def action_resume(self) -> None:
         highlighted = self._highlighted()

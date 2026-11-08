@@ -16,11 +16,11 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ringleader import registry
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.picker.app import PickerApp
 from ringleader.resume import Scope
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.app import App
 from textual.pilot import Pilot
 from textual.worker import WorkerCancelled

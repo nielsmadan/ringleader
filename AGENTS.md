@@ -53,8 +53,8 @@ pruning them before the GC clock deletes them.
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing** for the skills
   in `.agents/skills/` (session track) or `.claude/skills/` (`memory-triage`), not for hand use.
-  `--json` on `rl inbox`, `rl data export` and the guarded `rl session` verbs is the circus desktop
-  app's versioned contract (JSON-only stdout, `version: 1`): change it only with
+  `--json` on `rl inbox`, `rl data export`, `rl handoff triage` and the guarded `rl session` verbs
+  is the circus desktop app's versioned contract (JSON-only stdout, `version: 1`): change it only with
   `docs/tech/json-contract.md` and the goldens in `tests/golden/`.
 - **`rl analyze` keeps a SQLite index and refreshes it on every run.** It lives at
   `analysis/index-v<FACTS_VERSION>.sqlite` under the state dir. `--no-refresh` reads it as it is
@@ -127,8 +127,8 @@ pruning them before the GC clock deletes them.
   shells out to a bundled `hooklinesinker` binary (`sessions --json`, `consumers --json`,
   `doctor --json`, 2s timeout) and parses protocol 1 only. Its state under
   `$XDG_STATE_HOME/hooklinesinker` is private — do not read it. The binary is **not** a Brew
-  dependency: `scripts/hooklinesinker.json` pins a published release, `just vendor` (run by
-  `just install`) downloads and checksum-verifies it and stages it into the gitignored
+  dependency: `scripts/hooklinesinker.json` pins a published release and each binary's sha256,
+  `just vendor` (run by `just install`) downloads and verifies it against the pin and stages it into the gitignored
   `ringleader/_vendor/<platform>/`, `just update-hooklinesinker [version]` moves the pin (never
   backwards), and `just check-hooklinesinker` warns when a newer release exists. `pyproject.toml`'s wheel
   `artifacts` key is what carries them into the wheel. Activation is explicit
@@ -165,10 +165,20 @@ pruning them before the GC clock deletes them.
   genuinely offline (loopback HTTP, no real inference) and safe to run unattended — droid's uses
   `droid exec --fork`, never interactive `droid`.
 
+- **A release is a pushed `vX.Y.Z` tag.** `pyproject.toml`'s `version` is the only version;
+  `.github/workflows/release.yml` refuses a tag that does not match it and publishes the wheel,
+  `contract-golden.tar.gz` and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job
+  and publishes from a separate one; its actions are pinned by commit SHA. The circus app pins a release
+  by version and wheel hash, so bump the version for anything it should pick up.
+  `ringleader/devtools/` (the synthetic worlds: `tui_fixture`, `gui_world`) ships in the wheel and
+  is type-checked like the rest of the package; it is for tests and QA, never for live data.
+
 ## Commands
 
 ```sh
+rl --version                        # rl X.Y.Z, from pyproject.toml
 rl start <agent> [--worktree]        # fresh conversation here or in a new worktree; --dry-run previews
+rl handoff triage --project K --agent A # an agent triages one project; --dry-run [--json] previews
 rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
 rl resume --last                    # re-enter the most recent session in scope, no picker
 rl                                  # bare, on an interactive non-agent TTY: opens rl inbox

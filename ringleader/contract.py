@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, get_args
 
-from . import overview, registry, resume, roundup_clock, scanner
+from . import overview, registry, resume, scanner
 from .agents import source_of
+from .codes import OutcomeCode
+from .handoff import HandoffPlan, HandoffReady
 from .home import state as home_state
 
 if TYPE_CHECKING:
@@ -22,6 +25,9 @@ TAIL_MAX_CHARS: Final = 2_000_000
 TAIL_MAX_IDS: Final = 16
 LIST_TEXT_MAX_CHARS: Final = 500
 type OutcomeStatus = Literal["ok", "refused", "empty", "failed"]
+type PresenceCode = Literal["not_installed", "failed"]
+
+PRESENCE_CODES: Final[tuple[PresenceCode, ...]] = get_args(PresenceCode.__value__)
 
 SESSION_ROW_KEYS: Final[tuple[str, ...]] = (
     "age_days",
@@ -65,6 +71,25 @@ SESSION_ROW_KEYS: Final[tuple[str, ...]] = (
 class PresenceView:
     live: frozenset[Identity] | None
     problem: str | None
+    code: PresenceCode | None
+
+    def __post_init__(self) -> None:
+        if (self.live is None) != (self.code is not None):
+            raise ValueError("unknown presence needs a code, and only unknown presence has one")
+
+    @classmethod
+    def ok(cls, live: frozenset[Identity]) -> PresenceView:
+        return cls(live, None, None)
+
+    @classmethod
+    def unknown(cls, problem: str, code: PresenceCode) -> PresenceView:
+        return cls(None, problem, code)
+
+
+@dataclass(frozen=True)
+class AgentView:
+    source: str
+    installed: bool
 
 
 @dataclass(frozen=True)
@@ -75,6 +100,27 @@ class GuiOutcome:
     wrote: bool = False
     path: str | None = None
     warnings: tuple[str, ...] = ()
+    code: OutcomeCode | None = None
+
+    def __post_init__(self) -> None:
+        if (self.status in ("refused", "failed")) != (self.code is not None):
+            raise ValueError(
+                f"a {self.status} outcome {'needs' if self.code is None else 'has no'} code"
+            )
+
+
+@dataclass(frozen=True)
+class Surroundings:
+    presence: PresenceView
+    stale_hours: int
+    pending_harvests: int
+    agents: Sequence[AgentView]
+
+
+class UntilError(ValueError):
+    def __init__(self, message: str, code: OutcomeCode) -> None:
+        super().__init__(message)
+        self.code = code
 
 
 def clip(text: str | None, limit: int) -> str | None:
@@ -170,14 +216,72 @@ def _roundup_age(last_at: Any, now_iso: str) -> str | None:
         return None
 
 
-def _roundup(reg: dict[str, Any], now_iso: str, stale_hours: int) -> dict[str, Any]:
-    last_at = reg.get("lastRoundupAt")
+def _roundup(state: home_state.HomeState, stale_hours: int) -> dict[str, Any]:
     return {
-        "last_at": last_at,
-        "age_human": _roundup_age(last_at, now_iso),
-        "stale": roundup_clock.is_stale(reg, now_iso, stale_hours),
+        "last_at": state.last_roundup_at,
+        "age_human": _roundup_age(state.last_roundup_at, state.now_iso),
+        "stale": state.roundup_stale,
         "stale_hours": stale_hours,
     }
+
+
+def _project(ref: home_state.ProjectRef) -> dict[str, Any]:
+    return {
+        "key": ref.key,
+        "label": ref.label,
+        "pending": ref.pending,
+        "unclassified": ref.unclassified,
+        "oldest_mtime": ref.oldest_mtime,
+        "newest_mtime": ref.newest_mtime,
+    }
+
+
+def _step(step: home_state.NextStep) -> dict[str, Any]:
+    return {
+        "kind": step.kind,
+        "deletes": step.deletes,
+        "costs_model": step.costs_model,
+        "count": step.count,
+        "project_key": step.project.key if step.project is not None else None,
+        "id": ":".join(step.session) if step.session is not None else None,
+    }
+
+
+def _home(
+    state: home_state.HomeState,
+    already_listed: AbstractSet[str],
+    live: frozenset[Identity] | None,
+) -> dict[str, Any]:
+    referenced = {registry.qualified_id(t): t for t in (*state.waking_soon, *state.in_flight)}
+    return {
+        "counts": {
+            "triage_total": state.triage_total,
+            "live": state.live_count,
+            "unclassified": state.unclassified,
+            "blocked": state.blocked_count,
+            "stale": state.stale_count,
+            "kept": state.kept_count,
+            "projects": len(state.projects),
+            "spread_projects": state.spread_projects,
+        },
+        "pending_harvests": state.pending_harvests,
+        "projects": [_project(ref) for ref in state.projects],
+        "waking_soon": [registry.qualified_id(t) for t in state.waking_soon],
+        "in_flight": [registry.qualified_id(t) for t in state.in_flight],
+        "next_steps": [_step(step) for step in home_state.next_steps(state)],
+        "rows": [
+            session_row(t, state.now_iso, live)
+            for qualified, t in referenced.items()
+            if qualified not in already_listed
+        ],
+    }
+
+
+def _agents(agents: Sequence[AgentView]) -> list[dict[str, Any]]:
+    return [
+        {"source": a.source, "agent": resume.agent_name(a.source), "installed": a.installed}
+        for a in agents
+    ]
 
 
 def list_payload(
@@ -185,10 +289,17 @@ def list_payload(
     now_iso: str,
     *,
     registry_path: str,
-    presence: PresenceView,
-    stale_hours: int,
     scan: dict[str, Any] | None,
+    surroundings: Surroundings,
 ) -> dict[str, Any]:
+    presence = surroundings.presence
+    stale_hours = surroundings.stale_hours
+    for thread in home_state.visible_threads(reg):
+        _inbox_order(thread)
+    state = home_state.build_home_state(
+        reg, now_iso, pending_harvests=surroundings.pending_harvests, stale_hours=stale_hours
+    )
+    rows = [session_row(t, now_iso, presence.live) for t in sorted(state.inbox, key=_inbox_order)]
     return {
         "version": CONTRACT_VERSION,
         "kind": "list",
@@ -198,10 +309,13 @@ def list_payload(
         "presence": {
             "state": "unknown" if presence.live is None else "ok",
             "problem": presence.problem,
+            "code": presence.code,
         },
-        "roundup": _roundup(reg, now_iso, stale_hours),
+        "roundup": _roundup(state, stale_hours),
         "scan": scan,
-        "sessions": [session_row(t, now_iso, presence.live) for t in inbox_threads(reg, now_iso)],
+        "agents": _agents(surroundings.agents),
+        "home": _home(state, {row["id"] for row in rows}, presence.live),
+        "sessions": rows,
     }
 
 
@@ -242,6 +356,23 @@ def tails_payload(items: list[dict[str, Any]]) -> dict[str, Any]:
     return {"version": CONTRACT_VERSION, "kind": "tails", "items": items}
 
 
+def handoff_payload(plan: HandoffPlan) -> dict[str, Any]:
+    ready = isinstance(plan, HandoffReady)
+    return {
+        "version": CONTRACT_VERSION,
+        "kind": "handoff",
+        "purpose": "triage",
+        "status": "ok" if ready else "refused",
+        "code": None if isinstance(plan, HandoffReady) else plan.code,
+        "reason": None if isinstance(plan, HandoffReady) else plan.message,
+        "source": plan.source,
+        "agent": resume.agent_name(plan.source),
+        "project_key": plan.project_key,
+        "cwd": plan.cwd if isinstance(plan, HandoffReady) else None,
+        "argv": list(plan.argv) if isinstance(plan, HandoffReady) else None,
+    }
+
+
 def error_payload(message: str) -> dict[str, Any]:
     return {"version": CONTRACT_VERSION, "kind": "error", "message": message}
 
@@ -250,22 +381,22 @@ def encode_document(doc: dict[str, Any]) -> bytes:
     return (json.dumps(doc, ensure_ascii=False) + "\n").encode("utf-8", "replace")
 
 
-def refused(reason: str) -> GuiOutcome:
-    return GuiOutcome("refused", reason, reason)
-
-
-def _status(outcome: decisions.Outcome) -> tuple[OutcomeStatus, str | None]:
-    if outcome.ok:
-        return "ok", None
-    if outcome.refused:
-        return "refused", outcome.refused[0][1]
-    return "failed", None
+def refused(reason: str, code: OutcomeCode) -> GuiOutcome:
+    return GuiOutcome("refused", reason, reason, code=code)
 
 
 def from_outcome(outcome: decisions.Outcome) -> GuiOutcome:
-    status, reason = _status(outcome)
+    status: OutcomeStatus
+    reason: str | None
+    code: OutcomeCode | None
+    if outcome.ok:
+        status, reason, code = "ok", None, None
+    elif outcome.refused:
+        status, reason, code = "refused", outcome.refused[0][1], outcome.code or "other"
+    else:
+        status, reason, code = "failed", None, outcome.code or "failed"
     return GuiOutcome(
-        status, reason, outcome.message, outcome.wrote, outcome.path, outcome.warnings
+        status, reason, outcome.message, outcome.wrote, outcome.path, outcome.warnings, code
     )
 
 
@@ -277,6 +408,7 @@ def outcome_payload(action: Decision, qualified: str, result: GuiOutcome) -> dic
         "id": qualified,
         "status": result.status,
         "reason": result.reason,
+        "code": result.code,
         "message": result.message,
         "wrote": result.wrote,
         "path": result.path,
@@ -288,9 +420,9 @@ def normalize_until(text: str, now: datetime) -> str:
     try:
         parsed = datetime.fromisoformat(text)
     except ValueError:
-        raise ValueError(f"--until is not an ISO 8601 time: {text!r}") from None
+        raise UntilError(f"--until is not an ISO 8601 time: {text!r}", "until_invalid") from None
     if parsed.tzinfo is None:
-        raise ValueError("--until needs a timezone offset")
+        raise UntilError("--until needs a timezone offset", "until_naive")
     if parsed <= now:
-        raise ValueError("snooze time must be in the future")
+        raise UntilError("snooze time must be in the future", "until_past")
     return parsed.astimezone(UTC).isoformat()

@@ -23,7 +23,7 @@ _FLAT = (
     "update",
     "uninstall",
 )
-_GROUPS = ("session", "mem", "data", "workspace")
+_GROUPS = ("session", "mem", "data", "workspace", "handoff")
 _RESERVED: set[str] = set()
 
 
@@ -122,5 +122,10 @@ def main(argv: list[str] | None = None) -> int:
         argv = ["inbox"]
     if not argv or argv[0] in ("-h", "--help", "help"):
         _usage()
+        return 0
+    if argv == ["--version"]:
+        from importlib.metadata import version  # noqa: PLC0415 -- only --version needs it
+
+        print(f"rl {version('ringleader')}")
         return 0
     return _walk(_table(), [], argv)

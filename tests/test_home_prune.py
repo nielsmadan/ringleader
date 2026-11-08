@@ -5,13 +5,13 @@ from pathlib import Path
 
 from ringleader import decisions, registry
 from ringleader.decisions import KeepOp
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.screens import prune as prune_screen
 from ringleader.home.screens.prune import PruneScreen
 from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.widgets import OptionList
 
 from tui_helpers import until

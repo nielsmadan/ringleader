@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 from ringleader import refresh, registry, revalidate
 from ringleader.decisions import ArchiveOp, KeepOp, Outcome, ReloadOp
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.harvests import Harvest
 from ringleader.home.app import InboxApp, ScanFailedMessage
 from ringleader.home.harvest_view import harvest_groups
@@ -22,7 +23,6 @@ from ringleader.picker.app import Choice, PickerScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from scripts.tui_shot import settle_inbox
 from textual.widgets import Label, OptionList, Static
 

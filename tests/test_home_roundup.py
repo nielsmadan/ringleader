@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ringleader import decisions, registry, stateio
 from ringleader.decisions import KeepOp, RoundupPhasesOp
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.base import RoundupRun
 from ringleader.home.screens.home import HomeScreen
@@ -21,7 +22,6 @@ from ringleader.roundup import PhasesResult, RoundupPlan, RoundupProgress
 from ringleader.sources.base import stat_fingerprint
 from ringleader.tui.modals import ChoiceModal, ConfirmModal
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.widgets import Label
 
 from tui_helpers import until

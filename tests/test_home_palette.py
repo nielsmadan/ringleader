@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from rich.text import Text
 from ringleader import cli, registry
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home import app as app_module
 from ringleader.home.app import InboxApp
 from ringleader.home.base import ScreenTarget
@@ -21,7 +22,6 @@ from ringleader.picker.app import PickerScreen
 from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.runner import CommandRun
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.content import Content
 
 from tui_helpers import until

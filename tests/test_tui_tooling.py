@@ -4,12 +4,12 @@ from pathlib import Path
 
 import pytest
 from ringleader import overview, refresh, registry
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.picker.app import PickerApp
 from ringleader.resume import Scope
 from ringleader.slug import droid_slug, slugify
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from scripts.tui_shot import parse_keys, settle_workers, shoot
 from textual.widgets import OptionList
 

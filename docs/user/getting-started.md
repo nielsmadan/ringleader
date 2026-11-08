@@ -69,7 +69,8 @@ rl
 
 Bare `rl` in a terminal opens the inbox: what's waiting, the next step, and one-key triage. `a`
 archive, `h` harvest, `g` keep going, `s` snooze, `K` keep long-term, `d` delete (`u` undoes it
-for 10 seconds), `enter` detail, `escape` back, `q` quit. `1`-`7` jump between screens.
+for 10 seconds), `enter` detail, `escape` back, `q` quit. `rl config set inbox.keys circus`
+switches to the circus app's keys. `1`-`7` jump between screens.
 
 If you'd rather have an agent drive it, wire up the skills ([Agent setup](agent-setup.md)) and
 invoke `ringleader-init`, which verifies the install, checks your retention settings, and runs a

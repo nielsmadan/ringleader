@@ -60,15 +60,20 @@ class FakeGitHub:
         return self.files(tag.removeprefix("v"))[name]
 
 
+def pinned(version: str) -> object:
+    hashes = {name: hashlib.sha256(binary(version)).hexdigest() for name in hls.ARTIFACTS}
+    return hls.Pin(version, 1, hashes)
+
+
 @pytest.fixture
 def pin_path(tmp_path: Path) -> Path:
     path = tmp_path / "hooklinesinker.json"
-    hls.write_pin(hls.Pin("1.0.3", 1), path)
+    hls.write_pin(pinned("1.0.3"), path)
     return path
 
 
 def test_read_pin_returns_the_pinned_version(pin_path):
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.3", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.3")
 
 
 @pytest.mark.parametrize(
@@ -78,6 +83,8 @@ def test_read_pin_returns_the_pinned_version(pin_path):
         ({"version": "1.0.3-rc1", "protocol": 1}, "stable version"),
         ({"version": "1.0.3", "protocol": 2}, "speaks 1"),
         ({"version": "1.0.3"}, "integer protocol"),
+        ({"version": "1.0.3", "protocol": 1}, "needs a sha256"),
+        ({"version": "1.0.3", "protocol": 1, "sha256": {hls.ARTIFACTS[0]: "ab"}}, "needs a sha256"),
     ],
 )
 def test_read_pin_refuses_an_invalid_pin(tmp_path, content, message):
@@ -93,7 +100,7 @@ def test_update_pins_the_latest_release_after_verifying_it(pin_path):
 
     hls.update(None, pin_path, github)
 
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.4", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.4")
     assert f"{DOWNLOAD}v1.0.4/{hls.MANIFEST}" in github.requests
 
 
@@ -102,7 +109,7 @@ def test_update_pins_a_requested_version(pin_path):
 
     hls.update("v1.0.5", pin_path, github)
 
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.5", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.5")
 
 
 def test_update_refuses_to_downgrade(pin_path):
@@ -111,7 +118,7 @@ def test_update_refuses_to_downgrade(pin_path):
     with pytest.raises(ValueError, match="downgrade"):
         hls.update("1.0.2", pin_path, github)
 
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.3", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.3")
 
 
 @pytest.mark.parametrize(
@@ -127,7 +134,7 @@ def test_update_refuses_an_incomplete_or_unstable_release(pin_path, published, m
     with pytest.raises(ValueError, match=message):
         hls.update(None, pin_path, github)
 
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.3", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.3")
 
 
 def test_update_refuses_a_binary_reporting_another_version(pin_path, monkeypatch):
@@ -137,12 +144,12 @@ def test_update_refuses_a_binary_reporting_another_version(pin_path, monkeypatch
     with pytest.raises(ValueError, match="reports"):
         hls.update(None, pin_path, github)
 
-    assert hls.read_pin(pin_path) == hls.Pin("1.0.3", 1)
+    assert hls.read_pin(pin_path) == pinned("1.0.3")
 
 
 def test_cached_release_downloads_once_then_reuses_the_cache(tmp_path):
     github = FakeGitHub({"1.0.3": release("1.0.3")}, latest="1.0.3")
-    pin = hls.Pin("1.0.3", 1)
+    pin = pinned("1.0.3")
 
     first = hls.cached_release(pin, tmp_path / "cache", github)
     downloads = len(github.requests)
@@ -155,7 +162,7 @@ def test_cached_release_downloads_once_then_reuses_the_cache(tmp_path):
 
 def test_cached_release_replaces_a_damaged_cache(tmp_path):
     github = FakeGitHub({"1.0.3": release("1.0.3")}, latest="1.0.3")
-    pin = hls.Pin("1.0.3", 1)
+    pin = pinned("1.0.3")
     cached = hls.cached_release(pin, tmp_path / "cache", github)
     (cached / hls.ARTIFACTS[0]).write_bytes(b"tampered")
 
@@ -171,3 +178,22 @@ def test_verify_checksums_rejects_a_mismatched_artifact(tmp_path):
 
     with pytest.raises(ValueError, match=f"checksum mismatch for {hls.ARTIFACTS[1]}"):
         hls.verify_checksums(tmp_path)
+
+
+def test_cached_release_refuses_a_release_that_no_longer_matches_the_pin(tmp_path):
+    github = FakeGitHub({"1.0.3": release("1.0.3")}, latest="1.0.3")
+    swapped = {name: hashlib.sha256(b"earlier upload").hexdigest() for name in hls.ARTIFACTS}
+
+    with pytest.raises(ValueError, match="does not match the sha256 pinned"):
+        hls.cached_release(hls.Pin("1.0.3", 1, swapped), tmp_path / "cache", github)
+
+    assert not (tmp_path / "cache" / "1.0.3").exists()
+
+
+def test_update_records_the_sha256_of_every_artifact(pin_path):
+    github = FakeGitHub({"1.0.4": release("1.0.4")}, latest="1.0.4")
+
+    hls.update(None, pin_path, github)
+
+    recorded = json.loads(pin_path.read_text())["sha256"]
+    assert recorded == {name: hashlib.sha256(binary("1.0.4")).hexdigest() for name in hls.ARTIFACTS}

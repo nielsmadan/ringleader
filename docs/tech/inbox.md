@@ -28,7 +28,8 @@ Textual is the package's only runtime dependency (`textual>=8`).
 | `home/overlay.py` | pure: the overlay of identities hidden from the view |
 | `home/scan.py` | `ScanService`: at most one scan thread |
 | `home/policy.py` | `DELETE_GRACE_SECONDS`, `CONFIRM_EACH_DELETE`, `CONFIRM_BULK`, `SCAN_FRESH_SECONDS` |
-| `home/intents.py`, `home/launch.py` | exit intents and the pure handoff builders, and running one after the app has exited |
+| `home/intents.py`, `home/launch.py` | exit intents and the pure handoff builders, and running one after the app has exited (the launch checks are shared with `rl handoff triage` in `ringleader/handoff.py`) |
+| `home/keymap.py` | the `vim` and `circus` key presets (`inbox.keys`), the triage hint built from them, and `with_bindings` |
 | `home/palette.py` | the command palette provider and its verb allowlist |
 | `home/screens/` | `home`, `triage`, `projects`, `roundup`, `prune`, `harvests`, `detail`, `output`, `usage` |
 | `tui/` | shared: `background` (daemon jobs), `modals`, `rows`, `keys`, `runner`, `snapshot` |
@@ -93,7 +94,7 @@ keep), archives and deletes each run inside one registry transaction (`batch.run
 [registry.md](registry.md)) that rechecks each session right before acting on it. Ops stay in
 the queue while their group runs: the executor *claims* each one as its turn comes, which moves
 it to running and delivers its `Started`. An op withdrawn before its claim — by `cancel(ticket)`,
-`u` or the discard confirm — is skipped and gets no `Finished`; only the claimed one is
+the undo key or the discard confirm — is skipped and gets no `Finished`; only the claimed one is
 `running`. Every claimed op gets its own `Finished` with its own outcome and generation; only
 the last carries the reload snapshot. A group whose transaction fails before claiming anything
 still finishes those ops with the failure. Harvest, prune, roundup, classify, stamp and reload
@@ -107,7 +108,7 @@ ops that have not started; `writer.unfinished` adds the ones claimed but not yet
 
 - Deletes carry a `not_before` of now plus `DELETE_GRACE_SECONDS` (10 s). Everything else runs
   at once.
-- `u` calls `undo_last`: the newest queued batch that is not a reload, classify or stamp, going
+- Undo (`u`, or `z` with the circus keys) calls `undo_last`: the newest queued batch that is not a reload, classify or stamp, going
   further back on repeated presses. An op that has started cannot be undone; an archive is
   reversed with `rl session unarchive`. When part of the batch already ran, the toast says so:
   `undone: 2 of delete 3 sessions (1 already applied)`.
@@ -181,7 +182,7 @@ App-wide (non-priority except `ctrl+c`, so a focused `Input` still receives ordi
 |---|---|
 | `1`–`7` | Home, Projects, Resume, Roundup, Prune, Harvests, Usage |
 | `q` | leave (the barrier above) |
-| `u` | undo the newest queued decision |
+| `u` (`z`) | undo the newest queued decision |
 | `ctrl+r` | rescan (queued when one is running) |
 | `ctrl+p` | command palette (off while a modal is open) |
 | `escape` | back, on every screen but Home |
@@ -194,19 +195,33 @@ screen.
 |---|---|
 | Home | `enter` runs the highlighted step or resumes the highlighted in-flight session; `tab` moves between the two lists |
 | Projects | `enter` opens a project's triage; `t` triage it with an agent |
-| Triage | `a` archive · `h` harvest and archive · `g` keep going · `s` snooze · `K` keep long-term · `d` delete · `space` mark · `*`/`A` mark all · `enter` detail · `r` resume · `t` triage with an agent |
+| Triage | `a` archive · `h` harvest and archive · `g` keep going · `s` snooze · `K` keep long-term · `d` delete · `space` mark · `*`/`A` mark all · `enter` detail (also a click) · `r` resume · `t` triage with an agent; `enter` on the done state opens the next project |
 | Resume | the picker; `enter` picks, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh |
 | Roundup | `enter` run (or, when finished, plan again) · `c` stop |
 | Prune | `D` delete the listed candidates · `c` stop |
 | Harvests | `enter` read · `p` publish the group with an agent · `P` publish all |
 | Usage / palette output | `r` re-run · `c` cancel |
 
+Those are the `vim` preset, the default. `config.inbox_keys` (`rl config set inbox.keys
+vim|circus`) picks a preset from `home/keymap.py`: a `Keymap` holds the triage decision bindings
+and the undo key, and `keymap.hint` builds the hint line from the hidden bindings, so the hint
+cannot drift from the keys. `config.key_preset` is the one check of a stored value (`rl config
+set` and `rl inbox` both use it). The `circus` preset matches the circus app's Inbox: `e` harvest,
+`E` archive, `r` keep going, `h` snooze, `s` keep long-term, `#` delete, `x` mark, `*` mark all,
+`enter`/`o` resume, `v` detail, `z` undo. `InboxApp` takes the keymap (`rl inbox` resolves it
+from config, refusing an unknown preset with exit 2) and binds the undo key on itself; each
+`TriageScreen` is constructed with it and merges the preset's keys into its own `_bindings`
+(`keymap.with_bindings`, which keeps whole `Binding` objects), after the shared class bindings so
+the footer order stays fixed. Textual has no public per-instance binding API, so both go through
+the private `_bindings`. In both presets `enter` is a priority
+binding, so the `OptionList`'s own select is reached only by a click, which opens the detail.
+
 A decision key applies to the marked rows, or to the highlighted row when none is marked. Marks
 clear only when a decision was submitted. Bulk archive and bulk delete confirm with the count;
 bulk harvest is refused. A bulk decision skips and reports sessions their source cannot archive
 or delete (OpenCode) and applies the rest. When a rescan removed the highlighted or a marked row,
 the next decision key refuses once with "the list changed under you — press the key again".
-`s` opens a snooze prompt that takes `3d`, `2w`, `tomorrow`, `next monday` (`fuzzytime.py`).
+The snooze key opens a prompt that takes `3d`, `2w`, `tomorrow`, `next monday` (`fuzzytime.py`).
 
 Home's next-step order is `state.next_steps`, a pure function: roundup when stale; snoozed
 sessions that woke; undecided sessions active in the last 7 days; pending harvests; the oldest

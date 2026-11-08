@@ -117,11 +117,14 @@ it is a no-op when ringleader is not registered, and keeps any warning hooklines
 about hooks it left in place. Status prints the setup command when a hook is `drifted` (written
 by an older hooklinesinker), and install reminds you to approve Codex hooks in Codex's `/hooks`.
 
-`scripts/hooklinesinker.json` pins the bundled release. `scripts/hooklinesinker.py vendor`
-downloads it into `build/hooklinesinker/downloads/<version>/` (reused while its checksums and
+`scripts/hooklinesinker.json` pins the bundled release and the sha256 of each of its three
+binaries. `scripts/hooklinesinker.py vendor` downloads it into
+`build/hooklinesinker/downloads/<version>/` (reused while its checksums, the pinned hashes and
 the binary's `version --json` still match the pin), and `scripts/vendor-hooklinesinker.sh`
-stages its three binaries and checksum manifest under `ringleader/_vendor/`. `update` moves
-the pin to a published stable release carrying every artifact, refusing downgrades.
+stages its three binaries and checksum manifest under `ringleader/_vendor/`. The pinned hashes
+are what make a replaced release asset fail: the release's own `SHA256SUMS` would be replaced
+with it. `update` moves the pin to a published stable release carrying every artifact, records
+the new hashes, and refuses downgrades.
 Hatchling includes those ignored artifacts in the wheel.
 Source installs without artifacts still work; presence installation reports the missing bundle.
 

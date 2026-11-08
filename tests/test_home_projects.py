@@ -2,13 +2,13 @@ from datetime import UTC, datetime, timedelta
 
 from ringleader import registry
 from ringleader.decisions import Outcome
+from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.home.intents import AgentHandoffIntent
 from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.triage import TriageScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.snapshot import screen_text
-from scripts.tui_fixture import build_fixture
 from textual.widgets import OptionList
 
 from tui_helpers import until

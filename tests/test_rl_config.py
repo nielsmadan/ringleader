@@ -10,6 +10,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+from ringleader.config import key_preset
+
 REPO = Path(__file__).resolve().parent.parent
 
 
@@ -37,6 +40,7 @@ def test_config_show_defaults(tmp_path):
     assert "ai: None" in r.stdout
     assert "llm.provider: anthropic" in r.stdout
     assert "archive.retention_days: 0" in r.stdout
+    assert "inbox.keys: vim" in r.stdout
 
 
 def test_config_set_and_show_roundtrip(tmp_path):
@@ -66,6 +70,7 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "roundup_stale_hours": 8,
         "archive_retention_days": 0,
         "session_filters": [],
+        "inbox_keys": "vim",
     }
 
 
@@ -260,3 +265,44 @@ def test_config_set_ai_command_prefix_rejects_unbalanced_quotes(tmp_path):
 
     assert r.returncode == 2
     assert "rl config set ai.command_prefix: No closing quotation" in r.stderr
+
+
+def test_config_set_inbox_keys_roundtrip(tmp_path):
+    env = _env(tmp_path)
+
+    r = _run("config", "set", "inbox.keys", "circus", env=env)
+
+    assert r.returncode == 0, r.stderr
+    assert "inbox.keys: circus" in _run("config", "show", env=env).stdout
+
+
+def test_config_set_invalid_inbox_keys_rejected(tmp_path):
+    env = _env(tmp_path)
+
+    r = _run("config", "set", "inbox.keys", "emacs", env=env)
+
+    assert r.returncode == 2
+    assert "rl config set: inbox.keys is 'emacs'; it must be one of vim, circus" in r.stderr
+
+
+@pytest.mark.parametrize("value", ["emacs", ["circus"], None])
+def test_key_preset_names_the_setting_for_any_bad_value(value):
+    with pytest.raises(ValueError) as raised:
+        key_preset(value)
+    assert str(raised.value) == f"inbox.keys is {value!r}; it must be one of vim, circus"
+
+
+@pytest.mark.parametrize("stored", ["emacs", ["circus"]])
+def test_rl_inbox_refuses_a_stored_preset_it_does_not_know(tmp_path, stored):
+    env = _env(tmp_path)
+    config_file = tmp_path / "ringleader" / "config.json"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(json.dumps({"inbox_keys": stored}))
+
+    r = _run("inbox", "--registry", str(tmp_path / "registry.json"), env=env)
+
+    assert r.returncode == 2
+    assert r.stderr == (
+        f"rl inbox: inbox.keys is {stored!r}; it must be one of vim, circus"
+        " — set it with rl config set inbox.keys\n"
+    )

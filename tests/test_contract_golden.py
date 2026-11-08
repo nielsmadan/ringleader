@@ -2,7 +2,7 @@ import json
 import os
 from pathlib import Path
 
-from ringleader import cli, contract, contract_io, presence, registry
+from ringleader import cli, contract, contract_io, presence, registry, resume
 from ringleader.slug import slugify
 from tests.test_json_commands import NOW_DT, gui_world
 
@@ -48,8 +48,12 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
         t for t in contract.inbox_threads(reg, NOW_DT.isoformat()) if t["source"] == "claude-code"
     )
     live = frozenset({("claude", first_claude["sessionId"])})
-    monkeypatch.setattr(contract_io, "_presence", lambda: contract.PresenceView(live, None))
+    monkeypatch.setattr(contract_io, "_presence", lambda: contract.PresenceView.ok(live))
     monkeypatch.setattr(presence.PresenceClient, "require_running_session_ids", lambda self: live)
+    agents = tuple(
+        contract.AgentView(name, name == "claude-code") for name in resume.launchable_agents()
+    )
+    monkeypatch.setattr(contract_io, "_agents", lambda: agents)
     roots = [str(tmp_path), str(tmp_path.resolve())]
 
     listing = _run(cli.main, capsys, "inbox", "--json", *reg_arg)
@@ -90,12 +94,26 @@ def test_documents_match_the_committed_goldens(monkeypatch, tmp_path, capsys):
         f"--if-fingerprint={other['file_fingerprint']}",
         *reg_arg,
     )
+    handoff = _run(
+        cli.main,
+        capsys,
+        "handoff",
+        "triage",
+        "--project",
+        listing["home"]["projects"][0]["key"],
+        "--agent",
+        "claude",
+        "--dry-run",
+        "--json",
+        *reg_arg,
+    )
 
-    assert (ok["status"], refused["status"]) == ("ok", "refused")
+    assert (ok["status"], refused["status"], handoff["status"]) == ("ok", "refused", "ok")
     for name, doc in (
         ("contract-list.json", listing),
         ("contract-tails.json", tails),
         ("contract-outcome-ok.json", ok),
         ("contract-outcome-refused.json", refused),
+        ("contract-handoff.json", handoff),
     ):
         _check(name, doc, roots)

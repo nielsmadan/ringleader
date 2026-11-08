@@ -203,3 +203,14 @@ def test_a_render_basis_changes_with_the_minute_the_view_or_presence_not_the_sec
     ]
     assert (later == basis, later.now) == (True, NOW_DT + timedelta(seconds=59))
     assert [variant != basis for variant in variants] == [True, True, True]
+
+
+def test_steps_that_name_a_number_carry_it_as_a_count():
+    reg = _reg(_woke("w1"), _thread("r1", days=2), _thread("o1", days=40, project="/w/b"))
+    counts = [(s.kind, s.count) for s in next_steps(_state(reg, harvests=3))]
+    assert counts == [("woke", 1), ("recent", 1), ("publish", 3), ("project", 1)]
+
+
+def test_an_unparsable_roundup_stamp_still_recommends_the_roundup():
+    steps = next_steps(_state(_reg(last_roundup="garbage")))
+    assert [(s.kind, s.title) for s in steps] == [("roundup", "Run the roundup (last run unknown)")]

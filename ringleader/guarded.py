@@ -21,7 +21,6 @@ from .models import Model, ModelError
 from .revalidate import Seen
 
 _STAMPED = ("archive", "delete", "harvest")
-_GONE = "no longer in the registry"
 
 
 def _harvest_model() -> Model | None:
@@ -54,7 +53,7 @@ def _remove(
 ) -> contract.GuiOutcome:
     blocked = None if thread is None else decisions.lifecycle_reason(thread, action)
     if blocked is not None:
-        return contract.refused(blocked)
+        return contract.refused(blocked, "lifecycle_blocked")
     return _run(ArchiveOp(seen) if action == "archive" else DeleteOp(seen), ctx)
 
 
@@ -63,23 +62,24 @@ def _snooze(
 ) -> contract.GuiOutcome:
     try:
         when = contract.normalize_until(until, now())
-    except ValueError as error:
-        return contract.refused(str(error))
+    except contract.UntilError as error:
+        return contract.refused(str(error), error.code)
     return _run(SnoozeOp(seen, when), ctx)
 
 
 def _harvest_gate(thread: dict[str, Any], seen: Seen, ctx: OpContext) -> contract.GuiOutcome | None:
-    reason = (
-        decisions.lifecycle_reason(thread, "harvest")
-        or revalidate.changed_reason(thread, seen)
-        or revalidate.running_reason(thread, ctx.presence(), "refuse")
+    blocked = decisions.lifecycle_reason(thread, "harvest")
+    if blocked is not None:
+        return contract.refused(blocked, "lifecycle_blocked")
+    refusal = revalidate.changed_refusal(thread, seen) or revalidate.running_refusal(
+        thread, ctx.presence(), "refuse"
     )
-    return None if reason is None else contract.refused(reason)
+    return None if refusal is None else contract.refused(refusal.text, refusal.code)
 
 
 def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> contract.GuiOutcome:
     if thread is None:
-        return contract.refused(_GONE)
+        return contract.refused(revalidate.GONE, "gone")
     blocked = _harvest_gate(thread, seen, ctx)
     if blocked is not None:
         return blocked
@@ -87,11 +87,15 @@ def _harvest(thread: dict[str, Any] | None, seen: Seen, ctx: OpContext) -> contr
     if thread.get("decision") != "harvested":
         model = _harvest_model()
         if model is None:
-            return contract.refused("no harvest model configured — run rl config")
+            return contract.refused(
+                "no harvest model configured — run rl config", "no_harvest_model"
+            )
         try:
             markdown = decisions.harvest_markdown(thread, model)
         except (ModelError, RuntimeError, OSError) as error:
-            return contract.GuiOutcome("failed", None, f"harvest {seen.label} failed: {error}")
+            return contract.GuiOutcome(
+                "failed", None, f"harvest {seen.label} failed: {error}", code="harvest_failed"
+            )
         if markdown is None:
             return contract.GuiOutcome("empty", None, "nothing worth harvesting")
     return _run(HarvestSaveOp(seen, markdown), ctx)
@@ -120,7 +124,7 @@ def decide(  # noqa: PLR0913 -- the shared guarded-decision signature
     now: Callable[[], datetime],
 ) -> contract.GuiOutcome:
     if action in _STAMPED and revalidate.content_stamp(fingerprint) is None:
-        return contract.refused(revalidate.NO_STAMP)
+        return contract.refused(revalidate.NO_STAMP, "no_fingerprint")
     thread = registry.find_session(registry.load_registry(registry_path), qualified)
     seen = _seen(qualified, thread, mtime, fingerprint)
     ctx = _context(registry_path, now)
