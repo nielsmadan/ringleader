@@ -1,0 +1,127 @@
+# Changelog
+
+User-facing changes to ringleader. While it is on `0.x`, a minor release may break things.
+
+## 0.2.0 - 2026-11-09
+
+### Features
+
+- Package ringleader with an rl console entry point
+- Move state to the home directory with rl migrate
+- Add --json output to overview and triage
+- Regroup the rl command surface into namespaces
+- Add Codex as a second session source
+- Add session name setting for codex
+- Add a Model seam with claude, codex, and api backends
+- Add rl config for selecting the model backend
+- Add rl session enrich for tool-native classification
+- Add the ringleader plugin and skill layer
+- Add tool-native session harvesting
+- Package the ringleader skills for multiple agents
+- Add rl roundup
+- Add a selected-for-day marker to threads
+- Add a fuzzy duration parser and a desktop notify helper
+- Add the rl inbox TUI
+- Add a keep-long-term disposition for sessions
+- Rework the archive lifecycle with retention and unarchive
+- Add rl usage across claude, codex, opencode and pi
+- Install and sync bundled skills
+- Let RINGLEADER_CLAUDE_SETTINGS redirect the settings doctor reads
+- Add a sandbox recipe for testing the skills from zero state
+- Capture and report Claude rate limits
+- Freeze real sessions for the sandbox
+- Filter overview by status
+- Add current-directory overview
+- Restore the sandbox from a private fixture
+- Add an isolated sandbox shell
+- Add recoverable harvest publishing
+- Add documentation publishing skill
+- Make install, update and uninstall top-level verbs
+- Add the plumbing to finish a session from inside it
+- Add rl session sweep to archive finished sessions once quiet
+- Add the ringleader-finish skill
+- Install session-end hooks for claude, codex and pi
+- Add rl workspace move and retarget
+- Hide noisy sessions with rl config filter
+- Report build artifacts a workspace move invalidates
+- Follow codex sessions when a workspace moves
+- Make --current work in Codex, Pi and OpenCode
+- Add OpenCode session support
+- Group the kept-sessions view by project
+- Scan Pi sessions
+- Add rl session search
+- Add agent presence client
+- Detect droid, qwen, and kimi agents
+- Integrate shared agent presence
+- Add a session launching capability to the source seam
+- Share ctrl+j and ctrl+k navigation across ringleader tuis
+- Add rl resume
+- Add rl resume --last
+- Add factory droid support
+- Add session conversion commands
+- Convert real sessions natively across agents behind rl resume --to
+- Bundle hooklinesinker 1.1.0
+- Add native fork choice to resume picker
+- Add per-task model setting with bounded model calls
+- Enrich sessions concurrently from a bounded transcript tail
+- Plan roundup up front and revalidate before deleting
+- Rebuild rl inbox as the daily home
+- Add a command prefix setting for the agent CLI engines
+- Add rl analyze session analysis with labels, reports and skills
+- Show resume progress
+- Clarify resume picker session status
+- Support ctrl+c cancellation in the tui
+- Add the rl gui list, scan and tail commands
+- Add rl gui decide and qualified ids in rl resume
+- Add the gui contract doc, a synthetic gui world and sigterm-safe decide archives
+- Refresh sessions from the resume picker
+- Fork sessions into worktrees
+- Add rl inbox --json with --scan and rl data export --json
+- Add --json and --if-mtime guards to the rl session verbs and remove rl gui
+- Start fresh sessions in worktrees
+- Prepare the 0.2.0 release for the circus app
+
+### Fixes
+
+- Migrate a leftover archive when the registry already moved
+- Test the api backend and recurse codex schema additionalProperties
+- Handle rl skills permission errors and show resolved target dirs
+- List the skills group in rl help
+- Correct codex session identity and picker cleanup
+- Clear the codex picker entry when deleting a session
+- Skip unreadable directories instead of aborting the scan
+- Create the state dir before writing under it
+- Name the triage outcomes by what they do and fix their order
+- Surface Claude API envelope errors
+- Require complete harvest responses
+- Harden harvest publishing recovery
+- Stop re-registering a transcript an agent recreated after archiving
+- Make the archive and config-writing paths safe under failure
+- Correct rl install --help and the finish skill's first step
+- Keep the mode and follow the symlink when rewriting an agent config
+- Report a malformed config even when the install is declined
+- Guard the resurrected-stub unlink against an OS error
+- Repoint editable installs when a workspace moves
+- Carry a cached git root across a workspace move
+- Align overview totals with triage
+- Reinstall rl on just install-local instead of auditing
+- Stop forcing a harvest on a session with nothing to keep
+- Clarify claude-only refresh path and pi hook limitation
+- Cap codex session-end hook timeout
+- Count archived codex tokens in rl usage
+- Keep moved sessions in the agent's resume picker
+- Scrub QWEN_HOME and KIMI_CODE_HOME in tests
+- Render pi conversations in export
+- Preserve concurrent registry updates
+- Verify cross-agent session preservation
+- Harden session conversion lifecycle
+- Clarify command ownership
+- Eliminate session picker delays
+- Resume converted claude sessions on the configured model
+- Make resume --last see the session just left
+- Remove the slow paths found in the performance review
+- Count subagent, nested-run and forked-rollout spend correctly in usage
+- Resolve clean code review findings
+- Isolate reconciled registry snapshots
+- Exclude Droid exec runs from session discovery
+
