@@ -173,7 +173,7 @@ pruning them before the GC clock deletes them.
   user runs it. The tag starts `.github/workflows/release.yml`, which validates the tag with
   `curtains ci`, checks it matches the version, and publishes the wheel, `contract-golden.tar.gz`
   and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job and publishes from a
-  separate one; its actions are pinned by commit SHA. A failed publish is retried with
+  separate one; its actions are locked to commits in `.github/workflows/actions.lock`. A failed publish is retried with
   `gh workflow run release.yml --ref main -f tag=vX.Y.Z`, never by re-tagging. The circus app pins a
   release by version and wheel hash, so release for anything it should pick up.
   `ringleader/devtools/` (the synthetic worlds: `tui_fixture`, `gui_world`) ships in the wheel and
