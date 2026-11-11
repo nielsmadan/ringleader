@@ -12,11 +12,16 @@ import time
 from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 
+from ringleader.devtools.isolation import AGENT_STORE_VARS, agent_store_env
+
 REPO = Path(__file__).resolve().parent.parent
 DESCRIPTOR = REPO / "scripts" / "sandbox-fixture.json"
 SANDBOX = REPO / ".sandbox"
 DAY = 86400
 TINY_MESSAGE_CEILING = 12
+# droid's store predates the shared mapping's name for it
+STORE_NAMES = {"factory": "droid"}
+SANDBOX_DIRS = ("data", *(STORE_NAMES.get(store, store) for store in AGENT_STORE_VARS))
 MEDIUM_MESSAGE_CEILING = 50
 ExecProcess = Callable[[str, list[str], dict[str, str]], None]
 
@@ -129,6 +134,8 @@ def build(
     (sandbox_root / "data").mkdir(parents=True)
     # FACTORY_HOME_OVERRIDE is droid's HOME, so its store sits one .factory down
     (sandbox_root / "droid" / ".factory" / "sessions").mkdir(parents=True)
+    for name in SANDBOX_DIRS:
+        (sandbox_root / name).mkdir(exist_ok=True)
 
     stamp = time.time() if now is None else now
     for entry in manifest["files"]:
@@ -150,11 +157,8 @@ def build(
     print(f"sandbox: {sandbox_root}")
     print(f"  fixture: {descriptor['fixture_version']} ({fingerprint})")
     print(f"  sessions: {sum(descriptor['session_counts'].values())}; registry: empty\n")
-    print(f'export XDG_DATA_HOME="{sandbox_root / "data"}"')
-    print(f'export SESSION_TRACKER_PROJECTS_DIR="{sandbox_root / "claude"}"')
-    print(f'export CODEX_SESSIONS_DIR="{sandbox_root / "codex"}"')
-    print(f'export FACTORY_HOME_OVERRIDE="{sandbox_root / "droid"}"')
-    print(f'export RINGLEADER_CLAUDE_SETTINGS="{settings}"')
+    for name, value in sandbox_variables(sandbox_root).items():
+        print(f'export {name}="{value}"')
     return fingerprint
 
 
@@ -165,13 +169,20 @@ def ensure_sandbox(
     *,
     retention: int = 7,
 ) -> None:
-    directories = ("data", "claude", "codex", "droid")
     if (
-        all((sandbox_root / name).is_dir() for name in directories)
+        all((sandbox_root / name).is_dir() for name in SANDBOX_DIRS)
         and (sandbox_root / "claude-settings.json").is_file()
     ):
         return
     build(fixture_root, sandbox_root, descriptor, retention=retention)
+
+
+def sandbox_variables(sandbox_root: Path) -> dict[str, str]:
+    return {
+        "XDG_DATA_HOME": str(sandbox_root / "data"),
+        **agent_store_env(sandbox_root, prefix="", names=STORE_NAMES),
+        "RINGLEADER_CLAUDE_SETTINGS": str(sandbox_root / "claude-settings.json"),
+    }
 
 
 def shell_environment(sandbox_root: Path, base: dict[str, str] | None = None) -> dict[str, str]:
@@ -180,13 +191,7 @@ def shell_environment(sandbox_root: Path, base: dict[str, str] | None = None) ->
     environment["PATH"] = str(REPO / ".venv" / "bin")
     if current_path:
         environment["PATH"] += os.pathsep + current_path
-    environment.update(
-        XDG_DATA_HOME=str(sandbox_root / "data"),
-        SESSION_TRACKER_PROJECTS_DIR=str(sandbox_root / "claude"),
-        CODEX_SESSIONS_DIR=str(sandbox_root / "codex"),
-        FACTORY_HOME_OVERRIDE=str(sandbox_root / "droid"),
-        RINGLEADER_CLAUDE_SETTINGS=str(sandbox_root / "claude-settings.json"),
-    )
+    environment.update(sandbox_variables(sandbox_root))
     return environment
 
 

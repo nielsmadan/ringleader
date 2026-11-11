@@ -9,6 +9,7 @@ from typing import Any
 from . import scanner
 from .agents import source_of
 from .sources.base import ConversationRenderingSource, Source
+from .sources.cursor import prompt_text
 from .transcript import text_blocks
 
 
@@ -44,6 +45,15 @@ def _codex_text(payload: dict[str, Any]) -> str:
     return " ".join(c.get("text", "") for c in content if isinstance(c, dict)).strip()
 
 
+def _cursor_chunks(o: dict[str, Any]) -> list[str]:
+    msg = o.get("message")
+    if not isinstance(msg, dict):
+        return []
+    if o["role"] == "user":
+        return [c for c in (_turn("user", prompt_text(text_blocks(msg).strip())),) if c]
+    return [c for c in (_turn("assistant", text_blocks(msg).strip()), _tool_note(msg)) if c]
+
+
 def _record_chunks(o: dict[str, Any]) -> list[str]:
     t = o.get("type")
     if t == "user":
@@ -57,6 +67,8 @@ def _record_chunks(o: dict[str, Any]) -> list[str]:
         if not isinstance(msg, dict):
             return []
         return [c for c in (_turn(msg.get("role"), text_blocks(msg).strip()),) if c]
+    if t is None and o.get("role") in ("user", "assistant"):
+        return _cursor_chunks(o)
     if t == "response_item":  # codex
         payload = o.get("payload") or {}
         if payload.get("type") != "message":

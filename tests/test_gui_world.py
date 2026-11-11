@@ -6,6 +6,7 @@ from pathlib import Path
 
 from ringleader import contract, harvesting, presence, registry
 from ringleader.devtools import gui_world
+from ringleader.devtools.isolation import agent_store_env
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -27,6 +28,8 @@ def test_world_registry_config_and_marker(tmp_path):
     assert config["ai_command_prefix"] == [str(root / "bin" / "fake-harvest")]
     assert config["session_filters"] == ["zz-hidden*"]
     assert world.env["RINGLEADER_CLAUDE_SETTINGS"] == str(root / "claude-settings.json")
+    stores = agent_store_env(world.root)
+    assert {name: world.env.get(name) for name in stores} == stores
 
 
 def test_fake_hooklinesinker_reports_one_running_visible_session(tmp_path):

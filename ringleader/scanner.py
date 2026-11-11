@@ -24,17 +24,19 @@ from .sources.base import (
     ScopedDiscoverySource,
     Source,
     SourceUnavailableError,
+    SplitStoreSource,
     StoredSource,
     WorkspaceRebindingSource,
     WorkspaceRelocatingSource,
 )
 from .sources.claude_code import ClaudeCodeSource
 from .sources.codex import CodexSource
+from .sources.cursor import CursorSource
 from .sources.droid import DroidSource
 from .sources.opencode import OpenCodeSource
 from .sources.pi import PiSource
 
-SOURCE_TYPES = (ClaudeCodeSource, CodexSource, DroidSource, OpenCodeSource, PiSource)
+SOURCE_TYPES = (ClaudeCodeSource, CodexSource, DroidSource, OpenCodeSource, PiSource, CursorSource)
 
 
 def _new_sources() -> list[StoredSource]:
@@ -137,6 +139,7 @@ def source_for_thread(thread: dict[str, Any]) -> StoredSource | None:
         "pi": lambda: PiSource(sessions_dir=store / "sessions"),
         "droid": lambda: DroidSource(sessions_dir=store / "sessions"),
         "opencode": lambda: OpenCodeSource(db_path=store / "opencode.db"),
+        "cursor": lambda: CursorSource(config_dir=store, data_dir=store),
     }
     factory = factories.get(name)
     return factory() if factory else cast(StoredSource | None, source_by_name(name))
@@ -165,9 +168,10 @@ def _strictly_under(path: Path, root: Path) -> bool:
 
 
 def _outside_store(source: StoredSource, path: Path) -> Path | None:
-    store = source.root.resolve()
+    roots = source.store_roots if isinstance(source, SplitStoreSource) else (source.root,)
+    stores = [root.resolve() for root in roots]
     owned = (path, *companion_paths(source.name, path))
-    return next((p for p in owned if not _strictly_under(p, store)), None)
+    return next((p for p in owned if not any(_strictly_under(p, s) for s in stores)), None)
 
 
 def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
@@ -194,13 +198,27 @@ def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
 
 
 def companion_paths(source_name: str | None, file_path: str | Path) -> tuple[Path, ...]:
-    """The per-transcript files that belong with `file_path` — Claude Code's
-    `<sessionId>/` directory, droid's `.settings.json` sidecars. Empty for a source
-    that keeps none, so archive/delete/prune can treat every source the same."""
+    """The companions of the transcript at `file_path`. Empty for a source that
+    keeps none, so archive/delete/prune can treat every source the same."""
     src = source_by_name(source_name or "claude-code")
     if not supports(src, "companion_files", CompanionFileSource):
         return ()
     return tuple(cast(CompanionFileSource, src).companion_paths(str(file_path)))
+
+
+def companion_moves(
+    source_name: str | None, file_path: str | Path, destination: str | Path
+) -> tuple[tuple[Path, Path], ...]:
+    """Each companion of the transcript at `file_path`, paired with where it goes
+    when the transcript moves to `destination`."""
+    src = source_by_name(source_name or "claude-code")
+    if not supports(src, "companion_files", CompanionFileSource):
+        return ()
+    source = cast(CompanionFileSource, src)
+    return tuple(
+        (companion, source.companion_destination(companion, str(destination)))
+        for companion in source.companion_paths(str(file_path))
+    )
 
 
 def remove_companions(paths: Iterable[Path]) -> None:

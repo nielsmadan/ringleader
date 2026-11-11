@@ -802,8 +802,11 @@ def test_detected_agents_orders_new_agents_after_the_original_four(tmp_path, mon
         ".kimi-code",
     ):
         (home / probe).mkdir(parents=True)
+    (home / ".cursor").mkdir()
+    (home / ".cursor" / "cli-config.json").write_text("{}")
     monkeypatch.setenv("HOME", str(home))
-    monkeypatch.delenv("FACTORY_HOME_OVERRIDE", raising=False)
+    for name in ("FACTORY_HOME_OVERRIDE", "CURSOR_CONFIG_DIR"):
+        monkeypatch.delenv(name, raising=False)
     assert presence.detected_agents() == presence.AGENTS
 
 
@@ -856,3 +859,32 @@ def test_presence_rows_report_an_unregistered_consumer(tmp_path):
     consumer_row = next(r for r in rows if r["label"] == "consumer")
     assert consumer_row["state"] == "warn"
     assert presence.SETUP_COMMAND in consumer_row["detail"]
+
+
+def test_detected_agents_finds_cursor_by_its_cli_config(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    (home / ".cursor").mkdir(parents=True)
+    (home / ".cursor" / "cli-config.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CURSOR_CONFIG_DIR", raising=False)
+    assert presence.detected_agents() == ("cursor",)
+
+
+def test_detected_agents_skips_a_cursor_dir_the_ide_made(tmp_path, monkeypatch):
+    """The Cursor IDE creates ~/.cursor without the CLI, which alone writes cli-config.json."""
+    home = tmp_path / "home"
+    (home / ".cursor" / "extensions").mkdir(parents=True)
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.delenv("CURSOR_CONFIG_DIR", raising=False)
+    assert presence.detected_agents() == ()
+
+
+def test_detected_agents_honors_cursor_config_dir(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    relocated = tmp_path / "elsewhere"
+    relocated.mkdir()
+    (relocated / "cli-config.json").write_text("{}")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("CURSOR_CONFIG_DIR", str(relocated))
+    assert presence.detected_agents() == ("cursor",)

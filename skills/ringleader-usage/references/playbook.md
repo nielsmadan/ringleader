@@ -146,6 +146,9 @@ last write. So a droid session shows a single turn in `rl usage session`, its wh
 lands on one day under `--by day`, and `--by model` credits the model its router last chose.
 Say so when reporting droid numbers rather than reading the grouping as fact.
 
+Cursor CLI stores no token counts at all, only how full the context window is, so `rl usage`
+reports nothing for it. A Cursor session missing from a usage report is expected, not a gap.
+
 ## Strategic ordering
 
 Work in this order, every time, regardless of which skill is running:

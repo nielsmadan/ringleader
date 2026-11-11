@@ -63,9 +63,7 @@ def archive_thread(
     )
     dest_dir = Path(archive_root_path) / slug
     dest = dest_dir / src.name
-    companions = [
-        (c, dest_dir / c.name) for c in scanner.companion_paths(thread.get("source"), src)
-    ]
+    companions = list(scanner.companion_moves(thread.get("source"), src, dest))
     summary_source = Path(summary_file) if summary_file else None
     summary_dest = dest_dir / (src.stem + ".md") if summary_source else None
     summary_already_copied = False
@@ -140,11 +138,16 @@ def restore(reg: dict[str, Any], ts: dict[str, Any]) -> tuple[str, IndexUpdate]:
     if not src.exists():
         raise RuntimeError(f"archived transcript is gone: {src}")
 
+    companions = scanner.companion_moves(thread.get("source"), src, dest)
+    if blocked := next((d for c, d in companions if c.exists() and d.exists()), None):
+        raise RuntimeError(f"{blocked} already exists — not overwriting")
+
     dest.parent.mkdir(parents=True, exist_ok=True)
     shutil.move(str(src), str(dest))
-    for companion in scanner.companion_paths(thread.get("source"), src):
+    for companion, companion_dest in companions:
         if companion.exists():
-            shutil.move(str(companion), str(dest.parent / companion.name))
+            companion_dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(companion), str(companion_dest))
 
     shown = scanner.show_in_picker(thread, str(dest))
     # The workspace may have moved while this session sat in the archive, in which case

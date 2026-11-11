@@ -104,6 +104,7 @@ def test_source_satisfies_protocol(tmp_path):
             "shows_in_picker",
             "rebinds_workspace",
             "launches_sessions",
+            "forks_sessions",
         }
     )
 

@@ -735,6 +735,7 @@ async def test_enter_opens_the_agent_modal_with_the_sessions_own_agent_first(tmp
             AgentChoice("droid"),
             AgentChoice("opencode"),
             AgentChoice("pi"),
+            AgentChoice("cursor"),
         ]
         agents = modal.query_one("#agents", ListView)
         assert agents.index == 0
@@ -1573,3 +1574,10 @@ async def test_preset_worktree_action_skips_action_and_running_modals(tmp_path):
     assert app.return_value.action == "worktree"
     assert app.return_value.target == "claude-code"
     assert app.return_value.confirmed is False
+
+
+def test_the_agent_modal_offers_an_agent_that_cannot_fork_only_its_resume():
+    assert AgentModal(_thread("s0", source="cursor"))._choices == [
+        AgentChoice("cursor"),
+        *(AgentChoice(a) for a in launchable_agents() if a != "cursor"),
+    ]

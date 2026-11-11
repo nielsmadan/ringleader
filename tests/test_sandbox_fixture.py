@@ -145,7 +145,10 @@ def test_shell_environment_isolates_every_ringleader_input(tmp_path):
         "XDG_DATA_HOME": "/real/data",
         "SESSION_TRACKER_PROJECTS_DIR": "/real/claude",
         "CODEX_SESSIONS_DIR": "/real/codex",
+        "PI_SESSIONS_DIR": "/real/pi",
         "FACTORY_HOME_OVERRIDE": "/real/factory",
+        "CURSOR_CONFIG_DIR": "/real/cursor",
+        "CURSOR_DATA_DIR": "/real/cursor",
         "RINGLEADER_CLAUDE_SETTINGS": "/real/settings.json",
     }
 
@@ -158,7 +161,10 @@ def test_shell_environment_isolates_every_ringleader_input(tmp_path):
         "XDG_DATA_HOME": str(target / "data"),
         "SESSION_TRACKER_PROJECTS_DIR": str(target / "claude"),
         "CODEX_SESSIONS_DIR": str(target / "codex"),
+        "PI_SESSIONS_DIR": str(target / "pi"),
         "FACTORY_HOME_OVERRIDE": str(target / "droid"),
+        "CURSOR_CONFIG_DIR": str(target / "cursor"),
+        "CURSOR_DATA_DIR": str(target / "cursor"),
         "RINGLEADER_CLAUDE_SETTINGS": str(target / "claude-settings.json"),
     }
 

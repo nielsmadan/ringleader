@@ -39,6 +39,20 @@ def factory_label() -> str:
     return "~/.factory" if factory_home() == Path.home() else str(factory_dir())
 
 
+def cursor_dir(home: Path | None = None) -> Path:
+    """Cursor's CLI config dir, in the agent's own precedence."""
+    if explicit := os.environ.get("CURSOR_CONFIG_DIR", "").strip():
+        return Path(explicit)
+    if xdg := os.environ.get("XDG_CONFIG_HOME", "").strip():
+        return Path(xdg) / "cursor"
+    return (home or Path.home()) / ".cursor"
+
+
+def cursor_cli_installed(home: Path | None = None) -> bool:
+    """The Cursor IDE creates ~/.cursor too; only the CLI writes cli-config.json."""
+    return exists_or_report(cursor_dir(home) / "cli-config.json")
+
+
 def state_dir() -> Path:
     base = os.environ.get("XDG_DATA_HOME") or str(Path.home() / ".local" / "share")
     return Path(base) / "ringleader"

@@ -58,6 +58,7 @@ class ClaudeCodeSource:
                 "filesystem_lifecycle",
                 "relocates_workspace",
                 "launches_sessions",
+                "forks_sessions",
             }
         )
     )
@@ -85,6 +86,15 @@ class ClaudeCodeSource:
 
     def companion_paths(self, file_path: str) -> tuple[Path, ...]:
         return (Path(file_path).with_suffix(""),)  # <sessionId>.jsonl -> <sessionId>/
+
+    def companion_destination(self, companion: Path, file_path: str) -> Path:
+        return Path(file_path).parent / companion.name
+
+    def storage_dir(self, file_path: str) -> Path:
+        return Path(file_path).parent
+
+    def stored_transcripts(self, storage: Path) -> list[Path]:
+        return sorted(storage.glob("*.jsonl"))
 
     def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]:
         """Rename the whole slug directory for `old_cwd`. Every session launched

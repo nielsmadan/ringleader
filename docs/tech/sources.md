@@ -13,8 +13,10 @@ a session came from ([0003](../decisions/0003-scan-behind-a-source-seam.md)).
 Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.py`
 (`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`),
 `droid.py` (`~/.factory/sessions/<enc-cwd>/*.jsonl` plus `.settings.json` sidecars), `pi.py`
-(`~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl`, names via `session_info`), and read-only
-`opencode.py` (rows in `$XDG_DATA_HOME/opencode/opencode.db`).
+(`~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl`, names via `session_info`), `cursor.py`
+(`~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` plus the chat store
+`~/.cursor/chats/<md5(cwd)>/<id>/`), and read-only `opencode.py` (rows in
+`$XDG_DATA_HOME/opencode/opencode.db`).
 
 ## How it works
 
@@ -50,10 +52,12 @@ class Source(Protocol):
     def parse(self, ref: RawRef) -> NormalizedSession: ...
 ```
 
-Registered stores implement `StoredSource`, which adds a `root: Path` property.
+Registered stores implement `StoredSource`, which adds a `root: Path` property. A source whose
+sessions span several trees also implements `SplitStoreSource`, whose `store_roots` are what
+`delete` and `prune` confine a transcript and its companions to.
 `AvailabilitySource` optionally supplies an `available()` probe. `active_sources()` and
 `SourcePool` use those contracts; injected `scan(sources=...)` readers can still implement
-the minimal `Source` protocol. Recorded native roots are honored for all five agents,
+the minimal `Source` protocol. Recorded native roots are honored for all six agents,
 including Droid stores outside the current `FACTORY_HOME_OVERRIDE`.
 
 The two-phase split is what makes incremental scans cheap: `discover()` computes lightweight
@@ -69,19 +73,20 @@ Each is `@runtime_checkable`. Protocols with a named capability require both the
 | `SessionExclusionSource` | — | `excludes_session(file)` — positive evidence that a cached transcript should leave session discovery |
 | `CachedMetadataSource` | — | `refresh_cached_metadata()` — update display fields even on a cache hit |
 | `DiscoveryCacheSource` | `seeds_discovery` | `seed_discovery()` — prime discovery from version-matched cached sessions; Codex reuses headers only while the file fingerprint matches |
-| `CompanionFileSource` | `companion_files` | `companion_paths()` — the per-transcript state that must travel with it |
+| `CompanionFileSource` | `companion_files` | `companion_paths()` — the per-transcript state that must travel with it; `companion_destination()` — where one goes when the transcript moves |
 | `ConversationRenderingSource` | `renders_conversation` | `render_conversation()` — render a source-owned session without assuming JSONL |
 | `NameApplyingSource` | `applies_names` | `apply_name()` — write a name into the agent's own store |
 | `PickerHidingSource` | `hides_from_picker` | `hide_from_picker()` |
 | `PickerShowingSource` | `shows_in_picker` | `show_in_picker()` |
-| `WorkspaceRelocatingSource` | `relocates_workspace` | `storage_for()`, `relocate_storage()`, `relocate_session()` |
+| `WorkspaceRelocatingSource` | `relocates_workspace` | `storage_for()`, `storage_dir()`, `stored_transcripts()`, `relocate_storage()`, `relocate_session()` |
 | `WorkspaceRebindingSource` | `rebinds_workspace` | `rebind_workspace()` |
 | `ScopedDiscoverySource` | `discovers_scoped` | `discover_scoped()` — one workspace's sessions plus the registry's known in-scope files, changed since a time, without discovering everything |
 | `SessionLaunchingSource` | `launches_sessions` | `resume_argv()`, `fork_argv()`, `launch_argv()` |
+| `SessionLaunchingSource` | `forks_sessions` | the same protocol; the string alone says `fork_argv()` works |
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
-`Path` or touching disk. Claude Code, Codex, Droid, and Pi opt in. OpenCode deliberately does
+`Path` or touching disk. Claude Code, Codex, Droid, Pi and Cursor opt in. OpenCode deliberately does
 not: its database is read-only to ringleader, so it supports scan, overview, triage, detail,
 export and harvest, while lifecycle verbs decline or skip it.
 
@@ -92,7 +97,10 @@ workspace move all go through `scanner.companion_paths()` rather than deriving a
 themselves — a session separated from its own sidecars is a session whose token counts or
 tool results are gone. `companion_paths()` returns *candidates* derived from the transcript's
 path, not a listing of what exists: callers check existence, and the same derivation names the
-destination once the transcript has moved.
+destination once the transcript has moved. Archive and unarchive pair each companion with
+`scanner.companion_moves()`, which asks the source's `companion_destination()`: beside the
+transcript for Claude Code and Droid, and back under `chats/<md5(cwd)>/` for a Cursor chat
+restored from the archive, where the chat directory sits beside the archived transcript.
 
 **Picker hiding** exists because Codex keeps a sqlite index separate from the rollout files.
 Deleting or moving a transcript there leaves the picker offering a session whose file is gone.
@@ -104,7 +112,11 @@ index still points there. The file has to be back in place before it runs.
 
 **Workspace relocation** exists because Claude Code keys storage by the directory a session was
 launched in. Both relocate methods **raise rather than merge** when the destination is occupied;
-the caller checks up front and refuses, so a move never half-completes.
+the caller checks up front and refuses, so a move never half-completes. `storage_dir()` is the
+inverse of `storage_for()`: the workspace directory a transcript sits under. Drift detection and
+workspace moves compare it rather than the transcript's parent, which for Cursor is the chat's own
+`agent-transcripts/<id>/` folder. `stored_transcripts()` lists every transcript in such a
+directory, which is how a workspace move decides it owns the whole directory.
 
 **Workspace rebinding** is the other shape the same problem takes. Codex files rollouts by date
 and records the workspace in a `cwd` column of its state db, which `codex resume` filters the
@@ -119,8 +131,9 @@ an explicit prompt preserves the seeded cross-agent handoff, including an explic
 string. OpenCode uses `--prompt` and Pi uses `--` for that prompted form.
 All return argv whose first element is the binary, and none carries a directory — every agent
 resolves a session id relative to the directory it is launched in, so the caller chdirs first and a path in argv would be a second, conflicting answer.
-All five sources opt in, including OpenCode, whose read-only store does not stop its CLI being
-launched. `worktrees.py` composes worktree flags and preparation around these argv builders;
+All six sources opt in, including OpenCode, whose read-only store does not stop its CLI being
+launched. `forks_sessions` is separate because Cursor has no fork verb: its `fork_argv()` raises,
+the resume picker offers no fork or worktree row for it, and `rl resume` refuses one. `worktrees.py` composes worktree flags and preparation around these argv builders;
 [resume and fresh starts](resume.md) describes the shared launch boundary.
 
 All three index writers (`hide_from_picker`, `show_in_picker`, `rebind_workspace`) return an
@@ -178,6 +191,20 @@ does, and the session is not in it) need opposite handling from the caller, and
 - **Droid's title is on line 1, so it declines `applies_names`.** `session_start` carries `title`
   and there is no later override record; renaming would mean rewriting the first line of a file
   the agent may still be appending to.
+- **A Cursor session spans two roots.** The chat store sits under `CURSOR_CONFIG_DIR` (else
+  `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`) and the transcript under `CURSOR_DATA_DIR` (else
+  `~/.cursor`). The transcript is the session file because its name, `<id>.jsonl`, is unique, and
+  archive names files by name; every chat holds a `meta.json`. Its `store_roots` are the
+  `projects/` and `chats/` directories, so `delete` and `prune` accept the chat store wherever
+  `XDG_CONFIG_HOME` puts it and refuse anything outside the two. Archive and delete leave the empty
+  `agent-transcripts/<id>/` folder behind.
+- **Cursor's slug is lossy and the md5 is not.** `slug.cursor_slug()` maps every
+  non-alphanumeric run to one `-`, so `/a/b-c` and `/a/b/c` share a `projects/` directory.
+  `relocate_storage()` therefore refuses a slug directory holding a transcript whose chat is not
+  under the old cwd's md5, rather than carrying another directory's sessions along.
+- **Cursor's title lives outside the transcript.** `meta.json` gains `title` after the first turn
+  without the transcript changing, so `CursorSource` implements `refresh_cached_metadata()` and
+  reports it as `ai_title`. There is no rename verb, so it declines `applies_names`.
 - **`parser_version` is the cache-invalidation lever.** Change how a source parses and bump it,
   or every existing thread keeps its stale cached parse.
 - **OpenCode fingerprints are per session, not per database file.** They cover the session's

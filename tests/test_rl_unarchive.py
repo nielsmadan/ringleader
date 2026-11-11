@@ -205,3 +205,15 @@ def test_restore_reports_only_missing_picker_entries(
         assert "picker entry could not be updated" in output.err
     else:
         assert output.err == ""
+
+
+def test_restore_refuses_when_a_companion_destination_exists_and_moves_nothing(tmp_path):
+    reg, original = _setup(tmp_path)
+    archived = tmp_path / "arc" / "proj" / "s1.jsonl"
+    (archived.parent / "s1").mkdir()
+    (archived.parent / "s1" / "tool.txt").write_text("archived")
+    (original.parent / "s1").mkdir()
+    r = _run("session", "unarchive", "s1", "--registry", str(reg))
+    assert r.returncode == 1
+    assert "already exists" in r.stderr
+    assert (archived.is_file(), (archived.parent / "s1" / "tool.txt").is_file()) == (True, True)

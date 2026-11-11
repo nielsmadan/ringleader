@@ -1,4 +1,4 @@
-"""Claude Code's project-slug function, reproduced.
+"""Each agent's cwd-to-storage-directory encoding, reproduced.
 
 Claude Code stores a session's transcript under `~/.claude/projects/<slug>`, where
 the slug is the launch directory's absolute path with every non-alphanumeric
@@ -11,6 +11,7 @@ alike — so paths are always mapped forward to slugs, never decoded back.
 
 from __future__ import annotations
 
+import hashlib
 import os
 import re
 from pathlib import Path
@@ -54,6 +55,17 @@ def slugify(path: str | Path) -> str:
 def droid_slug(path: str | Path) -> str:
     resolved = os.path.realpath(os.path.expanduser(str(path))).rstrip("/\\").lstrip("/")
     return "-" + re.sub(r"/+", "-", resolved)
+
+
+def cursor_slug(path: str | Path) -> str:
+    """Cursor's `projects/` directory name for a cwd: lexical like Node's
+    `path.resolve`, never `realpath`, so a symlinked cwd keeps its own name."""
+    return re.sub(r"-+", "-", re.sub(r"[^a-zA-Z0-9]", "-", normalize(path))).strip("-")
+
+
+def cursor_chat_key(path: str | Path) -> str:
+    """Cursor's `chats/` directory name for a cwd: the md5 of its normalized path."""
+    return hashlib.md5(normalize(path).encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
 def normalize(path: str | Path) -> str:

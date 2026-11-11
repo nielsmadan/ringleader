@@ -101,15 +101,17 @@ def _drifted(thread: dict[str, Any], srcs: _Sources) -> bool:
     relocating = srcs.relocating.get(name)
     if relocating is None:
         raise ValueError(f"{name} does not file sessions under a workspace directory")
-    return Path(thread["file"]).parent.name != relocating.storage_for(thread["project"]).name
+    stored = relocating.storage_dir(thread["file"])
+    return stored.name != relocating.storage_for(thread["project"]).name
 
 
-def _listing(slug_dir: Path) -> list[Path]:
-    """Directory contents, read once per directory rather than once per thread."""
+def _listing(relocating: WorkspaceRelocatingSource, slug_dir: Path) -> list[Path]:
+    """The transcripts stored in `slug_dir`, read once per directory rather than once
+    per thread."""
     key = str(slug_dir)
     if _LISTINGS.get(key) is None:
         try:
-            _LISTINGS[key] = sorted(slug_dir.glob("*.jsonl"))
+            _LISTINGS[key] = relocating.stored_transcripts(slug_dir)
         except OSError:
             _LISTINGS[key] = []
     return _LISTINGS[key]
@@ -148,8 +150,9 @@ def build_plan(reg: dict[str, Any], old: str, new: str, srcs: _Sources) -> _Plan
         if source not in srcs.relocating:
             plan.unsupported.append(thread)
             continue
-        slug_dir = Path(thread["file"]).parent
-        siblings = _listing(slug_dir)
+        relocating = srcs.relocating[source]
+        slug_dir = relocating.storage_dir(thread["file"])
+        siblings = _listing(relocating, slug_dir)
         # A whole directory may only be renamed when we own every session in it, and
         # only when none of them has drifted — a drifted sibling would otherwise be
         # scheduled for a second, per-session move out of a directory already gone.
@@ -178,14 +181,16 @@ def collisions(plan: _Plan, srcs: _Sources) -> list[str]:
         if dst.exists():
             out.append(str(dst))
     for thread, source, new_project in plan.per:
-        dst_dir = srcs.relocating[source].storage_for(new_project)
+        relocating = srcs.relocating[source]
         transcript = Path(thread["file"])
-        if (dst_dir / transcript.name).exists():
-            out.append(str(dst_dir / transcript.name))
-        for companion in scanner.companion_paths(source, transcript):
+        stored = relocating.storage_dir(thread["file"])
+        dst = relocating.storage_for(new_project) / transcript.relative_to(stored)
+        if dst.exists():
+            out.append(str(dst))
+        for companion, companion_dst in scanner.companion_moves(source, transcript, dst):
             # only ones we would actually move: that is what relocate_session refuses on
-            if companion.exists() and (dst_dir / companion.name).exists():
-                out.append(str(dst_dir / companion.name))
+            if companion.exists() and companion.is_relative_to(stored) and companion_dst.exists():
+                out.append(str(companion_dst))
     return out
 
 

@@ -374,3 +374,17 @@ def test_droids_skills_dir_sits_under_the_real_home_without_an_override(tmp_path
     _fake_home(tmp_path, ".factory")
 
     assert skills._install_dirs(Path.home()) == [("droid", tmp_path / ".factory" / "skills")]
+
+
+def test_install_links_the_shared_skills_dir_for_cursor_alone(tmp_path, monkeypatch):
+    """Cursor reads ~/.agents/skills as its own, so a machine with only Cursor still
+    gets the shared dir."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config = tmp_path / "_cursor"  # where conftest points CURSOR_CONFIG_DIR
+    config.mkdir()
+    (config / "cli-config.json").write_text("{}")
+
+    assert skills.cmd_install(["--yes"]) == 0
+
+    link = tmp_path / ".agents" / "skills" / "ringleader-triage"
+    assert link.is_symlink() and (link / "SKILL.md").exists()

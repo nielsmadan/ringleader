@@ -40,7 +40,7 @@ def test_source_satisfies_protocol(tmp_path):
     assert isinstance(source, SessionLaunchingSource)
     assert source.name == "pi"
     assert source.capabilities == frozenset(
-        {"applies_names", "filesystem_lifecycle", "launches_sessions"}
+        {"applies_names", "filesystem_lifecycle", "launches_sessions", "forks_sessions"}
     )
 
 

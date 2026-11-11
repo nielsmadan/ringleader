@@ -154,6 +154,7 @@ class DroidSource:
                 "filesystem_lifecycle",
                 "relocates_workspace",
                 "launches_sessions",
+                "forks_sessions",
             }
         )
     )
@@ -189,6 +190,15 @@ class DroidSource:
     def companion_paths(self, file_path: str) -> tuple[Path, ...]:
         src = Path(file_path)
         return tuple(src.with_name(src.stem + suffix) for suffix in _SIDECAR_SUFFIXES)
+
+    def companion_destination(self, companion: Path, file_path: str) -> Path:
+        return Path(file_path).parent / companion.name
+
+    def storage_dir(self, file_path: str) -> Path:
+        return Path(file_path).parent
+
+    def stored_transcripts(self, storage: Path) -> list[Path]:
+        return sorted(storage.glob("*.jsonl"))
 
     def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]:
         src, dst = self.storage_for(old_cwd), self.storage_for(new_cwd)

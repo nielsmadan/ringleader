@@ -63,8 +63,9 @@ read-only, so a shot of live data never writes the live registry. It uses the re
 directories (one per 14 threads), a registry at `root/xdg-data/ringleader/registry.json` and a
 `config.json` that filters `zz-hidden*` names. The lifecycle mix mirrors live data: a few
 classified, kept, snoozed (waking soon and one expired), one harvested, one marked
-finish-on-exit, filtered names, and archived/deleted tombstones. `fixture.env` holds the six
-store and XDG variables that make the world self-contained.
+finish-on-exit, filtered names, and archived/deleted tombstones. `fixture.env` holds every agent's
+store override (`devtools/isolation.agent_store_env`) and the XDG variables that make the world
+self-contained.
 
 `transcripts=False` writes only the registry and is what goldens use. `transcripts=True` writes
 Claude Code transcripts and builds the registry from a real scan, so a later scan changes nothing:

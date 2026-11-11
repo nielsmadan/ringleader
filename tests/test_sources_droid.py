@@ -85,6 +85,7 @@ def test_source_satisfies_the_protocols_it_declares(tmp_path):
             "filesystem_lifecycle",
             "relocates_workspace",
             "launches_sessions",
+            "forks_sessions",
         }
     )
 

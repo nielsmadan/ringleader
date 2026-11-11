@@ -13,7 +13,7 @@ from textual.widgets import Input, Label, ListItem, ListView, OptionList
 
 from .. import fuzzytime
 from ..agents import source_of
-from ..resume import SessionAction, agent_name, launchable_agents
+from ..resume import SessionAction, agent_name, forks_sessions, launchable_agents
 from .keys import nav_bindings
 from .types import Clock
 
@@ -62,15 +62,12 @@ class AgentModal(ModalScreen[AgentChoice | None]):
         super().__init__()
         self._source = source_of(thread)
         agents = launchable_agents()
-        own = (
-            [
-                AgentChoice(self._source),
-                AgentChoice(self._source, "fork"),
-                AgentChoice(self._source, "worktree"),
-            ]
-            if self._source in agents
+        forks: list[AgentChoice] = (
+            [AgentChoice(self._source, "fork"), AgentChoice(self._source, "worktree")]
+            if forks_sessions(self._source)
             else []
         )
+        own = [AgentChoice(self._source), *forks] if self._source in agents else []
         self._choices = [*own, *(AgentChoice(a) for a in agents if a != self._source)]
 
     def compose(self) -> ComposeResult:

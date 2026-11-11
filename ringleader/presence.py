@@ -17,13 +17,15 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Final
 
+from .paths import cursor_dir
+
 PROTOCOL = 1
 TIMEOUT_SECONDS = 2
 CONSUMER = "ringleader"
 SETUP_COMMAND = "rl data presence install"
 VENDOR_COMMAND = "just install"
 CHECKSUM_MANIFEST = "checksums.txt"
-AGENTS = ("claude", "codex", "opencode", "pi", "droid", "qwen", "kimi")
+AGENTS = ("claude", "codex", "opencode", "pi", "droid", "qwen", "kimi", "cursor")
 
 _ARTIFACTS = {
     ("Darwin", "arm64"): "macos-universal",
@@ -162,8 +164,9 @@ def detected_agents(home: Path | None = None) -> tuple[str, ...]:
         "droid": _agent_home_override(root, "FACTORY_HOME_OVERRIDE", ".") / ".factory",
         "qwen": _agent_home_override(root, "QWEN_HOME", ".qwen"),
         "kimi": _agent_home_override(root, "KIMI_CODE_HOME", ".kimi-code"),
+        "cursor": cursor_dir(root) / "cli-config.json",
     }
-    return tuple(agent for agent in AGENTS if homes[agent].is_dir())
+    return tuple(agent for agent in AGENTS if homes[agent].exists())
 
 
 def sha256_file(path: Path) -> str:

@@ -54,3 +54,5 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
   neither should you. Its day and model groupings are approximations (one per-session record,
   stamped at the last write, credited to the model its router last chose); say so rather than
   presenting them as measured.
+- **Cursor CLI has no usage on disk** — it keeps only the context-window fill, so `rl usage`
+  never lists it. Say that rather than estimating its spend.

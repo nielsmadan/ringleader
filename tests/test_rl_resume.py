@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
-from ringleader import export, paths, scanner, slug
+from ringleader import export, paths, resume, scanner, slug
 from ringleader.commands import resume as resume_cmd
 from ringleader.picker.app import Choice
 from ringleader.portability.capabilities import RunRequest
@@ -1740,3 +1740,38 @@ def test_worktree_dry_run_does_not_create_or_launch(tmp_path, monkeypatch, capsy
         subprocess.check_output(["git", "-C", root, "worktree", "list", "--porcelain"]) == inventory
     )
     assert runner.calls == []
+
+
+@pytest.mark.parametrize("action", ["fork", "worktree"])
+def test_a_cursor_session_cannot_be_forked(tmp_path, action):
+    thread = {"sessionId": "c1", "source": "cursor", "project": str(tmp_path)}
+    pick = resume_cmd._Pick(thread, [thread], "cursor", action=action)
+    with pytest.raises(resume_cmd._Abort, match="cursor cannot fork a session"):
+        resume_cmd._plan(pick, "cursor")
+
+
+def test_a_cursor_session_resumes_with_its_own_id(tmp_path):
+    thread = {"sessionId": "c1", "source": "cursor", "project": str(tmp_path)}
+    plan = resume_cmd._plan(resume_cmd._Pick(thread, [thread], "cursor"), "cursor")
+    assert (plan.argv, plan.cwd) == (("cursor-agent", "--resume", "c1"), str(tmp_path))
+
+
+def _cursor_thread(store, session_id, *, project, stored_for):
+    folder = (
+        store / "projects" / slug.cursor_slug(str(stored_for)) / "agent-transcripts" / session_id
+    )
+    return {
+        "sessionId": session_id,
+        "source": "cursor",
+        "file": str(folder / f"{session_id}.jsonl"),
+        "project": str(project),
+    }
+
+
+def test_a_drifted_cursor_session_is_launched_where_its_transcript_is_filed(tmp_path):
+    store, launched = tmp_path / "_cursor", tmp_path / "work" / "api"
+    drifted = _cursor_thread(store, "c1", project=launched / "sub", stored_for=launched)
+    sibling = _cursor_thread(store, "c2", project=launched, stored_for=launched)
+
+    assert (resume.drifted(drifted), resume.drifted(sibling)) == (True, False)
+    assert resume.launch_cwd(drifted, [drifted, sibling]) == str(launched)

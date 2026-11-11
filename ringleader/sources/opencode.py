@@ -245,7 +245,9 @@ class OpenCodeSource:
     tail_turns: int = 30
     name: str = "opencode"
     capabilities: frozenset[str] = field(
-        default_factory=lambda: frozenset({"renders_conversation", "launches_sessions"})
+        default_factory=lambda: frozenset(
+            {"renders_conversation", "launches_sessions", "forks_sessions"}
+        )
     )
 
     def __post_init__(self) -> None:

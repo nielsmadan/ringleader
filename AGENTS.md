@@ -96,7 +96,7 @@ pruning them before the GC clock deletes them.
   the session you're currently in, harvesting it from live context instead of waiting for
   triage to read the transcript later. `memory-triage` is untouched and still lives in
   `loadout/skills/`. Wire them into an agent with `rl install
-  skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi),
+  skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi/Cursor),
   `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid — its own native personal
   skills dir, not the shared one); `rl update`/`rl uninstall` round out the surface,
   and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer
@@ -137,12 +137,14 @@ pruning them before the GC clock deletes them.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the
   `discover()`/`parse()` protocol plus opt-in capability protocols (native rename, picker
   hiding, companion files, workspace relocation, workspace rebinding, session launching); all
-  five of `claude_code.py`, `codex.py`, `droid.py`, `opencode.py` and `pi.py` implement it.
+  six of `claude_code.py`, `codex.py`, `cursor.py`, `droid.py`, `opencode.py` and `pi.py`
+  implement it.
   Registry/overview/triage code talks to `Source`, never to a transcript format.
   `companion_files` is the one to remember when writing a lifecycle verb: per-transcript state
   lives beside the transcript (Claude Code's `<sessionId>/` dir, droid's `.settings.json`
-  sidecars) and every archive/delete/prune/unarchive path goes through
-  `scanner.companion_paths()` rather than deriving a sibling path itself.
+  sidecars) or in a store of its own (Cursor's chat dir), and every
+  archive/delete/prune/unarchive path goes through `scanner.companion_paths()` and
+  `scanner.companion_moves()` rather than deriving a sibling path itself.
   See `docs/tech/sources.md`.
 - **Droid has its own directory encoding, not Claude Code's.** `~/.factory/sessions/` is keyed
   by `slug.droid_slug(cwd)`: `realpath`, then every `/` becomes `-` — unlike Claude Code's
@@ -155,6 +157,14 @@ pruning them before the GC clock deletes them.
   `FACTORY_HOME_OVERRIDE` replaces HOME (not the `.factory` name) and is what the tests and
   sandbox isolate with. Droid's tokens live in the `.settings.json` sidecar, not the transcript,
   and are never priced — Factory bills credits. See `docs/reference/agent-session-management.md`.
+- **A Cursor CLI session is two directories in two roots.** The transcript
+  `<data>/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` is the session file; the chat
+  store `<config>/chats/<md5(cwd)>/<id>/` (`store.db`, `meta.json`) is its companion and goes
+  back under the md5 of the cwd its `meta.json` records. `CURSOR_CONFIG_DIR` and
+  `CURSOR_DATA_DIR` are the agent's own overrides and what the tests and sandbox isolate with;
+  hooks are read from `$HOME/.cursor/hooks.json` regardless. Cursor has no fork verb (so
+  `forks_sessions` is a capability of its own), no rename verb and no stored token counts, so
+  `rl usage` reports nothing for it. See `docs/reference/agent-session-management.md`.
 - **Self-verifying a conversion target records its state outside the registry.**
   `rl doctor --verify-conversion [AGENT]` runs an offline harness per agent (a fake-provider
   capture for claude-code/codex/pi/droid, a CLI-acceptance check for opencode) against whatever

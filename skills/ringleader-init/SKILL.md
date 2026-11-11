@@ -28,8 +28,8 @@ this file only adds the flow.
 
 3. **Wire the skills into this agent.** Run `rl install skills`, which links the bundled
    `ringleader-*` skills into the agent directories it finds — `~/.claude/skills` for Claude
-   Code, `~/.factory/skills` for Droid, and the shared `~/.agents/skills` for Codex, OpenCode
-   and Pi. `rl doctor` reports what is
+   Code, `~/.factory/skills` for Droid, and the shared `~/.agents/skills` for Codex, OpenCode,
+   Pi and Cursor CLI. `rl doctor` reports what is
    already wired, so skip this if it says they are. `rl update skills` refreshes them after
    an upgrade and `rl uninstall skills` removes them.
 
@@ -46,7 +46,7 @@ this file only adds the flow.
    activating it writes status hooks into each detected agent's own configuration
    (`~/.claude/settings.json`, `~/.codex/hooks.json`, the OpenCode plugin directory, the Pi
    extension directory, `~/.factory/hooks.json`, `~/.qwen/settings.json`,
-   `~/.kimi-code/config.toml`) and registers ringleader alongside any other tool already using
+   `~/.kimi-code/config.toml`, `~/.cursor/hooks.json`) and registers ringleader alongside any other tool already using
    the binary. Get the user's approval, then run `rl data presence install` for the agents they
    chose — `rl data presence uninstall` later removes only ringleader's registration. If the
    command reports no staged artifact (a source checkout), relay the command it names and

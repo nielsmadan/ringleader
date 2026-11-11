@@ -33,8 +33,9 @@ The eight session-track skills share an agent-neutral `SKILL.md` plus a bundled
 `references/playbook.md`, synced from the canonical `skills/PLAYBOOK.md`
 (`just sync-playbook`). `ringleader-publish` owns its focused publishing protocol.
 
-All nine read natively in **Claude Code, Codex, Droid, OpenCode and Pi** — no per-agent plugin
-format. `rl install skills` symlinks them into `~/.agents/skills` (Codex, OpenCode, Pi),
+All nine read natively in **Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI** — no
+per-agent plugin format. `rl install skills` symlinks them into `~/.agents/skills` (Codex,
+OpenCode, Pi, Cursor CLI),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid).
 
 `memory-triage` is separate and lives in `loadout/skills/`.
@@ -49,7 +50,7 @@ rl install hooks
 
 Registers a session-end hook running `rl session sweep --from-hook`, so a finished session is
 archived within seconds of quitting instead of at the next roundup. Wired for Claude Code, Codex,
-Droid and Pi; OpenCode has no session-end event, so the sweep there runs from `rl roundup` and
+Droid, Pi and Cursor CLI (in `~/.cursor/hooks.json`); OpenCode has no session-end event, so the sweep there runs from `rl roundup` and
 `rl session refresh` instead.
 
 Droid's hooks file needs one caveat. Droid reads `~/.factory/hooks.json` *or* the legacy

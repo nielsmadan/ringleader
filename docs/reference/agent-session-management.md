@@ -11,21 +11,23 @@ OpenCode storage: verified 2026-08-31 against opencode 1.18.25.
 
 Droid storage and CLI: verified 2026-09-23 against droid 0.218.2.
 
+Cursor CLI storage, CLI and hooks: verified 2026-11-11 against cursor-agent 2026.11.05-86047df.
+
 For worktree creation, setup, isolation, session binding, and cleanup, see
 [Agent worktree management](agent-worktrees.md), surveyed separately on 2026-11-01.
 
 ## Summary
 
-| | Claude Code | Codex | Droid | OpenCode | Pi |
-|---|---|---|---|---|---|
-| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | `~/.factory/sessions/<enc-cwd>/<uuid>.jsonl` + `.settings.json` sidecars | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` |
-| Picker index | none — scans the project dir | `~/.codex/state_5.sqlite` `threads` | none — scans the session dir | same DB (`session` table) | none — scans the session dir |
-| Scoped to cwd | yes | yes (`--all` to disable) | yes (`--cwd` to point elsewhere) | yes (by `project_id`) | yes |
-| Fork | `--fork-session`, `forkSession` API | `codex fork` | `--fork <id>`, `resume --fork` | `--fork` | `--fork`, `/fork`, `/clone`, `/tree` |
-| Rename | `custom-title` record | `threads.name`, `session_index.jsonl` | — (title is on line 1) | `session.slug` / `title` | `--name`, `/name` |
-| Archive | — | `codex archive` / `unarchive` | — | `session.time_archived` | — |
-| Delete | `claude project purge <path>` (whole project) | `codex delete <id\|name>` | — | `opencode session delete <id>` | Ctrl+D in `/resume` |
-| Index drifts from files | n/a (no index) | **yes — badly** | unverified (see Droid) | n/a (DB is the store) | n/a (no index) |
+| | Claude Code | Codex | Droid | OpenCode | Pi | Cursor CLI |
+|---|---|---|---|---|---|---|
+| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | `~/.factory/sessions/<enc-cwd>/<uuid>.jsonl` + `.settings.json` sidecars | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` + `~/.cursor/chats/<md5(cwd)>/<id>/` store |
+| Picker index | none — scans the project dir | `~/.codex/state_5.sqlite` `threads` | none — scans the session dir | same DB (`session` table) | none — scans the session dir | none — scans the chats dir for the cwd |
+| Scoped to cwd | yes | yes (`--all` to disable) | yes (`--cwd` to point elsewhere) | yes (by `project_id`) | yes | yes (`chats/<md5(cwd)>`) |
+| Fork | `--fork-session`, `forkSession` API | `codex fork` | `--fork <id>`, `resume --fork` | `--fork` | `--fork`, `/fork`, `/clone`, `/tree` | — |
+| Rename | `custom-title` record | `threads.name`, `session_index.jsonl` | — (title is on line 1) | `session.slug` / `title` | `--name`, `/name` | — (`title` in `meta.json`) |
+| Archive | — | `codex archive` / `unarchive` | — | `session.time_archived` | — | — |
+| Delete | `claude project purge <path>` (whole project) | `codex delete <id\|name>` | — | `opencode session delete <id>` | Ctrl+D in `/resume` | — |
+| Index drifts from files | n/a (no index) | **yes — badly** | unverified (see Droid) | n/a (DB is the store) | n/a (no index) | n/a (no separate index) |
 
 The headline for ringleader: **Claude Code and Pi have no index, so deleting a file is a
 complete delete. Codex has one, and deleting the rollout file leaves a live picker entry behind.
@@ -357,6 +359,100 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
 `/clone`, `/compact`, `/export`, `/share`. The `/resume` picker supports rename (Ctrl+R), delete
 (Ctrl+D), and a named-sessions-only filter (Ctrl+N); deletion prefers the `trash` CLI over `unlink`.
 
+## Cursor CLI
+
+Surveyed 2026-11-11 against `cursor-agent` 2026.11.05-86047df, its bundled JavaScript under
+`~/.local/share/cursor-agent/versions/`, and 13 local chats. This is the CLI agent (`cursor-agent`,
+also installed as `agent`), not the Cursor IDE, whose chats live elsewhere.
+
+### Storage: a chat store and a transcript, in two roots
+
+Each chat is kept twice, and the agent's own `cursor-config/dist/paths.js` names both roots:
+
+- **The chat store**, `<config>/chats/<md5(cwd)>/<chatId>/`, where `<config>` is
+  `$CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`. The directory name is
+  the md5 of `path.resolve(cwd)` (13 of 13 local chats). It holds `meta.json`, and for a chat with
+  a conversation also `store.db` (with `-wal`/`-shm` while live) and sometimes
+  `prompt_history.json`.
+- **The transcript**, `<data>/projects/<slug>/agent-transcripts/<chatId>/<chatId>.jsonl`, where
+  `<data>` is `$CURSOR_DATA_DIR`, else `~/.cursor`. The agent renders it from the store "for
+  citation" (its own `.gitignore` wording), so it is derived, but it is the only plain-text copy.
+  Present for 9 of 9 chats with a conversation.
+
+The slug (`utils/dist/workspace-paths.js`) replaces every non-alphanumeric character with `-`,
+collapses runs and trims both ends, with no `realpath`: `/var/folders/v_/…` becomes
+`var-folders-v-…`. It is lossy, so `/a/b-c` and `/a/b/c` share a slug; the md5 key does not
+have that problem. *(Unverified: whether a chat started in a repo's subdirectory files its
+transcript under the cwd's slug or the git root's. Ringleader finds a transcript by chat id when the
+cwd's slug misses.)*
+
+`meta.json` is `{schemaVersion: 1, createdAtMs, updatedAtMs, hasConversation, cwd, title?}`. A chat
+with `hasConversation: false` is empty, from `create-chat` or an agent opened and closed (4 of 13
+here). `title` is generated after the first turn (6 of 9 real chats had one).
+
+`store.db` is SQLite with two tables: `meta(key, value)`, holding one hex-encoded JSON row
+(`agentId`, `latestRootBlobId`, `name`, `mode`, `createdAt`, `lastUsedModel`, `subagentInfo`,
+`blobEncryptionKey`), and `blobs(id, data)`, a content-addressed store of JSON messages and
+protobuf state rooted at an `agent.v1.ConversationStateStructure`. Open it with `?mode=ro`, which
+reads a live store's WAL; `?immutable=1` reads only the main file and can see no tables at all.
+
+### The transcript
+
+Records are `{role, message: {content: [...]}}` with `text` and `tool_use` blocks, plus
+`{type: "turn_ended", status}`. There are no timestamps, no ids and no tool results. A user turn
+wraps the prompt as `<timestamp>…</timestamp>\n<user_query>\n…\n</user_query>`, sometimes
+after attached-skill text.
+
+A subagent chat carries `subagentInfo` in the store's meta row (the agent's own constructor
+defaults it to `undefined`). None of the 9 local stores had one. *(Unverified: what a subagent
+chat looks like on disk.)* A `--print` run may persist no chat at all: persistence is
+conditional in the bundle (`… || CURSOR_AGENT_PERSIST_SESSION ? initAndLoad : …`).
+
+### What the picker shows
+
+There is no index apart from the chat store. `agent-cli-state.json` holds UI flags, and
+`ai-tracking/ai-code-tracking.db` is code-attribution tracking (its `conversation_summaries`
+table was empty). `agent ls` lists the chats under the cwd's md5 directory, so moving a chat
+directory away is the whole of hiding it. *(Unverified: whether the picker reads `meta.json`
+or opens `store.db`.)*
+
+### Tokens
+
+Not stored as spend. The root state's `token_details` is `ConversationTokenDetails{used_tokens,
+max_tokens, breakdown}`, the context-window fill (for example 181216 of 300000), not input,
+output or cache counts. Per-call usage (`inputTokens`, `outputTokens`, `cacheReadTokens`,
+`cacheWriteTokens`) reaches only `--print --output-format json` stdout and telemetry, gated by
+`CURSOR_EMIT_MODEL_CALL_USAGE`. `rl usage` therefore reports nothing for Cursor.
+
+### Hooks and skills
+
+User hooks are read from `$HOME/.cursor/hooks.json` whatever `CURSOR_CONFIG_DIR` says:
+`{version: 1, hooks: {<camelCaseEvent>: [entry, …]}}`, each entry a bare
+`{type, command, timeout, failClosed?}` with no matcher group. The session-end event is
+`sessionEnd`. Cursor also loads Claude Code's hooks, from `~/.claude/settings.json` and a
+project's `.claude/settings.json` and `.claude/settings.local.json`. *(Unverified: whether a
+Claude `SessionEnd` hook runs under Cursor's `sessionEnd`, so ringleader's sweep may run twice
+on a machine with both installed. The sweep is idempotent.)*
+
+Skills are read from `.cursor/skills` and `.agents/skills` as first-party, from `.claude/skills`,
+`.codex/skills` and `.grok/skills` as third-party, and from the built-in `.cursor/skills-cursor`.
+*(Unverified: how it resolves one name present in two of them.)*
+
+### Commands
+
+- `cursor-agent [prompt]`: start interactive, optionally with an opening prompt.
+- `cursor-agent --resume [chatId]`: picker without an id, direct resume with one. `resume`
+  resumes the latest chat, and `--continue` continues the previous one.
+- `cursor-agent ls`: the resume picker.
+- `cursor-agent create-chat`: an empty chat, printing its id.
+- `cursor-agent --workspace <path>`: the workspace to use instead of the cwd.
+- `cursor-agent -p`: non-interactive (`--output-format text|json|stream-json`).
+- `cursor-agent -w [name]`: start in a git worktree under `~/.cursor/worktrees/<repo>/<name>`.
+
+There is **no fork, rename, archive or delete verb**, and the agent exports no chat id into its
+shells (`CURSOR_AGENT` and `CURSOR_PROJECT_DIR` are set; `CURSOR_CONVERSATION_ID` is read only
+on the cloud path). Hooklinesinker reports live Cursor sessions as `cursor`.
+
 ## Implications for ringleader
 
 1. **Never derive a cwd from a directory name.** Claude's encoding is lossy and truncating; Droid
@@ -396,3 +492,10 @@ Commands: `pi -c`, `pi -r`, `pi --session <path|id>` (partial UUID accepted), `p
    to clear, no append surface to rename through, no archive verb to delegate to — the only
    droid-specific knowledge ringleader carries is where the files are, that the first line holds
    the identity, and that two `.settings.json` sidecars travel with each transcript.
+
+8. **A Cursor session is two directories in two roots.** The transcript is the session file and
+   the chat directory its companion, so archive and unarchive ask the source where a companion
+   goes (`companion_destination`) rather than assuming it sits beside the transcript. Workspace
+   moves rename both `chats/<md5>` and `projects/<slug>` and rewrite `meta.json`'s `cwd`. The
+   protobuf state's `previous_workspace_uris` keeps the old path; whether the agent cares is
+   *(unverified)*, as no real chat was resumed after a move.

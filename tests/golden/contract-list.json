@@ -24,6 +24,11 @@
       "agent": "pi",
       "installed": false,
       "source": "pi"
+    },
+    {
+      "agent": "cursor",
+      "installed": false,
+      "source": "cursor"
     }
   ],
   "generated_at": "2026-10-15T12:00:00+00:00",

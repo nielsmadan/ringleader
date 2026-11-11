@@ -476,9 +476,9 @@ development and QA of the app: a `tui_fixture` registry with real Claude transcr
 `claude-settings.json`, and `bin/` stubs (`claude` exits 97, `fake-harvest` answers harvests,
 empty for any project directory ending in `/proj-00`), plus a fake `hooklinesinker` that reports
 one running session. Its config points `ai_command_prefix` at `fake-harvest`. It refuses to build
-inside `~/.local/share`, `~/.claude`, `~/.codex`, `~/.factory` or `~/.pi`, and refuses to replace
+inside `~/.local/share`, `~/.claude`, `~/.codex`, `~/.factory`, `~/.pi` or `~/.cursor`, and refuses to replace
 any existing directory without a `.gui-world` marker, and any path that is not a directory. `--exports` prints `export KEY=value` lines
-for the six data variables, `RINGLEADER_CLAUDE_SETTINGS`, and a `PATH` that puts `bin/` first.
+for every agent's store override and the XDG data variables, `RINGLEADER_CLAUDE_SETTINGS`, and a `PATH` that puts `bin/` first.
 Source them (and `unset OPENCODE_DB`) before running `rl`; `--registry` alone is not isolation.
 The module ships in the wheel with `devtools/tui_fixture.py`, so a venv holding only a release
 wheel runs it with that venv's `python`.

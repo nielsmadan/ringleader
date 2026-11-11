@@ -16,6 +16,7 @@ from typing import Any
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ringleader import registry
+from ringleader.devtools.isolation import agent_store_env
 from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.picker.app import PickerApp
@@ -176,13 +177,7 @@ def _parser() -> argparse.ArgumentParser:
 def _empty_stores(workdir: Path) -> dict[str, str]:
     empty = workdir / "empty-home"
     empty.mkdir(exist_ok=True)
-    return {
-        "HOME": str(empty),
-        "SESSION_TRACKER_PROJECTS_DIR": str(empty / "claude"),
-        "CODEX_SESSIONS_DIR": str(empty / "codex"),
-        "PI_SESSIONS_DIR": str(empty / "pi"),
-        "FACTORY_HOME_OVERRIDE": str(empty / "factory"),
-    }
+    return {"HOME": str(empty), **agent_store_env(empty, prefix="")}
 
 
 def _context(args: argparse.Namespace, workdir: Path) -> ShotContext:

@@ -337,7 +337,7 @@ def test_install_uses_the_droid_session_end_timeout(tmp_path, monkeypatch):
 
     groups = json.loads(hooks_json.read_text())[hooks.HOOK_EVENT]
     ours = next(h for g in groups for h in g["hooks"] if "session_end.sh" in h["command"])
-    assert ours["timeout"] == hooks.TIMEOUT_SECONDS["droid"] == 5
+    assert ours["timeout"] == 5
 
 
 def test_update_repairs_a_droid_timeout_and_keeps_a_foreign_hook(tmp_path, monkeypatch):
@@ -585,3 +585,70 @@ def test_the_droid_config_root_is_read_from_the_environment_not_a_session_source
         for alias in node.names
     }
     assert sorted(imported) == ["__future__", "os", "pathlib", "sys"]
+
+
+def _cursor_cli(tmp_path: Path) -> Path:
+    """Mark the Cursor CLI installed where conftest points CURSOR_CONFIG_DIR; return the
+    hooks.json Cursor reads from $HOME."""
+    config = tmp_path / "_cursor"
+    config.mkdir(exist_ok=True)
+    (config / "cli-config.json").write_text("{}")
+    return tmp_path / ".cursor" / "hooks.json"
+
+
+def test_install_registers_a_bare_cursor_session_end_entry(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = _cursor_cli(tmp_path)
+
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    assert json.loads(target.read_text()) == {
+        "hooks": {
+            "sessionEnd": [
+                {"type": "command", "command": str(hooks._session_end_script()), "timeout": 5}
+            ]
+        },
+        "version": 1,
+    }
+
+
+def test_install_keeps_cursors_other_hooks_and_is_idempotent(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = _cursor_cli(tmp_path)
+    target.parent.mkdir()
+    foreign = {"type": "command", "command": "/opt/other ingest", "timeout": 5}
+    target.write_text(
+        json.dumps({"version": 1, "hooks": {"sessionEnd": [foreign], "stop": [foreign]}})
+    )
+
+    assert hooks.cmd_install(["--yes"]) == 0
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    data = json.loads(target.read_text())
+    assert [h["command"] for h in data["hooks"]["sessionEnd"]] == [
+        "/opt/other ingest",
+        str(hooks._session_end_script()),
+    ]
+    assert data["hooks"]["stop"] == [foreign]
+
+
+def test_uninstall_removes_only_our_cursor_entry(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    target = _cursor_cli(tmp_path)
+    target.parent.mkdir()
+    foreign = {"type": "command", "command": "/opt/other ingest", "timeout": 5}
+    target.write_text(json.dumps({"version": 1, "hooks": {"sessionEnd": [foreign]}}))
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    assert hooks.cmd_uninstall(["--yes"]) == 0
+
+    assert json.loads(target.read_text()) == {"version": 1, "hooks": {"sessionEnd": [foreign]}}
+
+
+def test_a_cursor_dir_without_the_cli_gets_no_hook(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".cursor").mkdir()
+
+    assert hooks.cmd_install(["--yes"]) == 0
+
+    assert "no supported agents detected" in capsys.readouterr().out

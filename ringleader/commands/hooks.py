@@ -1,11 +1,12 @@
 """`rl install/update/uninstall/status hooks` — register ringleader's session-end hook
 into each detected agent's own configuration.
 
-Three formats: Claude Code, Codex and Droid all keep a JSON list of `SessionEnd`
-groups (read/patch/write), nested under a `hooks` key except in Droid's standalone
-`hooks.json`, which is keyed by event name directly; Pi discovers extensions by
-symlink, same as `skills.py` links skill directories; OpenCode has no session-end
-event at all and is only ever reported on, never written to.
+Three formats: Claude Code, Codex, Droid and Cursor keep JSON hook files
+(read/patch/write) — a list of `SessionEnd` matcher groups under `hooks`, except that
+Droid's standalone `hooks.json` is keyed by event name directly and Cursor lists bare
+entries under `hooks.sessionEnd`; Pi discovers extensions by symlink, same as `skills.py`
+links skill directories; OpenCode has no session-end event at all and is only ever
+reported on, never written to.
 """
 
 from __future__ import annotations
@@ -17,17 +18,25 @@ from pathlib import Path
 from typing import Any, NamedTuple
 
 from .. import safe_write
-from ..paths import exists_or_report, factory_dir, factory_label
+from ..paths import (
+    cursor_cli_installed,
+    exists_or_report,
+    factory_dir,
+    factory_label,
+)
 
 HOOK_EVENT = "SessionEnd"
-TIMEOUT_SECONDS = {"claude": 5, "codex": 3, "droid": 5}
 
 
 class JsonAgent(NamedTuple):
     label: str
     path: Path
     flat: bool
+    timeout: int
     prune_when_empty: bool = False
+    event: str = HOOK_EVENT
+    grouped: bool = True
+    version: int | None = None
 
 
 def bundled_dir() -> Path:
@@ -51,21 +60,37 @@ def _droid_agent(factory: Path) -> JsonAgent:
     standalone = factory / "hooks.json"
     legacy = factory / "hooks" / "hooks.json"
     if not exists_or_report(standalone) and exists_or_report(legacy):
-        return JsonAgent("droid", legacy, flat=True)
-    return JsonAgent("droid", standalone, flat=True, prune_when_empty=not exists_or_report(legacy))
+        return JsonAgent("droid", legacy, flat=True, timeout=5)
+    return JsonAgent(
+        "droid", standalone, flat=True, timeout=5, prune_when_empty=not exists_or_report(legacy)
+    )
 
 
 def _json_agents(home: Path) -> list[JsonAgent]:
-    """One entry per detected JSON-hook agent: its label, its hooks-config path, and
-    whether that file is keyed by event name directly rather than under `hooks`."""
+    """One entry per detected JSON-hook agent: where its hooks file lives and how that
+    file is shaped."""
     out: list[JsonAgent] = []
     if exists_or_report(home / ".claude"):
-        out.append(JsonAgent("claude", home / ".claude" / "settings.json", flat=False))
+        out.append(JsonAgent("claude", home / ".claude" / "settings.json", flat=False, timeout=5))
     if exists_or_report(home / ".codex"):
-        out.append(JsonAgent("codex", home / ".codex" / "hooks.json", flat=False))
+        out.append(JsonAgent("codex", home / ".codex" / "hooks.json", flat=False, timeout=3))
     factory = factory_dir()
     if exists_or_report(factory):
         out.append(_droid_agent(factory))
+    if cursor_cli_installed(home):
+        # Cursor reads hooks from $HOME/.cursor, never from CURSOR_CONFIG_DIR
+        hooks = home / ".cursor" / "hooks.json"
+        out.append(
+            JsonAgent(
+                "cursor",
+                hooks,
+                flat=False,
+                timeout=5,
+                event="sessionEnd",
+                grouped=False,
+                version=1,
+            )
+        )
     return out
 
 
@@ -81,7 +106,7 @@ def _opencode_detected(home: Path) -> bool:
 
 def _is_ours(command: object) -> bool:
     """An entry is ours only if its command path lies inside `bundled_dir()` — this is
-    what `uninstall` matches on, so a user's own SessionEnd hook is never touched."""
+    what `uninstall` matches on, so a user's own session-end hook is never touched."""
     if not isinstance(command, str) or not command:
         return False
     try:
@@ -128,96 +153,106 @@ def _load_json_or_none(path: Path) -> dict[str, Any] | None:
     return None if loaded is None else loaded[1]
 
 
-def _event_container(data: dict[str, Any], *, flat: bool) -> dict[str, Any] | None:
+def _event_container(data: dict[str, Any], agent: JsonAgent) -> dict[str, Any] | None:
     """The object that holds the event lists: the file's root when it is keyed by event
     name, else its `hooks` value."""
-    if flat:
+    if agent.flat:
         return data
     hooks = data.get("hooks")
     return hooks if isinstance(hooks, dict) else None
 
 
-def _has_our_entry(data: dict[str, Any], *, flat: bool) -> bool:
-    container = _event_container(data, flat=flat)
+def _hook_entries(events: list[Any], agent: JsonAgent) -> list[dict[str, Any]]:
+    """Every hook entry under one event: inside its matcher groups, or the event's
+    list itself for an agent that keeps no groups."""
+    if not agent.grouped:
+        return [h for h in events if isinstance(h, dict)]
+    return [
+        h
+        for group in events
+        if isinstance(group, dict) and isinstance(group.get("hooks"), list)
+        for h in group["hooks"]
+        if isinstance(h, dict)
+    ]
+
+
+def _has_our_entry(data: dict[str, Any], agent: JsonAgent) -> bool:
+    container = _event_container(data, agent)
     if container is None:
         return False
-    events = container.get(HOOK_EVENT)
+    events = container.get(agent.event)
     if not isinstance(events, list):
         return False
-    for group in events:
-        if not isinstance(group, dict):
-            continue
-        for h in group.get("hooks", []):
-            if isinstance(h, dict) and _is_ours(h.get("command")):
-                return True
-    return False
+    return any(_is_ours(h.get("command")) for h in _hook_entries(events, agent))
 
 
-def _with_our_entry(data: dict[str, Any], timeout_seconds: int, *, flat: bool) -> dict[str, Any]:
-    """`data`, with our SessionEnd group appended if not already present. Mutates and
-    returns `data` in place; raises `ValueError` (caller skips the file) if the event
+def _with_our_entry(data: dict[str, Any], timeout_seconds: int, agent: JsonAgent) -> dict[str, Any]:
+    """`data`, with our session-end entry appended (and the agent's `version` key set if
+    missing), or its timeout refreshed if already present. Mutates and returns `data`
+    in place; raises `ValueError` (caller skips the file) if the event
     key or its container already exist with the wrong shape."""
-    if flat:
+    if agent.flat:
         container = data
     else:
         container = data.setdefault("hooks", {})
         if not isinstance(container, dict):
             raise ValueError("'hooks' is not an object")
-    events = container.setdefault(HOOK_EVENT, [])
+    events = container.setdefault(agent.event, [])
     if not isinstance(events, list):
-        key = HOOK_EVENT if flat else f"hooks.{HOOK_EVENT}"
+        key = agent.event if agent.flat else f"hooks.{agent.event}"
         raise ValueError(f"'{key}' is not an array")
-    found = False
-    for group in events:
-        if not isinstance(group, dict):
-            continue
-        for h in group.get("hooks", []):
-            if isinstance(h, dict) and _is_ours(h.get("command")):
-                h["timeout"] = timeout_seconds
-                found = True
-    if found:
+    ours = [h for h in _hook_entries(events, agent) if _is_ours(h.get("command"))]
+    for h in ours:
+        h["timeout"] = timeout_seconds
+    if ours:
         return data
-    events.append(
-        {
-            "hooks": [
-                {
-                    "type": "command",
-                    "command": str(_session_end_script()),
-                    "timeout": timeout_seconds,
-                }
-            ]
-        }
-    )
+    if agent.version is not None:
+        data.setdefault("version", agent.version)
+    entry = {
+        "type": "command",
+        "command": str(_session_end_script()),
+        "timeout": timeout_seconds,
+    }
+    events.append({"hooks": [entry]} if agent.grouped else entry)
     return data
 
 
-def _without_our_entries(data: dict[str, Any], *, flat: bool) -> tuple[dict[str, Any], int]:
-    """A copy of `data` with only our SessionEnd entries removed; a foreign entry in
-    the same or another group survives untouched. Returns (new_data, removed_count)."""
-    container = _event_container(data, flat=flat)
-    if container is None:
-        return data, 0
-    events = container.get(HOOK_EVENT)
-    if not isinstance(events, list):
-        return data, 0
+def _kept_events(events: list[Any], agent: JsonAgent) -> tuple[list[Any], int]:
+    def ours(h: object) -> bool:
+        return isinstance(h, dict) and _is_ours(h.get("command"))
+
+    if not agent.grouped:
+        kept = [h for h in events if not ours(h)]
+        return kept, len(events) - len(kept)
     removed = 0
     new_events = []
     for group in events:
         if not isinstance(group, dict) or not isinstance(group.get("hooks"), list):
             new_events.append(group)
             continue
-        kept = [
-            h for h in group["hooks"] if not (isinstance(h, dict) and _is_ours(h.get("command")))
-        ]
-        removed += len(group["hooks"]) - len(kept)
-        if kept:
-            new_events.append({**group, "hooks": kept})
+        hooks = [h for h in group["hooks"] if not ours(h)]
+        removed += len(group["hooks"]) - len(hooks)
+        if hooks:
+            new_events.append({**group, "hooks": hooks})
+    return new_events, removed
+
+
+def _without_our_entries(data: dict[str, Any], agent: JsonAgent) -> tuple[dict[str, Any], int]:
+    """A copy of `data` with only our session-end entries removed; a foreign entry in
+    the same or another group survives untouched. Returns (new_data, removed_count)."""
+    container = _event_container(data, agent)
+    if container is None:
+        return data, 0
+    events = container.get(agent.event)
+    if not isinstance(events, list):
+        return data, 0
+    new_events, removed = _kept_events(events, agent)
     new_container = dict(container)
     if new_events:
-        new_container[HOOK_EVENT] = new_events
+        new_container[agent.event] = new_events
     else:
-        new_container.pop(HOOK_EVENT, None)
-    if flat:
+        new_container.pop(agent.event, None)
+    if agent.flat:
         return new_container, removed
     new_data = dict(data)
     if new_container:
@@ -227,11 +262,11 @@ def _without_our_entries(data: dict[str, Any], *, flat: bool) -> tuple[dict[str,
     return new_data, removed
 
 
-def _planned_text(data: dict[str, Any], timeout_seconds: int, *, flat: bool) -> str | None:
+def _planned_text(data: dict[str, Any], timeout_seconds: int, agent: JsonAgent) -> str | None:
     """The full text to write once our entry is in `data`, or None if it is already
     there. Raises `ValueError` (caller skips the file) on a wrong-shaped event key."""
     before = json.dumps(data, indent=2)
-    after = json.dumps(_with_our_entry(data, timeout_seconds, flat=flat), indent=2)
+    after = json.dumps(_with_our_entry(data, timeout_seconds, agent), indent=2)
     return None if after == before else after + "\n"
 
 
@@ -322,10 +357,10 @@ def _json_plan(
         if loaded is None:
             continue
         raw, data = loaded
-        if not (opt_in or _has_our_entry(data, flat=agent.flat)):
+        if not (opt_in or _has_our_entry(data, agent)):
             continue
         try:
-            text = _planned_text(data, TIMEOUT_SECONDS[agent.label], flat=agent.flat)
+            text = _planned_text(data, agent.timeout, agent)
         except ValueError as e:
             print(f"{agent.path}: {e}; leaving untouched", file=sys.stderr)
             failed += 1
@@ -360,7 +395,10 @@ def _sync(home: Path, yes: bool, *, opt_in: bool) -> int:
     candidates = _json_agents(home)
     pi_dir = _pi_dir(home)
     if not candidates and pi_dir is None:
-        print(f"no supported agents detected (~/.claude, ~/.codex, {factory_label()}, ~/.pi)")
+        print(
+            f"no supported agents detected (~/.claude, ~/.codex, {factory_label()}, ~/.pi,"
+            " ~/.cursor)"
+        )
         return 0
 
     json_plan, failed = _json_plan(candidates, opt_in=opt_in)
@@ -428,10 +466,10 @@ def cmd_uninstall(argv: list[str]) -> int:
     json_victims: list[tuple[str, Path, str, str]] = []
     for agent in _json_agents(home):
         loaded = _load_json_raw(agent.path)
-        if loaded is None or not _has_our_entry(loaded[1], flat=agent.flat):
+        if loaded is None or not _has_our_entry(loaded[1], agent):
             continue
         raw, data = loaded
-        new_data, removed = _without_our_entries(data, flat=agent.flat)
+        new_data, removed = _without_our_entries(data, agent)
         if not removed:
             continue
         gone = agent.prune_when_empty and not new_data
@@ -486,7 +524,7 @@ def cmd_status(argv: list[str]) -> int:
         data = _load_json_or_none(agent.path)
         if data is None:
             status = "could not read/parse (see above)"
-        elif _has_our_entry(data, flat=agent.flat):
+        elif _has_our_entry(data, agent):
             status = "installed"
         else:
             status = "not installed"

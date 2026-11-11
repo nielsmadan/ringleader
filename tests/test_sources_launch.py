@@ -8,6 +8,7 @@ RESUME = {
     "droid": ("droid", "resume", "SID"),
     "opencode": ("opencode", "--session", "SID"),
     "pi": ("pi", "--session", "SID"),
+    "cursor": ("cursor-agent", "--resume", "SID"),
 }
 
 LAUNCH = {
@@ -16,6 +17,7 @@ LAUNCH = {
     "droid": ("droid", "read the file"),
     "opencode": ("opencode", "--prompt", "read the file"),
     "pi": ("pi", "--", "read the file"),
+    "cursor": ("cursor-agent", "read the file"),
 }
 
 
@@ -62,8 +64,9 @@ def test_argv_starts_with_the_binary_and_holds_no_directory(name):
     """The caller chdirs before exec, so a cwd baked into argv would be a second,
     conflicting answer about where the agent starts."""
     src = _sources()[name]
-    for argv in (src.resume_argv("SID"), src.fork_argv("SID"), src.launch_argv("p")):
-        assert argv[0] in ("claude", "codex", "droid", "opencode", "pi")
+    forks = (src.fork_argv("SID"),) if name in FORK else ()
+    for argv in (src.resume_argv("SID"), *forks, src.launch_argv("p")):
+        assert argv[0] in {resume[0] for resume in RESUME.values()}
         assert all("/" not in part for part in argv[1:])
 
 
@@ -73,7 +76,8 @@ def test_a_session_id_is_passed_as_one_argv_element(name):
     argument rather than being re-split by a shell that never runs."""
     src = _sources()[name]
     assert "weird id" in src.resume_argv("weird id")
-    assert "weird id" in src.fork_argv("weird id")
+    if name in FORK:
+        assert "weird id" in src.fork_argv("weird id")
     assert "two words" in src.launch_argv("two words")
 
 
@@ -86,6 +90,18 @@ FORK = {
 }
 
 
-@pytest.mark.parametrize("name", sorted(RESUME))
+@pytest.mark.parametrize("name", sorted(FORK))
 def test_fork_argv_matches_the_agent_cli(name):
     assert _sources()[name].fork_argv("SID") == FORK[name]
+
+
+@pytest.mark.parametrize("name", sorted(RESUME))
+def test_the_fork_capability_matches_the_fork_table(name):
+    assert scanner.supports(_sources()[name], "forks_sessions", SessionLaunchingSource) == (
+        name in FORK
+    )
+
+
+def test_cursor_has_no_fork_verb():
+    with pytest.raises(RuntimeError, match="cannot fork"):
+        _sources()["cursor"].fork_argv("SID")

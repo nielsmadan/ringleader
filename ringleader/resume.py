@@ -281,6 +281,10 @@ def launchable_agents() -> tuple[str, ...]:
     )
 
 
+def forks_sessions(name: str) -> bool:
+    return scanner.supports(scanner.source_by_name(name), "forks_sessions", SessionLaunchingSource)
+
+
 @cache
 def _slug_keyed_sources() -> frozenset[str]:
     """Sources whose agent files a transcript under the *launch* directory's slug, so
@@ -302,7 +306,6 @@ def slug_sources() -> dict[str, WorkspaceRelocatingSource]:
 def drifted(
     thread: dict[str, Any], sources: Mapping[str, WorkspaceRelocatingSource] | None = None
 ) -> bool:
-    # the transcript is filed under the *launch* dir's slug; a different slug means it cd'd
     name = source_of(thread)
     if name not in _slug_keyed_sources():
         return False
@@ -310,12 +313,12 @@ def drifted(
     if not file or not project:
         return False
     source = sources[name] if sources else scanner.source_by_name(name)
-    parent = Path(file).parent
+    stored = source.storage_dir(file)
     # `root` is not part of the Source protocol, so read it off the concrete source
     root: Path | None = getattr(source, "root", None)
-    if root is not None and parent == root:
+    if root is not None and stored == root:
         return False  # droid's global-root layout: no slug dir to compare against
-    return parent.name != source.storage_for(project).name
+    return stored.name != source.storage_for(project).name
 
 
 def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -> str | None:
@@ -324,12 +327,13 @@ def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -
         return None
     if not drifted(thread):
         return str(project)
-    parent = Path(thread["file"]).parent
+    source = slug_sources()[source_of(thread)]
+    stored = source.storage_dir(thread["file"])
     for other in threads:
         if source_of(other) != source_of(thread):
             continue
         if not other.get("file") or not other.get("project"):
             continue
-        if Path(other["file"]).parent == parent and not drifted(other):
+        if source.storage_dir(other["file"]) == stored and not drifted(other):
             return str(other["project"])
     return str(project)

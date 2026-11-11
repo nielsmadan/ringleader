@@ -13,7 +13,7 @@ session lifecycle decisions, and continuation in the same or another agent.
 | Area | Cass | Ringleader |
 |---|---|---|
 | Search | Indexed transcript contents, Boolean and phrase queries, optional local semantic search | Names, IDs and cached blurbs; fuzzy filtering in the resume picker |
-| Agent coverage | Broader connector inventory, including Cursor, Gemini, Aider and many others | Claude Code, Codex, Droid, OpenCode and Pi |
+| Agent coverage | Broader connector inventory, including Cursor, Gemini, Aider and many others | Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI |
 | Resume | Detects the originating harness and constructs its native resume command | Same-agent resume plus native cross-agent conversion, forks and handoffs |
 | Curation | Tool-readiness preflight, bookmarks and archive maintenance | Name, classify, snooze, keep, finish, archive and prune sessions |
 | Preservation | Copies conversation content into its own canonical database; source disappearance need not erase that history | Moves supported file-backed sessions out of native resume pickers, with unarchive to restore them |

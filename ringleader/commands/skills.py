@@ -6,7 +6,13 @@ import stat
 import sys
 from pathlib import Path
 
-from ..paths import bundled_skills_dir, exists_or_report, factory_dir, factory_label
+from ..paths import (
+    bundled_skills_dir,
+    cursor_cli_installed,
+    exists_or_report,
+    factory_dir,
+    factory_label,
+)
 
 PREFIX = "ringleader-"
 
@@ -30,6 +36,8 @@ def _install_dirs(home: Path) -> list[tuple[str, Path]]:
     factory = factory_dir()
     if exists_or_report(factory):
         out.append(("droid", factory / "skills"))
+    if cursor_cli_installed(home):
+        out.append(("cursor", shared))  # Cursor reads ~/.agents/skills as its own
     return out
 
 
@@ -110,7 +118,7 @@ def cmd_install(argv: list[str]) -> int:
     if not targets:
         print(
             "no supported agents detected "
-            f"(~/.claude, ~/.codex, ~/.config/opencode, ~/.pi, {factory_label()})"
+            f"(~/.claude, ~/.codex, ~/.config/opencode, ~/.pi, {factory_label()}, ~/.cursor)"
         )
         return 0
     if not _confirm(targets, bundled, args.yes):

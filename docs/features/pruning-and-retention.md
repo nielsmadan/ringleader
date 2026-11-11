@@ -37,7 +37,8 @@ ringleader never mutates `opencode.db`.
 
 Deleting a session removes its **companion files** with the transcript — Claude Code's
 `<sessionId>/` directory of subagent and tool-result payloads, droid's `<sessionId>.settings.json`
-and `.settings.json.bak` — so a prune leaves no orphaned sidecars behind.
+and `.settings.json.bak`, Cursor's chat directory — so a prune leaves no orphaned sidecars behind.
+Cursor's emptied `agent-transcripts/<id>/` folder is the one thing left.
 
 ## Archive retention
 

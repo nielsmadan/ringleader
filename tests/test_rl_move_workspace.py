@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from ringleader import registry as registry_mod
 from ringleader.commands import move_workspace
-from ringleader.slug import is_beneath, remap, slugify
+from ringleader.slug import cursor_chat_key, cursor_slug, is_beneath, remap, slugify
 from ringleader.sources.droid import DroidSource
 
 
@@ -625,3 +625,69 @@ def test_a_droid_session_under_its_own_underscore_dot_space_slug_has_not_drifted
     srcs = move_workspace._Sources({"droid": DroidSource(sessions_dir=Path("/f/sessions"))}, {})
 
     assert move_workspace._drifted(thread, srcs) is False
+
+
+def _cursor_world(tmp_path, monkeypatch, sessions):
+    """Cursor chats, each `(chat_id, launch_dir)`, in the store conftest points Cursor at:
+    a chat dir under `chats/<md5(cwd)>/` and a transcript under
+    `projects/<slug>/agent-transcripts/<id>/`."""
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    monkeypatch.setattr(move_workspace, "_git_for", lambda p: None)
+    store = tmp_path / "_cursor"
+    threads = []
+    for chat_id, launch in sessions:
+        launch.mkdir(parents=True, exist_ok=True)
+        chat = store / "chats" / cursor_chat_key(str(launch)) / chat_id
+        chat.mkdir(parents=True)
+        (chat / "meta.json").write_text(json.dumps({"hasConversation": True, "cwd": str(launch)}))
+        folder = store / "projects" / cursor_slug(str(launch)) / "agent-transcripts" / chat_id
+        folder.mkdir(parents=True)
+        (folder / f"{chat_id}.jsonl").write_text("{}\n")
+        threads.append(
+            {
+                "sessionId": chat_id,
+                "file": str(folder / f"{chat_id}.jsonl"),
+                "project": str(launch),
+                "source": "cursor",
+                "mtime": "2026-11-11T00:00:00+00:00",
+            }
+        )
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"version": 2, "threads": threads, "archived": [], "deleted": []}))
+    return store, reg
+
+
+def test_a_cursor_workspace_moves_its_storage_once_for_all_its_chats(tmp_path, monkeypatch):
+    ws, new = tmp_path / "ws", tmp_path / "moved"
+    store, reg = _cursor_world(tmp_path, monkeypatch, [("c1", ws), ("c2", ws)])
+
+    plan = move_workspace.build_plan(
+        json.loads(reg.read_text()), str(ws), str(new), move_workspace._resolve_sources()
+    )
+    assert (len(plan.whole), plan.per) == (1, [])
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    moved = store / "projects" / cursor_slug(str(new)) / "agent-transcripts"
+    assert sorted(p.name for p in moved.glob("*/*.jsonl")) == ["c1.jsonl", "c2.jsonl"]
+    chats = store / "chats" / cursor_chat_key(str(new))
+    assert sorted(p.name for p in chats.iterdir()) == ["c1", "c2"]
+    assert [t["file"] for t in json.loads(reg.read_text())["threads"]] == [
+        str(moved / "c1" / "c1.jsonl"),
+        str(moved / "c2" / "c2.jsonl"),
+    ]
+
+
+def test_a_cursor_slug_shared_with_another_directory_moves_chats_one_by_one(tmp_path, monkeypatch):
+    """`my-app` and `my_app` share Cursor's slug, so the slug dir is not ours to rename."""
+    ws, stranger, new = tmp_path / "my-app", tmp_path / "my_app", tmp_path / "moved"
+    store, reg = _cursor_world(tmp_path, monkeypatch, [("c1", ws), ("c2", stranger)])
+
+    assert move_workspace.cmd_move([str(ws), str(new), "--registry", str(reg), "--yes"]) == 0
+
+    shared = store / "projects" / cursor_slug(str(ws)) / "agent-transcripts"
+    assert sorted(p.name for p in shared.glob("*/*.jsonl")) == ["c2.jsonl"]
+    moved = store / "projects" / cursor_slug(str(new)) / "agent-transcripts" / "c1" / "c1.jsonl"
+    assert moved.is_file()
+    assert (store / "chats" / cursor_chat_key(str(new)) / "c1" / "meta.json").is_file()

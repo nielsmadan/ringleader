@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import NoReturn
 
 import pytest
+from ringleader.devtools.isolation import agent_store_env
 from ringleader.portability import claude
 from ringleader.tui.snapshot import normalize_text
 
@@ -75,10 +76,8 @@ def skill_dirs():
 
 @pytest.fixture(autouse=True)
 def isolate_agent_environment(monkeypatch, tmp_path):
-    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "_claude"))
-    monkeypatch.setenv("CODEX_SESSIONS_DIR", str(tmp_path / "_codex"))
-    monkeypatch.setenv("PI_SESSIONS_DIR", str(tmp_path / "_pi"))
-    monkeypatch.setenv("FACTORY_HOME_OVERRIDE", str(tmp_path / "_factory"))
+    for name, value in agent_store_env(tmp_path).items():
+        monkeypatch.setenv(name, value)
     # keeps `rl doctor` from finding — and running — the machine's real hooklinesinker
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_state"))

@@ -25,7 +25,8 @@ These installers **detect** the agents present, **preview** their edits, and ski
 binary and installs its status hooks. `status` reports the wiring and running-session count;
 `uninstall` removes only Ringleader's registration. Hooks remain while another consumer needs them.
 
-Presence supports Claude Code, Codex, OpenCode, Pi, Factory Droid, Qwen Code, and Kimi Code.
+Presence supports Claude Code, Codex, OpenCode, Pi, Factory Droid, Qwen Code, Kimi Code, and Cursor
+CLI.
 Installation names the detected agents and confirms before changing their configuration;
 repeat `--agent` to choose explicitly, or use `--yes` for unattended setup.
 `just install` and `just install-editable` run that setup too.
@@ -49,7 +50,7 @@ also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 | `ringleader-analyze` | find where sessions went wrong, save findings as a report ([analysis](analysis.md)) |
 | `ringleader-recommend` | turn saved findings into proposed setup edits; never applies them |
 
-`rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi),
+`rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi, Cursor CLI),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid) — the two agents with a native
 personal skills directory get their own, the rest share. `memory-triage` is separate and still
 lives in `loadout/skills/`.
@@ -58,7 +59,7 @@ lives in `loadout/skills/`.
 
 `rl install hooks` registers a session-end hook running `rl session sweep --from-hook`, so a
 finished session is archived seconds after the agent exits instead of on the next roundup.
-JSON-configured agents (Claude Code, Codex, Droid) get a hooks-file entry; Pi gets a bundled
+JSON-configured agents (Claude Code, Codex, Droid, Cursor CLI) get a hooks-file entry; Pi gets a bundled
 TypeScript extension; OpenCode has no session-end event and is only ever reported on.
 
 Droid's hooks file is the awkward one. `~/.factory/hooks.json` is keyed by event name

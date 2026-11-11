@@ -404,6 +404,8 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
         )
     cwd = _launch_dir(thread, pick.threads)
     if target_source == source:
+        if pick.action != "resume" and not resume.forks_sessions(source):
+            raise _Abort(f"{resume.agent_name(source)} cannot fork a session; resume it instead")
         argv = src.fork_argv(session_id) if pick.action != "resume" else src.resume_argv(session_id)
         return _Plan(thread, argv, cwd, None, pick.confirmed, target_source, pick.action)
     if pick.action != "resume":

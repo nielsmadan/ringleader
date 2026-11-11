@@ -50,7 +50,7 @@ def _follow_storage(thread: dict[str, Any], new_path: str) -> tuple[str | None, 
         src = relocating[source]
         # Already there: re-running after a partial failure is the recovery path, and
         # relocate_session refuses a destination that exists — including its own result.
-        if Path(thread["file"]).parent == src.storage_for(new_path):
+        if src.storage_dir(thread["file"]) == src.storage_for(new_path):
             return None, True
         try:
             return src.relocate_session(thread["file"], new_path), True

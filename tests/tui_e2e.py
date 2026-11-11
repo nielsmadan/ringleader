@@ -13,6 +13,7 @@ from time import monotonic
 import pexpect
 import pyte
 from ringleader import session_env
+from ringleader.devtools.isolation import agent_store_env
 from ringleader.sources.claude_code import ClaudeCodeSource
 
 KEY_ENTER = "\r"
@@ -141,10 +142,7 @@ def isolated_env(root: Path, bin_dir: Path) -> dict[str, str]:
         "PATH": f"{bin_dir}:{Path(sys.executable).parent}:/usr/bin:/bin",
         "HOME": str(home),
         "TERM": "xterm-256color",
-        "SESSION_TRACKER_PROJECTS_DIR": str(root / "_claude"),
-        "CODEX_SESSIONS_DIR": str(root / "_codex"),
-        "PI_SESSIONS_DIR": str(root / "_pi"),
-        "FACTORY_HOME_OVERRIDE": str(root / "_factory"),
+        **agent_store_env(root),
         "XDG_DATA_HOME": str(root / "xdg-data"),
         "XDG_STATE_HOME": str(root / "xdg-state"),
         "XDG_CONFIG_HOME": str(root / "xdg-config"),

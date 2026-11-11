@@ -4,8 +4,8 @@ Curates the **dormant** agent sessions sitting on disk — naming them, classify
 they're in, surfacing what's still in-flight vs. abandoned, harvesting what they taught you, and
 pruning the rest before the GC clock silently deletes it.
 
-Reads Claude Code, Codex, Factory Droid, OpenCode, and Pi sessions; reports token usage across
-all five. OpenCode session curation is read-only: views, triage, detail, export, and harvest
+Reads Claude Code, Codex, Factory Droid, OpenCode, Pi, and Cursor CLI sessions; reports token
+usage across all but Cursor, which stores no token counts. OpenCode session curation is read-only: views, triage, detail, export, and harvest
 work, while file lifecycle verbs decline its database-backed sessions.
 
 ## Install
@@ -98,7 +98,7 @@ rl install             # skills, session-end hook, statusline capture
 ## Skills
 
 `skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands, and
-read natively in Claude Code, Codex, Droid, OpenCode and Pi:
+read natively in Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI:
 
 | Skill | Does |
 |---|---|
@@ -125,7 +125,7 @@ rl uninstall skills    # remove only what this tool created
 ## Commands
 
 ```sh
-rl start <agent>                    # fresh conversation here: claude, codex, droid, opencode, pi
+rl start <agent>                    # fresh conversation here: claude, codex, droid, opencode, pi, cursor
 rl start <agent> --worktree         # fresh conversation in a separate checkout
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl resume --last                    # re-enter the most recent session here, no picker
@@ -198,7 +198,7 @@ relocation remains `rl workspace move`/`retarget`.
 Ringleader's presence commands report which agent sessions are live using
 [hooklinesinker](https://github.com/nielsmadan/hooklinesinker), a small
 shared binary that owns the status hooks for Claude Code, Codex, OpenCode, Pi, Factory Droid,
-Qwen Code and Kimi Code. **You do not install a separate Brew dependency**: the release artifacts
+Qwen Code, Kimi Code and Cursor CLI. **You do not install a separate Brew dependency**: the release artifacts
 for all four supported architectures ride along inside ringleader's own wheel.
 
 ```sh

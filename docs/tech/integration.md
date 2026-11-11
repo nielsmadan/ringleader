@@ -5,7 +5,7 @@
 
 ## Purpose
 
-Ringleader wires itself into five agents — installing skills, a session-end hook, and a Claude
+Ringleader wires itself into six agents — installing skills, a session-end hook, and a Claude
 Code status-line capture. Every one of those edits a file the agent owns, so this layer's whole
 concern is **editing someone else's config without breaking it and without becoming
 un-removable**.
@@ -24,6 +24,7 @@ only Claude Code installs only Claude Code's wiring.
 | Droid | `~/.factory/skills` | `~/.factory/hooks.json`, or the legacy `~/.factory/hooks/hooks.json` |
 | OpenCode | `~/.agents/skills` | detected via `~/.config/opencode` |
 | Pi | `~/.agents/skills` | `~/.pi/agent/extensions` (a TypeScript extension) |
+| Cursor CLI | `~/.agents/skills` | `~/.cursor/hooks.json`, detected via its `cli-config.json` |
 
 `paths.exists_or_report()` is used for every probe: it reports a stat failure instead of
 silently treating it as absent, so a permissions problem does not look like "agent not
@@ -34,6 +35,12 @@ replaces **HOME** rather than the `.factory` name; `paths.factory_label()` is wh
 so an overridden root is named in full instead of as a misleading `~/.factory`. Droid also gets
 its own skills directory rather than the shared `~/.agents/skills`, because `.factory/skills` is
 its documented native personal skills location — the same reason Claude Code gets `~/.claude/skills`.
+
+Cursor CLI is detected by `paths.cursor_cli_installed()`: `cli-config.json` in its config dir
+(`CURSOR_CONFIG_DIR`, else `$XDG_CONFIG_HOME/cursor`, else `~/.cursor`). The Cursor IDE creates
+`~/.cursor` as well, so the directory alone would wire up an IDE-only machine. Cursor reads
+`~/.agents/skills` as one of its own skills dirs, so it shares that target rather than getting
+`~/.cursor/skills`.
 
 ### Skills
 
@@ -66,7 +73,7 @@ inside `bundled_dir()`**. A user's own `SessionEnd` hook is never touched.
 Claude Code and Codex use is only valid inside `settings.json`. `_event_container()` is the one
 place that branch lives; everything downstream patches the same shape. Droid's event vocabulary
 is otherwise exactly Claude Code's, and `timeout` is per command, in seconds, defaulting to 60 —
-`TIMEOUT_SECONDS["droid"]` writes 5.
+droid's `JsonAgent` writes 5.
 
 `_droid_agent()` handles the loader being **either/or**: once `hooks.json` exists, droid never
 reads the legacy `.factory/hooks/hooks.json`. Creating the former would therefore silently
@@ -81,6 +88,16 @@ shadowed on purpose.
 `settings.json` per event with the hooks file winning, so installing ours replaces a `SessionEnd`
 declared in `settings.json` rather than joining it. The installer says so before writing rather
 than letting the user's hook quietly stop firing.
+
+#### Cursor's hooks file
+
+Cursor reads user hooks from `$HOME/.cursor/hooks.json` whatever `CURSOR_CONFIG_DIR` says. Its
+shape is a third one: `{"version": 1, "hooks": {"sessionEnd": [entry, ...]}}`, with camelCase
+event names and **bare** entries rather than `{"hooks": [...]}` matcher groups. `JsonAgent` says so
+with `event="sessionEnd"`, `grouped=False` and `version=1`, which install writes only into a file
+that has no `version` yet. `_hook_entries()` is where the grouped and bare shapes meet. Cursor
+also loads Claude Code's `~/.claude/settings.json` hooks, so on a machine with both the sweep may
+run twice at session end; it is idempotent.
 
 ### Status line
 
@@ -161,8 +178,6 @@ exports no session-id variable to probe — only `DROID_PARENT_SESSION_ID` — s
 - **Droid is not probeable and has no status line to capture.** `rl install statusline` is
   Claude-Code-only, and droid's status-line payload carries no rate-limit data, so there is
   nothing for it to capture — that is a deliberate omission, not a missing case.
-- **`TIMEOUT_SECONDS` is indexed unguarded.** A new JSON-hook agent without an entry there is a
-  `KeyError`, not a default.
 - **Symlinked skills mean repo edits are live** in every wired agent immediately. Convenient
   while iterating, surprising if you forget.
 - **Uninstall is ownership-scoped**, by symlink target and by command path. A hand-written hook

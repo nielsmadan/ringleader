@@ -18,7 +18,7 @@ from .tui_fixture import build_fixture
 
 MARKER = ".gui-world"
 MIN_THREADS = 2
-FORBIDDEN_HOME_DIRS = (".local/share", ".claude", ".codex", ".factory", ".pi")
+FORBIDDEN_HOME_DIRS = (".local/share", ".claude", ".codex", ".factory", ".pi", ".cursor")
 RUNNING_WINDOW = timedelta(days=7)
 EMPTY_HARVEST = {"summary": "", "gotchas": [], "decisions": [], "whatChanged": []}
 FULL_HARVEST = {

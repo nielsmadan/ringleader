@@ -160,6 +160,15 @@ class StoredSource(Source, Protocol):
 
 
 @runtime_checkable
+class SplitStoreSource(StoredSource, Protocol):
+    """A source whose sessions span more than one directory tree, so a path is inside
+    its store when it sits under any of `store_roots`."""
+
+    @property
+    def store_roots(self) -> tuple[Path, ...]: ...
+
+
+@runtime_checkable
 class AvailabilitySource(Protocol):
     def available(self) -> bool: ...
 
@@ -220,16 +229,20 @@ class PickerHidingSource(Source, Protocol):
 
 @runtime_checkable
 class CompanionFileSource(Source, Protocol):
-    """A source whose agent keeps per-transcript state beside the transcript —
+    """A source whose agent keeps per-transcript state outside the transcript file —
     Claude Code's `<sessionId>/` directory, droid's `<sessionId>.settings.json`
-    sidecars. Archive, delete and prune have to carry or remove them with the
+    sidecars, Cursor's chat store. Archive, delete and prune have to carry or remove them with the
     transcript, or the session is split from its own state.
 
-    The return is a set of candidate paths derived from the transcript's, not a
-    listing of what is there: callers check existence themselves, and the same
-    derivation names the destination once a transcript has moved."""
+    The return is a set of candidate paths, which may not exist: callers check
+    existence themselves.
+
+    `companion_destination` says where one of those companions goes when the
+    transcript is placed at `file_path`: beside it for most agents, back in a store
+    of its own for an agent that keeps the transcript and its state apart."""
 
     def companion_paths(self, file_path: str) -> tuple[Path, ...]: ...
+    def companion_destination(self, companion: Path, file_path: str) -> Path: ...
 
 
 @runtime_checkable
@@ -242,9 +255,15 @@ class WorkspaceRelocatingSource(Source, Protocol):
 
     `relocate_storage` moves every session launched at `old_cwd`; `relocate_session`
     moves one, for a session whose recorded cwd has drifted from its launch dir.
-    Both return the old->new transcript paths the registry must follow."""
+    Both return the old->new transcript paths the registry must follow.
+
+    `storage_dir` is the inverse of `storage_for`: the workspace directory a stored
+    transcript sits under, which is not always its parent. `stored_transcripts` lists
+    every transcript in such a directory."""
 
     def storage_for(self, cwd: str) -> Path: ...
+    def storage_dir(self, file_path: str) -> Path: ...
+    def stored_transcripts(self, storage: Path) -> list[Path]: ...
     def relocate_storage(self, old_cwd: str, new_cwd: str) -> dict[str, str]: ...
     def relocate_session(self, file_path: str, new_cwd: str) -> str: ...
 
@@ -275,8 +294,9 @@ class WorkspaceRebindingSource(Source, Protocol):
 
 @runtime_checkable
 class SessionLaunchingSource(Source, Protocol):
-    """A source whose agent can resume or fork its own sessions, or start fresh with
-    an optional opening prompt. All return argv whose first element is the binary, never a
+    """A source whose agent can resume its own sessions, or start fresh with an
+    optional opening prompt; `fork_argv` is only valid with the `forks_sessions`
+    capability. All return argv whose first element is the binary, never a
     shell string — and none carries a directory, because every
     agent resolves a session id relative to the directory it is launched in, so the
     caller chdirs first."""

@@ -122,7 +122,7 @@ class PiSource:
     name: str = "pi"
     capabilities: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            {"applies_names", "filesystem_lifecycle", "launches_sessions"}
+            {"applies_names", "filesystem_lifecycle", "launches_sessions", "forks_sessions"}
         )
     )
 

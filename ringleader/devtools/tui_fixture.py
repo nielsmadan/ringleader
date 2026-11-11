@@ -12,6 +12,7 @@ from typing import Any
 from .. import refresh, registry
 from ..slug import droid_slug, slugify
 from ..sources.claude_code import ClaudeCodeSource
+from .isolation import agent_store_env
 
 FILTERS = ("zz-hidden*",)
 SOURCE_WEIGHTS = (("claude-code", 64), ("codex", 18), ("opencode", 12), ("pi", 3), ("droid", 3))
@@ -63,10 +64,7 @@ class _Plan:
 
 def _env(root: Path) -> dict[str, str]:
     return {
-        "SESSION_TRACKER_PROJECTS_DIR": str(root / "_claude"),
-        "CODEX_SESSIONS_DIR": str(root / "_codex"),
-        "PI_SESSIONS_DIR": str(root / "_pi"),
-        "FACTORY_HOME_OVERRIDE": str(root / "_factory"),
+        **agent_store_env(root),
         "XDG_DATA_HOME": str(root / "xdg-data"),
         "XDG_STATE_HOME": str(root / "xdg-state"),
     }

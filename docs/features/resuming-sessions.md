@@ -6,7 +6,7 @@ in its own agent or another one.
 ## Starting fresh
 
 `rl start <agent> [--worktree] [--dry-run]` requires an explicit agent: `claude` (or
-`claude-code`), `codex`, `droid`, `opencode`, or `pi`. No arguments prints help. It launches
+`claude-code`), `codex`, `droid`, `opencode`, `pi`, or `cursor`. No arguments prints help. It launches
 from the current directory with no history or opening prompt, and has no picker or
 pass-through flags. It neither scans nor writes the registry. Plain launch needs no Git
 checkout; the agent binary must be on `PATH`.
@@ -117,6 +117,7 @@ source or a reused target is running before proceeding.
 | `droid` | `droid resume <id>` |
 | `opencode` | `opencode --session <id>` |
 | `pi` | `pi --session <id>` |
+| `cursor` | `cursor-agent --resume <id>` |
 
 **Fork in the same agent** — the second entry creates a fresh session continuing from the
 source's current conversation state. The original is preserved, and the workspace stays the
@@ -129,6 +130,9 @@ same. Each selection forks anew. This uses the agent's native command:
 | `droid` | `droid resume <id> --fork` |
 | `opencode` | `opencode --session <id> --fork` |
 | `pi` | `pi --fork <id>` |
+
+Cursor CLI has no fork verb, so a Cursor session offers neither a fork nor a worktree row, and
+`rl resume --worktree` refuses one. `rl start cursor --worktree` is refused too.
 
 Pi's CLI fork copies the session tree into a fresh file; its interactive `/fork` instead asks
 for an earlier prompt. Native metadata follows each agent's rules. Forking creates no git

@@ -3,7 +3,7 @@ import sqlite3
 
 from ringleader.commands import relocate
 from ringleader.gitinfo import GitProject
-from ringleader.slug import normalize, slugify
+from ringleader.slug import cursor_chat_key, cursor_slug, normalize, slugify
 
 
 def test_relocate_preserves_raw_clone_url(tmp_path, monkeypatch):
@@ -192,3 +192,33 @@ def test_registry_only_leaves_storage_alone(tmp_path, monkeypatch):
 
     assert _db_cwd(home) == str(ws)
     assert json.loads(reg.read_text())["threads"][0]["project"] == str(dest)
+
+
+def test_relocating_a_cursor_session_twice_is_a_no_op_the_second_time(tmp_path):
+    """The second run finds the transcript already filed under the destination's slug,
+    which sits two levels above the transcript's own folder."""
+    store, ws, dest = tmp_path / "_cursor", tmp_path / "ws", tmp_path / "dest"
+    ws.mkdir()
+    dest.mkdir()
+    chat = store / "chats" / cursor_chat_key(str(ws)) / "c1"
+    chat.mkdir(parents=True)
+    (chat / "meta.json").write_text(json.dumps({"hasConversation": True, "cwd": str(ws)}))
+    folder = store / "projects" / cursor_slug(str(ws)) / "agent-transcripts" / "c1"
+    folder.mkdir(parents=True)
+    (folder / "c1.jsonl").write_text("{}\n")
+    thread = {
+        "sessionId": "c1",
+        "file": str(folder / "c1.jsonl"),
+        "project": str(ws),
+        "source": "cursor",
+        "mtime": "2026-11-11T00:00:00+00:00",
+    }
+    reg = tmp_path / "registry.json"
+    reg.write_text(json.dumps({"version": 2, "threads": [thread], "archived": [], "deleted": []}))
+    moved = store / "projects" / cursor_slug(str(dest)) / "agent-transcripts" / "c1" / "c1.jsonl"
+
+    assert relocate.cmd_relocate(["c1", str(dest), "--registry", str(reg)]) == 0
+    assert relocate.cmd_relocate(["c1", str(dest), "--registry", str(reg)]) == 0
+
+    assert json.loads(reg.read_text())["threads"][0]["file"] == str(moved)
+    assert (store / "chats" / cursor_chat_key(str(dest)) / "c1" / "meta.json").is_file()
