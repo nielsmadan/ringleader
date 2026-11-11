@@ -1,6 +1,6 @@
 from pathlib import Path
 
-SKILLS = Path(__file__).resolve().parent.parent / ".agents" / "skills"
+SKILLS = Path(__file__).resolve().parent.parent / "skills"
 
 
 def test_usage_skill_is_bundled_with_frontmatter_and_playbook():

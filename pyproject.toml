@@ -36,7 +36,7 @@ packages = ["ringleader"]
 artifacts = ["ringleader/_vendor/**"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".agents/skills" = "ringleader/_skills"
+"skills" = "ringleader/_skills"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

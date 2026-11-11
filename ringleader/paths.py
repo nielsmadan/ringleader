@@ -96,11 +96,11 @@ def archive_root() -> Path:
 
 def bundled_skills_dir() -> Path:
     """Where the ringleader-* skill folders live: the wheel-bundled copy when
-    installed, else the repo's .agents/skills for source runs."""
+    installed, else the repo's skills/ for source runs."""
     packaged = Path(__file__).resolve().parent / "_skills"
     if packaged.is_dir():
         return packaged
-    return Path(__file__).resolve().parent.parent / ".agents" / "skills"
+    return Path(__file__).resolve().parent.parent / "skills"
 
 
 def analysis_dir() -> Path:

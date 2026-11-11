@@ -15,7 +15,7 @@ rl doctor             # what's linked, registered, and how retention is set
 
 ## Skills
 
-`.agents/skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands:
+`skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands:
 
 | Skill | Does |
 |---|---|
@@ -30,14 +30,14 @@ rl doctor             # what's linked, registered, and how retention is set
 | `ringleader-recommend` | turn saved findings into proposed edits to instruction files, skills and config; proposes only |
 
 The eight session-track skills share an agent-neutral `SKILL.md` plus a bundled
-`references/playbook.md`, synced from the canonical `.agents/skills/PLAYBOOK.md`
+`references/playbook.md`, synced from the canonical `skills/PLAYBOOK.md`
 (`just sync-playbook`). `ringleader-publish` owns its focused publishing protocol.
 
 All nine read natively in **Claude Code, Codex, Droid, OpenCode and Pi** — no per-agent plugin
 format. `rl install skills` symlinks them into `~/.agents/skills` (Codex, OpenCode, Pi),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid).
 
-`memory-triage` is separate and lives in `.claude/skills/`.
+`memory-triage` is separate and lives in `loadout/skills/`.
 
 > Skills are **symlinked**, so editing the repo changes what every wired agent runs, immediately.
 
@@ -142,4 +142,4 @@ reviewed semantically. Raw transcripts stay out of git under
 fingerprint, source counts and byte count, so an incomplete extraction is rejected before
 `.sandbox/` is touched.
 
-See `.agents/skills/SMOKE.md` for the manual end-to-end checklist.
+See `skills/SMOKE.md` for the manual end-to-end checklist.

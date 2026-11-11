@@ -18,7 +18,7 @@ uv run rl overview
 **Working on ringleader itself?** Use `just install-editable`. A normal install copies the
 source, so the global `rl` silently falls behind your checkout until you reinstall; an editable
 one tracks the working tree, so `rl` is always what you last edited — and `rl install skills`
-resolves to the repo's own `.agents/skills/`.
+resolves to the repo's own `skills/`.
 
 Re-run `just install` to refresh the installed snapshot. `just uninstall` removes the CLI
 installation and preserves registry data, archives, and configuration.

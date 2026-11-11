@@ -9,7 +9,7 @@ PLAYBOOK_REF = "references/playbook.md"
 
 
 def test_a_skill_bundles_a_playbook_exactly_when_it_references_one(skill_dirs):
-    assert skill_dirs, "no ringleader-* skill directories found under .agents/skills"
+    assert skill_dirs, "no ringleader-* skill directories found under skills/"
     for skill_dir in skill_dirs:
         wants = PLAYBOOK_REF in (skill_dir / "SKILL.md").read_text()
         copy = skill_dir / "references" / "playbook.md"

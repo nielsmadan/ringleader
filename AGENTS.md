@@ -52,7 +52,7 @@ pruning them before the GC clock deletes them.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing** for the skills
-  in `.agents/skills/` (session track) or `.claude/skills/` (`memory-triage`), not for hand use.
+  in `skills/` (session track) or `loadout/skills/` (`memory-triage`), not for hand use.
   `--json` on `rl inbox`, `rl data export`, `rl handoff triage` and the guarded `rl session` verbs
   is the circus desktop app's versioned contract (JSON-only stdout, `version: 1`): change it only with
   `docs/tech/json-contract.md` and the goldens in `tests/golden/`.
@@ -81,12 +81,12 @@ pruning them before the GC clock deletes them.
 - **`rl usage` counts subagent spend, counts Codex forks once and prices 1h cache writes at 2x
   input.** Its exports carry `cache_write_1h` and `nested`, so an older `rl usage --merge` drops
   them. `rl analyze` totals use the same Claude model filter, so the two agree.
-- **Skills live at `.agents/skills/ringleader-*`, agent-neutral.** Nine skills —
+- **Skills live at `skills/ringleader-*`, agent-neutral.** Nine skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
   `ringleader-usage`, `ringleader-finish`, `ringleader-publish`, `ringleader-analyze`,
   `ringleader-recommend` — each ship an
   agent-neutral `SKILL.md`. Eight of them also bundle a `references/playbook.md` synced
-  from the canonical `.agents/skills/PLAYBOOK.md` (`just sync-playbook`, which derives
+  from the canonical `skills/PLAYBOOK.md` (`just sync-playbook`, which derives
   the list from the skills that ask for one); `ringleader-publish` ships its own protocol
   reference instead. The first four replace the old, single-purpose session skills
   (sync, overview, name, harvest, triage as separate skills) — those are gone, folded into
@@ -95,12 +95,12 @@ pruning them before the GC clock deletes them.
   proposed setup edits; `ringleader-finish` finishes
   the session you're currently in, harvesting it from live context instead of waiting for
   triage to read the transcript later. `memory-triage` is untouched and still lives in
-  `.claude/skills/`. Wire them into an agent with `rl install
+  `loadout/skills/`. Wire them into an agent with `rl install
   skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi),
   `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid — its own native personal
   skills dir, not the shared one); `rl update`/`rl uninstall` round out the surface,
   and `rl doctor` reports what's wired. The old Claude-only plugin manifest and installer
-  are gone. See `.agents/skills/SMOKE.md` for the manual smoke checklist.
+  are gone. See `skills/SMOKE.md` for the manual smoke checklist.
 - **`rl workspace move` changes three things at once.** The directory on disk, the
   agent's session storage — which takes one of two shapes: Claude Code keys it by the
   cwd a session was *launched* in, so the slug dir is renamed, while Codex files rollouts

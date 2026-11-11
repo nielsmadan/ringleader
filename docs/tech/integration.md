@@ -47,7 +47,7 @@ through a symlink is never a surprise.
 non-symlink; uninstall touches nothing it does not own.
 
 `paths.bundled_skills_dir()` resolves to the wheel-bundled copy when installed, and to the
-repo's `.agents/skills/` for a source run — so an editable install edits live skills.
+repo's `skills/` for a source run — so an editable install edits live skills.
 
 ### Hooks
 

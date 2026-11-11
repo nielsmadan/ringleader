@@ -7,7 +7,7 @@ import pytest
 from ringleader.portability import claude
 from ringleader.tui.snapshot import normalize_text
 
-SKILLS_ROOT = Path(__file__).resolve().parent.parent / ".agents" / "skills"
+SKILLS_ROOT = Path(__file__).resolve().parent.parent / "skills"
 GOLDENS_ROOT = Path(__file__).resolve().parent / "goldens"
 
 

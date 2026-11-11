@@ -116,9 +116,9 @@ clean:
 
 # Copy the playbook to each skill whose SKILL.md asks for it.
 sync-playbook:
-    @for d in .agents/skills/ringleader-*; do \
+    @for d in skills/ringleader-*; do \
       if grep -qs 'references/playbook.md' "$d/SKILL.md"; then \
         mkdir -p "$d/references"; \
-        cp .agents/skills/PLAYBOOK.md "$d/references/playbook.md"; \
+        cp skills/PLAYBOOK.md "$d/references/playbook.md"; \
       fi; \
     done

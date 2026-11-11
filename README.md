@@ -97,7 +97,7 @@ rl install             # skills, session-end hook, statusline capture
 
 ## Skills
 
-`.agents/skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands, and
+`skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands, and
 read natively in Claude Code, Codex, Droid, OpenCode and Pi:
 
 | Skill | Does |
@@ -112,7 +112,7 @@ read natively in Claude Code, Codex, Droid, OpenCode and Pi:
 | `ringleader-analyze` | find where recent sessions went wrong and save the findings as a report |
 | `ringleader-recommend` | turn saved findings into proposed edits to your agent setup; proposes only |
 
-`memory-triage` is separate and lives in `.claude/skills/`.
+`memory-triage` is separate and lives in `loadout/skills/`.
 
 ```sh
 rl install skills      # symlink into ~/.agents/skills, ~/.claude/skills and ~/.factory/skills
@@ -120,7 +120,7 @@ rl update all          # re-sync after a repo change
 rl uninstall skills    # remove only what this tool created
 ```
 
-→ [Agent setup](docs/user/agent-setup.md) · `.agents/skills/SMOKE.md` for the manual checklist
+→ [Agent setup](docs/user/agent-setup.md) · `skills/SMOKE.md` for the manual checklist
 
 ## Commands
 

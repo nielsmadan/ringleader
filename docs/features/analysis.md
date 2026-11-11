@@ -248,7 +248,7 @@ and never as instructions to follow.
 
 - `ringleader/commands/analyze.py`; `ringleader/analysis/` (`ingest.py`, `store.py`,
   `signals.py`, `health.py`, `rollups.py`, `labels.py`, `render.py`).
-- Skills: `.agents/skills/ringleader-analyze`, `.agents/skills/ringleader-recommend`.
+- Skills: `skills/ringleader-analyze`, `skills/ringleader-recommend`.
 
 ## Related
 

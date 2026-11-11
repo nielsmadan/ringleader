@@ -28,7 +28,7 @@ accepts an optional repo/dir scope.
 ## Gotchas
 
 - **`rl mem prune` previews by default**, like `rl prune`; only `--delete` removes anything.
-- **`memory-triage` still lives in `.claude/skills/`**, not with the agent-neutral
+- **`memory-triage` still lives in `loadout/skills/`**, not with the agent-neutral
   `ringleader-*` skills.
 
 ## Key entry points

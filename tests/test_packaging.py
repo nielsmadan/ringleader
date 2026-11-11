@@ -137,8 +137,7 @@ def stage_project(root: Path) -> Path:
         project / "ringleader",
         ignore=shutil.ignore_patterns("__pycache__", "_vendor"),
     )
-    (project / ".agents").mkdir()
-    shutil.copytree(REPO / ".agents" / "skills", project / ".agents" / "skills")
+    shutil.copytree(REPO / "skills", project / "skills")
     return project
 
 

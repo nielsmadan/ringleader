@@ -33,7 +33,7 @@ Dormant-session views do not yet use presence to exclude running sessions.
 
 ## Skills
 
-Nine bundled skills at `.agents/skills/ringleader-*`, each an agent-neutral `SKILL.md`. Eight
+Nine bundled skills at `skills/ringleader-*`, each an agent-neutral `SKILL.md`. Eight
 also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 (`just sync-playbook`); `ringleader-publish` ships `references/protocol.md` instead:
 
@@ -52,7 +52,7 @@ also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 `rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid) — the two agents with a native
 personal skills directory get their own, the rest share. `memory-triage` is separate and still
-lives in `.claude/skills/`.
+lives in `loadout/skills/`.
 
 ## Hooks
 
@@ -88,7 +88,7 @@ path lies inside the bundled dir. Your own `SessionEnd` hook is never touched.
 
 - `commands/skills.py`, `commands/hooks.py`, `commands/statusline.py`, `commands/setup.py`,
   `commands/doctor.py`.
-- `paths.bundled_skills_dir()` — the wheel copy when installed, the repo's `.agents/skills/`
+- `paths.bundled_skills_dir()` — the wheel copy when installed, the repo's `skills/`
   for a source run.
 
 ## Gotchas
