@@ -10,7 +10,7 @@ from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal
 from ringleader.tui.snapshot import screen_text
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -150,7 +150,7 @@ async def test_golden_harvests(tmp_path, golden):
     app = _app(_fixture(tmp_path))
     async with app.run_test(size=(100, 30)) as pilot:
         await _open(app, pilot)
-        golden("inbox/harvests", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/harvests", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
 
 
 async def test_a_rerender_with_the_same_harvests_does_not_regroup_them(tmp_path, monkeypatch):

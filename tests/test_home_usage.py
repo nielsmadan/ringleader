@@ -11,7 +11,7 @@ from ringleader.tui.runner import CommandRun
 from ringleader.tui.snapshot import screen_text
 from textual.widgets import Log
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -124,7 +124,7 @@ async def test_golden_usage(tmp_path, monkeypatch, golden):
         await until(pilot, lambda: app.idle)
         await pilot.press("7")
         await until(pilot, lambda: "BODY of usage windows" in screen_text(app))
-        golden("inbox/usage", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/usage", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
 
 
 def test_run_commands_hands_the_child_the_app_environment_and_registry_argv(tmp_path, monkeypatch):

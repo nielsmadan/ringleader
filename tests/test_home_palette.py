@@ -24,7 +24,7 @@ from ringleader.tui.runner import CommandRun
 from ringleader.tui.snapshot import screen_text
 from textual.content import Content
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 
@@ -236,7 +236,7 @@ async def test_golden_palette(tmp_path, golden):
         await _type(pilot, app, "us")
         await until(pilot, lambda: "rl usage windows" in screen_text(app))
         await until(pilot, lambda: app.screen.query_one("CommandList").highlighted is not None)
-        golden("inbox/palette", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/palette", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
 
 
 async def test_help_with_brackets_is_escaped_for_literal_rendering(tmp_path, monkeypatch):

@@ -5,6 +5,7 @@ from typing import Any
 
 from rich.console import Console
 from textual.app import App
+from textual.widgets import Footer
 
 
 def normalize_text(text: str) -> str:
@@ -30,3 +31,7 @@ def screen_text(app: App[Any]) -> str:
         app.screen._compositor.render_update(full=True, screen_stack=app._background_screens)
     )
     return normalize_text(console.export_text(styles=False))
+
+
+def footers_drawn(app: App[Any]) -> bool:
+    return all(footer.children for footer in app.screen.query(Footer))

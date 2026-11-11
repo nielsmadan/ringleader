@@ -20,7 +20,7 @@ from ringleader.devtools.tui_fixture import build_fixture
 from ringleader.home.app import InboxApp
 from ringleader.picker.app import PickerApp
 from ringleader.resume import Scope
-from ringleader.tui.snapshot import screen_text
+from ringleader.tui.snapshot import footers_drawn, screen_text
 from textual.app import App
 from textual.pilot import Pilot
 from textual.worker import WorkerCancelled
@@ -54,6 +54,17 @@ type Settle = Callable[[App[Any], Pilot[Any]], Awaitable[None]]
 type AppFactory = Callable[[ShotContext], tuple[App[Any], Settle]]
 
 
+# A Footer composes empty and fills in its keys on a later refresh.
+async def _await_footers(app: App[Any], pilot: Pilot[Any]) -> None:
+    deadline = time.monotonic() + SETTLE_TIMEOUT
+    while not footers_drawn(app):
+        if time.monotonic() >= deadline:
+            print(f"settle timed out after {SETTLE_TIMEOUT}s; the footer is empty", file=sys.stderr)
+            break
+        await pilot.pause(0.02)
+    await pilot.pause()
+
+
 async def settle_workers(app: App[Any], pilot: Pilot[Any]) -> None:
     try:
         await asyncio.wait_for(app.workers.wait_for_complete(), timeout=SETTLE_TIMEOUT)
@@ -61,7 +72,7 @@ async def settle_workers(app: App[Any], pilot: Pilot[Any]) -> None:
         print(
             f"settle timed out after {SETTLE_TIMEOUT}s; a worker is still running", file=sys.stderr
         )
-    await pilot.pause()
+    await _await_footers(app, pilot)
 
 
 def _reload(path: str, now: str) -> tuple[dict[str, Any], str | None]:
@@ -87,7 +98,7 @@ async def settle_inbox(app: App[Any], pilot: Pilot[Any]) -> None:
             print(f"settle timed out after {SETTLE_TIMEOUT}s; inbox is still busy", file=sys.stderr)
             break
         await pilot.pause(0.02)
-    await pilot.pause()
+    await _await_footers(app, pilot)
 
 
 def _inbox(ctx: ShotContext) -> tuple[App[Any], Settle]:

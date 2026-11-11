@@ -26,7 +26,7 @@ from ringleader.tui.snapshot import screen_text
 from scripts.tui_shot import settle_inbox
 from textual.widgets import Label, OptionList, Static
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 NOW = NOW_DT.isoformat()
@@ -367,7 +367,7 @@ async def test_golden_home(tmp_path, golden):
     app = _app(fixture.registry_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await settle_inbox(app, pilot)
-        golden("inbox/home", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/home", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
 
 
 async def test_golden_home_caught_up(tmp_path, golden):
@@ -375,7 +375,7 @@ async def test_golden_home_caught_up(tmp_path, golden):
     app = _app(path)
     async with app.run_test(size=(100, 30)) as pilot:
         await settle_inbox(app, pilot)
-        text = screen_text(app)
+        text = await drawn_text(pilot, app)
         golden("inbox/home-caught-up", text)
     assert "All caught up — nothing waiting." in text
 

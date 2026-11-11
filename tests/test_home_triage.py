@@ -23,7 +23,7 @@ from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
 from textual.widgets import Label, OptionList
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 NOW = NOW_DT.isoformat()
@@ -816,9 +816,11 @@ async def test_golden_triage(tmp_path, golden):
     app = _app(fixture.registry_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_triage(app, pilot)
-        golden("inbox/triage", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/triage", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
         await pilot.press("space", "down", "down", "space")
-        golden("inbox/triage-marked", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden(
+            "inbox/triage-marked", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"}
+        )
 
 
 async def test_golden_triage_circus(tmp_path, golden):
@@ -827,7 +829,9 @@ async def test_golden_triage_circus(tmp_path, golden):
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_triage(app, pilot)
         await pilot.press("x", "down", "down", "x")
-        golden("inbox/triage-circus", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden(
+            "inbox/triage-circus", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"}
+        )
 
 
 async def test_golden_detail(tmp_path, golden, monkeypatch):
@@ -847,7 +851,7 @@ async def test_golden_detail(tmp_path, golden, monkeypatch):
         await until(pilot, lambda: isinstance(app.screen, DetailScreen))
         await until(pilot, lambda: "fix the parser in s1" in screen_text(app))
         await pilot.pause()
-        golden("inbox/detail", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden("inbox/detail", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"})
 
 
 async def test_undo_after_an_archive_applied_points_at_unarchive(tmp_path):

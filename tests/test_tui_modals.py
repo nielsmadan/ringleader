@@ -6,7 +6,7 @@ from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
 from textual.widgets import Label, OptionList
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW = datetime(2026, 10, 15, 12, tzinfo=UTC)
 UNSET = object()
@@ -77,7 +77,7 @@ async def test_choice_modal_golden(golden):
     async with app.run_test(size=(100, 30)) as pilot:
         await until(pilot, lambda: app.screen is modal)
         await pilot.pause()
-        golden("modals/choice", screen_text(app))
+        golden("modals/choice", await drawn_text(pilot, app))
 
 
 async def test_choice_modal_renders_a_bracketed_title_verbatim():

@@ -24,7 +24,7 @@ from ringleader.tui.modals import ChoiceModal, ConfirmModal
 from ringleader.tui.snapshot import screen_text
 from textual.widgets import Label
 
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW_DT = datetime(2026, 10, 15, 12, tzinfo=UTC)
 NOW = NOW_DT.isoformat()
@@ -334,7 +334,9 @@ async def test_golden_roundup_plan(tmp_path, golden):
     app = _app(fixture.registry_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_plan(app, pilot)
-        golden("inbox/roundup-plan", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden(
+            "inbox/roundup-plan", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"}
+        )
 
 
 async def test_golden_roundup_warning(tmp_path, golden):
@@ -344,7 +346,9 @@ async def test_golden_roundup_warning(tmp_path, golden):
         await _open_plan(app, pilot)
         await pilot.press("enter")
         await until(pilot, lambda: isinstance(app.screen, ChoiceModal))
-        golden("inbox/roundup-warning", screen_text(app), replace={str(tmp_path): "<root>"})
+        golden(
+            "inbox/roundup-warning", await drawn_text(pilot, app), replace={str(tmp_path): "<root>"}
+        )
 
 
 def _exited(app):

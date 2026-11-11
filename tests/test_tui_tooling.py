@@ -11,10 +11,10 @@ from ringleader.slug import droid_slug, slugify
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.tui.snapshot import screen_text
 from scripts.tui_shot import parse_keys, settle_workers, shoot
-from textual.widgets import OptionList
+from textual.widgets import Footer, OptionList
 
 from conftest import golden_checker
-from tui_helpers import until
+from tui_helpers import drawn_text, until
 
 NOW = datetime(2026, 5, 5, 12, tzinfo=UTC)
 
@@ -65,7 +65,20 @@ async def test_picker_golden_over_every_scope(tmp_path, golden):
     app = _picker(tmp_path)
     async with app.run_test(size=(100, 30)) as pilot:
         await settle_workers(app, pilot)
-        golden("picker/all-scope", screen_text(app), replace=_paths(tmp_path))
+        golden("picker/all-scope", await drawn_text(pilot, app), replace=_paths(tmp_path))
+
+
+async def test_settling_waits_for_a_footer_that_draws_late(tmp_path, monkeypatch):
+    drawn = Footer.bindings_changed
+
+    def late(self, screen):
+        self.set_timer(0.3, lambda: drawn(self, screen))
+
+    monkeypatch.setattr(Footer, "bindings_changed", late)
+    app = _picker(tmp_path)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await settle_workers(app, pilot)
+        assert "^r refresh  esc quit" in screen_text(app)
 
 
 async def test_picker_golden_after_typing_a_filter(tmp_path, golden):
@@ -75,7 +88,7 @@ async def test_picker_golden_after_typing_a_filter(tmp_path, golden):
         await pilot.press(*"bravo")
         await until(pilot, lambda: app.screen.query_one("#rows", OptionList).option_count == 1)
         await until(pilot, lambda: "[all] (1)" in screen_text(app))
-        golden("picker/filtered", screen_text(app), replace=_paths(tmp_path))
+        golden("picker/filtered", await drawn_text(pilot, app), replace=_paths(tmp_path))
 
 
 async def test_screen_text_draws_a_modal_over_its_background(tmp_path):
