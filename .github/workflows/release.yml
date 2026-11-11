@@ -52,7 +52,7 @@ jobs:
           persist-credentials: false
           ref: ${{ steps.identity.outputs.release-commit }}
           path: release-source
-      - uses: astral-sh/setup-uv@v7.6.0
+      - uses: astral-sh/setup-uv@v10.3.3
         with:
           version: '0.13.4'
           working-directory: release-source
