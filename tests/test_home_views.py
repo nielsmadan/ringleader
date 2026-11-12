@@ -2,7 +2,18 @@ import time
 from datetime import UTC, date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from ringleader.home.state import handoff_key, scope_rows, scope_title
+from ringleader.home import state
+from ringleader.home.state import (
+    ProjectScope,
+    ProjectsView,
+    RecentScope,
+    SessionViews,
+    handoff_key,
+    project_queue,
+    scope_rows,
+    scope_title,
+    view_for,
+)
 from ringleader.home.views import (
     FolderScope,
     PeriodScope,
@@ -330,6 +341,34 @@ def test_scope_titles_for_folder_tree_and_period_scopes():
     ]
     assert scope_title(TreeScope("/home/me/wrksp"), HOME) == "~/wrksp"
     assert scope_title(TreeScope("/", excluding=HOME), HOME) == "/ except ~"
+
+
+def test_each_scope_belongs_to_the_view_it_came_from():
+    project = project_queue([_thread("a")], NOW)[0]
+    scopes = [
+        ProjectScope(project),
+        FolderScope("/w"),
+        TreeScope("/w"),
+        PeriodScope(_at(2026, 11, 11, 0), None, "2026-11-11"),
+        RecentScope(7),
+    ]
+    assert [view_for(s) for s in scopes] == [
+        ProjectsView.REPOS,
+        ProjectsView.FOLDERS,
+        ProjectsView.TREE,
+        ProjectsView.DATES,
+        ProjectsView.REPOS,
+    ]
+
+
+def test_session_views_build_only_the_grouping_asked_for(monkeypatch):
+    def unwanted(*args, **kwargs):
+        raise AssertionError("built a grouping nobody asked for")
+
+    monkeypatch.setattr(state, "folder_groups", unwanted)
+    monkeypatch.setattr(state, "date_buckets", unwanted)
+    views = SessionViews((_thread("a", "/home/me/w"),), HOME, NOW_DT, BERLIN)
+    assert [n.name for n in views.tree] == ["~/w"]
 
 
 def test_handoff_key_is_the_one_project_a_scope_holds():

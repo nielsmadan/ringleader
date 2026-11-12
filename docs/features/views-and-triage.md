@@ -62,11 +62,20 @@ most recent in-flight session. `enter` runs the highlighted step.
 `q` leaves, `ctrl+r` rescans, `ctrl+p` opens a palette of screens, next steps and a few read-only
 `rl` verbs (usage, harvests, doctor, `config show`, ...) whose output shows in a scrollable screen.
 
-**Triage** (a project, the last 7 days, or woke sessions) takes the five decisions on the
+**Projects** shows the waiting sessions four ways, and `tab`/`shift+tab` cycle them for the rest
+of the session: **Repos** (by git project, oldest activity first), **Folders** (by cwd),
+**Tree** (the folders as a tree, with home under `~` and everything else under `/`; `l`/right
+expands, `h`/left collapses or moves to the parent) and **Dates** (today and the six days before
+it, then weeks, then months, each labelled by its first day, like `2026-11-09`, `2026-11-02` or
+`2026-09`). `enter` triages the highlighted entry; on a tree folder that is every session under
+it. When all the entry's sessions belong to one project, `t` hands that whole project to an agent.
+
+**Triage** (a project, a folder, a period, the last 7 days, or woke sessions) takes the five decisions on the
 highlighted row or the marked rows: `a` archive, `g` keep going, `s` snooze, `K` keep long-term,
 `d` delete, plus `h` harvest and archive through the configured model. `space` marks, `*`/`A`
 marks all, `enter` opens the detail, `r` resumes, `t` triages the project with an agent.
-Keep going marks the session reviewed until it sees new activity. Delete has no prompt: it
+When the list is empty, `enter` moves on to the next entry of the view it came from; a tree
+folder has no next. Keep going marks the session reviewed until it sees new activity. Delete has no prompt: it
 waits 10 s and `u` undoes it. Those are the default `vim` keys; `rl config set inbox.keys
 circus` switches to the circus app's (`e` harvest, `E` archive, `r` keep going, `h` snooze, `s`
 keep, `#` delete, `x` mark, `enter`/`o` resume, `v` detail, `z` undo). Bulk archive and delete confirm with the count; bulk harvest is

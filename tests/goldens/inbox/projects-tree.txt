@@ -1,0 +1,30 @@
+ ⭘                                 rl inbox — scanned just now
+ Projects · Tree — 36 waiting across 2 folders
+▼ ~/work  36
+├── proj-00  18
+└── proj-01  18
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tab next view  esc back  t triage with an agent  q quit  u undo  ^r rescan             ▏^p palette

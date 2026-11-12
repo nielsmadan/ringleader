@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -20,11 +19,15 @@ from ..policy import CONFIRM_BULK, CONFIRM_EACH_DELETE
 from ..state import (
     ProjectRef,
     ProjectScope,
+    ProjectsView,
     RenderBasis,
     TriageScope,
+    ViewEntry,
+    next_entry,
     project_label,
     scope_rows,
     scope_title,
+    view_for,
 )
 from .detail import DetailScreen
 
@@ -73,14 +76,11 @@ def thread_project(thread: dict[str, Any]) -> ProjectRef:
     )
 
 
-def next_project(scope: TriageScope, projects: tuple[ProjectRef, ...]) -> ProjectRef | None:
-    current = scope.project.key if isinstance(scope, ProjectScope) else None
-    return next((project for project in projects if project.key != current), None)
-
-
-def done_text(scope: TriageScope, following: ProjectRef | None) -> Text:
-    text = Text(f"{scope_title(scope, str(Path.home()))} done.\n", style="bold")
-    if following is None:
+def done_text(title: str, following: ViewEntry | None, view: ProjectsView) -> Text:
+    text = Text(f"{title} done.\n", style="bold")
+    if following is None and view is ProjectsView.TREE:
+        text.append("Nothing next in the tree — escape for the tree")
+    elif following is None:
         text.append("All caught up — escape for Home")
     else:
         text.append(f"Next: Triage {following.label} ({following.pending} waiting) — enter")
@@ -122,13 +122,14 @@ class TriageScreen(InboxScreen):
         super().__init__()
         self.scope = scope
         self.keymap = keymap
+        self.view = view_for(scope)
         self._bindings = with_bindings(
             self._bindings,
             (*keymap.triage, Binding(keymap.undo, "app.undo", "undo", show=False)),
         )
         self._rows: list[dict[str, Any]] = []
         self._marks: frozenset[str] = frozenset()
-        self._following: ProjectRef | None = None
+        self._following: ViewEntry | None = None
         self._stale = False
         self._now_iso = ""
         self._basis: RenderBasis | None = None
@@ -183,10 +184,11 @@ class TriageScreen(InboxScreen):
         )
         empty = not threads
         self._following = (
-            next_project(self.scope, self.inbox.home_state().projects) if empty else None
+            next_entry(self.scope, self.inbox.view_entries(self.view)) if empty else None
         )
         done = self.query_one("#done", Static)
-        done.update(done_text(self.scope, self._following) if empty else Text(""))
+        title = scope_title(self.scope, self.inbox.home_dir)
+        done.update(done_text(title, self._following, self.view) if empty else Text(""))
         done.display = empty
         was_hidden = not rows.display
         rows.display = not empty
@@ -198,7 +200,7 @@ class TriageScreen(InboxScreen):
         self.query_one("#subtitle", Static).update(
             Text(
                 subtitle(
-                    scope_title(self.scope, str(Path.home())),
+                    scope_title(self.scope, inbox.home_dir),
                     len(self._rows),
                     inbox.decided_count,
                     inbox.harvesting,
@@ -316,7 +318,7 @@ class TriageScreen(InboxScreen):
         elif self._rows:
             self.action_detail()
         elif self._following is not None:
-            self.app.switch_screen(TriageScreen(ProjectScope(self._following), self.keymap))
+            self.app.switch_screen(TriageScreen(self._following.scope, self.keymap))
 
     def action_detail(self) -> None:
         highlighted = self._highlighted()

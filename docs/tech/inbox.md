@@ -25,6 +25,7 @@ Textual is the package's only runtime dependency (`textual>=8`).
 | `home/base.py` | `InboxScreen`, `AppState`, `ScreenTarget`, `RoundupRun` |
 | `home/state.py` | pure: `build_home_state`, `next_steps`, `project_queue`, `scope_rows`, `handoff_key` |
 | `home/views.py` | pure: the folder, folder-tree and date groupings and their scopes, plus `is_unclassified` and `UNKNOWN`, which `state.py` shares |
+| `home/localzone.py` | `local_timezone`, the default zone for the Dates view |
 | `home/writer.py` | `Writer`: the single mutation queue |
 | `home/overlay.py` | pure: the overlay of identities hidden from the view |
 | `home/scan.py` | `ScanService`: at most one scan thread |
@@ -263,6 +264,23 @@ triage inbox, oldest first. `handoff_key` returns the one `group_key` a scope's 
 `None` when they span several projects (or none), since an agent hand-off works on one project:
 `t` then hands that whole project to the agent, not just the folder or period.
 
+The Projects screen shows one view at a time. `InboxApp.projects_memory` (a `ProjectsMemory`)
+remembers the view and every tree expand or collapse, keyed by path, until the app exits;
+untouched nodes start open down to the first level below the roots. A triage screen derives its
+view from its scope (`view_for`), so "next" always walks the list it was opened from.
+`InboxApp.session_views` builds each grouping lazily, once per `HomeState`, from the app's
+`home_dir=` (default `Path.home()`) and `tz=`. `home_dir` covers the folder views, their titles
+and the agent hand-offs; Repos labels come from `project_label`, which the JSON contract shares,
+and still abbreviate with the process `$HOME`. Without `tz=`,
+`home/localzone.py::local_timezone` passes `$TZ` and the `/etc/localtime` link name to the pure
+`zone_from`; a POSIX rule such as `CET-1CEST` is not a zone name and is skipped, and with neither
+the current UTC offset is used, which puts DST boundaries an hour off. `view_entries` turns a view
+into the rows the list shows and the done state's "next" (`next_entry`: the first entry that is
+not the one just finished); Tree has none. Tree renders on Textual's `Tree` with `auto_expand`
+off, so `enter` triages instead of toggling. A rebuild puts the cursor back on its folder; when
+that folder is gone it goes to the nearest folder that contains it, and when it is now inside a
+closed folder, to that folder.
+
 ### Roundup flow
 
 The Roundup screen waits for a fresh scan, runs `roundup.plan_roundup` on a job, and shows the
@@ -318,7 +336,8 @@ second by `home/prints.py::PrintCoalescer`.
 - `home/app.py` — `InboxApp`, `decide`, `harvest`, `go`, `_leave`.
 - `home/roundup_run.py` — `RoundupDriver`, behind `InboxApp.start_roundup`/`cancel_roundup`.
 - `home/jobs.py` — `JobBook`, behind `InboxApp.harvest` and `run_job`.
-- `home/state.py` — `next_steps`, `project_queue`, `scope_rows`, `handoff_key`.
+- `home/state.py` — `next_steps`, `project_queue`, `scope_rows`, `handoff_key`, `SessionViews`,
+  `view_entries`, `next_entry`.
 - `home/views.py` — `folder_groups`, `folder_tree`, `date_buckets`, `matches`.
 - `home/writer.py`, `home/overlay.py` — the mutation queue and the view.
 - `cli.py` — `_opens_inbox`, the bare-`rl` rule.

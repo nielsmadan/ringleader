@@ -50,7 +50,7 @@ def _triage_steps():
     return (
         Expect("Next:"),
         Send("2"),
-        Expect("Projects —"),
+        Expect("Projects · Repos —"),
         Send("t"),
         Expect("with which agent?"),
         Send(KEY_ENTER),

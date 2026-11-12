@@ -6,7 +6,7 @@ import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, tzinfo
 from functools import partial
 from pathlib import Path
 from typing import Any, ClassVar, Protocol, cast, runtime_checkable
@@ -73,6 +73,7 @@ from .jobs import (
     harvest_job,
 )
 from .keymap import Keymap, keymap_for, with_bindings
+from .localzone import local_timezone
 from .palette import InboxCommands
 from .policy import DELETE_GRACE_SECONDS
 from .prints import PrintCoalescer
@@ -91,13 +92,18 @@ from .state import (
     NextStep,
     ProjectRef,
     ProjectScope,
+    ProjectsMemory,
+    ProjectsView,
     RecentScope,
     RenderBasis,
+    SessionViews,
     TriageScope,
+    ViewEntry,
     WokeScope,
     build_home_state,
     next_steps,
     plural,
+    view_entries,
     visible_threads,
 )
 from .writer import (
@@ -136,6 +142,12 @@ class _ViewMemo:
 class _HomeMemo:
     key: tuple[int, datetime, int | None]
     state: HomeState
+
+
+@dataclass(frozen=True)
+class _SessionViewsMemo:
+    state: HomeState
+    views: SessionViews
 
 
 class WriterMessage(Message):
@@ -260,6 +272,8 @@ class InboxApp(App[ExitIntent | None]):
         delete_grace: float = DELETE_GRACE_SECONDS,
         strict: bool = False,
         keymap: Keymap | None = None,
+        tz: tzinfo | None = None,
+        home_dir: str | Path | None = None,
     ) -> None:
         super().__init__()
         config = load_config()
@@ -273,6 +287,9 @@ class InboxApp(App[ExitIntent | None]):
         self.read_only = read_only
         self._strict = strict
         self._now: Clock = now or (lambda: datetime.now(UTC))
+        self._tz = tz or local_timezone()
+        self._home_dir = str(home_dir) if home_dir is not None else str(Path.home())
+        self.projects_memory = ProjectsMemory()
         self._presence: Presence = presence or live_session_ids
         self._models: ModelResolver = models or _default_models
         self._cwd = str(cwd) if cwd is not None else os.getcwd()
@@ -298,6 +315,7 @@ class InboxApp(App[ExitIntent | None]):
         self._synced: tuple[InboxScreen, int] | None = None
         self._view_memo: _ViewMemo | None = None
         self._home_memo: _HomeMemo | None = None
+        self._views_memo: _SessionViewsMemo | None = None
         self.jobs = JobBook(self._post)
         self.roundups = RoundupDriver(
             read_only=read_only,
@@ -413,6 +431,23 @@ class InboxApp(App[ExitIntent | None]):
             memo = _HomeMemo(key, state)
             self._home_memo = memo
         return memo.state
+
+    def session_views(self) -> SessionViews:
+        state = self.home_state()
+        memo = self._views_memo
+        if memo is None or memo.state is not state:
+            now = datetime.fromisoformat(state.now_iso)
+            views = SessionViews(state.inbox, self._home_dir, now, self._tz)
+            memo = _SessionViewsMemo(state, views)
+            self._views_memo = memo
+        return memo.views
+
+    def view_entries(self, view: ProjectsView) -> tuple[ViewEntry, ...]:
+        return view_entries(view, self.home_state().projects, self.session_views())
+
+    @property
+    def home_dir(self) -> str:
+        return self._home_dir
 
     def home_steps(self, state: HomeState) -> tuple[NextStep, ...]:
         return next_steps(state)
@@ -915,7 +950,9 @@ class InboxApp(App[ExitIntent | None]):
         )
         if agent is not None:
             self.exit_with(
-                triage_handoff(agent, project, self._state.snapshot.reg["threads"], Path.home())
+                triage_handoff(
+                    agent, project, self._state.snapshot.reg["threads"], Path(self._home_dir)
+                )
             )
 
     def exit_with(self, intent: ExitIntent) -> None:
@@ -1020,7 +1057,7 @@ class InboxApp(App[ExitIntent | None]):
         )
         if agent is None:
             return
-        home = Path.home()
+        home = Path(self._home_dir)
         cwd = (group.folder if group is not None else None) or publish_all_cwd(everything, home)
         if home.is_relative_to(cwd):
             message = Text(

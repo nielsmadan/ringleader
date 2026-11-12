@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, tzinfo
+from enum import Enum
+from functools import cached_property
 from typing import Any, Literal
 
 from .. import overview, registry, resume, roundup_clock
@@ -10,10 +12,16 @@ from ..agents import source_of
 from ..revalidate import Identity
 from .views import (
     UNKNOWN,
+    DateBucket,
+    FolderGroup,
+    FolderNode,
     FolderScope,
     PeriodScope,
     TreeScope,
+    date_buckets,
+    folder_groups,
     folder_label,
+    folder_tree,
     is_unclassified,
     matches,
 )
@@ -96,6 +104,60 @@ class WokeScope:
 
 type ViewScope = ProjectScope | FolderScope | TreeScope | PeriodScope
 type TriageScope = ViewScope | RecentScope | WokeScope
+
+
+class ProjectsView(Enum):
+    REPOS = "repos"
+    FOLDERS = "folders"
+    TREE = "tree"
+    DATES = "dates"
+
+    @property
+    def label(self) -> str:
+        return self.value.capitalize()
+
+
+@dataclass(frozen=True, eq=False)
+class SessionViews:
+    inbox: tuple[dict[str, Any], ...]
+    home: str
+    now: datetime
+    tz: tzinfo
+
+    @cached_property
+    def folders(self) -> tuple[FolderGroup, ...]:
+        return folder_groups(self.inbox, self.home)
+
+    @cached_property
+    def tree(self) -> tuple[FolderNode, ...]:
+        return folder_tree(self.inbox, self.home)
+
+    @cached_property
+    def dates(self) -> tuple[DateBucket, ...]:
+        return date_buckets(self.inbox, self.now, self.tz)
+
+
+@dataclass
+class ProjectsMemory:
+    view: ProjectsView = ProjectsView.REPOS
+    toggled: dict[str, bool] = field(default_factory=dict)
+
+    def expanded(self, path: str, *, default: bool) -> bool:
+        return self.toggled.get(path, default)
+
+    def remember_expanded(self, path: str, *, expanded: bool) -> None:
+        self.toggled[path] = expanded
+
+
+@dataclass(frozen=True)
+class ViewEntry:
+    key: str
+    scope: ViewScope
+    label: str
+    pending: int
+    unclassified: int
+    oldest_mtime: str
+    newest_mtime: str
 
 
 RECENT_DAYS = 7
@@ -356,3 +418,51 @@ def scope_title(scope: TriageScope, home: str) -> str:
             return folder_label(path, home)
         case PeriodScope(label=label):
             return label
+
+
+def _entry(scope: ViewScope, group: ProjectRef | FolderGroup | DateBucket) -> ViewEntry:
+    return ViewEntry(
+        group.key,
+        scope,
+        group.label,
+        group.pending,
+        group.unclassified,
+        group.oldest_mtime,
+        group.newest_mtime,
+    )
+
+
+def view_entries(
+    view: ProjectsView, projects: tuple[ProjectRef, ...], views: SessionViews
+) -> tuple[ViewEntry, ...]:
+    match view:
+        case ProjectsView.REPOS:
+            return tuple(_entry(ProjectScope(p), p) for p in projects)
+        case ProjectsView.FOLDERS:
+            return tuple(_entry(g.scope, g) for g in views.folders)
+        case ProjectsView.DATES:
+            return tuple(_entry(b.scope, b) for b in views.dates)
+        case ProjectsView.TREE:
+            return ()
+
+
+def view_for(scope: TriageScope) -> ProjectsView:
+    match scope:
+        case FolderScope():
+            return ProjectsView.FOLDERS
+        case TreeScope():
+            return ProjectsView.TREE
+        case PeriodScope():
+            return ProjectsView.DATES
+        case ProjectScope() | RecentScope() | WokeScope():
+            return ProjectsView.REPOS
+
+
+def _same_scope(a: TriageScope, b: TriageScope) -> bool:
+    if isinstance(a, ProjectScope) and isinstance(b, ProjectScope):
+        return a.project.key == b.project.key
+    return a == b
+
+
+def next_entry(scope: TriageScope, entries: tuple[ViewEntry, ...]) -> ViewEntry | None:
+    return next((entry for entry in entries if not _same_scope(entry.scope, scope)), None)
