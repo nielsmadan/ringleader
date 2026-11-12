@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any, ClassVar
 
 from rich.text import Text
@@ -78,7 +79,7 @@ def next_project(scope: TriageScope, projects: tuple[ProjectRef, ...]) -> Projec
 
 
 def done_text(scope: TriageScope, following: ProjectRef | None) -> Text:
-    text = Text(f"{scope_title(scope)} done.\n", style="bold")
+    text = Text(f"{scope_title(scope, str(Path.home()))} done.\n", style="bold")
     if following is None:
         text.append("All caught up — escape for Home")
     else:
@@ -197,7 +198,7 @@ class TriageScreen(InboxScreen):
         self.query_one("#subtitle", Static).update(
             Text(
                 subtitle(
-                    scope_title(self.scope),
+                    scope_title(self.scope, str(Path.home())),
                     len(self._rows),
                     inbox.decided_count,
                     inbox.harvesting,

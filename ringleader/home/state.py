@@ -8,6 +8,15 @@ from typing import Any, Literal
 from .. import overview, registry, resume, roundup_clock
 from ..agents import source_of
 from ..revalidate import Identity
+from .views import (
+    UNKNOWN,
+    FolderScope,
+    PeriodScope,
+    TreeScope,
+    folder_label,
+    is_unclassified,
+    matches,
+)
 
 type StepKind = Literal["roundup", "woke", "recent", "publish", "project", "resume"]
 
@@ -85,7 +94,9 @@ class WokeScope:
     pass
 
 
-type TriageScope = ProjectScope | RecentScope | WokeScope
+type ViewScope = ProjectScope | FolderScope | TreeScope | PeriodScope
+type TriageScope = ViewScope | RecentScope | WokeScope
+
 
 RECENT_DAYS = 7
 SOON_DAYS = 7
@@ -111,15 +122,11 @@ def is_woke(thread: dict[str, Any], now_iso: str) -> bool:
     return until <= now_iso and overview.in_triage_inbox(thread, now_iso)
 
 
-def _is_unclassified(thread: dict[str, Any]) -> bool:
-    return bool(thread.get("status", "unclassified") == "unclassified")
-
-
 LABEL_PATH_PARTS = 3
 
 
 def short_path(path: str | None) -> str:
-    parts = overview.tilde(path or "(unknown)").split("/")
+    parts = overview.tilde(path or UNKNOWN).split("/")
     return "…/" + "/".join(parts[-2:]) if len(parts) > LABEL_PATH_PARTS else "/".join(parts)
 
 
@@ -136,7 +143,7 @@ def _project_ref(key: str, threads: list[dict[str, Any]]) -> ProjectRef:
         key=key,
         label=project_label(ordered[0]),
         pending=len(ordered),
-        unclassified=sum(1 for t in ordered if _is_unclassified(t)),
+        unclassified=sum(1 for t in ordered if is_unclassified(t)),
         oldest_mtime=ordered[0]["mtime"],
         newest_mtime=ordered[-1]["mtime"],
     )
@@ -325,10 +332,17 @@ def scope_rows(
             ]
         case WokeScope():
             rows = [t for t in threads if is_woke(t, now_iso)]
+        case FolderScope() | TreeScope() | PeriodScope():
+            rows = [t for t in overview.triage_inbox(threads, now_iso) if matches(scope, t)]
     return _by_mtime(rows, newest_first=False)
 
 
-def scope_title(scope: TriageScope) -> str:
+def handoff_key(scope: ViewScope, threads: list[dict[str, Any]], now_iso: str) -> str | None:
+    keys = {overview.group_key(t) for t in scope_rows(scope, threads, now_iso)}
+    return keys.pop() if len(keys) == 1 else None
+
+
+def scope_title(scope: TriageScope, home: str) -> str:
     match scope:
         case ProjectScope(project=project):
             return project.label
@@ -336,3 +350,9 @@ def scope_title(scope: TriageScope) -> str:
             return f"Last {days} days"
         case WokeScope():
             return "Woke from snooze"
+        case TreeScope(path=path, excluding=str(excluding)):
+            return f"{folder_label(path, home)} except {folder_label(excluding, home)}"
+        case FolderScope(path=path) | TreeScope(path=path):
+            return folder_label(path, home)
+        case PeriodScope(label=label):
+            return label

@@ -23,7 +23,8 @@ Textual is the package's only runtime dependency (`textual>=8`).
 | `home/jobs.py` | `JobBook`: harvest jobs and side jobs (`run_job`) in flight; `harvest_job` and its result and message types |
 | `home/prints.py` | `PrintCoalescer`: stderr print capture coalesced into toasts |
 | `home/base.py` | `InboxScreen`, `AppState`, `ScreenTarget`, `RoundupRun` |
-| `home/state.py` | pure: `build_home_state`, `next_steps`, `project_queue`, `scope_rows` |
+| `home/state.py` | pure: `build_home_state`, `next_steps`, `project_queue`, `scope_rows`, `handoff_key` |
+| `home/views.py` | pure: the folder, folder-tree and date groupings and their scopes, plus `is_unclassified` and `UNKNOWN`, which `state.py` shares |
 | `home/writer.py` | `Writer`: the single mutation queue |
 | `home/overlay.py` | pure: the overlay of identities hidden from the view |
 | `home/scan.py` | `ScanService`: at most one scan thread |
@@ -194,8 +195,8 @@ screen.
 | Screen | Keys |
 |---|---|
 | Home | `enter` runs the highlighted step or resumes the highlighted in-flight session; `tab` moves between the two lists |
-| Projects | `enter` opens a project's triage; `t` triage it with an agent |
-| Triage | `a` archive · `h` harvest and archive · `g` keep going · `s` snooze · `K` keep long-term · `d` delete · `space` mark · `*`/`A` mark all · `enter` detail (also a click) · `r` resume · `t` triage with an agent; `enter` on the done state opens the next project |
+| Projects | `tab`/`shift+tab` cycle Repos, Folders, Tree and Dates · `enter` opens the entry's triage · `t` triage it with an agent (refused when it spans several projects) · in Tree, `l`/right expand, `h`/left collapse or go to the parent |
+| Triage | `a` archive · `h` harvest and archive · `g` keep going · `s` snooze · `K` keep long-term · `d` delete · `space` mark · `*`/`A` mark all · `enter` detail (also a click) · `r` resume · `t` triage with an agent; `enter` on the done state opens the next entry of the view it came from |
 | Resume | the picker; `enter` picks, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh |
 | Roundup | `enter` run (or, when finished, plan again) · `c` stop |
 | Prune | `D` delete the listed candidates · `c` stop |
@@ -226,6 +227,41 @@ The snooze key opens a prompt that takes `3d`, `2w`, `tomorrow`, `next monday` (
 Home's next-step order is `state.next_steps`, a pure function: roundup when stale; snoozed
 sessions that woke; undecided sessions active in the last 7 days; pending harvests; the oldest
 project with a backlog not already covered; otherwise resume the most recent in-flight session.
+
+### Session views
+
+Waiting sessions group four ways. Repos is `project_queue` (git identity, falling back to the
+cwd). The other three live in `home/views.py`: each takes the triage inbox (the threads
+`overview.triage_inbox` keeps) plus the home directory, or `now` and the local timezone, and reads
+no clock, environment or file. The circus app ports these rules, and the scope and hand-off rules
+in `home/state.py` below, from the `project`, `project_key`, `mtime` and `status` fields of
+`rl inbox --json`, so a change here is a change for it too. The `unclassified` counts read the
+registry `status`; counting the JSON row's `status` gives the same number except for a legacy
+`decision: abandon`, which the JSON reports as `abandoned`.
+
+- **Folders** (`folder_groups`): one group per cwd, labelled with `~` for home and sorted by
+  label ignoring case, then by path. Sessions with no cwd form `(unknown)`, labelled
+  `Unknown folder`.
+- **Tree** (`folder_tree`): paths under home hang from a `~` root and other absolute paths from a
+  `/` root; a relative path is a root of its own and `(unknown)` is the last root. A
+  `FolderNode` counts its `own` sessions and its `total` including descendants. A node with no
+  sessions of its own and a single child merges into it (`~/wrksp`), roots included. A node's
+  `TreeScope` covers its path and every path below it (`/a/foo` never covers `/a/foobar`). Nodes
+  outside home whose path contains home (the `/` root, or `/home` above `/home/me`) carry
+  `excluding=home`, so entering them lists what their row counts, and their title says so
+  (`/ except ~`); build a scope from `FolderNode.scope`, not from the path alone.
+- **Dates** (`date_buckets`): by local calendar day of `mtime`: today and the six days before
+  it, then Monday-start weeks back to eight weeks before the current one, then calendar months.
+  A week or month the newer range overlaps ends where that range starts. Boundaries are local
+  midnights from date arithmetic, so a DST week is 7 days and an hour long. A future `mtime`
+  counts as today. Keys are `day:YYYY-MM-DD`, `week:YYYY-MM-DD` (its Monday) and `month:YYYY-MM`,
+  independent of the labels. Labels come from a formatter argument; the default,
+  `iso_period_label`, prints the same dates.
+
+`matches(scope, thread)` is the rule for the three scopes. `scope_rows` lists any scope from the
+triage inbox, oldest first. `handoff_key` returns the one `group_key` a scope's rows share, or
+`None` when they span several projects (or none), since an agent hand-off works on one project:
+`t` then hands that whole project to the agent, not just the folder or period.
 
 ### Roundup flow
 
@@ -282,7 +318,8 @@ second by `home/prints.py::PrintCoalescer`.
 - `home/app.py` — `InboxApp`, `decide`, `harvest`, `go`, `_leave`.
 - `home/roundup_run.py` — `RoundupDriver`, behind `InboxApp.start_roundup`/`cancel_roundup`.
 - `home/jobs.py` — `JobBook`, behind `InboxApp.harvest` and `run_job`.
-- `home/state.py` — `next_steps`, `project_queue`, `scope_rows`.
+- `home/state.py` — `next_steps`, `project_queue`, `scope_rows`, `handoff_key`.
+- `home/views.py` — `folder_groups`, `folder_tree`, `date_buckets`, `matches`.
 - `home/writer.py`, `home/overlay.py` — the mutation queue and the view.
 - `cli.py` — `_opens_inbox`, the bare-`rl` rule.
 

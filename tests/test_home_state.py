@@ -163,7 +163,8 @@ def test_scope_rows_list_each_scope_oldest_first():
 
 def test_scope_titles():
     a = project_queue([_thread("a", days=2)], NOW)[0]
-    assert [scope_title(s) for s in (ProjectScope(a), RecentScope(7), WokeScope())] == [
+    scopes = (ProjectScope(a), RecentScope(7), WokeScope())
+    assert [scope_title(s, "/home/me") for s in scopes] == [
         "/w/a",
         "Last 7 days",
         "Woke from snooze",
