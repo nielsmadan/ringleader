@@ -84,7 +84,7 @@ rl install             # skills, session-end hook, statusline capture
   → [Starting a fresh session](docs/user/cli.md#starting-a-fresh-session)
 - **Resume** — `rl resume` is one picker over every agent's sessions, filtered as you type.
   Pick one to resume it or fork a new session with that agent, in the right directory,
-  including a fork into a separate worktree with `--worktree`,
+  skipping the choice with `--fork` or forking into a separate worktree with `--worktree`,
   or hand it to a *different* agent via a native conversion (falling back to a Markdown
   transcript of the old session only if that's refused, or if you pass `--markdown`).
   → [Resuming sessions](docs/features/resuming-sessions.md)
@@ -129,6 +129,7 @@ rl start <agent>                    # fresh conversation here: claude, codex, dr
 rl start <agent> --worktree         # fresh conversation in a separate checkout
 rl resume [<query>]                 # TUI to re-enter a session, in its agent or another
 rl resume --last                    # re-enter the most recent session here, no picker
+rl resume --last --fork             # fork it into a new session with its own agent
 rl resume --last --worktree         # fork it into a separate checkout with its own agent
 rl inbox [--read-only]              # the daily home TUI; bare `rl` in a terminal opens it
 rl roundup [--enrich all|recent|none] [--preview] [--yes] # refresh + sweep + prune (deletes) + enrich, plan first

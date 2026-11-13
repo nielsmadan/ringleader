@@ -1613,6 +1613,62 @@ def test_picker_fork_refuses_missing_launch_requirements(tmp_path, problem, caps
     assert runner.calls == []
 
 
+def test_last_fork_forks_the_most_recent_session_without_asking(tmp_path, monkeypatch):
+    older = _session(tmp_path, "aaa111", mtime="2026-09-01T00:00:00+00:00")
+    newer = _session(tmp_path, "bbb222", mtime="2026-09-20T00:00:00+00:00")
+    reg = _registry(tmp_path, older, newer)
+    runner, picker = Runner(), Picker()
+    monkeypatch.chdir(tmp_path / "work" / "api")
+    monkeypatch.setattr("builtins.input", lambda _: pytest.fail("fork must not ask to reopen"))
+
+    rc = _run(
+        ["--last", "--fork", "--registry", reg],
+        runner=runner,
+        picker=picker,
+        presence=lambda: frozenset({("claude", "bbb222")}),
+    )
+
+    assert rc == 0
+    assert runner.argv == ("claude", "--resume", "bbb222", "--fork-session")
+    assert picker.calls == []
+
+
+def test_fork_flag_forks_whatever_the_picker_returns(tmp_path):
+    thread = _session(tmp_path, "aaa111", source="codex")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+
+    rc = _run(["--fork", "--registry", reg], runner=runner, picker=Picker(Choice(thread, "codex")))
+
+    assert rc == 0
+    assert runner.argv == FORK_ARGV["codex"]
+
+
+def test_fork_flag_dry_run_reports_the_fork_command(tmp_path, capsys):
+    thread = _session(tmp_path, "aaa111", source="pi")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+
+    assert _run(["aaa111", "--fork", "--dry-run", "--registry", reg], runner=runner) == 0
+    assert "argv: " + " ".join(FORK_ARGV["pi"]) in capsys.readouterr().out
+    assert runner.calls == []
+
+
+@pytest.mark.parametrize("conflict", [["--to", "pi"], ["--markdown"]])
+def test_fork_incompatible_flags_refuse_before_picker(conflict, capsys):
+    picker = Picker()
+    assert _run(["--fork", *conflict], picker=picker) == 1
+    assert "--fork forks in the original agent" in capsys.readouterr().err
+    assert picker.calls == []
+
+
+def test_fork_and_worktree_are_mutually_exclusive(capsys):
+    with pytest.raises(SystemExit) as exit_:
+        _run(["--fork", "--worktree"], picker=Picker())
+    assert exit_.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
 def test_a_qualified_archived_id_names_the_command_that_brings_it_back(tmp_path, capsys):
     reg = _registry(tmp_path, archived=[{"sessionId": "zzz999"}])
     runner, picker, rescan = Runner(), Picker(), Rescanner()

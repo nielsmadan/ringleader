@@ -44,6 +44,7 @@ rl resume auth             # picker, pre-filtered to "auth"
 rl resume 3f2a91c7 --to codex   # hand it to a different agent: native conversion, consented fallback
 rl resume 3f2a91c7 --to codex --markdown   # skip native conversion, go straight to the Markdown handoff
 rl resume 3f2a91c7 --dry-run    # print the directory and argv, launch nothing
+rl resume 3f2a91c7 --fork       # fork into a new session with its own agent, same directory
 rl resume 3f2a91c7 --worktree   # fork into a separate checkout with its own agent
 ```
 
@@ -56,7 +57,9 @@ One that matches nothing earns one scan, then refuses without suggesting `--recu
 
 `rl resume --last` takes the newest session in scope and re-enters it, with no picker and no
 prompt. It obeys the scope flags, so `--last --recursive` is the newest anywhere beneath this
-directory and `--last --all` the newest on the machine.
+directory and `--last --all` the newest on the machine. `--last --fork` forks that session
+into a new one in its own agent instead, and `--last --worktree` forks it into a separate
+checkout.
 
 Each agent already has its own version of this — `claude -c`, `codex resume --last`,
 `droid resume --last`, `opencode -c`, `pi -c`. What none of them can do is cross the agent
@@ -121,7 +124,8 @@ source or a reused target is running before proceeding.
 
 **Fork in the same agent** — the second entry creates a fresh session continuing from the
 source's current conversation state. The original is preserved, and the workspace stays the
-same. Each selection forks anew. This uses the agent's native command:
+same. Each selection forks anew, and `--fork` takes this entry without showing the menu. This
+uses the agent's native command:
 
 | source | command |
 |---|---|
@@ -132,7 +136,7 @@ same. Each selection forks anew. This uses the agent's native command:
 | `pi` | `pi --fork <id>` |
 
 Cursor CLI has no fork verb, so a Cursor session offers neither a fork nor a worktree row, and
-`rl resume --worktree` refuses one. `rl start cursor --worktree` is refused too.
+`rl resume --fork` and `--worktree` refuse one. `rl start cursor --worktree` is refused too.
 
 Pi's CLI fork copies the session tree into a fresh file; its interactive `/fork` instead asks
 for an earlier prompt. Native metadata follows each agent's rules. Forking creates no git

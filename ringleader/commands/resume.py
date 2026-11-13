@@ -153,13 +153,19 @@ def _parser() -> argparse.ArgumentParser:
         "asking, across every agent.",
     )
     ap.add_argument("query", nargs="?", default="", help="session id, id prefix, or picker filter")
-    ap.add_argument(
+    action = ap.add_mutually_exclusive_group()
+    action.add_argument(
+        "--fork",
+        action="store_true",
+        help="fork the conversation into a new session in its own agent, in the same directory",
+    )
+    action.add_argument(
         "--worktree",
         action="store_true",
         help="fork the conversation into a worktree managed by its agent (persistent Git checkout for Pi)",
     )
     ap.add_argument(
-        "--last", action="store_true", help="resume the most recent session in scope, no picker"
+        "--last", action="store_true", help="take the most recent session in scope, no picker"
     )
     ap.add_argument(
         "--to",
@@ -599,9 +605,10 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
 def _resolve(
     args: argparse.Namespace, picker: Picker, refreshers: tuple[ScopedRefresher, Refresher]
 ) -> _Plan | None:
-    if args.worktree and (args.to or args.markdown):
+    forking = "--worktree" if args.worktree else "--fork" if args.fork else None
+    if forking and (args.to or args.markdown):
         raise _Abort(
-            "--worktree forks in the original agent; it cannot be combined with --to or --markdown"
+            f"{forking} forks in the original agent; it cannot be combined with --to or --markdown"
         )
     requested = _requested_target(args.to)
     if args.last:
@@ -613,8 +620,9 @@ def _resolve(
     pick = _choose(args, reg, cwd, picker, refreshers, requested)
     if pick is None:
         return None
-    if args.worktree:
-        pick = replace(pick, action="worktree", target=source_of(pick.thread))
+    if args.worktree or args.fork:
+        action: SessionAction = "worktree" if args.worktree else "fork"
+        pick = replace(pick, action=action, target=source_of(pick.thread))
     return _plan(pick, requested or pick.target or source_of(pick.thread))
 
 
@@ -742,7 +750,8 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
             or partial(
                 _run_picker,
                 options=_PickerOptions(
-                    persist=not args.dry_run, action="worktree" if args.worktree else None
+                    persist=not args.dry_run,
+                    action="worktree" if args.worktree else "fork" if args.fork else None,
                 ),
             ),
             (scoper or _scan_scope, refresher or _scan),
