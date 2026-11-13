@@ -594,3 +594,18 @@ def test_the_agent_and_source_names_of_claude_code_map_onto_each_other():
     assert resume.source_name("claude") == "claude-code"
     for source in resume.launchable_agents():
         assert resume.source_name(resume.agent_name(source)) == source
+
+
+@pytest.mark.parametrize(
+    ("name", "taken", "expected"),
+    [
+        ("foo", [], "foo-fork-1"),
+        ("foo-fork-1", [], "foo-fork-2"),
+        ("foo", ["foo-fork-1", "foo-fork-2"], "foo-fork-3"),
+        ("foo-fork-1", ["foo-fork-2", "foo-fork-4"], "foo-fork-3"),
+        ("foo-fork-9", [], "foo-fork-10"),
+        ("my-fork-idea", [], "my-fork-idea-fork-1"),
+    ],
+)
+def test_fork_name_counts_up_from_the_name_it_forks(name, taken, expected):
+    assert resume.fork_name(name, taken) == expected

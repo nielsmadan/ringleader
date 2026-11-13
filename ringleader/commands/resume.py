@@ -63,6 +63,7 @@ class _Pick:
     target: str | None
     confirmed: bool = False
     action: SessionAction = "resume"
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -348,11 +349,11 @@ def _choose(
     scoper, refresher = refreshers
     if args.last:
         thread, reg = _for_last(args, scope, cwd, scoper, refresher)
-        return _Pick(thread, _eligible(reg), None)
+        return _direct(args, thread, reg)
     if args.query:
         direct, reg = _for_query(args, reg, scope, cwd, refresher)
         if direct is not None:
-            return _Pick(direct, _eligible(reg), None)
+            return _direct(args, direct, reg)
     choice = picker(args.registry, cwd, scope, args.query, target)
     if choice is None:
         return None
@@ -363,7 +364,14 @@ def _choose(
         choice.target,
         confirmed=choice.confirmed,
         action=choice.action,
+        name=choice.name,
     )
+
+
+def _direct(args: argparse.Namespace, thread: dict[str, Any], reg: dict[str, Any]) -> _Pick:
+    named = args.fork and resume.names_forks(source_of(thread))
+    name = resume.suggested_fork_name(thread, reg.get("threads") or []) if named else None
+    return _Pick(thread, _eligible(reg), None, name=name)
 
 
 def _launch_dir(thread: dict[str, Any], threads: Sequence[dict[str, Any]]) -> str:
@@ -398,6 +406,15 @@ def _prompt(thread: dict[str, Any], path: Path) -> str:
     )
 
 
+def _own_agent_argv(src: SessionLaunchingSource, pick: _Pick, session_id: str) -> tuple[str, ...]:
+    if pick.action == "resume":
+        return src.resume_argv(session_id)
+    namer = resume.fork_namer(source_of(pick.thread))
+    if pick.action == "fork" and pick.name and namer is not None:
+        return namer.named_fork_argv(session_id, pick.name)
+    return src.fork_argv(session_id)
+
+
 def _plan(pick: _Pick, target_source: str) -> _Plan:
     thread = pick.thread
     session_id = str(thread["sessionId"])
@@ -412,7 +429,7 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
     if target_source == source:
         if pick.action != "resume" and not resume.forks_sessions(source):
             raise _Abort(f"{resume.agent_name(source)} cannot fork a session; resume it instead")
-        argv = src.fork_argv(session_id) if pick.action != "resume" else src.resume_argv(session_id)
+        argv = _own_agent_argv(src, pick, session_id)
         return _Plan(thread, argv, cwd, None, pick.confirmed, target_source, pick.action)
     if pick.action != "resume":
         raise _Abort("native fork requires the session's original agent")

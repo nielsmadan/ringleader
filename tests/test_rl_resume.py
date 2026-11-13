@@ -1629,8 +1629,46 @@ def test_last_fork_forks_the_most_recent_session_without_asking(tmp_path, monkey
     )
 
     assert rc == 0
-    assert runner.argv == ("claude", "--resume", "bbb222", "--fork-session")
+    assert runner.argv == (
+        "claude",
+        "--resume",
+        "bbb222",
+        "--fork-session",
+        "--name",
+        "session bbb222-fork-1",
+    )
     assert picker.calls == []
+
+
+def test_fork_numbers_past_the_forks_the_registry_already_holds(tmp_path):
+    source = _session(tmp_path, "aaa111", source="pi")
+    source["title"] = "foo-fork-1"
+    sibling = _session(tmp_path, "bbb222", source="pi")
+    sibling["title"] = "foo-fork-2"
+    reg = _registry(tmp_path, source, sibling)
+    runner = Runner()
+
+    assert _run(["aaa111", "--fork", "--registry", reg], runner=runner) == 0
+    assert runner.argv == ("pi", "--fork", "aaa111", "--name", "foo-fork-3")
+
+
+def test_fork_of_an_agent_that_cannot_name_one_launches_unnamed(tmp_path):
+    thread = _session(tmp_path, "aaa111", source="codex")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+
+    assert _run(["aaa111", "--fork", "--registry", reg], runner=runner) == 0
+    assert runner.argv == FORK_ARGV["codex"]
+
+
+def test_a_fork_named_in_the_picker_launches_under_that_name(tmp_path):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    picker = Picker(Choice(thread, "claude-code", action="fork", name="spike"))
+
+    assert _run(["--registry", reg], runner=runner, picker=picker) == 0
+    assert runner.argv == ("claude", "--resume", "aaa111", "--fork-session", "--name", "spike")
 
 
 def test_fork_flag_forks_whatever_the_picker_returns(tmp_path):
@@ -1650,7 +1688,7 @@ def test_fork_flag_dry_run_reports_the_fork_command(tmp_path, capsys):
     runner = Runner()
 
     assert _run(["aaa111", "--fork", "--dry-run", "--registry", reg], runner=runner) == 0
-    assert "argv: " + " ".join(FORK_ARGV["pi"]) in capsys.readouterr().out
+    assert "argv: pi --fork aaa111 --name 'session aaa111-fork-1'" in capsys.readouterr().out
     assert runner.calls == []
 
 

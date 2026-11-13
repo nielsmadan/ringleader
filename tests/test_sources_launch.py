@@ -1,6 +1,6 @@
 import pytest
-from ringleader import scanner
-from ringleader.sources.base import SessionLaunchingSource
+from ringleader import resume, scanner
+from ringleader.sources.base import ForkNamingSource, SessionLaunchingSource
 
 RESUME = {
     "claude-code": ("claude", "--resume", "SID"),
@@ -100,6 +100,24 @@ def test_the_fork_capability_matches_the_fork_table(name):
     assert scanner.supports(_sources()[name], "forks_sessions", SessionLaunchingSource) == (
         name in FORK
     )
+
+
+NAMED_FORK = {
+    "claude-code": ("claude", "--resume", "SID", "--fork-session", "--name", "foo-fork-1"),
+    "pi": ("pi", "--fork", "SID", "--name", "foo-fork-1"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(NAMED_FORK))
+def test_named_fork_argv_passes_the_name_to_the_agent(name):
+    source = _sources()[name]
+    assert isinstance(source, ForkNamingSource)
+    assert source.named_fork_argv("SID", "foo-fork-1") == NAMED_FORK[name]
+
+
+@pytest.mark.parametrize("name", sorted(RESUME))
+def test_the_fork_naming_capability_matches_the_named_fork_table(name):
+    assert resume.names_forks(name) == (name in NAMED_FORK)
 
 
 def test_cursor_has_no_fork_verb():

@@ -1162,10 +1162,59 @@ async def test_fork_choice_creates_a_new_session_without_reopening_confirmation(
         await pilot.pause()
         await pilot.press("down", "enter")
         await pilot.pause()
+        if source in NAMES_FORKS:
+            await pilot.press("enter")
+            await pilot.pause()
     assert app.return_value.thread["sessionId"] == "s0"
     assert app.return_value.target == source
     assert app.return_value.action == "fork"
     assert app.return_value.confirmed is False
+
+
+NAMES_FORKS = {"claude-code", "pi"}
+
+
+async def _fork_with_name(tmp_path, threads, *keys):
+    app = _app(tmp_path, threads)
+    async with app.run_test() as pilot:
+        await _settle(app, pilot)
+        await pilot.press("enter")
+        await pilot.pause()
+        await pilot.press("down", "enter")
+        await pilot.pause()
+        field = app.screen.query_one("#fork-name-input", Input)
+        suggested = field.value
+        await pilot.press(*keys)
+        await pilot.pause()
+    return suggested, app.return_value
+
+
+async def test_naming_a_fork_suggests_the_next_free_number(tmp_path):
+    threads = [
+        _thread("s0", title="foo-fork-1", mtime="2026-03-03"),
+        _thread("s1", title="foo-fork-2", mtime="2026-01-01"),
+    ]
+    suggested, choice = await _fork_with_name(tmp_path, threads, "enter")
+    assert suggested == "foo-fork-3"
+    assert choice.name == "foo-fork-3"
+
+
+async def test_a_fork_takes_the_name_typed_over_the_suggestion(tmp_path):
+    threads = [_thread("s0", title="foo")]
+    suggested, choice = await _fork_with_name(tmp_path, threads, "ctrl+u", *"spike", "enter")
+    assert suggested == "foo-fork-1"
+    assert choice.name == "spike"
+
+
+async def test_clearing_the_fork_name_forks_without_one(tmp_path):
+    _, choice = await _fork_with_name(tmp_path, [_thread("s0", title="foo")], "ctrl+u", "enter")
+    assert choice.action == "fork"
+    assert choice.name is None
+
+
+async def test_escape_on_the_fork_name_cancels_the_fork(tmp_path):
+    _, choice = await _fork_with_name(tmp_path, [_thread("s0", title="foo")], "escape")
+    assert choice is None
 
 
 class _Host(App[None]):

@@ -59,6 +59,7 @@ class ClaudeCodeSource:
                 "relocates_workspace",
                 "launches_sessions",
                 "forks_sessions",
+                "names_forks",
             }
         )
     )
@@ -75,6 +76,9 @@ class ClaudeCodeSource:
 
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("claude", "--resume", session_id, "--fork-session")
+
+    def named_fork_argv(self, session_id: str, name: str) -> tuple[str, ...]:
+        return (*self.fork_argv(session_id), "--name", name)
 
     def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
         if prompt is None:

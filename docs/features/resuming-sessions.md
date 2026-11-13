@@ -138,6 +138,15 @@ uses the agent's native command:
 Cursor CLI has no fork verb, so a Cursor session offers neither a fork nor a worktree row, and
 `rl resume --fork` and `--worktree` refuse one. `rl start cursor --worktree` is refused too.
 
+**Naming a fork.** Claude Code and Pi take a name on the fork command (`--name`), so their
+forks are named as they are created. The picker asks for the name with a suggestion already
+filled in, and `rl resume --fork` uses the suggestion without asking. The suggestion is the
+source's name with a counter: `foo` forks to `foo-fork-1`, `foo-fork-1` to `foo-fork-2`, and a
+number another session already holds is skipped. Clearing the field forks without a name;
+escape cancels the fork. The agent writes the name into the fork's own transcript, so it
+reaches ringleader on the next scan like any other rename. Codex, Droid and OpenCode have no
+name option on their fork command, so their forks stay unnamed.
+
 Pi's CLI fork copies the session tree into a fresh file; its interactive `/fork` instead asks
 for an earlier prompt. Native metadata follows each agent's rules. Forking creates no git
 worktree or filesystem snapshot, and a running source can advance while the agent reads it.

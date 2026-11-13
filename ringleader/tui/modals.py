@@ -215,6 +215,47 @@ class AgentPickModal(ChoiceModal[str]):
         super().__init__(title, [ChoiceOption(agent_name(agent), agent) for agent in agents])
 
 
+class ForkNameModal(ModalScreen[str | None]):
+    """Name a fork before it launches. Dismisses with the name, an empty string for an
+    unnamed fork, or None to cancel the fork."""
+
+    BINDINGS: ClassVar[list[BindingType]] = [
+        Binding("escape", "cancel", "cancel", show=False),
+    ]
+
+    DEFAULT_CSS = f"""
+    ForkNameModal {{
+        align: center middle;
+    }}
+    #fork-name-box {{{_BOX_CSS}}}
+    #fork-name-hint {{
+        color: $text-muted;
+    }}
+    """
+
+    def __init__(self, suggested: str) -> None:
+        super().__init__()
+        self._suggested = suggested
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(Text("name the fork"), id="fork-name-title"),
+            Input(value=self._suggested, id="fork-name-input"),
+            Label(Text("enter fork · clear for no name · escape cancel"), id="fork-name-hint"),
+            id="fork-name-box",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one("#fork-name-input", Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        self.dismiss(" ".join(event.value.split()))
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)
+
+
 class SnoozeModal(ModalScreen[str | None]):
     BINDINGS: ClassVar[list[BindingType]] = [
         Binding("escape", "cancel", "cancel", show=False),

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from dataclasses import field as dataclass_field
 from datetime import UTC, datetime
@@ -25,7 +25,7 @@ from ..presence import PresenceClient
 from ..resume import Haystack, Scope, SessionAction, agent_name, launchable_agents
 from ..sources.base import WorkspaceRelocatingSource
 from ..tui.keys import nav_bindings
-from ..tui.modals import AgentChoice, AgentModal, ConfirmModal, agent_row_text
+from ..tui.modals import AgentChoice, AgentModal, ConfirmModal, ForkNameModal, agent_row_text
 from ..tui.types import Clock, Presence, Refresher
 
 __all__ = [
@@ -62,6 +62,7 @@ class Choice:
     threads: tuple[dict[str, Any], ...] = ()
     confirmed: bool = False
     action: SessionAction = "resume"
+    name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -152,13 +153,14 @@ def row_text(
     return text
 
 
-async def ask_resume_choice(
+async def ask_resume_choice(  # noqa: PLR0913 -- known is the picker's registry before a scan
     screen: Screen[Any],
     thread: dict[str, Any],
     *,
     target: str | None,
     running: bool,
     threads: tuple[dict[str, Any], ...],
+    known: Sequence[dict[str, Any]] = (),
     action: SessionAction | None = None,
 ) -> Choice | None:
     choice = (
@@ -178,12 +180,19 @@ async def ask_resume_choice(
         confirmed = await screen.app.push_screen_wait(ConfirmModal(message))
         if not confirmed:
             return None
+    name = None
+    if choice.action == "fork" and resume.names_forks(choice.target):
+        suggested = resume.suggested_fork_name(thread, known or threads)
+        name = await screen.app.push_screen_wait(ForkNameModal(suggested))
+        if name is None:
+            return None
     return Choice(
         thread=thread,
         target=choice.target,
         action=choice.action,
         threads=threads,
         confirmed=confirmed,
+        name=name or None,
     )
 
 
@@ -581,6 +590,7 @@ class PickerScreen(Screen[Choice | None]):
             target=self._target,
             running=self._is_running(thread),
             threads=threads,
+            known=cast(list[dict[str, Any]], self._reg.get("threads") or []),
             action=self._requested_action,
         )
         if choice is not None and self._alive():

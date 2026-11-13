@@ -122,7 +122,13 @@ class PiSource:
     name: str = "pi"
     capabilities: frozenset[str] = field(
         default_factory=lambda: frozenset(
-            {"applies_names", "filesystem_lifecycle", "launches_sessions", "forks_sessions"}
+            {
+                "applies_names",
+                "filesystem_lifecycle",
+                "launches_sessions",
+                "forks_sessions",
+                "names_forks",
+            }
         )
     )
 
@@ -138,6 +144,9 @@ class PiSource:
 
     def fork_argv(self, session_id: str) -> tuple[str, ...]:
         return ("pi", "--fork", session_id)
+
+    def named_fork_argv(self, session_id: str, name: str) -> tuple[str, ...]:
+        return (*self.fork_argv(session_id), "--name", name)
 
     def launch_argv(self, prompt: str | None = None) -> tuple[str, ...]:
         if prompt is None:

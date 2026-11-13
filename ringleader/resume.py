@@ -1,17 +1,23 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
 from functools import cache
-from itertools import pairwise
+from itertools import count, pairwise
 from pathlib import Path
 from typing import Any, Literal, cast
 
 from . import namefilter, overview, scanner, search
 from .agents import canonical_agent, display_agent, source_of
 from .search import BLURB_FIELDS
-from .sources.base import SessionLaunchingSource, WorkspaceRelocatingSource, in_workspace
+from .sources.base import (
+    ForkNamingSource,
+    SessionLaunchingSource,
+    WorkspaceRelocatingSource,
+    in_workspace,
+)
 
 SessionAction = Literal["resume", "fork", "worktree"]
 
@@ -283,6 +289,32 @@ def launchable_agents() -> tuple[str, ...]:
 
 def forks_sessions(name: str) -> bool:
     return scanner.supports(scanner.source_by_name(name), "forks_sessions", SessionLaunchingSource)
+
+
+def fork_namer(name: str) -> ForkNamingSource | None:
+    src = scanner.source_by_name(name)
+    named = scanner.supports(src, "names_forks", ForkNamingSource)
+    return src if isinstance(src, ForkNamingSource) and named and forks_sessions(name) else None
+
+
+def names_forks(name: str) -> bool:
+    return fork_namer(name) is not None
+
+
+_FORK_SUFFIX = re.compile(r"(?P<stem>.*)-fork-(?P<number>\d+)")
+
+
+def fork_name(name: str, taken: Iterable[str]) -> str:
+    """`name-fork-1`, or the next number up when `name` is itself a numbered fork,
+    skipping any number another session already holds."""
+    match = _FORK_SUFFIX.fullmatch(name)
+    stem, start = (match["stem"], int(match["number"]) + 1) if match else (name, 1)
+    used = frozenset(taken)
+    return next(f"{stem}-fork-{n}" for n in count(start) if f"{stem}-fork-{n}" not in used)
+
+
+def suggested_fork_name(thread: dict[str, Any], threads: Iterable[dict[str, Any]]) -> str:
+    return fork_name(label(thread), (label(t) for t in threads))
 
 
 @cache

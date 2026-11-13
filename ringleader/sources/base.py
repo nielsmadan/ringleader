@@ -307,6 +307,14 @@ class SessionLaunchingSource(Source, Protocol):
 
 
 @runtime_checkable
+class ForkNamingSource(SessionLaunchingSource, Protocol):
+    """A source whose agent names a fork as it creates it, writing the name into the
+    fork's own transcript, where the next scan reads it like any other rename."""
+
+    def named_fork_argv(self, session_id: str, name: str) -> tuple[str, ...]: ...
+
+
+@runtime_checkable
 class PickerShowingSource(Source, Protocol):
     """The inverse of `PickerHidingSource`: restore an entry the tool previously
     hid, so a session put back on disk becomes resumable again. `file_path` is the

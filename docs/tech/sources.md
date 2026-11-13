@@ -83,6 +83,7 @@ Each is `@runtime_checkable`. Protocols with a named capability require both the
 | `ScopedDiscoverySource` | `discovers_scoped` | `discover_scoped()` — one workspace's sessions plus the registry's known in-scope files, changed since a time, without discovering everything |
 | `SessionLaunchingSource` | `launches_sessions` | `resume_argv()`, `fork_argv()`, `launch_argv()` |
 | `SessionLaunchingSource` | `forks_sessions` | the same protocol; the string alone says `fork_argv()` works |
+| `ForkNamingSource` | `names_forks` | `named_fork_argv()` — a fork the agent names as it creates it; only with `forks_sessions` |
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
@@ -133,7 +134,10 @@ All return argv whose first element is the binary, and none carries a directory 
 resolves a session id relative to the directory it is launched in, so the caller chdirs first and a path in argv would be a second, conflicting answer.
 All six sources opt in, including OpenCode, whose read-only store does not stop its CLI being
 launched. `forks_sessions` is separate because Cursor has no fork verb: its `fork_argv()` raises,
-the resume picker offers no fork or worktree row for it, and `rl resume` refuses one. `worktrees.py` composes worktree flags and preparation around these argv builders;
+the resume picker offers no fork or worktree row for it, and `rl resume` refuses one.
+`names_forks` marks an agent whose fork command takes a name (Claude Code and Pi pass
+`--name`); the picker's naming step and `rl resume --fork`'s numbered name check it through
+`resume.names_forks()` and build argv with `named_fork_argv()`, never by agent name. `worktrees.py` composes worktree flags and preparation around these argv builders;
 [resume and fresh starts](resume.md) describes the shared launch boundary.
 
 All three index writers (`hide_from_picker`, `show_in_picker`, `rebind_workspace`) return an

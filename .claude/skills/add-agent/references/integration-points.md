@@ -35,6 +35,9 @@ The core. See `docs/tech/sources.md` for the protocol and every capability.
   - `launches_sessions`: `resume_argv`, `fork_argv`, `launch_argv`. No directory in argv.
   - `forks_sessions`: only with a native fork verb. Without it, `fork_argv` raises and the
     picker offers no fork or worktree row (Cursor).
+  - `names_forks`: the fork command accepts a session name (`ForkNamingSource.named_fork_argv`).
+    Without it, forks launch unnamed and the picker skips the naming step (Codex, Droid,
+    OpenCode).
   - `filesystem_lifecycle`: sessions are movable files, so archive, delete and prune apply.
     Leave it off for a database the agent owns (OpenCode).
   - `companion_files`: sidecars that must travel with the transcript. `companion_destination`
