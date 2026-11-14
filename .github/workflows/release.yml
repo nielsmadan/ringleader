@@ -30,7 +30,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.sha }}
-      - uses: nielsmadan/curtaincall@v1.2.0
+      - uses: nielsmadan/curtaincall@v1.3.0
       - name: Validate the annotated tag and its ancestry
         id: identity
         working-directory: .
@@ -92,7 +92,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           ref: ${{ github.sha }}
-      - uses: nielsmadan/curtaincall@v1.2.0
+      - uses: nielsmadan/curtaincall@v1.3.0
       - name: Revalidate the release commit
         env:
           RELEASE_COMMIT: ${{ needs.build.outputs.release-commit }}

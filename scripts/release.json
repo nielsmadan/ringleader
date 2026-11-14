@@ -4,6 +4,7 @@
   "workflow": "release.yml",
   "branch": "main",
   "initial_version": "0.2.0",
+  "sign": true,
   "tag_prefix": "v",
   "tools": ["git", "uv", "uvx", "just"],
   "checks": [["just", "check"]],
