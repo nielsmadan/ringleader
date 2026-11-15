@@ -1,10 +1,21 @@
 from datetime import UTC, datetime
 
-from ringleader.tui.modals import AgentPickModal, ChoiceModal, ChoiceOption, SnoozeModal
+import pytest
+from rich.text import Text
+from ringleader.tui.modals import (
+    AgentChoice,
+    AgentModal,
+    AgentPickModal,
+    ChoiceModal,
+    ChoiceOption,
+    ConfirmModal,
+    ForkNameModal,
+    SnoozeModal,
+)
 from ringleader.tui.snapshot import screen_text
 from textual.app import App, ComposeResult
 from textual.screen import ModalScreen
-from textual.widgets import Label, OptionList
+from textual.widgets import Label, ListView, OptionList
 
 from tui_helpers import drawn_text, until
 
@@ -46,6 +57,70 @@ async def _run(modal, *keys):
         await pilot.press(*keys)
         await until(pilot, lambda: app.result is not UNSET)
     return app.result
+
+
+DIALOGS = [
+    pytest.param(lambda: AgentModal({"source": "codex"}), id="resume-agent"),
+    pytest.param(_choices, id="choice"),
+    pytest.param(lambda: AgentPickModal("Which agent?", ["claude-code", "codex"]), id="agent"),
+    pytest.param(lambda: ConfirmModal(Text("Continue? [y/n]")), id="confirm"),
+    pytest.param(lambda: ForkNameModal("new fork"), id="fork-name"),
+    pytest.param(lambda: SnoozeModal(lambda: NOW), id="snooze"),
+]
+
+
+@pytest.mark.parametrize("make_modal", DIALOGS)
+async def test_dialog_fits_its_content_and_stays_centered_when_resized(make_modal):
+    modal = make_modal()
+    app = Host(modal)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        box = modal.query_one("Grid")
+        height = box.region.height
+        children = [child for child in box.children if child.display]
+        assert height == box.styles.gutter.height + sum(
+            child.outer_size.height for child in children
+        ) + box.styles.grid_gutter_vertical * (len(children) - 1)
+        assert 0 < box.region.y < box.region.bottom < app.size.height
+        assert abs(box.region.x * 2 + box.region.width - app.size.width) <= 1
+        assert abs(box.region.y * 2 + height - app.size.height) <= 1
+
+        await pilot.resize_terminal(120, 60)
+        await pilot.pause()
+        assert box.region.height == height
+        assert abs(box.region.x * 2 + box.region.width - app.size.width) <= 1
+        assert abs(box.region.y * 2 + height - app.size.height) <= 1
+
+
+@pytest.mark.parametrize("make_modal", DIALOGS)
+async def test_dialog_stays_within_a_small_terminal(make_modal):
+    modal = make_modal()
+    app = Host(modal)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.pause()
+        box = modal.query_one("Grid")
+        assert app.screen.region.contains_region(box.region)
+        await pilot.press("escape")
+        await until(pilot, lambda: app.result is not UNSET)
+
+
+async def test_resume_agent_scrolls_to_the_last_choice_in_a_short_terminal(monkeypatch):
+    agents = ("claude-code", "codex", "cursor", "droid", "opencode", "pi")
+    monkeypatch.setattr("ringleader.tui.modals.launchable_agents", lambda: agents)
+    modal = AgentModal({"source": "codex"})
+    app = Host(modal)
+    async with app.run_test(size=(40, 10)) as pilot:
+        await pilot.pause()
+        await pilot.press(*(["down"] * (len(agents) + 1)))
+        await pilot.pause()
+        options = modal.query_one(ListView)
+        assert options.highlighted_child is not None
+        assert options.scroll_y > 0
+        assert options.scrollable_content_region.contains_region(options.highlighted_child.region)
+        assert modal.query_one("Grid").scrollable_content_region.contains_region(options.region)
+        await pilot.press("enter")
+        await until(pilot, lambda: app.result is not UNSET)
+    assert app.result == AgentChoice("pi")
 
 
 async def test_choice_modal_returns_the_highlighted_value_on_enter():

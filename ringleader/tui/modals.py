@@ -22,7 +22,10 @@ _BOX_CSS = """
     grid-gutter: 1;
     padding: 1 2;
     width: 60;
+    max-width: 100%;
     height: auto;
+    max-height: 100%;
+    overflow-y: auto;
     border: thick $accent;
     background: $surface;
 """
@@ -55,7 +58,13 @@ class AgentModal(ModalScreen[AgentChoice | None]):
     AgentModal {{
         align: center middle;
     }}
-    #agent-box {{{_BOX_CSS}}}
+    #agent-box {{{_BOX_CSS}
+        grid-rows: auto 1fr;
+    }}
+    #agents {{
+        height: auto;
+        max-height: 100%;
+    }}
     """
 
     def __init__(self, thread: dict[str, Any]) -> None:

@@ -146,8 +146,9 @@ otherwise both dismiss the screen.
 `AgentChoice`, `agent_row_text`, `AgentModal` and `ConfirmModal` live in `tui/modals.py` (and are
 re-exported from `picker/app.py`) beside the other shared modals: `ChoiceModal[T]` (enter, digits
 `1`–`9`, escape), `SnoozeModal(now)` (a `fuzzytime.parse_duration` input with an inline error) and
-`AgentPickModal(title, agents)` (canonical source names in and out). Each binds its own keys,
-because app bindings do not fire under a `ModalScreen`. `tui/rows.py:set_rows(option_list, rows,
+`AgentPickModal(title, agents)` (canonical source names in and out). Dialogs are centered and
+content-height, bounded by the terminal size; the resume agent list scrolls in short terminals.
+Each binds its own keys, because app bindings do not fire under a `ModalScreen`. `tui/rows.py:set_rows(option_list, rows,
 keep=)` rebuilds an `OptionList` keyed by option id and restores the highlight — the kept key,
 else the previous index clamped — since `set_options` resets it.
 
