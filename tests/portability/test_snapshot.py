@@ -4,6 +4,7 @@ from dataclasses import replace
 
 import pytest
 from ringleader.portability import PreservationError
+from ringleader.portability.serialization import decode_value, encode_value
 from ringleader.portability.snapshot import (
     SnapshotFile,
     SourceSnapshot,
@@ -13,6 +14,15 @@ from ringleader.portability.snapshot import (
 )
 
 from .fixtures import conversation
+
+
+def test_snapshot_warnings_roundtrip_and_older_snapshots_remain_readable():
+    snapshot = SourceSnapshot(conversation(), (SnapshotFile("history", b"native"),), "claude")
+    older = encode_value(snapshot)
+    older.pop("warnings", None)
+    assert decode_value(older, SourceSnapshot) == snapshot
+    warned = replace(snapshot, warnings=("Skipped unfamiliar records",))
+    assert decode_value(encode_value(warned), SourceSnapshot) == warned
 
 
 def test_snapshot_captures_owned_bytes_and_bounds(tmp_path):

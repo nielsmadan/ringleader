@@ -90,6 +90,49 @@ def test_public_surface():
     } <= commands.command_paths()
 
 
+@pytest.mark.parametrize("json_output", [False, True])
+def test_convert_warns_about_unknown_claude_records_and_strict_refuses(
+    environment, capsys, json_output
+):
+    path, reg = seed(environment)
+    assert (
+        invoke(
+            path, "session", "convert", reg["threads"][0]["sessionId"], "--to", "claude", "--json"
+        )
+        == 0
+    )
+    created = output(capsys)["results"][0]
+    identifier = created["target"]["native_id"]
+    thread = registry.find_session(registry.load_registry(path), identifier)
+    with Path(thread["file"]).open("a") as stream:
+        stream.write(json.dumps({"type": "tools-used", "tools": ["Bash"]}) + "\n")
+    flags = ["--json"] if json_output else []
+    before = tree(environment)
+    assert invoke(path, "session", "convert", identifier, "--to", "pi", "--dry-run", *flags) == 0
+    captured = capsys.readouterr()
+    if json_output:
+        result = json.loads(captured.out)["results"][0]
+        assert any("tools-used (1)" in item for item in result["diagnostics"])
+    else:
+        assert "tools-used (1)" in captured.out
+    assert tree(environment) == before
+    assert (
+        invoke(
+            path, "session", "convert", identifier, "--to", "pi", "--dry-run", "--strict", *flags
+        )
+        == 1
+    )
+    captured = capsys.readouterr()
+    if json_output:
+        assert (
+            json.loads(captured.out)["errors"][0]["error"]
+            == "Unsupported Claude transcript entry: tools-used"
+        )
+    else:
+        assert "Unsupported Claude transcript entry: tools-used" in captured.err
+    assert tree(environment) == before
+
+
 def test_convert_preview_publish_reuse_fork_lineage(environment, capsys):
     path, reg = seed(environment)
     identifier = reg["threads"][0]["sessionId"]

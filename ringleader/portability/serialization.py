@@ -12,6 +12,7 @@ SPARSE_FIELDS = {
     "Checkpoint": ("replaced_context",),
     "Message": ("hidden",),
     "StoredStage": ("normalizations",),
+    "SourceSnapshot": ("warnings",),
     "TransformOptions": ("portable_version",),
 }
 ADDITIVE_FIELDS = {
@@ -19,6 +20,7 @@ ADDITIVE_FIELDS = {
     "Compatibility": ("warnings", "needs_verification"),
     "Message": ("hidden",),
     "StoredStage": ("normalizations",),
+    "SourceSnapshot": ("warnings",),
     "TransformOptions": ("portable_version",),
 }
 # Fields older journals still carry; decoding drops them.

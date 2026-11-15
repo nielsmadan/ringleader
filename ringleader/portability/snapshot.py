@@ -36,6 +36,7 @@ class SourceSnapshot:
     files: tuple[SnapshotFile, ...]
     format_profile: str
     metadata: tuple[tuple[str, str], ...] = ()
+    warnings: tuple[str, ...] = ()
 
     def identity(self, options: TransformOptions | None = None) -> str:
         options = options or TransformOptions()

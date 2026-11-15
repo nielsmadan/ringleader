@@ -140,6 +140,10 @@ def source_ref(adapters: AdapterRegistry, selected: SelectedSession, roots: Nati
     return resolver.source_ref(roots, selected.source_ref)
 
 
-def source_request(adapters: AdapterRegistry, selected: SelectedSession) -> SourceRequest:
+def source_request(
+    adapters: AdapterRegistry, selected: SelectedSession, *, strict: bool = False
+) -> SourceRequest:
     roots = native_roots(adapters, selected)
-    return SourceRequest(selected.identity, roots, source_ref(adapters, selected, roots))
+    return SourceRequest(
+        selected.identity, roots, source_ref(adapters, selected, roots), strict=strict
+    )

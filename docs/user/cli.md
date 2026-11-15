@@ -41,7 +41,7 @@ rl
 | Command | Does | Key flags |
 |---|---|---|
 | `rl start <agent>` | Start a fresh conversation in the current directory. Choose `claude` (or `claude-code`), `codex`, `cursor`, `droid`, `opencode`, or `pi`. Bare `rl start` prints help. See [Starting a fresh session](#starting-a-fresh-session) for worktree behavior. | `--worktree`, `--dry-run` |
-| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (`--fork` picks that without asking; `--worktree` forks into a worktree; Claude Code and Pi forks are named `<name>-fork-N`, which the picker lets you edit), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--fork`, `--worktree`, `--to claude\|codex\|cursor\|droid\|opencode\|pi`, `--markdown`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
+| `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (`--fork` picks that without asking; `--worktree` forks into a worktree; Claude Code and Pi forks are named `<name>-fork-N`, which the picker lets you edit), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--fork`, `--worktree`, `--to claude\|codex\|cursor\|droid\|opencode\|pi`, `--markdown`, `--strict`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
 | `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. These are the default `vim` keys; `rl config set inbox.keys circus` switches to the circus app's (see [the triage workflow](triage-workflow.md#triage-in-the-inbox)). | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
@@ -301,11 +301,11 @@ first when a source is absent. IDs accept exact native IDs, `AGENT:ID`, then una
 prefixes; `claude` aliases `claude-code`. Names are not ID selectors.
 
 ```sh
-rl session convert <id>... --to <agent> [--compact] [--dry-run] [--json]
+rl session convert <id>... --to <agent> [--compact] [--strict] [--dry-run] [--json]
 rl session convert --open --to <agent> [--from <agent>] [--workspace <path>]
 rl session convert --running --to <agent> [--from <agent>] [--workspace <path>]
-rl session fork <id> [--to <agent>] [--compact] [--resume] [--json]
-rl session handoff <id> --to <agent> [--compact] [--json]
+rl session fork <id> [--to <agent>] [--compact] [--strict] [--resume] [--json]
+rl session handoff <id> --to <agent> [--compact] [--strict] [--json]
 rl session resume <id> [--json]
 rl session lineage <id> [--json]
 rl data transaction list [--json]
@@ -318,7 +318,13 @@ Conversion preserves the source and creates a destination session in its effecti
 recorded workspace. Repeating a conversion reuses the same result; an archived or
 deleted result is reported with its lifecycle and is not recreated. Fork always
 creates a fresh identity and defaults to the source agent. Handoff forks and then
-resumes. `--compact` deterministically replaces complete tool exchanges with
+resumes. Claude sources skip unfamiliar standalone record types with a warning
+listing the skipped types and counts; records in the conversation graph and known
+conversation payloads still require validation. `--strict` on convert/fork/handoff
+or `rl resume --to` refuses unfamiliar standalone records as well. JSON results
+carry the warnings in `diagnostics`, including on preview and reuse.
+
+`--compact` deterministically replaces complete tool exchanges with
 omission markers and reports approximate sizes/counts; it makes no model call.
 
 Explicit IDs, `--open`, and `--running` are mutually exclusive. `--open` selects

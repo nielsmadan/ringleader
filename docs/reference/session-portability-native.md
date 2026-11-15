@@ -87,6 +87,10 @@ telemetry do not become messages. Meta messages stay in context, outside visible
 history; their combination with compaction currently fails explicitly. Branch IDs
 can select an earlier or alternate valid chain. Duplicate IDs, forward/missing
 parents, cycles, incomplete tools, and unknown conversational payloads fail.
+Unknown standalone record types (no `uuid`, `parentUuid`, `logicalParentUuid`, or
+`message` field) are skipped with a warning naming the types and counts. Their
+semantics are not verified or converted. `--strict` rejects them too; staged
+Claude output is always read back strictly.
 
 Every written assistant row carries the placeholder model `claude-sonnet-4-5`, and Claude
 2.1.301 resumes on the last assistant row's model over a configured default — measured

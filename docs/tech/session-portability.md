@@ -69,6 +69,15 @@ retains the terminal record on the selected branch, so trailing unsupported reco
 are validated even when the last visible message precedes them. OpenCode attachment
 discovery visits native file parts only; file-shaped tool arguments remain inert data.
 
+Claude's deep reader tolerates unknown standalone record types by default. An
+unknown type with any `uuid`, `parentUuid`, `logicalParentUuid`, or `message` field
+still refuses, as do malformed types and unsupported payloads inside known
+conversation records. `SourceRequest.strict` restores rejection of all unknown
+types; Claude stage read-back is always strict. Source snapshots carry aggregated
+warnings into result diagnostics and persisted artifacts, including reuse and
+recovery. Older snapshots decode with empty warnings. Snapshot identity continues
+to include all original file bytes, including skipped records.
+
 ## Service and persistence
 
 `ConversionService.convert()` snapshots, resolves target profile/configuration,

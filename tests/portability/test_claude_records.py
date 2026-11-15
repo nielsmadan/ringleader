@@ -3,13 +3,14 @@ from dataclasses import replace
 
 import pytest
 from ringleader.portability import claude_attachments, native
+from ringleader.portability.capabilities import SourceRequest
 from ringleader.portability.claude import PROFILE, ClaudeAdapter
 from ringleader.portability.claude import read as read_claude
 from ringleader.portability.compact import portable
 from ringleader.portability.compare import compare
 from ringleader.portability.model import Identity, Opaque, PreservationError, Text, ToolResult
 from tests.portability.fixtures import SESSION_ID, TIMESTAMP, claude_records
-from tests.portability.test_native_adapters import stage_for
+from tests.portability.test_native_adapters import roots, stage_for
 
 IDENTITY = Identity("claude-code", SESSION_ID)
 
@@ -78,9 +79,59 @@ def test_session_metadata_entries_are_dropped(tmp_path, kind):
 
 
 @pytest.mark.parametrize("kind", ["history-suppression", "fork-context-ref", "continued-in"])
-def test_unverified_entries_refuse(tmp_path, kind):
+def test_strict_reader_refuses_unfamiliar_standalone_entries(tmp_path, kind):
     with pytest.raises(PreservationError, match=f"Unsupported Claude transcript entry: {kind}"):
-        read_with(tmp_path, {"type": kind, "sessionId": SESSION_ID})
+        read_claude(
+            native.jsonl([*base(tmp_path), {"type": kind, "sessionId": SESSION_ID}]),
+            IDENTITY,
+            strict=True,
+        )
+
+
+def test_unfamiliar_standalone_records_preserve_conversation_and_report_counts(tmp_path):
+    original = read_with(tmp_path)
+    records = [
+        *base(tmp_path),
+        {"type": "tools-used", "tools": ["Bash"], "sessionId": SESSION_ID},
+        {"type": "future-metadata", "value": "unknown"},
+        {"type": "tools-used", "tools": ["Read"], "sessionId": SESSION_ID},
+    ]
+    path = tmp_path / "session.jsonl"
+    path.write_bytes(native.jsonl(records))
+    request = SourceRequest(IDENTITY, roots(tmp_path), str(path))
+    snapshot = ClaudeAdapter().snapshot(request)
+    assert snapshot.conversation == original
+    assert snapshot.files[0].data == path.read_bytes()
+    assert snapshot.warnings == (
+        (
+            "Skipped unfamiliar standalone Claude transcript records: future-metadata (1), "
+            "tools-used (2); their semantics were not converted. Use --strict to refuse these records."
+        ),
+    )
+    assert ClaudeAdapter().inspect_source(request).warnings == snapshot.warnings
+    with pytest.raises(PreservationError, match="Unsupported Claude transcript entry: tools-used"):
+        ClaudeAdapter().snapshot(replace(request, strict=True))
+
+
+@pytest.mark.parametrize("field", ["uuid", "parentUuid", "logicalParentUuid", "message"])
+def test_unfamiliar_conversation_records_still_refuse(tmp_path, field):
+    record = {"type": "future-entry", field: "entry-1"}
+    with pytest.raises(
+        PreservationError, match="Unsupported Claude transcript entry: future-entry"
+    ):
+        read_with(tmp_path, record)
+
+
+@pytest.mark.parametrize("kind", [None, "", [], {}])
+def test_malformed_entry_types_still_refuse(tmp_path, kind):
+    with pytest.raises(PreservationError, match="Invalid Claude transcript entry type"):
+        read_with(tmp_path, {"type": kind})
+
+
+def test_missing_parent_still_refuses_after_skipping_standalone_records(tmp_path):
+    missing = row("user", "next", "missing", message={"role": "user", "content": "next"})
+    with pytest.raises(PreservationError, match="missing parent entry"):
+        read_with(tmp_path, {"type": "tools-used", "tools": ["Read"]}, missing)
 
 
 def test_ai_title_is_the_fallback_title(tmp_path):

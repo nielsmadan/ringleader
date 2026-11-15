@@ -90,6 +90,35 @@ def request(tmp_path, agent="pi", *, target=None):
     return ConversionRequest(source(tmp_path), agent, target or roots(tmp_path / "target"))
 
 
+def test_claude_unknown_metadata_warning_survives_codex_conversion_and_reuse(tmp_path):
+    worker = service(tmp_path)
+    initial = request(tmp_path, "claude-code")
+    claude = worker.convert(initial)
+    source_path = initial.target_roots.store / claude.source_ref
+    with source_path.open("ab") as stream:
+        stream.write(json.dumps({"type": "tools-used", "tools": ["Bash"]}).encode() + b"\n")
+    source_bytes = source_path.read_bytes()
+    conversion = ConversionRequest(
+        SourceRequest(claude.target, initial.target_roots, str(source_path)),
+        "codex",
+        initialized(tmp_path / "codex"),
+    )
+    preview = worker.convert(conversion, dry_run=True)
+    assert any("tools-used (1)" in warning for warning in preview.diagnostics)
+    created = worker.convert(conversion)
+    assert created.diagnostics == preview.diagnostics
+    restarted = service(tmp_path)
+    assert restarted.resume(created.operation_id).diagnostics == created.diagnostics
+    assert restarted.convert(conversion).diagnostics == created.diagnostics
+    assert restarted.reusable(conversion).diagnostics == created.diagnostics
+    assert source_path.read_bytes() == source_bytes
+    strict = replace(conversion, source=replace(conversion.source, strict=True))
+    with pytest.raises(PreservationError, match="Unsupported Claude transcript entry: tools-used"):
+        restarted.convert(strict, dry_run=True)
+    with pytest.raises(PreservationError, match="Unsupported Claude transcript entry: tools-used"):
+        restarted.reusable(strict)
+
+
 def crash_at(point):
     def fault(name, operation):
         if name == point:

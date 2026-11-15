@@ -121,17 +121,21 @@ def _would_verify(worker: ConversionService, target: str) -> NativeResume:
     return NativeResume("would-verify", None, None, None, version=version)
 
 
-def _request(worker: ConversionService, source: SelectedSession, target: str) -> ConversionRequest:
+def _request(
+    worker: ConversionService, source: SelectedSession, target: str, *, strict: bool
+) -> ConversionRequest:
     return ConversionRequest(
-        source_request(worker.adapters, source),
+        source_request(worker.adapters, source, strict=strict),
         target,
         worker.adapters.roots(target, source.cwd),
     )
 
 
-def _prepare(worker: ConversionService, source: SelectedSession, target: str) -> PreparedConversion:
+def _prepare(
+    worker: ConversionService, source: SelectedSession, target: str, *, strict: bool
+) -> PreparedConversion:
     try:
-        return worker.prepare(_request(worker, source, target))
+        return worker.prepare(_request(worker, source, target, strict=strict))
     except subprocess.TimeoutExpired as exc:
         raise ConversionFailure(
             f"native conversion to {display_agent(target)} failed: {exc}; nothing was published"
@@ -139,10 +143,10 @@ def _prepare(worker: ConversionService, source: SelectedSession, target: str) ->
 
 
 def _resumable(
-    worker: ConversionService, source: SelectedSession, target: str
+    worker: ConversionService, source: SelectedSession, target: str, *, strict: bool
 ) -> ConversionResult | None:
     try:
-        existing = worker.reusable(_request(worker, source, target))
+        existing = worker.reusable(_request(worker, source, target, strict=strict))
     except _REFUSALS:
         return None
     except _ERRORS as exc:
@@ -168,11 +172,13 @@ def _resume_existing(
         )
         if isinstance(planned, NativeResume):
             return planned
-        return NativeResume("reused", existing.target, planned, None)
+        return NativeResume("reused", existing.target, planned, None, existing.diagnostics)
     refusal = _attempt(target, lambda: _validate(worker, source, target))
     if isinstance(refusal, NativeResume):
         return refusal
-    return NativeResume("reused", existing.target, _launch(worker, existing, paths), None)
+    return NativeResume(
+        "reused", existing.target, _launch(worker, existing, paths), None, existing.diagnostics
+    )
 
 
 def _validate(worker: ConversionService, source: SelectedSession, target: str) -> None:
@@ -259,9 +265,10 @@ def _prepare_or_verify(  # noqa: PLR0913
     dry_run: bool,
     allow_verify: bool,
     report: Report,
+    strict: bool,
 ) -> tuple[ConversionService, PreparedConversion] | NativeResume:
     try:
-        return worker, _prepare(worker, source, target)
+        return worker, _prepare(worker, source, target, strict=strict)
     except NeedsVerification as exc:
         if dry_run:
             return _attempt(target, lambda: _would_verify(worker, target))
@@ -277,7 +284,7 @@ def _prepare_or_verify(  # noqa: PLR0913
     def verified() -> tuple[ConversionService, PreparedConversion]:
         verify_and_record(worker.adapters, target, paths.verified, report)
         fresh = _service(paths)
-        return fresh, _prepare(fresh, source, target)
+        return fresh, _prepare(fresh, source, target, strict=strict)
 
     return _attempt(target, verified)
 
@@ -292,6 +299,7 @@ def native_resume(  # noqa: PLR0913
     dry_run: bool,
     allow_verify: bool,
     report: Report,
+    strict: bool = False,
 ) -> NativeResume:
     paths = _Paths(registry_path, operations_path, verified_path)
     try:
@@ -301,11 +309,18 @@ def native_resume(  # noqa: PLR0913
         return _refused(str(exc))
     except _ERRORS as exc:
         raise _unexpected(target_agent, exc) from exc
-    existing = _resumable(worker, source, target)
+    existing = _resumable(worker, source, target, strict=strict)
     if existing is not None:
         return _resume_existing(worker, paths, source, existing, dry_run=dry_run)
     ready = _prepare_or_verify(
-        worker, source, target, paths, dry_run=dry_run, allow_verify=allow_verify, report=report
+        worker,
+        source,
+        target,
+        paths,
+        dry_run=dry_run,
+        allow_verify=allow_verify,
+        report=report,
+        strict=strict,
     )
     if isinstance(ready, NativeResume):
         return ready

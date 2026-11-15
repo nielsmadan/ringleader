@@ -6,6 +6,7 @@ import os
 import re
 import sys
 import unicodedata
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
@@ -266,10 +267,15 @@ def _boundary(row: dict[str, Any]) -> dict[str, Any]:
     return row
 
 
-def _graph(rows: list[dict[str, Any]], identity: Identity) -> list[dict[str, Any]]:
+def _graph(
+    rows: list[dict[str, Any]], identity: Identity, *, strict: bool
+) -> tuple[list[dict[str, Any]], tuple[str, ...]]:
     graph = []
+    skipped: Counter[str] = Counter()
     for row in rows:
         kind = row.get("type")
+        if not isinstance(kind, str) or not kind:
+            raise PreservationError("Invalid Claude transcript entry type")
         if row.get("sessionId") not in (None, identity.native_id):
             raise PreservationError("Claude transcript session identity mismatch")
         if row.get("isSidechain") or row.get("teamName"):
@@ -287,9 +293,23 @@ def _graph(rows: list[dict[str, Any]], identity: Identity) -> list[dict[str, Any
                 "Claude content-replacement semantics are not verified; refusing required replacement content"
             )
         if kind not in ("user", "assistant", "system", "progress", "attachment"):
-            raise PreservationError(f"Unsupported Claude transcript entry: {kind}")
+            if strict or any(
+                key in row for key in ("uuid", "parentUuid", "logicalParentUuid", "message")
+            ):
+                raise PreservationError(f"Unsupported Claude transcript entry: {kind}")
+            skipped[kind] += 1
+            continue
         graph.append(_boundary(row) if claude_chain.is_boundary(row) else row)
-    return graph
+    warnings = (
+        (
+            "Skipped unfamiliar standalone Claude transcript records: "
+            + ", ".join(f"{kind} ({count})" for kind, count in sorted(skipped.items()))
+            + "; their semantics were not converted. Use --strict to refuse these records.",
+        )
+        if skipped
+        else ()
+    )
+    return graph, warnings
 
 
 def _attachment(row: dict[str, Any], identity: Identity, human_turn: bool) -> Message | None:
@@ -716,11 +736,21 @@ def _latest(
     return checkpoint, context
 
 
-def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conversation:
+def read(
+    data: bytes, identity: Identity, branch_id: str | None = None, *, strict: bool = False
+) -> Conversation:
+    conversation, _ = _read(data, identity, branch_id, strict=strict)
+    return conversation
+
+
+def _read(
+    data: bytes, identity: Identity, branch_id: str | None, *, strict: bool
+) -> tuple[Conversation, tuple[str, ...]]:
     if identity.agent != "claude-code":
         raise PreservationError("Source identity does not belong to claude-code")
     rows = native.records(data)
-    entries = claude_chain.index(_graph(rows, identity))
+    graph, warnings = _graph(rows, identity, strict=strict)
+    entries = claude_chain.index(graph)
     leaf = claude_chain.leaf(entries, branch_id)
     chain = claude_chain.recover(entries, claude_chain.walk(entries, leaf))
     boundaries = [row for row in chain if claude_chain.is_boundary(row)]
@@ -769,7 +799,7 @@ def read(data: bytes, identity: Identity, branch_id: str | None = None) -> Conve
         raise PreservationError("Duplicate Claude session annotations")
     result = native.restore_session(result, metadata[0] if metadata else None)
     validate(result)
-    return result
+    return result, warnings
 
 
 def _checkpoint_stream(conversation: Conversation) -> tuple[Message, ...]:
@@ -811,19 +841,20 @@ class ClaudeAdapter:
 
     def inspect_source(self, request: SourceRequest) -> Compatibility:
         try:
-            self.snapshot(request)
+            snapshot = self.snapshot(request)
         except PreservationError as exc:
             return Compatibility(False, None, (str(exc),))
-        return Compatibility(True, PROFILE, ())
+        return Compatibility(True, PROFILE, (), warnings=snapshot.warnings)
 
     def snapshot(self, request: SourceRequest) -> SourceSnapshot:
         files = snapshot_files(
             (("session", native.source_path(request.source_ref, request.roots)),),
             max_bytes=native.MAX_BYTES,
         )
-        return SourceSnapshot(
-            read(files[0].data, request.identity, request.branch_id), files, PROFILE.name
+        conversation, warnings = _read(
+            files[0].data, request.identity, request.branch_id, strict=request.strict
         )
+        return SourceSnapshot(conversation, files, PROFILE.name, warnings=warnings)
 
     def inspect_target(self, roots: NativeRoots, runner: Runner) -> Compatibility:
         result = native.probe_version(self.executable, "claude-code", runner)
@@ -1016,6 +1047,7 @@ class ClaudeAdapter:
         return read(
             next(item.data for item in stage.files if item.relative_path == stage.source_ref),
             stage.identity,
+            strict=True,
         )
 
     def launch_request(self, identity: Identity, roots: NativeRoots) -> RunRequest:

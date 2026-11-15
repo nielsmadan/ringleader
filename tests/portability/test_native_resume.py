@@ -488,6 +488,57 @@ def test_rl_resume_dry_run_prints_the_native_line_for_a_pi_session(offline, caps
     assert tree(base) == before
 
 
+def test_rl_resume_reports_skipped_claude_records_on_preview_launch_and_reuse(offline, capsys):
+    base, path, thread = offline
+    first = _resume(base, path, thread)
+    source = registry.find_session(registry.load_registry(path), first.target.native_id)
+    transcript = Path(source["file"])
+    with transcript.open("a") as stream:
+        stream.write(json.dumps({"type": "tools-used", "tools": ["Bash"]}) + "\n")
+    original = transcript.read_bytes()
+    argv = [
+        first.target.native_id,
+        "--to",
+        "pi",
+        "--registry",
+        str(path),
+        "--operations",
+        str(base / "operations"),
+        "--verified",
+        str(base / "verified.json"),
+    ]
+    launched = []
+    seams = {"which": lambda binary: binary, "presence": frozenset, "launch": launched.append}
+    assert resume_cmd.cmd_resume([*argv, "--dry-run"], **seams) == 0
+    assert (
+        "warning: Skipped unfamiliar standalone Claude transcript records: tools-used (1)"
+        in capsys.readouterr().out
+    )
+    assert resume_cmd.cmd_resume(argv, **seams) == 0
+    assert (
+        "rl-resume: Skipped unfamiliar standalone Claude transcript records: tools-used (1)"
+        in capsys.readouterr().err
+    )
+    assert resume_cmd.cmd_resume(argv, **seams) == 0
+    assert (
+        "rl-resume: Skipped unfamiliar standalone Claude transcript records: tools-used (1)"
+        in capsys.readouterr().err
+    )
+    assert len(launched) == 2
+    assert launched[0] == launched[1]
+    assert resume_cmd.cmd_resume([*argv, "--dry-run"], **seams) == 0
+    assert (
+        "warning: Skipped unfamiliar standalone Claude transcript records: tools-used (1)"
+        in capsys.readouterr().out
+    )
+    assert resume_cmd.cmd_resume([*argv, "--dry-run", "--strict"], **seams) == 0
+    assert (
+        "native: refused — Unsupported Claude transcript entry: tools-used"
+        in capsys.readouterr().out
+    )
+    assert transcript.read_bytes() == original
+
+
 def test_forking_an_archived_target_probes_and_reads_back_the_target_once(offline, monkeypatch):
     base, path, thread = offline
     first = _resume(base, path, thread)

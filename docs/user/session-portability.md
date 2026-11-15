@@ -100,6 +100,23 @@ recreating another process's session. Unverified private remnants are named.
 
 ## Compatibility
 
+Claude conversion skips unfamiliar standalone record types, such as `tools-used`,
+with a warning listing each skipped type and its count. Their semantics are not
+converted; the original transcript remains intact. Messages, tool exchanges,
+compaction, and parent links still undergo validation. Unknown records carrying
+message or parent-chain fields still refuse conversion.
+
+Use `--strict` on `rl resume --to`, `rl session convert`, `rl session fork`, or
+`rl session handoff` to refuse unfamiliar standalone records too. For an audit
+without publishing a session:
+
+```sh
+rl session convert <id> --to codex --strict --dry-run
+```
+
+Warnings appear in previews, successful conversions, and reused conversions;
+JSON conversion results include them in `diagnostics`.
+
 `rl doctor` reports compatibility for its current cwd/native roots and unfinished
 journals. A passing check in one workspace does not validate every batch workspace,
 especially for OpenCode model configuration.

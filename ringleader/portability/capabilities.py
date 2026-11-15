@@ -82,6 +82,7 @@ class SourceRequest:
     roots: NativeRoots
     source_ref: str
     branch_id: str | None = None
+    strict: bool = False
 
 
 @dataclass(frozen=True)

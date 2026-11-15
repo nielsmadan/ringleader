@@ -182,6 +182,11 @@ def _parser() -> argparse.ArgumentParser:
     ap.add_argument(
         "--dry-run", action="store_true", help="print the directory and argv, launch nothing"
     )
+    ap.add_argument(
+        "--strict",
+        action="store_true",
+        help="refuse unfamiliar standalone Claude records during native conversion",
+    )
     scope = ap.add_mutually_exclusive_group()
     scope.add_argument("--all", action="store_true", help="start the picker over every session")
     scope.add_argument(
@@ -502,6 +507,8 @@ def _report_native(plan: _Plan, outcome: NativeResume, *, absent: str | None) ->
     directory = outcome.launch.cwd if outcome.launch is not None else plan.cwd
     print(f"  directory: {directory}")
     print(f"  {_native_line(outcome, resume.agent_name(plan.target))}")
+    for warning in outcome.warnings:
+        print(f"  warning: {warning}")
     if outcome.launch is not None:
         print(f"  argv: {shlex.join(outcome.launch.argv)}")
     if outcome.outcome == "refused":
@@ -586,6 +593,7 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
             dry_run=args.dry_run,
             allow_verify=_interactive(),
             report=_progress,
+            strict=args.strict,
         )
     except ConversionFailure as error:
         return _fail(str(error))

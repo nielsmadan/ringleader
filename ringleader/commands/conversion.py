@@ -157,6 +157,9 @@ def cmd_convert(argv: list[str]) -> int:
     ap.add_argument(
         "--compact", action="store_true", help="deterministic tool omission; no model call"
     )
+    ap.add_argument(
+        "--strict", action="store_true", help="refuse unfamiliar standalone Claude records"
+    )
     ap.add_argument("--dry-run", action="store_true", help="validate without persistent writes")
     args = ap.parse_args(argv)
     if bool(args.ids) == bool(args.open or args.running):
@@ -173,7 +176,7 @@ def cmd_convert(argv: list[str]) -> int:
         selector = f"{item.identity.agent}:{item.identity.native_id}"
         try:
             request = ConversionRequest(
-                source_request(worker.adapters, item),
+                source_request(worker.adapters, item, strict=args.strict),
                 target,
                 worker.adapters.roots(target, item.cwd),
                 compact=args.compact,
@@ -249,6 +252,9 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
     ap.add_argument("id")
     ap.add_argument("--to", required=handoff, help="destination agent (fork defaults to source)")
     ap.add_argument("--compact", action="store_true")
+    ap.add_argument(
+        "--strict", action="store_true", help="refuse unfamiliar standalone Claude records"
+    )
     if not handoff:
         ap.add_argument(
             "--resume", action="store_true", help="replace this process with the new native session"
@@ -270,7 +276,7 @@ def _fork(argv: list[str], *, handoff: bool) -> int:
             launcher.validate(worker.adapters.launcher(target).launch_request(probe_id, roots))
         result = worker.convert(
             ConversionRequest(
-                source_request(worker.adapters, selected),
+                source_request(worker.adapters, selected, strict=args.strict),
                 target,
                 roots,
                 compact=args.compact,

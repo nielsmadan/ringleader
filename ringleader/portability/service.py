@@ -262,7 +262,11 @@ class ConversionService:
 
     def preview(self, prepared: PreparedConversion) -> ConversionResult:
         artifacts = prepared.artifacts
-        diagnostics = (*artifacts.compatibility.diagnostics, *artifacts.compatibility.warnings)
+        diagnostics = (
+            *artifacts.snapshot.warnings,
+            *artifacts.compatibility.diagnostics,
+            *artifacts.compatibility.warnings,
+        )
         prior = None if artifacts.kind == "fork" else self._prior(artifacts.key())
         if prior is None:
             return ConversionResult(
@@ -386,6 +390,11 @@ class ConversionService:
                 artifacts.stage.source_ref,
                 reused=True,
                 report=artifacts.report,
+                diagnostics=(
+                    *snapshot.warnings,
+                    *artifacts.compatibility.diagnostics,
+                    *artifacts.compatibility.warnings,
+                ),
                 normalizations=tuple(item.kind for item in artifacts.stage.normalizations or ()),
             )
             if artifacts.kind == "fork":
@@ -852,7 +861,11 @@ class ConversionService:
             source=operation.target.agent,
         )
         stage = artifacts.stage.native()
-        diagnostics = (*artifacts.compatibility.diagnostics, *artifacts.compatibility.warnings)
+        diagnostics = (
+            *artifacts.snapshot.warnings,
+            *artifacts.compatibility.diagnostics,
+            *artifacts.compatibility.warnings,
+        )
         if operation.abandoned_private:
             diagnostics += (
                 "Unverified private artifacts retained: " + ", ".join(operation.abandoned_private),
