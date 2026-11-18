@@ -11,13 +11,18 @@ from typing import ClassVar
 import pytest
 from ringleader import refresh, resume, scanner
 from ringleader.picker.app import (
+    PRESENCE_UNKNOWN,
+    PRESENCE_UNKNOWN_HOW,
     PREVIEW_CHARS,
+    SHELL_SETUP,
+    SHELL_SETUP_HOW,
     AgentChoice,
     AgentModal,
     ConfirmModal,
     PickerApp,
     PickerScreen,
     launchable_agents,
+    location_options,
     row_text,
 )
 from ringleader.presence import PresenceUnavailable
@@ -25,6 +30,7 @@ from ringleader.resume import Scope
 from ringleader.sources.base import SessionLaunchingSource
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.sources.codex import CodexSource
+from ringleader.tui.modals import ChoiceModal, ForkNameModal
 from textual.app import App
 from textual.geometry import Region
 from textual.widgets import Input, Label, ListView, OptionList
@@ -425,7 +431,7 @@ async def test_a_rescan_returning_the_same_threads_keeps_the_row_cache(tmp_path)
         await _settle(app, pilot)
         screen = _screen(app)
         cache = screen._cache
-        screen._adopt(_scanned(screen.registry_path), None, None)
+        screen._adopt(_scanned(screen.registry_path), None)
         await pilot.pause()
         assert screen._cache is cache
 
@@ -437,7 +443,7 @@ async def test_a_rescan_returning_different_threads_replaces_the_row_cache(tmp_p
         screen = _screen(app)
         cache = screen._cache
         later = [_thread("s9", title="zulu")]
-        screen._adopt(_scanned(screen.registry_path, later), None, None)
+        screen._adopt(_scanned(screen.registry_path, later), None)
         await pilot.pause()
         assert screen._cache is not cache
         assert _ids(app) == ["s9"]
@@ -1630,3 +1636,203 @@ def test_the_agent_modal_offers_an_agent_that_cannot_fork_only_its_resume():
         AgentChoice("cursor"),
         *(AgentChoice(a) for a in launchable_agents() if a != "cursor"),
     ]
+
+
+# -- sessions from another directory ----------------------------------------
+
+
+def _elsewhere_threads():
+    return [
+        _thread("s3", source="pi", project="/elsewhere", title="delta", mtime="2026-04-04"),
+        _thread("s4", project="/other/repo", title="echo", mtime="2026-03-03"),
+    ]
+
+
+def _values(options):
+    return [option.value for option in options]
+
+
+def test_a_movable_forkable_session_offers_all_four_places():
+    options = location_options(_thread("s4", project="/other"), running=False, shell_wrapped=True)
+    assert _values(options) == ["there", "follow", "move-here", "fork-here"]
+    assert options[1].detail is None
+
+
+def test_cd_there_names_the_shell_setup_it_needs():
+    options = location_options(_thread("s4", project="/other"), running=False, shell_wrapped=False)
+    assert options[1].detail == SHELL_SETUP
+
+
+def test_a_running_session_cannot_be_moved_here():
+    options = location_options(_thread("s4", project="/other"), running=True, shell_wrapped=True)
+    assert _values(options) == ["there", "follow", "fork-here"]
+
+
+def test_moving_a_session_nobody_can_vouch_for_says_so():
+    options = location_options(_thread("s4", project="/other"), running=None, shell_wrapped=True)
+    assert (options[2].value, options[2].detail) == ("move-here", PRESENCE_UNKNOWN)
+
+
+@pytest.mark.parametrize(
+    ("source", "places"),
+    [
+        ("pi", ["there", "follow", "fork-here"]),
+        ("cursor", ["there", "follow", "move-here"]),
+    ],
+)
+def test_only_what_the_agent_supports_is_offered(source, places):
+    options = location_options(
+        _thread("s9", source=source, project="/other"), running=False, shell_wrapped=True
+    )
+    assert _values(options) == places
+
+
+async def _choose_elsewhere(app, pilot, *keys):
+    await _settle(app, pilot)
+    await pilot.press(*keys)
+    await pilot.press("enter")
+    await pilot.pause()
+
+
+async def test_a_session_from_another_directory_asks_where_before_which_agent(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot)
+        assert isinstance(app.screen, ChoiceModal)
+        title = _rendered(app.screen.query_one("#choice-title", Label))
+        assert "delta lives in /elsewhere" in title
+        assert f"you are in {CWD}" in title
+        await pilot.press("1")
+        await pilot.pause()
+        assert isinstance(app.screen, AgentModal)
+        await pilot.press("enter")
+        await pilot.pause()
+    choice = app.return_value
+    assert (choice.thread["sessionId"], choice.target, choice.placement) == ("s3", "pi", "there")
+
+
+async def test_moving_here_needs_no_agent_menu(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot, "ctrl+j")
+        await pilot.press("3")
+        await pilot.pause()
+    choice = app.return_value
+    assert (choice.thread["sessionId"], choice.target) == ("s4", "claude-code")
+    assert (choice.placement, choice.action) == ("here", "resume")
+
+
+async def test_forking_here_asks_for_a_name(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot, "ctrl+j")
+        await pilot.press("4")
+        await pilot.pause()
+        assert isinstance(app.screen, ForkNameModal)
+        await pilot.press("enter")
+        await pilot.pause()
+    choice = app.return_value
+    assert (choice.placement, choice.action, choice.name) == ("here", "fork", "echo-fork-1")
+
+
+async def test_forking_a_running_session_here_confirms_first(tmp_path):
+    app = _app(
+        tmp_path,
+        _elsewhere_threads(),
+        scope=Scope.ALL,
+        presence=lambda: frozenset({("claude", "s4")}),
+    )
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot, "ctrl+j")
+        await pilot.press("3")
+        await pilot.pause()
+        assert isinstance(app.screen, ConfirmModal)
+        await pilot.press("y")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+    choice = app.return_value
+    assert (choice.placement, choice.action, choice.confirmed) == ("here", "fork", True)
+
+
+async def test_cd_there_with_the_shell_wrapper_continues_to_the_agent_menu(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL, shell_wrapped=True)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot)
+        await pilot.press("2")
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+    assert (app.return_value.placement, app.return_value.target) == ("follow", "pi")
+
+
+async def test_cd_there_without_the_shell_wrapper_explains_and_stays_in_the_picker(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot)
+        await pilot.press("2")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        assert [n.message for n in app._notifications] == [SHELL_SETUP_HOW]
+
+
+async def test_escape_from_where_returns_to_the_picker(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot)
+        await pilot.press("escape")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+
+
+async def test_a_preset_fork_never_asks_where(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL, action="fork")
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot, "ctrl+j")
+        assert isinstance(app.screen, ForkNameModal)
+        await pilot.press("enter")
+        await pilot.pause()
+    assert (app.return_value.placement, app.return_value.action) == ("there", "fork")
+
+
+def _presence_down():
+    raise PresenceUnavailable("hooklinesinker is not set up — rl data presence install")
+
+
+async def test_moving_here_without_presence_explains_and_stays_in_the_picker(tmp_path):
+    app = _app(tmp_path, _elsewhere_threads(), scope=Scope.ALL, presence=_presence_down)
+    async with app.run_test() as pilot:
+        await _choose_elsewhere(app, pilot, "ctrl+j")
+        await pilot.press("3")
+        await pilot.pause()
+        assert isinstance(app.screen, PickerScreen)
+        assert [n.message for n in app._notifications] == [PRESENCE_UNKNOWN_HOW]
+
+
+async def test_a_move_need_not_wait_for_a_slow_full_scan(tmp_path):
+    gate = threading.Event()
+    reg_path = _seed(tmp_path, _elsewhere_threads())
+
+    def slow(path, now_iso):
+        gate.wait(10)
+        return _scanned(path), None
+
+    app = PickerApp(
+        registry_path=str(reg_path),
+        cwd=CWD,
+        scope=Scope.ALL,
+        refresher=slow,
+        presence=frozenset,
+    )
+    try:
+        async with app.run_test() as pilot:
+            screen = _screen(app)
+            await until(pilot, lambda: screen._live_ids is not None)
+            assert screen._refreshing
+            await pilot.press("ctrl+j", "enter")
+            await pilot.pause()
+            await pilot.press("3")
+            await pilot.pause()
+    finally:
+        gate.set()
+    assert (app.return_value.placement, app.return_value.action) == ("here", "resume")

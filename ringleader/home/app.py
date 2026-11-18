@@ -20,6 +20,7 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Static
 
 from .. import (
+    contract,
     decisions,
     overview,
     paths,
@@ -248,16 +249,19 @@ class _HostedPicker(PickerScreen):
                 landed = outcome.value
                 result = RefreshResult(
                     inbox._decided_view(landed),
-                    landed.live_ids or frozenset(),
+                    landed.live_ids,
                     None,
                     None,
                     landed.unavailable_sources,
                 )
             else:
                 result = RefreshResult(None, None, None, "inbox session scan failed")
+            if isinstance(outcome, Done):
+                # presence is probed even when the scan fails, so it still counts
+                self._live_ids = outcome.value.live_ids
             self._refresh_status = self._result_status(result)
             self._show_refresh_status()
-            self._adopt(result.reg, result.running, None)
+            self._adopt(result.reg, None)
             return
 
 
@@ -294,6 +298,7 @@ class InboxApp(App[ExitIntent | None]):
         delete_grace: float = DELETE_GRACE_SECONDS,
         strict: bool = False,
         keymap: Keymap | None = None,
+        shell_wrapped: bool = False,
         tz: tzinfo | None = None,
         home_dir: str | Path | None = None,
     ) -> None:
@@ -318,6 +323,7 @@ class InboxApp(App[ExitIntent | None]):
         self._presence: Presence = presence or live_session_ids
         self._models: ModelResolver = models or _default_models
         self._cwd = str(cwd) if cwd is not None else os.getcwd()
+        self._shell_wrapped = shell_wrapped
         self._stale_hours = config.roundup_stale_hours
         pool = scanner.SourcePool()
         default_refresher: Refresher = partial(
@@ -792,6 +798,7 @@ class InboxApp(App[ExitIntent | None]):
             presence=self._presence,
             now=self._now,
             initial=self._decided_view(None),
+            shell_wrapped=self._shell_wrapped,
         )
         self.push_screen(picker, callback=self._resume_chosen)
 
@@ -843,8 +850,10 @@ class InboxApp(App[ExitIntent | None]):
             self.screen,
             thread,
             target=None,
-            running=self.session_running(thread),
+            running=contract.is_running(thread, self._state.live_ids),
             threads=tuple(self._state.snapshot.reg["threads"]),
+            cwd=self._cwd,
+            shell_wrapped=self._shell_wrapped,
         )
         if choice is not None:
             self.exit_with(ResumeIntent(choice))

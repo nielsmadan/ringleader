@@ -61,16 +61,7 @@ class _Plan:
 
 @cache
 def _git_for(new_project: str) -> dict[str, str | None] | None:
-    gp = gitinfo.resolve_git_project(new_project)
-    if gp is None:
-        return None
-    return {
-        "key": gp.key,
-        "label": gp.label,
-        "root": gp.root,
-        "remote": gp.remote,
-        "clone_url": gp.clone_url,
-    }
+    return gitinfo.project_record(new_project)
 
 
 @dataclass(frozen=True)

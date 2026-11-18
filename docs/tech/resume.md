@@ -130,16 +130,34 @@ The inbox owns scan notifications, so its picker does not repeat the scan's delt
 Presence comes from `PresenceClient.require_running_session_ids()`, matched on the
 `(agent, session_id)` **pair** — presence names agents `claude` where the registry says
 `claude-code`, so `agent_name()` maps between them, and an id colliding across two agents does not
-produce a false badge. Any failure degrades to no badges and never fails the app.
+produce a false badge. Any failure degrades to no badges and never fails the app, but the
+picker keeps presence as `_live_ids: frozenset | None`, `None` meaning unknown (before the probe
+lands, or after a failed one), and hands `ask_resume_choice` `contract.is_running(thread,
+live_ids)` — `None` rather than `False` when unknown. Resume confirmation treats `None` as not
+running; a move does not. The probe runs on its own daemon thread beside the scan, so a move
+need not wait for a slow full scan; `_receive_refresh` returns once both have reported. The
+hosted picker adopts the inbox scan's `live_ids` whenever a scan finishes, even one that failed.
 
-`Choice(thread, target, threads, confirmed, action)` is the result; quitting exits `None`. `threads` is
-the registry the picker converged on, and `confirmed` records that the user already answered the
-running-session modal, so the command does not ask a second time. `action` is `resume` (default)
-or `fork` or `worktree`. `AgentModal` returns an `AgentChoice(target, action)`, with resume, fork, and worktree entries
-for the original agent followed by other-agent handoffs. The modal half of choosing lives in
-`ask_resume_choice(screen, thread, *, target, running, threads)` — a preset target skips the agent
-modal, a same-agent resume of a running session asks `ConfirmModal` — so any screen can reuse it
-from an async `@work` worker (it awaits `push_screen_wait`). `action_choose` is
+`Choice(thread, target, threads, confirmed, action, name, placement)` is the result; quitting
+exits `None`. `threads` is the registry the picker converged on, and `confirmed` records that the
+user already answered the running-session modal, so the command does not ask a second time.
+`action` is `resume` (default) or `fork` or `worktree`. `placement` (`resume.Placement`) is
+`there` (default), `follow` (there, and the shell follows) or `here` — with `resume` that means
+move the session here, with `fork` fork it into here. `AgentModal` returns an
+`AgentChoice(target, action)`, with resume, fork, and worktree entries for the original agent
+followed by other-agent handoffs. The modal half of choosing lives in
+`ask_resume_choice(screen, thread, *, target, running, threads, cwd, known, action,
+shell_wrapped)`, so any screen can reuse it from an async `@work` worker (it awaits
+`push_screen_wait`). It computes `launch_cwd` once; when nothing is preset and
+`launched_elsewhere(launch, cwd)`, `_ask_where` shows a `ChoiceModal` of `location_options`
+(a closed `Where` literal: `there`, `follow`, `move-here`, `fork-here`, filtered by
+`moves_sessions`, `forks_across_directories` and `running`). Choosing `follow` without the shell
+function, or `move-here` with presence unknown, notifies and returns to the picker. `move-here`
+returns at once; `fork-here` confirms a running session and always asks a name (a converted
+fork takes a title in every agent); `there`/`follow` go on to `_ask_agent` — a preset target skips
+the agent modal, a same-agent resume of a running session asks `ConfirmModal`, and a fork asks a
+name only where the agent `names_forks`. `resume.CONVERTING_AGENTS` copies
+`builtin_adapters().agents()` (a test pins the two) so the picker never imports the converter. `action_choose` is
 `@work(exclusive=True)`: with `--to` set no modal is pushed, so two fast `enter` presses would
 otherwise both dismiss the screen.
 
@@ -153,6 +171,30 @@ keep=)` rebuilds an `OptionList` keyed by option id and restores the highlight �
 else the previous index clamped — since `set_options` resets it.
 
 ### The command (`commands/resume.py`)
+
+`cmd_resume` (and `cmd_inbox`, which hands it on through `run_intent(cwd_file=)`) pops
+`RINGLEADER_CWD_FILE` with `shell.take_cwd_file` before anything else runs, so no child process
+inherits it; it returns the path only for an empty regular file the user owns with one link, so
+a stray exported value does not count, and `shell_wrapped` for the picker is whether it did. A
+subcommand added to the wrapper's `case` list must pop the variable the same way. For `follow`, `_following`
+wraps the `runner` and `launch` seams to `shell.record_launch_dir` the actual launch directory
+(worktree or converted target included) just before exec — `O_NOFOLLOW`, regular, owned by the
+user and still empty, else a warning and the launch goes ahead. `shell.init_script` prints the
+`rl` function that creates the file, runs `command rl`, and `cd`s into what was written; it wraps
+only bare `rl`, `rl inbox` and `rl resume`.
+
+A `here` plan dispatches to `_place_here`. `_plan_here` accepts a move only where
+`relocation.storage_follows(source)` — the same active-source decision the move makes.
+`_move_here` refuses through `_move_refusal` — a running session, or no complete answer: its
+`move_presence` seam is `require_complete_running_session_ids`, which treats an answer with
+`problems` as unknown, and the refusal text is `revalidate.running_reason`'s — then calls
+`relocation.relocate()` (shared
+with `rl session relocate`: one `_storage()` decision picks rebind, relocate or registry-only,
+and `planned_storage()` previews the same decision for `--dry-run`) and resumes in the current
+directory. `_fork_here` calls the `native_fork` seam (`portability.native_resume.native_fork`,
+typed by the `NativeForker` protocol) with `workspace=` the current directory and `title=` the
+chosen name; a published fork launches through `_launch_published`, shared with `_native`,
+which reports a launch failure with the retained identity and a resume command.
 
 Worktree choices dispatch through `worktrees.py` after Textual releases the terminal. The
 resume action is conversation fork plus separate checkout; native naming, setup, base revision,
@@ -289,7 +331,9 @@ chdirs or prompts the test process.
 - `resume.agent_name` / `resume.source_name`, `resume.launchable_agents` — shared by the picker
   and the command
 - `picker.app.PickerScreen`, `picker.app.PickerApp`, `picker.app.Choice`, `picker.app.row_text`,
-  `picker.app.ask_resume_choice`
+  `picker.app.ask_resume_choice`, `picker.app.location_options`
+- `resume.launched_elsewhere`, `resume.moves_sessions`, `resume.forks_across_directories`
+- `shell.take_cwd_file`, `shell.record_launch_dir`, `shell.init_script`; `relocation.relocate`
 - `tui/modals.py`, `tui/rows.py:set_rows`
 - `commands.resume.cmd_resume`
 - `commands.start.cmd_start`, `launch.exec_agent`, `worktrees.plan`, `worktrees.prepare`

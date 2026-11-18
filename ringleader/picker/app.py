@@ -19,13 +19,21 @@ from textual.timer import Timer
 from textual.widgets import Footer, Header, Input, Label, OptionList
 from textual.widgets.option_list import Option
 
-from .. import overview, refresh, registry, resume, scanner
+from .. import contract, overview, refresh, registry, resume, scanner
 from ..agents import source_of
-from ..presence import PresenceClient
-from ..resume import Haystack, Scope, SessionAction, agent_name, launchable_agents
+from ..presence import SETUP_COMMAND, PresenceClient
+from ..resume import Haystack, Placement, Scope, SessionAction, agent_name, launchable_agents
 from ..sources.base import WorkspaceRelocatingSource
 from ..tui.keys import nav_bindings
-from ..tui.modals import AgentChoice, AgentModal, ConfirmModal, ForkNameModal, agent_row_text
+from ..tui.modals import (
+    AgentChoice,
+    AgentModal,
+    ChoiceModal,
+    ChoiceOption,
+    ConfirmModal,
+    ForkNameModal,
+    agent_row_text,
+)
 from ..tui.types import Clock, Presence, Refresher
 
 __all__ = [
@@ -35,11 +43,13 @@ __all__ = [
     "ConfirmModal",
     "PickerApp",
     "PickerScreen",
+    "Where",
     "agent_row_text",
     "ask_resume_choice",
     "empty_hint",
     "launchable_agents",
     "live_session_ids",
+    "location_options",
     "row_text",
 ]
 
@@ -63,6 +73,21 @@ class Choice:
     confirmed: bool = False
     action: SessionAction = "resume"
     name: str | None = None
+    placement: Placement = "there"
+
+
+type Where = Literal["there", "follow", "move-here", "fork-here"]
+
+SHELL_SETUP = "needs rl shell init"
+SHELL_SETUP_HOW = (
+    'cd there needs the rl shell function — add eval "$(rl shell init zsh)" to ~/.zshrc '
+    "(or bash to ~/.bashrc) and open a new shell"
+)
+PRESENCE_UNKNOWN = "can't tell yet whether it is running"
+PRESENCE_UNKNOWN_HOW = (
+    "move it here needs to know the session is not running — wait for the refresh to "
+    f"finish, or set up live sessions with {SETUP_COMMAND}"
+)
 
 
 @dataclass(frozen=True)
@@ -153,15 +178,116 @@ def row_text(
     return text
 
 
-async def ask_resume_choice(  # noqa: PLR0913 -- known is the picker's registry before a scan
+def location_options(
+    thread: dict[str, Any], *, running: bool | None, shell_wrapped: bool
+) -> list[ChoiceOption[Where]]:
+    source = source_of(thread)
+    launchable = source in launchable_agents()
+    movable = launchable and running is not True and resume.moves_sessions(source)
+    forkable = launchable and resume.forks_across_directories(source)
+    return [
+        ChoiceOption[Where]("open it where it is", "there"),
+        ChoiceOption[Where](
+            "cd there, then open it", "follow", None if shell_wrapped else SHELL_SETUP
+        ),
+        *(
+            [
+                ChoiceOption[Where](
+                    "move it here", "move-here", PRESENCE_UNKNOWN if running is None else None
+                )
+            ]
+            if movable
+            else []
+        ),
+        *(
+            [ChoiceOption[Where]("fork it here", "fork-here", "a converted copy")]
+            if forkable
+            else []
+        ),
+    ]
+
+
+def _location_title(thread: dict[str, Any], launch: str, cwd: str) -> Text:
+    title = Text(resume.label(thread), style="bold")
+    title.append(f" lives in {launch}\nyou are in {cwd}")
+    return title
+
+
+async def _ask_where(
+    screen: Screen[Any],
+    thread: dict[str, Any],
+    launch: str,
+    cwd: str,
+    *,
+    running: bool | None,
+    shell_wrapped: bool,
+) -> Where | None:
+    options = location_options(thread, running=running, shell_wrapped=shell_wrapped)
+    where = await screen.app.push_screen_wait(
+        ChoiceModal(_location_title(thread, launch, cwd), options)
+    )
+    if where == "follow" and not shell_wrapped:
+        screen.app.notify(SHELL_SETUP_HOW, title="rl resume", severity="warning", markup=False)
+        return None
+    if where == "move-here" and running is None:
+        screen.app.notify(PRESENCE_UNKNOWN_HOW, title="rl resume", severity="warning", markup=False)
+        return None
+    return where
+
+
+async def _confirm_running(screen: Screen[Any], thread: dict[str, Any], question: str) -> bool:
+    message = Text(resume.label(thread))
+    message.append(f" is running right now — {question} [y/n]")
+    confirmed: bool = await screen.app.push_screen_wait(ConfirmModal(message))
+    return confirmed
+
+
+async def _fork_name(
+    screen: Screen[Any], thread: dict[str, Any], pool: Sequence[dict[str, Any]]
+) -> str | None:
+    suggested = resume.suggested_fork_name(thread, pool)
+    name: str | None = await screen.app.push_screen_wait(ForkNameModal(suggested))
+    return name
+
+
+async def _fork_here(
+    screen: Screen[Any],
+    thread: dict[str, Any],
+    *,
+    running: bool | None,
+    threads: tuple[dict[str, Any], ...],
+    pool: Sequence[dict[str, Any]],
+) -> Choice | None:
+    confirmed = False
+    if running:
+        confirmed = await _confirm_running(screen, thread, "fork its current state here anyway?")
+        if not confirmed:
+            return None
+    # a converted fork takes a title in every agent, so it is always named
+    name = await _fork_name(screen, thread, pool)
+    if name is None:
+        return None
+    return Choice(
+        thread,
+        source_of(thread),
+        threads,
+        confirmed=confirmed,
+        action="fork",
+        name=name or None,
+        placement="here",
+    )
+
+
+async def _ask_agent(  # noqa: PLR0913 -- the flow ask_resume_choice hands on
     screen: Screen[Any],
     thread: dict[str, Any],
     *,
     target: str | None,
-    running: bool,
+    action: SessionAction | None,
+    running: bool | None,
     threads: tuple[dict[str, Any], ...],
-    known: Sequence[dict[str, Any]] = (),
-    action: SessionAction | None = None,
+    pool: Sequence[dict[str, Any]],
+    placement: Literal["there", "follow"],
 ) -> Choice | None:
     choice = (
         AgentChoice(source_of(thread), action)
@@ -175,15 +301,12 @@ async def ask_resume_choice(  # noqa: PLR0913 -- known is the picker's registry 
     handoff = choice.target != source_of(thread)
     confirmed = False
     if choice.action == "resume" and not handoff and running:
-        message = Text(resume.label(thread))
-        message.append(" is running right now — resume it anyway? [y/n]")
-        confirmed = await screen.app.push_screen_wait(ConfirmModal(message))
+        confirmed = await _confirm_running(screen, thread, "resume it anyway?")
         if not confirmed:
             return None
     name = None
     if choice.action == "fork" and resume.names_forks(choice.target):
-        suggested = resume.suggested_fork_name(thread, known or threads)
-        name = await screen.app.push_screen_wait(ForkNameModal(suggested))
+        name = await _fork_name(screen, thread, pool)
         if name is None:
             return None
     return Choice(
@@ -193,6 +316,45 @@ async def ask_resume_choice(  # noqa: PLR0913 -- known is the picker's registry 
         threads=threads,
         confirmed=confirmed,
         name=name or None,
+        placement=placement,
+    )
+
+
+async def ask_resume_choice(  # noqa: PLR0913 -- known is the picker's registry before a scan
+    screen: Screen[Any],
+    thread: dict[str, Any],
+    *,
+    target: str | None,
+    running: bool | None,
+    threads: tuple[dict[str, Any], ...],
+    cwd: str,
+    known: Sequence[dict[str, Any]] = (),
+    action: SessionAction | None = None,
+    shell_wrapped: bool = False,
+) -> Choice | None:
+    pool = known or threads
+    where: Where = "there"
+    launch = resume.launch_cwd(thread, pool) if action is None and target is None else None
+    if launch is not None and resume.launched_elsewhere(launch, cwd):
+        asked = await _ask_where(
+            screen, thread, launch, cwd, running=running, shell_wrapped=shell_wrapped
+        )
+        if asked is None:
+            return None
+        where = asked
+    if where == "move-here":
+        return Choice(thread, source_of(thread), threads, action="resume", placement="here")
+    if where == "fork-here":
+        return await _fork_here(screen, thread, running=running, threads=threads, pool=pool)
+    return await _ask_agent(
+        screen,
+        thread,
+        target=target,
+        action=action,
+        running=running,
+        threads=threads,
+        pool=pool,
+        placement=where,
     )
 
 
@@ -245,8 +407,10 @@ class PickerScreen(Screen[Choice | None]):
         now: Clock | None = None,
         initial: dict[str, Any] | None = None,
         filter_delay: float = FILTER_DELAY,
+        shell_wrapped: bool = False,
     ) -> None:
         super().__init__()
+        self._shell_wrapped = shell_wrapped
         self._initial = initial
         self._filter_delay = filter_delay
         self._filter_timer: Timer | None = None
@@ -272,7 +436,7 @@ class PickerScreen(Screen[Choice | None]):
         self._now: Clock = now or (lambda: datetime.now(UTC))
         self._reg: dict[str, Any] = registry.empty_registry()
         self._rows: list[dict[str, Any]] = []
-        self._live_ids: frozenset[tuple[str, str]] = frozenset()
+        self._live_ids: frozenset[tuple[str, str]] | None = None
         self._scanned = False
 
     def compose(self) -> ComposeResult:
@@ -355,28 +519,31 @@ class PickerScreen(Screen[Choice | None]):
         results: SimpleQueue[RefreshResult] = SimpleQueue()
         stopped = Event()
         # The default executor joins scan threads at App.run() exit, delaying resume.
-        Thread(
-            target=self._refresh,
-            args=(results, stopped, self._scope is Scope.RECURSIVE),
-            daemon=True,
-        ).start()
+        # Presence runs beside the scan, so a move need not wait for a slow full scan.
+        for target, args in (
+            (self._refresh, (results, stopped, self._scope is Scope.RECURSIVE)),
+            (self._probe_presence, (results, stopped)),
+        ):
+            Thread(target=target, args=args, daemon=True).start()
+        pending = {"full", "presence"}
         try:
-            while self._alive():
+            while pending and self._alive():
                 try:
                     result = results.get_nowait()
                 except Empty:
                     await asyncio.sleep(0.02)
                     continue
+                pending.discard(result.stage)
                 if result.stage == "presence":
-                    self._adopt(None, result.running, None)
-                    return
+                    self._adopt_presence(result.running)
+                    continue
                 self._refresh_status = self._result_status(result)
                 self._show_refresh_status()
                 if result.error:
                     self.app.notify(
                         result.error, title="rl resume", severity="warning", markup=False
                     )
-                self._adopt(result.reg, result.running, result.note)
+                self._adopt(result.reg, result.note)
         finally:
             stopped.set()
 
@@ -428,18 +595,24 @@ class PickerScreen(Screen[Choice | None]):
         if reg is not None:
             self._scan_baseline = reg
         results.put(RefreshResult(reg, None, note, warning, unavailable_sources))
+
+    def _probe_presence(self, results: SimpleQueue[RefreshResult], stopped: Event) -> None:
+        if stopped.is_set():
+            return
+        running: frozenset[tuple[str, str]] | None
         try:
             running = self._presence()
-        except Exception:  # noqa: BLE001 -- no presence means no live sessions
-            running = frozenset()
+        except Exception:  # noqa: BLE001 -- no badges; a move still refuses on unknown
+            running = None
         results.put(RefreshResult(None, running, None, None, stage="presence"))
 
-    def _adopt(
-        self,
-        reg: dict[str, Any] | None,
-        running: frozenset[tuple[str, str]] | None,
-        note: str | None,
-    ) -> None:
+    def _adopt_presence(self, running: frozenset[tuple[str, str]] | None) -> None:
+        if not self._alive():
+            return
+        self._live_ids = running
+        self.call_next(self._render_rows)
+
+    def _adopt(self, reg: dict[str, Any] | None, note: str | None) -> None:
         if not self._alive():
             return
         if reg is not None:
@@ -447,8 +620,6 @@ class PickerScreen(Screen[Choice | None]):
                 self._cache = _RowCache()
             self._reg = reg
             self._scanned = True
-        if running is not None:
-            self._live_ids = running
         if note:
             self.app.notify(note, title="rl resume", markup=False)
         self.call_next(self._render_rows)
@@ -465,10 +636,7 @@ class PickerScreen(Screen[Choice | None]):
         return registry.identity(self._rows[index])
 
     def _is_running(self, thread: dict[str, Any]) -> bool:
-        session_id = thread.get("sessionId")
-        if not session_id:
-            return False
-        return (agent_name(source_of(thread)), session_id) in self._live_ids
+        return bool(contract.is_running(thread, self._live_ids))
 
     def _haystack(self, thread: dict[str, Any]) -> Haystack:
         key = registry.identity(thread)
@@ -501,7 +669,7 @@ class PickerScreen(Screen[Choice | None]):
         self.sub_title = f"[{self._scope.value}] ({len(self._rows)})"
         self._render_empty()
         now = self._now().isoformat()
-        if not self._cache.advance(now[:16], self._live_ids, self._rows):
+        if not self._cache.advance(now[:16], self._live_ids or frozenset(), self._rows):
             return
         sources = resume.slug_sources()
         list_view = self._list_view()
@@ -588,10 +756,12 @@ class PickerScreen(Screen[Choice | None]):
             self,
             thread,
             target=self._target,
-            running=self._is_running(thread),
+            running=contract.is_running(thread, self._live_ids),
             threads=threads,
+            cwd=self.cwd,
             known=cast(list[dict[str, Any]], self._reg.get("threads") or []),
             action=self._requested_action,
+            shell_wrapped=self._shell_wrapped,
         )
         if choice is not None and self._alive():
             self.dismiss(choice)
@@ -622,6 +792,7 @@ class PickerApp(App[Choice | None]):
         presence: Presence | None = None,
         now: Clock | None = None,
         filter_delay: float = FILTER_DELAY,
+        shell_wrapped: bool = False,
     ) -> None:
         super().__init__()
         self._picker = PickerScreen(
@@ -638,6 +809,7 @@ class PickerApp(App[Choice | None]):
             presence=presence,
             now=now,
             filter_delay=filter_delay,
+            shell_wrapped=shell_wrapped,
         )
 
     def on_mount(self) -> None:

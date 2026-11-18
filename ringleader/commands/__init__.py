@@ -113,6 +113,9 @@ _DATA = {
 _HANDOFF = {
     "triage": Lazy("handoff", "cmd_triage"),
 }
+_SHELL = {
+    "init": Lazy("shell", "cmd_init"),
+}
 _WORKSPACE = {
     "move": Lazy("move_workspace", "cmd_move"),
     "retarget": Lazy("move_workspace", "cmd_retarget"),
@@ -136,6 +139,7 @@ TABLE: dict[str, CommandFn | dict[str, Any]] = {
     "uninstall": Lazy("setup", "cmd_uninstall"),
     # namespaces
     "workspace": _WORKSPACE,
+    "shell": _SHELL,
     "handoff": _HANDOFF,
     "session": _SESSION,
     "mem": _MEM,

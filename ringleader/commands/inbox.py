@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 
+from .. import shell
 from ..launch import exec_agent
 from . import default_registry
 
@@ -27,6 +29,7 @@ def cmd_inbox(argv: list[str]) -> int:
         "--scan", action="store_true", help="with --json, rescan the sources before listing"
     )
     args = ap.parse_args(argv)
+    cwd_file = shell.take_cwd_file(os.environ)
     if args.scan and not args.json:
         ap.error("--scan needs --json")
     if args.json and args.read_only:
@@ -56,7 +59,12 @@ def cmd_inbox(argv: list[str]) -> int:
     except ValueError as error:
         print(f"rl inbox: {error} — set it with rl config set inbox.keys", file=sys.stderr)
         return 2
-    app = InboxApp(args.registry, read_only=args.read_only, keymap=keymap)
+    app = InboxApp(
+        args.registry,
+        read_only=args.read_only,
+        keymap=keymap,
+        shell_wrapped=cwd_file is not None,
+    )
     try:
         intent = app.run()
     finally:
@@ -74,4 +82,5 @@ def cmd_inbox(argv: list[str]) -> int:
         resume_command=commands.resume.cmd_resume,
         runner=exec_agent,
         which=shutil.which,
+        cwd_file=cwd_file,
     )

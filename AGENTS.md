@@ -28,7 +28,12 @@ pruning them before the GC clock deletes them.
   `rl data migrate` (run automatically by `just install`) moves any legacy repo-root
   state there once.
 - **`rl resume` and `rl start` replace the `rl` process.** They `chdir` to the launch directory
-  and `execvpe` the agent, so ringleader cannot run cleanup after the agent exits. `--dry-run` prints the
+  and `execvpe` the agent, so ringleader cannot run cleanup after the agent exits — the only
+  after-exit effect is the `rl` shell function (`rl shell init`), which `cd`s the shell into the
+  directory rl left in the fresh file named by `RINGLEADER_CWD_FILE`; rl pops that variable at
+  start so no child inherits it. A picked session from another directory first asks where it
+  runs: there, cd there, move it here (refused unless presence vouches it is not running), or
+  fork it here (a conversion fork, ADR 0012 amendment). `--dry-run` prints the
   directory and the argv and launches nothing. Resuming in a *different* agent (`--to`) tries a
   **native conversion** first — a fresh session in the target agent that genuinely continues the
   source, via `rl session convert`/`fork` under the hood — and only on refusal asks before
@@ -203,6 +208,7 @@ rl --version                        # rl X.Y.Z, from pyproject.toml
 rl start <agent> [--worktree]        # fresh conversation here or in a new worktree; --dry-run previews
 rl handoff triage --project K --agent A # an agent triages one project; --dry-run [--json] previews
 rl resume [<query>]                 # TUI to re-enter a session, in its own agent or another
+rl shell init zsh                   # the rl shell function that lets "cd there" move your shell
 rl resume --last                    # re-enter the most recent session in scope, no picker
 rl                                  # bare, on an interactive non-agent TTY: opens rl inbox
 rl inbox [--read-only]              # the daily home TUI (Textual, shipped as a dep)

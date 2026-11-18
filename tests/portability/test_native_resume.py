@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -15,7 +16,8 @@ from ringleader.portability import native_resume as module
 from ringleader.portability import service as service_module
 from ringleader.portability.capabilities import RunResult
 from ringleader.portability.claude import ClaudeAdapter
-from ringleader.portability.model import PreservationError
+from ringleader.portability.launch import ExecLauncher
+from ringleader.portability.model import Identity, PreservationError
 from ringleader.portability.native_resume import ConversionFailure, native_resume
 from ringleader.portability.selection import resolve, sessions
 from ringleader.portability.service import ConversionService
@@ -28,6 +30,7 @@ from ringleader.portability.verification import (
 from ringleader.portability.verify import claude as claude_harness
 from ringleader.portability.verify import workflow
 from ringleader.portability.verify.common import HarnessResult
+from ringleader.slug import slugify
 from tests.portability.test_cli import environment, seed, tree
 from tests.portability.test_service import OfflineRunner
 
@@ -608,3 +611,97 @@ def test_doctor_and_resume_self_verify_through_one_workflow(offline, monkeypatch
         ] == [{**record.__dict__, "verified_at": None} for record in load_verified(from_resume)]
     else:
         assert resumed.outcome == "refused"
+
+
+def _fork_here(base, path, selected, workspace, *, title=None, dry_run=False):
+    return module.native_fork(
+        selected,
+        workspace=workspace,
+        title=title,
+        registry_path=path,
+        operations_path=base / "operations",
+        verified_path=base / "verified.json",
+        dry_run=dry_run,
+        allow_verify=False,
+        report=progress_lines.append,
+    )
+
+
+def test_a_fork_here_lands_in_the_given_workspace_and_leaves_the_source(offline):
+    base, path, thread = offline
+    here = base / "here"
+    here.mkdir()
+    before = Path(thread["file"]).read_bytes()
+
+    result = _fork_here(base, path, _selected(path, thread), here, title="topic-fork-1")
+
+    assert result.outcome == "forked"
+    assert result.target is not None and result.target.agent == "pi"
+    assert result.target.native_id != thread["sessionId"]
+    assert result.launch is not None and result.launch.cwd == here
+    created = registry.find_session(registry.load_registry(path), result.target.native_id)
+    assert created["project"] == str(here)
+    assert Path(thread["file"]).read_bytes() == before
+
+
+def test_a_claude_fork_here_is_filed_under_the_workspaces_project_dir(offline):
+    base, path, thread = offline
+    converted = _resume(base, path, thread)
+    assert converted.target is not None
+    claude = resolve(
+        sessions(registry.load_registry(path)), f"claude-code:{converted.target.native_id}"
+    )
+    here = base / "elsewhere" / "here"
+    here.mkdir(parents=True)
+
+    result = _fork_here(base, path, claude, here)
+
+    assert result.outcome == "forked"
+    assert result.launch is not None and result.launch.cwd == here
+    assert result.target is not None
+    created = registry.find_session(registry.load_registry(path), result.target.native_id)
+    assert Path(created["file"]).parent.name == slugify(str(here.resolve()))
+
+
+def test_a_dry_run_fork_here_previews_and_writes_nothing(offline):
+    base, path, thread = offline
+    here = base / "here"
+    here.mkdir()
+    before = tree(base)
+
+    result = _fork_here(base, path, _selected(path, thread), here, dry_run=True)
+
+    assert (result.outcome, result.launch) == ("would-convert", None)
+    assert tree(base) == before
+
+
+def test_a_fork_here_for_an_agent_without_an_adapter_is_refused(offline):
+    base, path, thread = offline
+    selected = _selected(path, thread)
+    cursor = dataclasses.replace(selected, identity=Identity("cursor", "c1"))
+    before = tree(base)
+
+    result = _fork_here(base, path, cursor, base)
+
+    assert (result.outcome, result.launch) == ("refused", None)
+    assert "cursor" in (result.reason or "")
+    assert tree(base) == before
+
+
+def test_a_fork_into_a_missing_directory_is_refused_before_anything_is_published(
+    offline, monkeypatch
+):
+    base, path, thread = offline
+    binary = base / "bin" / "pi"
+    binary.parent.mkdir(exist_ok=True)
+    binary.write_text("#!/bin/sh\nexit 0\n")
+    binary.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{binary.parent}{os.pathsep}{os.environ['PATH']}")
+    monkeypatch.setattr(module, "ExecLauncher", ExecLauncher)
+    registry_before = Path(path).read_bytes()
+
+    result = _fork_here(base, path, _selected(path, thread), base / "gone")
+
+    assert (result.outcome, result.launch) == ("refused", None)
+    assert "workspace is missing" in (result.reason or "")
+    assert Path(path).read_bytes() == registry_before

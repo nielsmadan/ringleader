@@ -121,21 +121,33 @@ def _would_verify(worker: ConversionService, target: str) -> NativeResume:
     return NativeResume("would-verify", None, None, None, version=version)
 
 
-def _request(
-    worker: ConversionService, source: SelectedSession, target: str, *, strict: bool
+def _request(  # noqa: PLR0913 -- one keyword per request field
+    worker: ConversionService,
+    source: SelectedSession,
+    target: str,
+    *,
+    strict: bool,
+    fork: bool = False,
+    workspace: Path | None = None,
+    title: str | None = None,
 ) -> ConversionRequest:
     return ConversionRequest(
         source_request(worker.adapters, source, strict=strict),
         target,
         worker.adapters.roots(target, source.cwd),
+        fork=fork,
+        title=title,
+        workspace=workspace,
     )
 
 
-def _prepare(
-    worker: ConversionService, source: SelectedSession, target: str, *, strict: bool
-) -> PreparedConversion:
+type _RequestFor = Callable[[ConversionService], ConversionRequest]
+
+
+def _prepare(worker: ConversionService, request: ConversionRequest) -> PreparedConversion:
+    target = request.target_agent
     try:
-        return worker.prepare(_request(worker, source, target, strict=strict))
+        return worker.prepare(request)
     except subprocess.TimeoutExpired as exc:
         raise ConversionFailure(
             f"native conversion to {display_agent(target)} failed: {exc}; nothing was published"
@@ -173,7 +185,7 @@ def _resume_existing(
         if isinstance(planned, NativeResume):
             return planned
         return NativeResume("reused", existing.target, planned, None, existing.diagnostics)
-    refusal = _attempt(target, lambda: _validate(worker, source, target))
+    refusal = _attempt(target, lambda: _validate(worker, target, source.cwd))
     if isinstance(refusal, NativeResume):
         return refusal
     return NativeResume(
@@ -181,11 +193,11 @@ def _resume_existing(
     )
 
 
-def _validate(worker: ConversionService, source: SelectedSession, target: str) -> None:
+def _validate(worker: ConversionService, target: str, cwd: Path) -> None:
     adapter = worker.adapters.get(target)
     allocator = adapter.identity_allocator
     probe = allocator.allocate_identity() if allocator else Identity(adapter.agent, str(uuid4()))
-    roots = worker.adapters.roots(target, source.cwd)
+    roots = worker.adapters.roots(target, cwd)
     ExecLauncher().validate(worker.adapters.launcher(target).launch_request(probe, roots))
 
 
@@ -258,17 +270,16 @@ def _preview(
 
 def _prepare_or_verify(  # noqa: PLR0913
     worker: ConversionService,
-    source: SelectedSession,
+    request_for: _RequestFor,
     target: str,
     paths: _Paths,
     *,
     dry_run: bool,
     allow_verify: bool,
     report: Report,
-    strict: bool,
 ) -> tuple[ConversionService, PreparedConversion] | NativeResume:
     try:
-        return worker, _prepare(worker, source, target, strict=strict)
+        return worker, _prepare(worker, request_for(worker))
     except NeedsVerification as exc:
         if dry_run:
             return _attempt(target, lambda: _would_verify(worker, target))
@@ -284,9 +295,54 @@ def _prepare_or_verify(  # noqa: PLR0913
     def verified() -> tuple[ConversionService, PreparedConversion]:
         verify_and_record(worker.adapters, target, paths.verified, report)
         fresh = _service(paths)
-        return fresh, _prepare(fresh, source, target, strict=strict)
+        return fresh, _prepare(fresh, request_for(fresh))
 
     return _attempt(target, verified)
+
+
+def _worker(paths: _Paths, agent: str) -> tuple[ConversionService, str] | NativeResume:
+    try:
+        worker = _service(paths)
+        return worker, worker.adapters.get(agent).agent
+    except _REFUSALS as exc:
+        return _refused(str(exc))
+    except _ERRORS as exc:
+        raise _unexpected(agent, exc) from exc
+
+
+type _Published = tuple[ConversionService, PreparedConversion, ConversionResult]
+
+
+def _publish_new(  # noqa: PLR0913
+    worker: ConversionService,
+    source: SelectedSession,
+    request_for: _RequestFor,
+    paths: _Paths,
+    *,
+    target: str,
+    cwd: Path,
+    dry_run: bool,
+    allow_verify: bool,
+    report: Report,
+) -> _Published | NativeResume:
+    ready = _prepare_or_verify(
+        worker,
+        request_for,
+        target,
+        paths,
+        dry_run=dry_run,
+        allow_verify=allow_verify,
+        report=report,
+    )
+    if isinstance(ready, NativeResume):
+        return ready
+    worker, prepared = ready
+    if dry_run:
+        return _preview(worker, source, prepared, paths)
+    refusal = _attempt(target, lambda: _validate(worker, target, cwd))
+    if isinstance(refusal, NativeResume):
+        return refusal
+    return worker, prepared, _publish(worker, prepared, paths)
 
 
 def native_resume(  # noqa: PLR0913
@@ -302,35 +358,27 @@ def native_resume(  # noqa: PLR0913
     strict: bool = False,
 ) -> NativeResume:
     paths = _Paths(registry_path, operations_path, verified_path)
-    try:
-        worker = _service(paths)
-        target = worker.adapters.get(target_agent).agent
-    except _REFUSALS as exc:
-        return _refused(str(exc))
-    except _ERRORS as exc:
-        raise _unexpected(target_agent, exc) from exc
+    started = _worker(paths, target_agent)
+    if isinstance(started, NativeResume):
+        return started
+    worker, target = started
     existing = _resumable(worker, source, target, strict=strict)
     if existing is not None:
         return _resume_existing(worker, paths, source, existing, dry_run=dry_run)
-    ready = _prepare_or_verify(
+    published = _publish_new(
         worker,
         source,
-        target,
+        lambda w: _request(w, source, target, strict=strict),
         paths,
+        target=target,
+        cwd=source.cwd,
         dry_run=dry_run,
         allow_verify=allow_verify,
         report=report,
-        strict=strict,
     )
-    if isinstance(ready, NativeResume):
-        return ready
-    worker, prepared = ready
-    if dry_run:
-        return _preview(worker, source, prepared, paths)
-    refusal = _attempt(target, lambda: _validate(worker, source, target))
-    if isinstance(refusal, NativeResume):
-        return refusal
-    result = _publish(worker, prepared, paths)
+    if isinstance(published, NativeResume):
+        return published
+    worker, prepared, result = published
     outcome: Outcome = "reused" if result.reused else "converted"
     previous = None
     if result.reused and result.lifecycle in RETIRED:
@@ -343,4 +391,43 @@ def native_resume(  # noqa: PLR0913
         None,
         result.diagnostics,
         previous=previous,
+    )
+
+
+def native_fork(  # noqa: PLR0913
+    source: SelectedSession,
+    *,
+    workspace: Path,
+    title: str | None,
+    registry_path: Path,
+    operations_path: Path,
+    verified_path: Path,
+    dry_run: bool,
+    allow_verify: bool,
+    report: Report,
+    strict: bool = False,
+) -> NativeResume:
+    paths = _Paths(registry_path, operations_path, verified_path)
+    started = _worker(paths, source.identity.agent)
+    if isinstance(started, NativeResume):
+        return started
+    worker, target = started
+    published = _publish_new(
+        worker,
+        source,
+        lambda w: _request(
+            w, source, target, strict=strict, fork=True, workspace=workspace, title=title
+        ),
+        paths,
+        target=target,
+        cwd=workspace,
+        dry_run=dry_run,
+        allow_verify=allow_verify,
+        report=report,
+    )
+    if isinstance(published, NativeResume):
+        return published
+    worker, _, result = published
+    return NativeResume(
+        "forked", result.target, _launch(worker, result, paths), None, result.diagnostics
     )

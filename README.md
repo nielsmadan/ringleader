@@ -87,6 +87,8 @@ rl install             # skills, session-end hook, statusline capture
   skipping the choice with `--fork` or forking into a separate worktree with `--worktree`,
   or hand it to a *different* agent via a native conversion (falling back to a Markdown
   transcript of the old session only if that's refused, or if you pass `--markdown`).
+  A session from another directory can be opened there, moved here, or forked here; with
+  `eval "$(rl shell init zsh)"` in your shell rc, "cd there" leaves your shell in its directory.
   → [Resuming sessions](docs/features/resuming-sessions.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
 - **Usage** — where your tokens went, across five harnesses, plus 5h/weekly subscription
@@ -159,6 +161,7 @@ rl mem <sub>                        # native memory review and recovery
 rl data <sub>                       # export, tokens, migrate, presence
 rl data presence status [--json]    # is live-session presence wired up
 rl workspace move <old> <new>       # move a checkout without stranding its sessions
+rl shell init zsh                   # the rl shell function: lets rl resume cd your shell
 rl config show | set <key> <value>  # the AI engine, retention, label model (stores no secrets)
 ```
 

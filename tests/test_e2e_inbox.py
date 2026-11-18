@@ -98,6 +98,8 @@ def test_resuming_a_session_from_the_picker_execs_its_agent(tmp_path):
                 Send(title),
                 Expect(title),
                 Send(KEY_ENTER),
+                Expect("open it where it is"),
+                Send("1"),
                 Expect("resume with which agent?"),
                 Send(KEY_ENTER),
                 ExpectExit(),

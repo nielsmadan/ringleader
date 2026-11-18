@@ -12,14 +12,18 @@ from typing import Any, Literal, cast
 from . import namefilter, overview, scanner, search
 from .agents import canonical_agent, display_agent, source_of
 from .search import BLURB_FIELDS
+from .slug import normalize
 from .sources.base import (
     ForkNamingSource,
     SessionLaunchingSource,
+    WorkspaceRebindingSource,
     WorkspaceRelocatingSource,
     in_workspace,
 )
 
 SessionAction = Literal["resume", "fork", "worktree"]
+# "here" is the current directory: a resume moves the session there, a fork lands there
+Placement = Literal["there", "follow", "here"]
 
 _UNKNOWN = "(unknown)"
 
@@ -301,6 +305,21 @@ def names_forks(name: str) -> bool:
     return fork_namer(name) is not None
 
 
+def moves_sessions(name: str) -> bool:
+    source = scanner.source_by_name(name)
+    return scanner.supports(
+        source, "relocates_workspace", WorkspaceRelocatingSource
+    ) or scanner.supports(source, "rebinds_workspace", WorkspaceRebindingSource)
+
+
+# equals builtin_adapters().agents(), copied so the picker need not import the converter
+CONVERTING_AGENTS = frozenset({"claude-code", "codex", "droid", "opencode", "pi"})
+
+
+def forks_across_directories(name: str) -> bool:
+    return name in CONVERTING_AGENTS
+
+
 _FORK_SUFFIX = re.compile(r"(?P<stem>.*)-fork-(?P<number>\d+)")
 
 
@@ -357,15 +376,20 @@ def launch_cwd(thread: dict[str, Any], threads: Sequence[dict[str, Any]] = ()) -
     project = thread.get("project")
     if not project:
         return None
-    if not drifted(thread):
+    sources = slug_sources()
+    if not drifted(thread, sources):
         return str(project)
-    source = slug_sources()[source_of(thread)]
+    source = sources[source_of(thread)]
     stored = source.storage_dir(thread["file"])
     for other in threads:
         if source_of(other) != source_of(thread):
             continue
         if not other.get("file") or not other.get("project"):
             continue
-        if source.storage_dir(other["file"]) == stored and not drifted(other):
+        if source.storage_dir(other["file"]) == stored and not drifted(other, sources):
             return str(other["project"])
     return str(project)
+
+
+def launched_elsewhere(launch: str, cwd: str) -> bool:
+    return normalize(launch) != normalize(cwd)

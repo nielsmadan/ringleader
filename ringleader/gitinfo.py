@@ -151,6 +151,19 @@ def resolve_git_project(cwd: str | None, runner: GitRunner | None = None) -> Git
         return None
 
 
+def project_record(cwd: str) -> dict[str, str | None] | None:
+    gp = resolve_git_project(cwd)
+    if gp is None:
+        return None
+    return {
+        "key": gp.key,
+        "label": gp.label,
+        "root": gp.root,
+        "remote": gp.remote,
+        "clone_url": gp.clone_url,
+    }
+
+
 RESOLVE_WORKERS = 8
 
 

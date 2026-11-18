@@ -83,6 +83,53 @@ Scope is a **path** comparison, directory-boundary aware — `/w/api` does not m
 It is not the git-project matching `rl overview <selector>` uses, because resuming is about the
 directory the agent will start in, not about which repo the work belongs to.
 
+## Sessions from another directory
+
+Choosing a session whose launch directory is not the current one — usually after `ctrl+a` or
+`ctrl+t` — first asks where it should run. The inbox's Resume asks the same. `--fork`,
+`--worktree` and `--to` skip the question and keep the session's own directory, as do an exact
+id and `--last`.
+
+| Row | What happens |
+|---|---|
+| open it where it is | the old behaviour: the agent starts in the session's directory; your shell stays put |
+| cd there, then open it | the same, and your shell is left in that directory once the agent exits |
+| move it here | the session moves to the current directory, then resumes here |
+| fork it here | a new session continuing this one starts in the current directory; the original stays |
+
+Rows 1 and 2 go on to the usual resume / fork / worktree / hand-off menu. Rows 3 and 4 stay in
+the session's own agent.
+
+**cd there** needs the `rl` shell function, because a program cannot change its parent shell's
+directory. Add `eval "$(rl shell init zsh)"` to `~/.zshrc` (`bash` for `~/.bashrc`), or save
+the output to a file once and source that, which skips starting Python in every new shell.
+The function wraps bare `rl`, `rl inbox` and `rl resume` only. Without it the row reads
+"needs rl shell init" and choosing it explains the setup. The handshake is a fresh, empty temp
+file named in `RINGLEADER_CWD_FILE`: rl takes the variable out of its environment as it starts,
+so neither the agent nor any other child sees it, and writes the launch directory into the file
+just before it hands over. A variable naming anything else — a symlink, a FIFO, a non-empty
+file, a second name for another file, someone else's file — is ignored, and the agent launches
+with the shell left where it was.
+
+**Move it here** is offered for Claude Code, Codex, Droid and Cursor, the agents whose storage
+can follow a session, and uses the same steps as `rl session relocate`: the transcript is
+refiled (Codex has its recorded cwd rewritten instead) and the registry record is pinned to the
+new directory. Moving a live transcript is undone by the agent's next write, so a session
+presence reports as running is never moved — and neither is one presence cannot vouch for:
+until the live-session check answers the row reads "can't tell yet whether it is running", and
+without `rl data presence install`, or when its answer is incomplete, the move refuses. The
+check runs beside the scan, so it is usually ready long before the scan is. Move it back the
+same way.
+
+**Fork it here** is offered for Claude Code, Codex, Droid, OpenCode and Pi. It is not the
+agent's own fork command — Claude Code cannot resume a session filed under another project —
+but the journaled conversion `rl session fork` uses, pointed at the current directory, so it
+records lineage and inherits that path's rules: the first use of an agent version may
+self-verify it (interactively), harness bootstrap is not carried over, and a refusal names its
+reason and suggests forking it where it is instead. The picker asks for a name for every agent,
+and confirms first if the session is running. `--dry-run` reports whether it would convert or
+would self-verify; the fork's argv does not exist until it is published.
+
 ## Refreshing the picker
 
 The picker shows cached sessions immediately, then refreshes this workspace before scanning
@@ -123,8 +170,9 @@ source or a reused target is running before proceeding.
 | `cursor` | `cursor-agent --resume <id>` |
 
 **Fork in the same agent** — the second entry creates a fresh session continuing from the
-source's current conversation state. The original is preserved, and the workspace stays the
-same. Each selection forks anew, and `--fork` takes this entry without showing the menu. This
+source's current conversation state. The original is preserved, and the fork starts in the
+session's own directory (to fork into this one, see
+[Sessions from another directory](#sessions-from-another-directory)). Each selection forks anew, and `--fork` takes this entry without showing the menu. This
 uses the agent's native command:
 
 | source | command |

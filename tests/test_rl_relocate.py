@@ -1,6 +1,7 @@
 import json
 import sqlite3
 
+from ringleader import gitinfo
 from ringleader.commands import relocate
 from ringleader.gitinfo import GitProject
 from ringleader.slug import cursor_chat_key, cursor_slug, normalize, slugify
@@ -13,7 +14,7 @@ def test_relocate_preserves_raw_clone_url(tmp_path, monkeypatch):
     repo.mkdir()
     clone_url = "ssh://git@gitlab.example.com:2222/team/service.git"
     monkeypatch.setattr(
-        relocate.gitinfo,
+        gitinfo,
         "resolve_git_project",
         lambda _: GitProject(
             root=str(repo),
@@ -222,3 +223,16 @@ def test_relocating_a_cursor_session_twice_is_a_no_op_the_second_time(tmp_path):
 
     assert json.loads(reg.read_text())["threads"][0]["file"] == str(moved)
     assert (store / "chats" / cursor_chat_key(str(dest)) / "c1" / "meta.json").is_file()
+
+
+def test_a_codex_session_missing_from_its_index_moves_with_a_warning(tmp_path, monkeypatch, capsys):
+    home, dest, reg = _codex_world(tmp_path, monkeypatch)
+    con = sqlite3.connect(home / "state_5.sqlite")
+    con.execute("DELETE FROM threads")
+    con.commit()
+    con.close()
+
+    assert relocate.cmd_relocate(["s1", str(dest), "--registry", str(reg)]) == 0
+
+    assert "stays resumable by id" in capsys.readouterr().err
+    assert json.loads(reg.read_text())["threads"][0]["project"] == str(dest)

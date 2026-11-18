@@ -13,6 +13,7 @@ UNDOCUMENTED_BY_DESIGN = {
     "start": "a human starts an agent; not part of the curation track",
     "handoff": "the inbox and the circus app hand a project to an agent; the skill is the target",
     "workspace": "relocation track, not the session track",
+    "shell": "a human wires the rl shell function into their shell rc once",
     "session sweep": "run by the session-end hook, not by an agent",
     "update hooks": "hook lifecycle; the user runs it directly",
     "uninstall hooks": "hook lifecycle; the user runs it directly",

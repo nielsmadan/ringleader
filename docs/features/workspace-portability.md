@@ -64,8 +64,9 @@ re-pointing, and the command says it went registry-only.
 ## Key entry points
 
 - `commands/move_workspace.py` — `cmd_move()`, `cmd_retarget()`.
-- `commands/relocate.py` — `cmd_relocate()`; carries the same pin-vs-refuse decision for
-  one session, and is re-runnable because it skips a transcript already at the destination.
+- `relocation.py` — `relocate()`, behind `commands/relocate.py:cmd_relocate()` and
+  `rl resume`'s move-here; carries the same pin-vs-refuse decision for one session, and
+  is re-runnable because it skips a transcript already at the destination.
 - `sources/base.py` — `WorkspaceRelocatingSource` (`storage_for`, `relocate_storage`,
   `relocate_session`); both relocate methods raise rather than merge.
 - `sources/base.py` — `WorkspaceRebindingSource` (`rebind_workspace`); rewrites the agent's

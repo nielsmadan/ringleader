@@ -53,5 +53,11 @@ Converted sessions follow ordinary lifecycle policy. Idempotent conversion repor
 an archived or deleted result instead of recreating it; a fork requests a fresh identity.
 Workspace relocation remains a separate operation.
 
+*Amended 2026-11-18:* a fork may name a destination workspace (`ConversionRequest.workspace`),
+which `rl resume`'s "fork it here" uses to continue a session from another directory in the
+current one. A plain convert still publishes in the source's recorded workspace, and moving an
+existing session is still `rl session relocate`'s job, not conversion's. The target's cwd has
+one channel: the service replaces `target_roots.cwd` with the workspace, or the source cwd.
+
 Current contracts live in [session portability internals](../tech/session-portability.md)
 and [registry concurrency](../tech/registry.md#concurrent-mutations).

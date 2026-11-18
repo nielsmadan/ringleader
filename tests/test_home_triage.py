@@ -122,7 +122,17 @@ ANSWER = {"summary": "fixed the parser", "gotchas": ["watch the cache"], "decisi
 EMPTY = {"summary": " ", "gotchas": [], "decisions": [], "whatChanged": []}
 
 
-def _app(path, *, execute=None, presence=frozenset, model=None, cls=InboxApp, keymap=VIM, **kwargs):
+def _app(  # noqa: PLR0913
+    path,
+    *,
+    execute=None,
+    presence=frozenset,
+    model=None,
+    cls=InboxApp,
+    keymap=VIM,
+    cwd=None,
+    **kwargs,
+):
     return cls(
         path,
         keymap=keymap,
@@ -131,7 +141,7 @@ def _app(path, *, execute=None, presence=frozenset, model=None, cls=InboxApp, ke
         now=lambda: NOW_DT,
         models=lambda task: model if task == "harvest" else None,
         execute=execute or GatedExecute(),
-        cwd=path.parent,
+        cwd=cwd or path.parent,
         strict=True,
         **kwargs,
     )
@@ -659,7 +669,7 @@ async def test_enter_opens_the_detail_and_the_conversation_appears(tmp_path):
 @pytest.mark.parametrize("key", ["enter", "o"])
 async def test_circus_enter_and_o_resume_the_highlighted_session(tmp_path, key):
     path = _write(tmp_path / "registry.json", _thread("s1", days=5))
-    app = _app(path, keymap=CIRCUS)
+    app = _app(path, keymap=CIRCUS, cwd="/w/x")
     async with app.run_test(size=(100, 30)) as pilot:
         await _open_triage(app, pilot)
         await pilot.press(key)
@@ -741,7 +751,7 @@ async def test_resume_waits_for_a_pending_archive_before_exiting(tmp_path):
             execute.log.append(("exit", type(result).__name__))
             super().exit(result, return_code, message)
 
-    app = _app(path, execute=execute, cls=Recording)
+    app = _app(path, execute=execute, cls=Recording, cwd="/w/x")
     async with app.run_test(size=(100, 30)) as pilot:
         try:
             await _open_triage(app, pilot)

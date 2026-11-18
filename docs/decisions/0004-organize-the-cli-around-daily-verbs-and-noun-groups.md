@@ -31,4 +31,8 @@ handing other work to an agent (publishing harvests, as the inbox already does) 
 as `rl handoff <purpose>`. It is unrelated to `rl session handoff`, which forks a session into
 another agent; the two share a word, not code.
 
+*Amended 2026-11-18:* a sixth group, `rl shell`, holds `rl shell init zsh|bash`, which prints
+the `rl` shell function that lets `rl resume` leave the shell in a session's directory. It is
+run once by a person wiring up their shell, not by skills, so it stays out of the daily verbs.
+
 See [tech/cli-and-commands.md](../tech/cli-and-commands.md).

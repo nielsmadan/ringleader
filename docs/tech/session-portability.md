@@ -87,6 +87,11 @@ artifacts and intents under `conversion/`; full execution roots are stored for
 recovery. Semantic reuse identity includes target store/cwd/profile/schema/resolved
 configuration and source snapshot/options/title, but not incidental TMP/cache paths.
 The requested reuse key is computed once before taking the operation lock.
+The target cwd is `ConversionRequest.workspace` when set, else the source's recorded cwd;
+`prepare()` and `reusable()` overwrite `target_roots.cwd` with it, so it is the only
+channel. `native_resume.native_fork()` sets it for `rl resume`'s "fork it here", sharing
+`_publish_new` (prepare or self-verify, preview, launch validation, publish) with
+`native_resume()`.
 `prepare()` reads the staged output back and probes the target once; `publish()` of
 that prepared conversion reuses the read-back and replays the recorded version probe,
 re-reading only the target's configuration and schema to catch drift since `prepare()`.

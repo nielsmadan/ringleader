@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from ringleader import resume
+from ringleader.portability.adapters import builtin_adapters
 from ringleader.resume import Scope
 
 NOW = "2026-09-01T00:00:00+00:00"
@@ -609,3 +610,19 @@ def test_the_agent_and_source_names_of_claude_code_map_onto_each_other():
 )
 def test_fork_name_counts_up_from_the_name_it_forks(name, taken, expected):
     assert resume.fork_name(name, taken) == expected
+
+
+@pytest.mark.parametrize(
+    ("launch", "cwd", "elsewhere"),
+    [
+        ("/w/api", "/w/api/", False),
+        ("/w/api", "/w/api/sub/..", False),
+        ("/w/api", "/w/apiary", True),
+    ],
+)
+def test_a_launch_directory_is_elsewhere_only_when_it_names_another_place(launch, cwd, elsewhere):
+    assert resume.launched_elsewhere(launch, cwd) is elsewhere
+
+
+def test_the_converting_agents_are_the_ones_with_a_portability_adapter():
+    assert frozenset(builtin_adapters().agents()) == resume.CONVERTING_AGENTS

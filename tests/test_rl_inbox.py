@@ -1,3 +1,4 @@
+import os
 import sys
 
 import pytest
@@ -98,3 +99,41 @@ def test_missing_textual_is_reported(monkeypatch, capsys):
 
     assert inbox_cmd.cmd_inbox([]) == 2
     assert "rl inbox needs Textual" in capsys.readouterr().out
+
+
+def test_the_shell_function_reaches_the_inbox_and_its_resume(monkeypatch, tmp_path):
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    _patch(monkeypatch, run=lambda log: _intent())
+    wrapped = []
+
+    def run(app, *args, **kwargs):
+        wrapped.append(app._shell_wrapped)
+        return _intent()
+
+    monkeypatch.setattr(InboxApp, "run", run)
+    handed = []
+
+    def fake_resume(argv, **kwargs):
+        handed.append(kwargs["cwd_file"])
+        return 0
+
+    monkeypatch.setattr(commands.resume, "cmd_resume", fake_resume)
+
+    assert inbox_cmd.cmd_inbox(["--registry", str(tmp_path / "r.json")]) == 0
+    assert (wrapped, handed) == ([True], [cwd_file])
+
+
+def test_the_json_inbox_drops_the_shell_file_before_it_does_anything(monkeypatch, tmp_path):
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    seen = []
+    monkeypatch.setattr(
+        "ringleader.contract_io.run_json",
+        lambda produce: seen.append(os.environ.get("RINGLEADER_CWD_FILE", "absent")) or 0,
+    )
+
+    assert inbox_cmd.cmd_inbox(["--json", "--registry", str(tmp_path / "r.json")]) == 0
+    assert seen == ["absent"]

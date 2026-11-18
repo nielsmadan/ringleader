@@ -28,6 +28,7 @@ TABLE = {
     "mem": _MEM,
     "data": _DATA,
     "workspace": _WORKSPACE,
+    "shell": _SHELL,
     "handoff": _HANDOFF,
 }
 ```
@@ -53,8 +54,8 @@ Groups nest arbitrarily — `_SESSION["mark"]` is itself a dict, giving
 `_usage()` also prints one line saying that bare `rl` in a terminal opens the inbox.
 
 `_FLAT` and `_GROUPS` in `cli.py` control the ordering of the top-level help. They are separate
-from `TABLE`, so **a command added to the table but not to `_FLAT` dispatches correctly but is
-invisible in `rl --help`.** `_RESERVED` marks names as `(coming soon)` and is currently empty.
+from `TABLE`, so **a command added to the table but not to `_FLAT` (or a group not in
+`_GROUPS`) dispatches correctly but is invisible in `rl --help`.** `_RESERVED` marks names as `(coming soon)` and is currently empty.
 
 ### Command modules
 
@@ -82,7 +83,7 @@ hand-roll the check on `argv[0]`.
 - `cli.main()` — the router.
 - `guard_args.py` / `contract_io.run_guarded` — the guarded path of the session verbs.
 - `commands.TABLE` — the whole surface, one literal.
-- `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` / `_HANDOFF` — the groups.
+- `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` / `_SHELL` / `_HANDOFF` — the groups.
 - `cli._FLAT` / `cli._GROUPS` — help ordering.
 
 ## Gotchas

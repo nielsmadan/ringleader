@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sys
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 from ..handoff import Which, dry_run_lines, handoff_argv, launch_problem
@@ -20,6 +21,7 @@ class ResumeCommand(Protocol):
         picker: Callable[[str, str, Scope, str, str | None], Choice | None],
         runner: Runner,
         which: Which,
+        cwd_file: Path | None,
     ) -> int: ...
 
 
@@ -28,7 +30,7 @@ def _fail(message: str) -> int:
     return 1
 
 
-def run_intent(
+def run_intent(  # noqa: PLR0913 -- injection points the suite drives
     intent: ExitIntent,
     registry_path: str,
     *,
@@ -36,6 +38,7 @@ def run_intent(
     resume_command: ResumeCommand,
     runner: Runner,
     which: Which,
+    cwd_file: Path | None = None,
 ) -> int:
     if isinstance(intent, ResumeIntent):
         choice = intent.choice
@@ -44,6 +47,7 @@ def run_intent(
             picker=lambda *_args: choice,
             runner=runner,
             which=which,
+            cwd_file=cwd_file,
         )
     try:
         argv = handoff_argv(intent)

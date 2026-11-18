@@ -372,10 +372,13 @@ class PresenceClient:
     def require_running_session_ids(self) -> frozenset[tuple[str, str]]:
         result = self.sessions()
         if not result.available:
-            message = "; ".join(result.problems) or "hooklinesinker gave no answer"
-            if SETUP_COMMAND not in message:
-                message = f"{message} — run `{SETUP_COMMAND}`"
-            raise PresenceUnavailable(message)
+            raise PresenceUnavailable(_unavailable(result))
+        return _running_ids(result)
+
+    def require_complete_running_session_ids(self) -> frozenset[tuple[str, str]]:
+        result = self.sessions()
+        if not result.available or result.problems:
+            raise PresenceUnavailable(_unavailable(result))
         return _running_ids(result)
 
     def doctor(self) -> DoctorReport:
@@ -548,6 +551,11 @@ class PresenceClient:
             return UninstallOutcome(False, result, True)
         detail = "\n".join(text.strip() for text in (result.stdout, result.stderr) if text.strip())
         return UninstallOutcome(result.returncode == 0, detail, True)
+
+
+def _unavailable(result: PresenceResult) -> str:
+    message = "; ".join(result.problems) or "hooklinesinker gave no answer"
+    return message if SETUP_COMMAND in message else f"{message} — run `{SETUP_COMMAND}`"
 
 
 def _running_ids(result: PresenceResult) -> frozenset[tuple[str, str]]:

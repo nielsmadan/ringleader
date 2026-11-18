@@ -4,6 +4,7 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -1190,7 +1191,7 @@ class Native:
         self.error = error
         self.calls: list[dict] = []
 
-    def __call__(self, source, target, **options):
+    def __call__(self, source, target=None, **options):
         self.calls.append({"source": source, "target": target, **options})
         if self.error is not None:
             raise self.error
@@ -1841,12 +1842,12 @@ def test_a_cursor_session_cannot_be_forked(tmp_path, action):
     thread = {"sessionId": "c1", "source": "cursor", "project": str(tmp_path)}
     pick = resume_cmd._Pick(thread, [thread], "cursor", action=action)
     with pytest.raises(resume_cmd._Abort, match="cursor cannot fork a session"):
-        resume_cmd._plan(pick, "cursor")
+        resume_cmd._plan(pick, "cursor", str(tmp_path))
 
 
 def test_a_cursor_session_resumes_with_its_own_id(tmp_path):
     thread = {"sessionId": "c1", "source": "cursor", "project": str(tmp_path)}
-    plan = resume_cmd._plan(resume_cmd._Pick(thread, [thread], "cursor"), "cursor")
+    plan = resume_cmd._plan(resume_cmd._Pick(thread, [thread], "cursor"), "cursor", str(tmp_path))
     assert (plan.argv, plan.cwd) == (("cursor-agent", "--resume", "c1"), str(tmp_path))
 
 
@@ -1869,3 +1870,351 @@ def test_a_drifted_cursor_session_is_launched_where_its_transcript_is_filed(tmp_
 
     assert (resume.drifted(drifted), resume.drifted(sibling)) == (True, False)
     assert resume.launch_cwd(drifted, [drifted, sibling]) == str(launched)
+
+
+# --- a session from another directory ----------------------------------------
+
+
+@pytest.fixture
+def here(tmp_path, monkeypatch):
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(tmp_path / "store"))
+    directory = tmp_path / "here"
+    directory.mkdir()
+    monkeypatch.chdir(directory)
+    return directory
+
+
+def _placed(  # noqa: PLR0913 -- one keyword per seam cmd_resume exposes
+    argv, choice, *, runner=None, presence=None, native_fork=None, launch=None, native=None
+):
+    return resume_cmd.cmd_resume(
+        argv,
+        runner=runner or Runner(),
+        picker=Picker(choice),
+        which=installed,
+        refresher=Rescanner(),
+        presence=presence or frozenset,
+        native=native,
+        native_fork=native_fork,
+        launch=launch or Launches(),
+    )
+
+
+def _thread_in(reg, sid):
+    return next(t for t in json.loads(Path(reg).read_text())["threads"] if t["sessionId"] == sid)
+
+
+def test_moving_a_session_here_refiles_it_and_resumes_it_from_here(tmp_path, here):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    choice = Choice(thread, "claude-code", placement="here")
+
+    assert _placed(["--registry", reg], choice, runner=runner) == 0
+
+    moved = tmp_path / "store" / slug.slugify(str(here)) / "aaa111.jsonl"
+    assert moved.is_file()
+    assert not Path(thread["file"]).exists()
+    assert runner.calls == [(("claude", "--resume", "aaa111"), str(here))]
+    record = _thread_in(reg, "aaa111")
+    assert (record["project"], record["file"], record["locationPinned"]) == (
+        str(here),
+        str(moved),
+        True,
+    )
+
+
+def test_a_running_session_is_never_moved(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    choice = Choice(thread, "claude-code", placement="here")
+
+    rc = _placed(
+        ["--registry", reg],
+        choice,
+        runner=runner,
+        presence=lambda: frozenset({("claude", "aaa111")}),
+    )
+
+    assert rc == 1
+    assert "running right now — quit it before moving it here" in capsys.readouterr().err
+    assert Path(thread["file"]).is_file()
+    assert runner.calls == []
+
+
+def test_a_dry_run_move_names_the_move_and_moves_nothing(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    before = Path(reg).read_bytes()
+    choice = Choice(thread, "claude-code", placement="here")
+
+    assert _placed(["--dry-run", "--registry", reg], choice) == 0
+
+    out = capsys.readouterr().out
+    target = tmp_path / "store" / slug.slugify(str(here)) / "aaa111.jsonl"
+    assert f"  move: {thread['file']} → {target}" in out
+    assert f"  directory: {here}" in out
+    assert Path(thread["file"]).is_file()
+    assert Path(reg).read_bytes() == before
+
+
+def test_a_pi_session_cannot_move_here(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111", source="pi")
+    reg = _registry(tmp_path, thread)
+    choice = Choice(thread, "pi", placement="here")
+
+    assert _placed(["--registry", reg], choice) == 1
+    assert "pi sessions cannot move to another directory" in capsys.readouterr().err
+
+
+def test_cd_there_leaves_the_launch_directory_for_the_shell(tmp_path, here, monkeypatch):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    runner = Runner()
+
+    assert (
+        _placed(
+            ["--registry", reg], Choice(thread, "claude-code", placement="follow"), runner=runner
+        )
+        == 0
+    )
+
+    assert runner.cwd == thread["project"]
+    assert cwd_file.read_text() == thread["project"]
+
+
+def test_open_it_where_it_is_leaves_the_shell_where_it_was(tmp_path, here, monkeypatch):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+
+    runner = Runner()
+
+    assert _placed(["--registry", reg], Choice(thread, "claude-code"), runner=runner) == 0
+    assert runner.calls == [(("claude", "--resume", "aaa111"), thread["project"])]
+    assert cwd_file.read_text() == ""
+
+
+def _forked(here: Path) -> NativeResume:
+    return NativeResume(
+        "forked",
+        Identity("claude-code", "fff999"),
+        RunRequest(("claude", "--resume", "fff999"), here, ()),
+        None,
+    )
+
+
+def test_forking_here_converts_into_this_directory_and_launches_the_fork(tmp_path, here):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    fork, launches = Native(_forked(here)), Launches()
+    choice = Choice(thread, "claude-code", action="fork", name="api-fork-1", placement="here")
+
+    assert _placed(["--registry", reg], choice, native_fork=fork, launch=launches) == 0
+
+    (call,) = fork.calls
+    assert call["source"].identity == Identity("claude-code", "aaa111")
+    assert (call["workspace"], call["title"], call["dry_run"]) == (here, "api-fork-1", False)
+    assert launches.requests == [_forked(here).launch]
+
+
+def test_a_refused_fork_here_launches_nothing_and_says_what_still_works(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    fork = Native(NativeResume("refused", None, None, "unsupported native shape"))
+    launches = Launches()
+    choice = Choice(thread, "claude-code", action="fork", placement="here")
+
+    assert _placed(["--registry", reg], choice, native_fork=fork, launch=launches) == 1
+    err = capsys.readouterr().err
+    assert "unsupported native shape — open it where it is to fork it there" in err
+    assert launches.requests == []
+
+
+def test_a_dry_run_fork_here_reports_the_pending_self_verification(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    fork = Native(NativeResume("would-verify", None, None, None, version="2.1.327"))
+    choice = Choice(thread, "claude-code", action="fork", name="api-fork-1", placement="here")
+
+    assert _placed(["--dry-run", "--registry", reg], choice, native_fork=fork) == 0
+
+    out = capsys.readouterr().out
+    assert "fork: would self-verify claude 2.1.327, then fork here" in out
+    assert "name: api-fork-1" in out
+    assert fork.calls[0]["dry_run"] is True
+
+
+def _presence_down():
+    raise PresenceUnavailable("hooklinesinker is not set up — rl data presence install")
+
+
+def test_a_session_nobody_can_vouch_for_is_never_moved(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    runner = Runner()
+    choice = Choice(thread, "claude-code", placement="here")
+
+    assert _placed(["--registry", reg], choice, runner=runner, presence=_presence_down) == 1
+
+    assert "can't tell whether session aaa111 is running — install presence with" in (
+        capsys.readouterr().err
+    )
+    assert Path(thread["file"]).is_file()
+    assert runner.calls == []
+
+
+def test_the_agent_starts_without_the_shells_cwd_file(tmp_path, here, monkeypatch):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    seen = []
+
+    def runner(argv, cwd):
+        seen.append(os.environ.get("RINGLEADER_CWD_FILE", "absent"))
+        return 0
+
+    choice = Choice(thread, "claude-code", placement="follow")
+    assert _placed(["--registry", reg], choice, runner=runner) == 0
+    assert (seen, cwd_file.read_text()) == (["absent"], thread["project"])
+
+
+def test_the_shell_function_makes_the_picker_offer_cd_there(tmp_path, monkeypatch):
+    reg = _registry(tmp_path)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    wrapped = []
+
+    class FakeApp:
+        def __init__(self, *args, shell_wrapped, **kwargs):
+            wrapped.append(shell_wrapped)
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr("ringleader.picker.app.PickerApp", FakeApp)
+    assert resume_cmd.cmd_resume(["--registry", reg]) == 0
+    assert wrapped == [True]
+
+
+def test_cd_there_follows_a_conversion_into_another_agent(tmp_path, here, monkeypatch):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    launches = Launches()
+    choice = Choice(thread, "codex", placement="follow")
+
+    rc = _placed(
+        ["--registry", reg], choice, native=Native(_outcome(tmp_path, "converted")), launch=launches
+    )
+
+    assert rc == 0
+    assert launches.requests == [_request(tmp_path)]
+    assert cwd_file.read_text() == str(_request(tmp_path).cwd)
+
+
+def test_a_tampered_shell_file_is_ignored_and_the_agent_still_launches(tmp_path, here, monkeypatch):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("someone else's")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+    runner = Runner()
+
+    choice = Choice(thread, "claude-code", placement="follow")
+    assert _placed(["--registry", reg], choice, runner=runner) == 0
+    assert runner.calls == [(("claude", "--resume", "aaa111"), thread["project"])]
+    assert cwd_file.read_text() == "someone else's"
+
+
+def test_a_shell_file_that_turns_bad_before_launch_warns_and_still_launches(
+    tmp_path, here, monkeypatch, capsys
+):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    cwd_file = tmp_path / "rl-cwd.x"
+    cwd_file.write_text("")
+    monkeypatch.setenv("RINGLEADER_CWD_FILE", str(cwd_file))
+
+    def refuse(target, directory):
+        raise OSError("not an empty file the rl shell function created")
+
+    monkeypatch.setattr(resume_cmd.shell, "record_launch_dir", refuse)
+    runner = Runner()
+
+    choice = Choice(thread, "claude-code", placement="follow")
+    assert _placed(["--registry", reg], choice, runner=runner) == 0
+    assert runner.calls == [(("claude", "--resume", "aaa111"), thread["project"])]
+    assert "your shell will stay where it is: not an empty file" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("source", "target", "action", "message"),
+    [
+        ("claude-code", "codex", "resume", "stays in its own agent"),
+        ("cursor", "cursor", "fork", "cannot be forked into another directory"),
+        ("claude-code", "claude-code", "worktree", "cannot be placed in the current directory"),
+    ],
+)
+def test_a_session_placed_here_refuses_what_it_cannot_do(tmp_path, source, target, action, message):
+    thread = {"sessionId": "c1", "source": source, "project": str(tmp_path)}
+    pick = resume_cmd._Pick(thread, [thread], target, action=action, placement="here")
+    with pytest.raises(resume_cmd._Abort, match=message):
+        resume_cmd._plan(pick, target, str(tmp_path))
+
+
+def test_declining_to_fork_a_running_session_here_forks_nothing(
+    tmp_path, here, monkeypatch, capsys
+):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    monkeypatch.setattr(resume_cmd, "_ask", lambda question: False)
+    fork = Native(_forked(here))
+    choice = Choice(thread, "claude-code", action="fork", placement="here")
+
+    rc = _placed(
+        ["--registry", reg],
+        choice,
+        native_fork=fork,
+        presence=lambda: frozenset({("claude", "aaa111")}),
+    )
+
+    assert (rc, fork.calls) == (0, [])
+    assert "not forked" in capsys.readouterr().err
+
+
+def test_a_fork_here_that_fails_to_convert_says_why(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    fork = Native(error=ConversionFailure("native conversion to claude failed: disk full"))
+    choice = Choice(thread, "claude-code", action="fork", placement="here")
+
+    assert _placed(["--registry", reg], choice, native_fork=fork) == 1
+    assert "rl-resume: native conversion to claude failed: disk full" in capsys.readouterr().err
+
+
+def test_a_fork_here_that_cannot_launch_names_the_fork_it_kept(tmp_path, here, capsys):
+    thread = _session(tmp_path, "aaa111")
+    reg = _registry(tmp_path, thread)
+    outcome = replace(_forked(here), warnings=("1 skipped record",))
+
+    def broken(request):
+        raise OSError("claude vanished")
+
+    choice = Choice(thread, "claude-code", action="fork", placement="here")
+    assert _placed(["--registry", reg], choice, native_fork=Native(outcome), launch=broken) == 1
+
+    err = capsys.readouterr().err
+    assert "rl-resume: 1 skipped record" in err
+    assert "claude vanished; fork retained: claude:fff999. Resume with: rl resume" in err

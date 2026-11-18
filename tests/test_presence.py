@@ -6,7 +6,7 @@ import subprocess
 
 import pytest
 from ringleader import presence
-from ringleader.presence import PresenceClient, PresenceUnavailable
+from ringleader.presence import PresenceClient, PresenceResult, PresenceUnavailable
 
 
 def _key(cmd: list[str]) -> str:
@@ -909,3 +909,16 @@ def test_detected_agents_honors_cursor_config_dir(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("CURSOR_CONFIG_DIR", str(relocated))
     assert presence.detected_agents() == ("cursor",)
+
+
+def test_a_presence_answer_with_problems_is_not_complete_enough_to_move_a_session(monkeypatch):
+    client = PresenceClient()
+    monkeypatch.setattr(
+        client,
+        "sessions",
+        lambda: PresenceResult((), ("skipped an unreadable status record",)),
+    )
+
+    assert client.require_running_session_ids() == frozenset()
+    with pytest.raises(PresenceUnavailable, match="skipped an unreadable status record"):
+        client.require_complete_running_session_ids()

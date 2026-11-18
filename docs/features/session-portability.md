@@ -4,7 +4,8 @@
 continuation across Claude Code, Codex, OpenCode, Pi, and Droid. `rl resume --to`
 uses this same mechanism, with a consented Markdown fallback (ADR 0011) on refusal.
 Conversion preserves the source and publishes a fresh target in the source's
-effective recorded cwd. Workspace move/retarget is a separate feature.
+effective recorded cwd; only a fork may name another workspace, which `rl resume`'s
+"fork it here" does. Workspace move/retarget is a separate feature.
 
 - Source identity is `(agent, native ID)`; explicit IDs/prefixes can be qualified.
   Selection reads the registry without refresh. `--open` follows effective open

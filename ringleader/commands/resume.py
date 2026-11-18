@@ -11,14 +11,25 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from time import monotonic
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 from uuid import uuid4
 
-from .. import export, gitinfo, paths, refresh, registry, resume, scanner, worktrees
+from .. import (
+    export,
+    gitinfo,
+    paths,
+    refresh,
+    registry,
+    relocation,
+    resume,
+    scanner,
+    shell,
+    worktrees,
+)
 from ..agents import source_of
 from ..launch import Runner, exec_agent
 from ..presence import PresenceClient
-from ..resume import Scope, SessionAction
+from ..resume import Placement, Scope, SessionAction
 from ..sources.base import NormalizedSession, SessionLaunchingSource
 from ..stateio import atomic_write_text
 from . import default_registry
@@ -28,6 +39,8 @@ if TYPE_CHECKING:
     from ..portability.capabilities import RunRequest
     from ..portability.model import Identity
     from ..portability.native_resume import NativeResume
+    from ..portability.native_resume import native_fork as _published_fork
+    from ..portability.selection import SelectedSession
 
 Picker = Callable[[str, str, Scope, str, "str | None"], "Choice | None"]
 Refresher = Callable[[str, str], tuple[dict[str, Any], str | None]]
@@ -36,6 +49,28 @@ Which = Callable[[str], str | None]
 Presence = Callable[[], frozenset[tuple[str, str]]]
 NativeResumer = Callable[..., "NativeResume"]
 Launch = Callable[["RunRequest"], None]
+
+
+class NativeForker(Protocol):
+    def __call__(  # noqa: PLR0913 -- mirrors native_resume.native_fork
+        self,
+        source: SelectedSession,
+        *,
+        workspace: Path,
+        title: str | None,
+        registry_path: Path,
+        operations_path: Path,
+        verified_path: Path,
+        dry_run: bool,
+        allow_verify: bool,
+        report: Callable[[str], None],
+        strict: bool = False,
+    ) -> NativeResume: ...
+
+
+if TYPE_CHECKING:
+    _FORK_CONTRACT: NativeForker = _published_fork
+
 
 _MIN_PREFIX = 4
 
@@ -54,6 +89,7 @@ class _Abort(Exception):
 class _PickerOptions:
     persist: bool = True
     action: SessionAction | None = None
+    shell_wrapped: bool = False
 
 
 @dataclass(frozen=True)
@@ -64,6 +100,7 @@ class _Pick:
     confirmed: bool = False
     action: SessionAction = "resume"
     name: str | None = None
+    placement: Placement = "there"
 
 
 @dataclass(frozen=True)
@@ -75,6 +112,8 @@ class _Plan:
     confirmed: bool
     target: str
     action: SessionAction = "resume"
+    placement: Placement = "there"
+    name: str | None = None
 
 
 def _launchable(source_name: str) -> SessionLaunchingSource | None:
@@ -95,10 +134,20 @@ def _live_session_ids() -> frozenset[tuple[str, str]]:
     return PresenceClient().require_running_session_ids()
 
 
+def _complete_live_session_ids() -> frozenset[tuple[str, str]]:
+    return PresenceClient().require_complete_running_session_ids()
+
+
 def _native_resume(*args: Any, **kwargs: Any) -> NativeResume:
     from ..portability.native_resume import native_resume  # noqa: PLC0415 -- keeps startup fast
 
     return native_resume(*args, **kwargs)
+
+
+def _native_fork(source: SelectedSession, **kwargs: Any) -> NativeResume:
+    from ..portability.native_resume import native_fork  # noqa: PLC0415 -- keeps startup fast
+
+    return native_fork(source, **kwargs)
 
 
 def _exec_request(request: RunRequest) -> None:
@@ -141,6 +190,7 @@ def _run_picker(
         target=target,
         persist=options.persist,
         action=options.action,
+        shell_wrapped=options.shell_wrapped,
     ).run()
 
 
@@ -370,6 +420,7 @@ def _choose(
         confirmed=choice.confirmed,
         action=choice.action,
         name=choice.name,
+        placement=choice.placement,
     )
 
 
@@ -420,7 +471,34 @@ def _own_agent_argv(src: SessionLaunchingSource, pick: _Pick, session_id: str) -
     return src.fork_argv(session_id)
 
 
-def _plan(pick: _Pick, target_source: str) -> _Plan:
+def _plan_here(pick: _Pick, src: SessionLaunchingSource, here: str) -> _Plan:
+    thread = pick.thread
+    source = source_of(thread)
+    agent = resume.agent_name(source)
+    if pick.action == "resume":
+        if not relocation.storage_follows(source):
+            raise _Abort(f"{agent} sessions cannot move to another directory")
+        argv = src.resume_argv(str(thread["sessionId"]))
+    elif pick.action == "fork":
+        if not resume.forks_across_directories(source):
+            raise _Abort(f"{agent} sessions cannot be forked into another directory")
+        argv = src.launch_argv()  # only for the PATH check; the published fork is what launches
+    else:
+        raise _Abort(f"a {pick.action} cannot be placed in the current directory")
+    return _Plan(
+        thread,
+        argv,
+        cwd=here,
+        transcript=None,
+        confirmed=pick.confirmed,
+        target=source,
+        action=pick.action,
+        placement="here",
+        name=pick.name,
+    )
+
+
+def _plan(pick: _Pick, target_source: str, here: str) -> _Plan:
     thread = pick.thread
     session_id = str(thread["sessionId"])
     source = source_of(thread)
@@ -430,17 +508,39 @@ def _plan(pick: _Pick, target_source: str) -> _Plan:
             f"{resume.agent_name(source)} sessions cannot be relaunched by rl"
             " — try --to <agent> to hand it off"
         )
+    if pick.placement == "here":
+        if target_source != source:
+            raise _Abort("a session moved or forked here stays in its own agent")
+        return _plan_here(pick, src, here)
     cwd = _launch_dir(thread, pick.threads)
     if target_source == source:
         if pick.action != "resume" and not resume.forks_sessions(source):
             raise _Abort(f"{resume.agent_name(source)} cannot fork a session; resume it instead")
         argv = _own_agent_argv(src, pick, session_id)
-        return _Plan(thread, argv, cwd, None, pick.confirmed, target_source, pick.action)
+        return _Plan(
+            thread,
+            argv,
+            cwd=cwd,
+            transcript=None,
+            confirmed=pick.confirmed,
+            target=target_source,
+            action=pick.action,
+            placement=pick.placement,
+            name=pick.name,
+        )
     if pick.action != "resume":
         raise _Abort("native fork requires the session's original agent")
     path = _handoff_path(session_id)
     argv = tuple(src.launch_argv(_prompt(thread, path)))
-    return _Plan(thread, argv, cwd, path, pick.confirmed, target_source)
+    return _Plan(
+        thread,
+        argv,
+        cwd=cwd,
+        transcript=path,
+        confirmed=pick.confirmed,
+        target=target_source,
+        placement=pick.placement,
+    )
 
 
 def _live(source: str, session_id: str | None, probe: Presence) -> bool:
@@ -455,6 +555,17 @@ def _live(source: str, session_id: str | None, probe: Presence) -> bool:
 
 def _running(thread: dict[str, Any], probe: Presence) -> bool:
     return _live(source_of(thread), thread.get("sessionId"), probe)
+
+
+def _move_refusal(thread: dict[str, Any], probe: Presence) -> str | None:
+    from .. import contract, revalidate  # noqa: PLC0415 -- only a move needs them
+
+    live = revalidate.probe(probe)()
+    if live is None:
+        return revalidate.running_reason(thread, None, "refuse")
+    if contract.is_running(thread, live):
+        return f"{resume.label(thread)} is running right now — quit it before moving it here"
+    return None
 
 
 def _ask(question: str) -> bool:
@@ -480,12 +591,22 @@ def _permitted(plan: _Plan, probe: Presence) -> bool:
     return False
 
 
-def _report(plan: _Plan, *, absent: str | None) -> None:
-    print("dry run — nothing launched")
+def _report(
+    plan: _Plan,
+    *,
+    absent: str | None,
+    header: str = "dry run — nothing launched",
+    lines: Sequence[str] = (),
+) -> None:
+    print(header)
+    for line in lines:
+        print(f"  {line}")
     print(f"  directory: {plan.cwd}")
     print(f"  argv: {shlex.join(plan.argv)}")
     if plan.transcript is not None:
         print(f"  would write: {plan.transcript}")
+    if plan.placement == "follow":
+        print(f"  shell: would cd to {plan.cwd} once the agent exits")
     if absent is not None:
         print(f"  note: {absent} is not installed — put it on PATH before resuming")
 
@@ -545,6 +666,56 @@ class _Seams:
     presence: Presence
     native: NativeResumer
     launch: Launch
+    native_fork: NativeForker
+    move_presence: Presence
+
+
+def _leave_for_shell(cwd_file: Path, directory: str) -> None:
+    try:
+        shell.record_launch_dir(cwd_file, directory)
+    except OSError as error:
+        print(f"rl-resume: your shell will stay where it is: {error}", file=sys.stderr)
+
+
+def _following(seams: _Seams, cwd_file: Path) -> _Seams:
+    def runner(argv: Sequence[str], cwd: str) -> int:
+        _leave_for_shell(cwd_file, cwd)
+        return seams.runner(argv, cwd)
+
+    def launch(request: RunRequest) -> None:
+        _leave_for_shell(cwd_file, str(request.cwd))
+        seams.launch(request)
+
+    return replace(seams, runner=runner, launch=launch)
+
+
+def _selected(thread: dict[str, Any]) -> SelectedSession:
+    from ..portability.model import Identity  # noqa: PLC0415
+    from ..portability.selection import SelectedSession  # noqa: PLC0415
+
+    return SelectedSession(Identity(*registry.identity(thread)), "active", thread)
+
+
+def _launch_published(
+    args: argparse.Namespace, outcome: NativeResume, launch: Launch, *, what: str, kept: str
+) -> int:
+    from ..portability.model import PreservationError  # noqa: PLC0415
+
+    target, request = outcome.target, outcome.launch
+    if target is None or request is None:
+        return _fail(f"{what} produced nothing to launch")
+    for warning in outcome.warnings:
+        print(f"rl-resume: {warning}", file=sys.stderr)
+    sys.stdout.flush()
+    sys.stderr.flush()
+    try:
+        launch(request)
+    except (OSError, PreservationError) as error:
+        return _fail(
+            f"{error}; {kept} retained: {resume.agent_name(target.agent)}:{target.native_id}. "
+            f"Resume with: {_resume_command(args, target)}"
+        )
+    return 0
 
 
 def _progress(line: str) -> None:
@@ -568,9 +739,7 @@ def _resume_command(args: argparse.Namespace, target: Identity) -> str:
 
 
 def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _Seams) -> int:
-    from ..portability.model import Identity, PreservationError  # noqa: PLC0415
     from ..portability.native_resume import ConversionFailure  # noqa: PLC0415
-    from ..portability.selection import SelectedSession  # noqa: PLC0415
 
     agent = resume.agent_name(plan.target)
     if (
@@ -582,10 +751,9 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
     ):
         print("not resumed", file=sys.stderr)
         return 0
-    selected = SelectedSession(Identity(*registry.identity(plan.thread)), "active", plan.thread)
     try:
         outcome = seams.native(
-            selected,
+            _selected(plan.thread),
             plan.target,
             registry_path=Path(args.registry),
             operations_path=Path(args.operations),
@@ -603,28 +771,102 @@ def _native(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _S
     if outcome.outcome == "refused":
         print(f"native conversion to {agent} refused: {outcome.reason}", file=sys.stderr)
         return _fallback(plan, seams.runner)
-    if outcome.launch is None or outcome.target is None:
-        return _fail(f"native conversion to {agent} produced nothing to launch")
     target = outcome.target
     if (
         outcome.outcome == "reused"
+        and target is not None
         and _live(target.agent, target.native_id, seams.presence)
         and not _ask(f"{agent}:{target.native_id} is running right now — resume it anyway?")
     ):
         print("not resumed", file=sys.stderr)
         return 0
+    return _launch_published(
+        args, outcome, seams.launch, what=f"native conversion to {agent}", kept="target"
+    )
+
+
+def _move_here(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _Seams) -> int:
+    thread = plan.thread
+    if args.dry_run:
+        move = f"move: {relocation.planned_storage(thread, plan.cwd)}"
+        _report(plan, absent=absent, header="dry run — nothing moved or launched", lines=[move])
+        return 0
+    refusal = _move_refusal(thread, seams.move_presence)
+    if refusal is not None:
+        return _fail(refusal)
+    done = relocation.relocate(args.registry, registry.qualified_id(thread), plan.cwd)
+    for note in done.notes:
+        _progress(note)
+    for message in (*done.warnings, *done.errors):
+        print(f"rl-resume: {message}", file=sys.stderr)
+    if not done.ok:
+        return 1
+    _progress(f"Moved {resume.label(thread)} to {done.where}")
+    return _carry_out(plan, None, seams.runner)
+
+
+def _fork_here_line(outcome: NativeResume, agent: str) -> str:
+    if outcome.outcome == "would-verify":
+        return f"fork: would self-verify {agent} {outcome.version}, then fork here"
+    if outcome.outcome == "refused":
+        return f"fork: refused — {outcome.reason}"
+    return f"fork: would fork into a new {agent} session here"
+
+
+def _report_fork_here(plan: _Plan, outcome: NativeResume, *, absent: str | None) -> None:
+    print("dry run — nothing launched")
+    print(f"  directory: {plan.cwd}")
+    print(f"  {_fork_here_line(outcome, resume.agent_name(plan.target))}")
+    if plan.name:
+        print(f"  name: {plan.name}")
     for warning in outcome.warnings:
-        print(f"rl-resume: {warning}", file=sys.stderr)
-    sys.stdout.flush()
-    sys.stderr.flush()
+        print(f"  warning: {warning}")
+    if absent is not None:
+        print(f"  note: {absent} is not installed — put it on PATH before forking")
+
+
+def _fork_here(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _Seams) -> int:
+    from ..portability.native_resume import ConversionFailure  # noqa: PLC0415
+
+    label = resume.label(plan.thread)
+    if (
+        not args.dry_run
+        and not plan.confirmed
+        and _running(plan.thread, seams.presence)
+        and not _ask(f"{label} is running right now — fork its current state here anyway?")
+    ):
+        print("not forked", file=sys.stderr)
+        return 0
     try:
-        seams.launch(outcome.launch)
-    except (OSError, PreservationError) as error:
-        return _fail(
-            f"{error}; target retained: {resume.agent_name(target.agent)}:{target.native_id}. "
-            f"Resume with: {_resume_command(args, target)}"
+        outcome = seams.native_fork(
+            _selected(plan.thread),
+            workspace=Path(plan.cwd),
+            title=plan.name,
+            registry_path=Path(args.registry),
+            operations_path=Path(args.operations),
+            verified_path=Path(args.verified),
+            dry_run=args.dry_run,
+            allow_verify=_interactive(),
+            report=_progress,
+            strict=args.strict,
         )
-    return 0
+    except ConversionFailure as error:
+        return _fail(str(error))
+    if args.dry_run:
+        _report_fork_here(plan, outcome, absent=absent)
+        return 0
+    if outcome.outcome == "refused":
+        return _fail(
+            f"cannot fork {label} into {plan.cwd}: {outcome.reason} "
+            "— open it where it is to fork it there"
+        )
+    return _launch_published(args, outcome, seams.launch, what=f"the fork of {label}", kept="fork")
+
+
+def _place_here(args: argparse.Namespace, plan: _Plan, absent: str | None, seams: _Seams) -> int:
+    if plan.action == "fork":
+        return _fork_here(args, plan, absent, seams)
+    return _move_here(args, plan, absent, seams)
 
 
 def _resolve(
@@ -648,7 +890,7 @@ def _resolve(
     if args.worktree or args.fork:
         action: SessionAction = "worktree" if args.worktree else "fork"
         pick = replace(pick, action=action, target=source_of(pick.thread))
-    return _plan(pick, requested or pick.target or source_of(pick.thread))
+    return _plan(pick, requested or pick.target or source_of(pick.thread), cwd)
 
 
 def _remember_worktree_fork(path: str, plan: _Plan, session_id: str, cwd: Path) -> None:
@@ -740,6 +982,40 @@ def _worktree(plan: _Plan, *, args: argparse.Namespace, runner: Runner, absent: 
         return 130
 
 
+def _dispatch(
+    args: argparse.Namespace,
+    plan: _Plan,
+    seams: _Seams,
+    *,
+    absent: str | None,
+    text: str | None,
+    started: float,
+) -> int:
+    converting = plan.transcript is not None and not args.markdown
+    if plan.placement == "here":
+        return _place_here(args, plan, absent, seams)
+    if plan.action == "worktree":
+        return _worktree(plan, args=args, runner=seams.runner, absent=absent is not None)
+    if converting:
+        return _native(args, plan, absent, seams)
+    if args.dry_run:
+        _report(plan, absent=absent)
+        return 0
+
+    def _probe() -> frozenset[tuple[str, str]]:
+        if args.last:
+            _progress("Checking whether the session is already running…")
+        return seams.presence()
+
+    if not _permitted(plan, _probe):
+        return 0
+    if args.last:
+        _progress(
+            f"Launching {shlex.join(plan.argv)} (ringleader took {monotonic() - started:.1f}s)…"
+        )
+    return _carry_out(plan, text, seams.runner)
+
+
 def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     argv: list[str],
     *,
@@ -751,8 +1027,11 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
     presence: Presence | None = None,
     native: NativeResumer | None = None,
     launch: Launch | None = None,
+    native_fork: NativeForker | None = None,
+    cwd_file: Path | None = None,
 ) -> int:
     args = _parser().parse_args(argv)
+    cwd_file = cwd_file if cwd_file is not None else shell.take_cwd_file(os.environ)
     if args.last and args.query:
         return _fail(f"--last takes the most recent session, so it cannot also take '{args.query}'")
     started = monotonic()
@@ -777,6 +1056,7 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
                 options=_PickerOptions(
                     persist=not args.dry_run,
                     action="worktree" if args.worktree else "fork" if args.fork else None,
+                    shell_wrapped=cwd_file is not None,
                 ),
             ),
             (scoper or _scan_scope, refresher or _scan),
@@ -796,24 +1076,10 @@ def cmd_resume(  # noqa: PLR0913 -- injection points the suite drives
         presence or _live_session_ids,
         native or _native_resume,
         launch or _exec_request,
+        native_fork or _native_fork,
+        presence or _complete_live_session_ids,
     )
-    if plan.action == "worktree":
-        return _worktree(plan, args=args, runner=seams.runner, absent=absent)
-    if converting:
-        return _native(args, plan, binary if absent else None, seams)
-    if args.dry_run:
-        _report(plan, absent=binary if absent else None)
-        return 0
-
-    def _probe() -> frozenset[tuple[str, str]]:
-        if args.last:
-            _progress("Checking whether the session is already running…")
-        return seams.presence()
-
-    if not _permitted(plan, _probe):
-        return 0
-    if args.last:
-        _progress(
-            f"Launching {shlex.join(plan.argv)} (ringleader took {monotonic() - started:.1f}s)…"
-        )
-    return _carry_out(plan, text, seams.runner)
+    if plan.placement == "follow" and not args.dry_run and cwd_file is not None:
+        seams = _following(seams, cwd_file)
+    missing = binary if absent else None
+    return _dispatch(args, plan, seams, absent=missing, text=text, started=started)

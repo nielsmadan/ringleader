@@ -96,7 +96,7 @@ async def test_screen_text_draws_a_modal_over_its_background(tmp_path):
     async with app.run_test(size=(100, 30)) as pilot:
         await settle_workers(app, pilot)
         await pilot.press("enter")
-        await until(pilot, lambda: "resume with which agent?" in screen_text(app))
+        await until(pilot, lambda: "delta lives in /elsewhere" in screen_text(app))
         text = screen_text(app)
     assert "opencode  12h ago" in text
 

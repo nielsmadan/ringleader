@@ -23,7 +23,7 @@ _FLAT = (
     "update",
     "uninstall",
 )
-_GROUPS = ("session", "mem", "data", "workspace", "handoff")
+_GROUPS = ("session", "mem", "data", "workspace", "shell", "handoff")
 _RESERVED: set[str] = set()
 
 

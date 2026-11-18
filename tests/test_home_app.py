@@ -20,7 +20,7 @@ from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.roundup import RoundupScreen
 from ringleader.home.writer import Snapshot
 from ringleader.memory_types import SessionOrigin
-from ringleader.picker.app import Choice, PickerScreen
+from ringleader.picker.app import PRESENCE_UNKNOWN_HOW, Choice, PickerScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
 from ringleader.tui.snapshot import screen_text
@@ -91,7 +91,7 @@ class FakeExecute:
         return Outcome(ok=True, message=f"done {type(op).__name__}", wrote=True)
 
 
-def _app(path, *, refresher=_reload, execute=None, cls=InboxApp, **kwargs):
+def _app(path, *, refresher=_reload, execute=None, cls=InboxApp, cwd=None, **kwargs):
     return cls(
         path,
         refresher=refresher,
@@ -99,7 +99,7 @@ def _app(path, *, refresher=_reload, execute=None, cls=InboxApp, **kwargs):
         now=lambda: NOW_DT,
         models=lambda task: None,
         execute=execute or FakeExecute(),
-        cwd=path.parent,
+        cwd=cwd or path.parent,
         strict=True,
         **kwargs,
     )
@@ -188,7 +188,7 @@ async def test_three_opens_the_hosted_picker_and_choosing_exits_with_a_resume_in
     path = _write(tmp_path / "registry.json", _thread("a", days=2))
     gate = Gate()
     gate.release.set()
-    app = _app(path, refresher=gate)
+    app = _app(path, refresher=gate, cwd="/w/a")
     async with app.run_test(size=(100, 30)) as pilot:
         await until(pilot, lambda: app.idle)
         await pilot.press("3")
@@ -205,6 +205,24 @@ async def test_three_opens_the_hosted_picker_and_choosing_exits_with_a_resume_in
         "a",
         "claude-code",
     )
+
+
+async def test_the_hosted_picker_asks_where_for_a_session_from_another_directory(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a", days=2, project="/w/a"))
+    app = _app(path, cwd="/w/b")
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        await until(pilot, lambda: app.screen.query_one("#rows", OptionList).option_count == 1)
+        await pilot.press("enter")
+        await until(pilot, lambda: "lives in /w/a" in screen_text(app))
+        await pilot.press("4")
+        await until(pilot, lambda: "name the fork" in screen_text(app))
+        await pilot.press("enter")
+        await until(pilot, lambda: _exited(app))
+    choice = app.return_value.choice
+    assert (choice.placement, choice.action, choice.name) == ("here", "fork", "title a-fork-1")
 
 
 @pytest.mark.parametrize("key", ["escape", "ctrl+c"])
@@ -826,7 +844,7 @@ async def test_hosted_failed_presence_refresh_clears_previous_badges(tmp_path):
         await pilot.press("ctrl+r")
         await until(pilot, lambda: app.idle and not picker._refreshing)
         assert [t["sessionId"] for t in picker._rows] == ["a"]
-        assert picker._live_ids == frozenset()
+        assert not picker._is_running(picker._rows[0])
 
 
 async def test_ctrl_c_cancels_a_dialog_with_focused_input(tmp_path):
@@ -896,3 +914,25 @@ async def test_hosted_refresh_keeps_pending_decisions_hidden(tmp_path):
         finally:
             execute.gate.set()
         await until(pilot, lambda: app.idle)
+
+
+async def test_the_inbox_will_not_move_a_session_while_presence_is_down(tmp_path):
+    path = _write(tmp_path / "registry.json", _thread("a", days=2, project="/w/a"))
+
+    def presence():
+        raise OSError("presence offline")
+
+    app = _app(path, cwd="/w/b")
+    app.scans._presence = presence
+    async with app.run_test(size=(100, 30)) as pilot:
+        await until(pilot, lambda: app.idle)
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        picker = app.screen
+        await until(pilot, lambda: not picker._refreshing)
+        await pilot.press("enter")
+        await until(pilot, lambda: "lives in /w/a" in screen_text(app))
+        await pilot.press("3")
+        await until(pilot, lambda: isinstance(app.screen, PickerScreen))
+        assert (PRESENCE_UNKNOWN_HOW, "warning") in _toasts(app)
+        assert app.is_running

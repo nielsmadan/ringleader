@@ -52,6 +52,10 @@ class ConversionRequest:
     compact: bool = False
     fork: bool = False
     title: str | None = None
+    workspace: Path | None = None
+
+    def target_cwd(self, source_cwd: Path) -> Path:
+        return self.workspace or source_cwd
 
 
 @dataclass(frozen=True)
@@ -203,7 +207,9 @@ class ConversionService:
             compact=request.compact, portable_version=PORTABLE_TRANSFORM_VERSION
         )
         snapshot.identity(options)
-        roots = StoredRoots.capture(replace(request.target_roots, cwd=source.roots.cwd)).native()
+        roots = StoredRoots.capture(
+            replace(request.target_roots, cwd=request.target_cwd(source.roots.cwd))
+        ).native()
         adapter = self.adapters.get(request.target_agent)
         writer = self.adapters.writer(adapter.agent)
         recording = _Recording(self.runner)
@@ -351,7 +357,9 @@ class ConversionService:
             compact=request.compact, portable_version=PORTABLE_TRANSFORM_VERSION
         )
         agent = self.adapters.get(request.target_agent).agent
-        roots = StoredRoots.capture(replace(request.target_roots, cwd=source.roots.cwd))
+        roots = StoredRoots.capture(
+            replace(request.target_roots, cwd=request.target_cwd(source.roots.cwd))
+        )
         wanted = (
             snapshot.identity(options),
             (roots.store, roots.cwd),
