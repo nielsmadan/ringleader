@@ -137,13 +137,18 @@ def build(
     for name in SANDBOX_DIRS:
         (sandbox_root / name).mkdir(exist_ok=True)
 
+    (sandbox_root / "codex" / "sessions").mkdir()
+
     stamp = time.time() if now is None else now
     for entry in manifest["files"]:
         source = fixture_root / entry["path"]
         if entry["kind"] == "session":
-            destination = sandbox_root / entry["path"]
+            relative = Path(entry["path"])
+            if entry["source"] == "codex":
+                relative = Path("codex/sessions") / relative.relative_to("codex")
+            destination = sandbox_root / relative
         else:
-            destination = sandbox_root / "session_index.jsonl"
+            destination = sandbox_root / "codex" / "session_index.jsonl"
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, destination)
         if entry["kind"] == "session":
@@ -162,6 +167,25 @@ def build(
     return fingerprint
 
 
+def _upgrade_codex_layout(sandbox_root: Path) -> None:
+    home = sandbox_root / "codex"
+    sessions = home / "sessions"
+    old_index = sandbox_root / "session_index.jsonl"
+    new_index = home / old_index.name
+    if any(path.is_symlink() for path in (sandbox_root, home, sessions, old_index, new_index)):
+        raise FixtureError("symlink in sandbox Codex layout")
+    rollouts = [path for path in home.iterdir() if path.name.isdecimal() and path.is_dir()]
+    for year in rollouts:
+        destination = sessions / year.name
+        if year.is_symlink() or destination.is_symlink() or destination.exists():
+            raise FixtureError(f"conflicting Codex year in sandbox: {year.name}")
+    sessions.mkdir(exist_ok=True)
+    for year in rollouts:
+        year.rename(sessions / year.name)
+    if old_index.is_file() and not new_index.exists():
+        old_index.rename(new_index)
+
+
 def ensure_sandbox(
     fixture_root: Path,
     sandbox_root: Path,
@@ -173,6 +197,7 @@ def ensure_sandbox(
         all((sandbox_root / name).is_dir() for name in SANDBOX_DIRS)
         and (sandbox_root / "claude-settings.json").is_file()
     ):
+        _upgrade_codex_layout(sandbox_root)
         return
     build(fixture_root, sandbox_root, descriptor, retention=retention)
 

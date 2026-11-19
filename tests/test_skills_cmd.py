@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import pytest
 from ringleader.commands import skills
 
 
@@ -388,3 +389,36 @@ def test_install_links_the_shared_skills_dir_for_cursor_alone(tmp_path, monkeypa
 
     link = tmp_path / ".agents" / "skills" / "ringleader-triage"
     assert link.is_symlink() and (link / "SKILL.md").exists()
+
+
+@pytest.mark.parametrize(
+    ("native_dir", "skill_dir"),
+    (
+        (".claude", ".claude/skills"),
+        (".codex", ".agents/skills"),
+        (".config/opencode", ".agents/skills"),
+        (".pi", ".agents/skills"),
+        ("_factory/.factory", "_factory/.factory/skills"),
+        ("_cursor", ".agents/skills"),
+    ),
+)
+def test_memory_workflow_is_installed_updated_and_reported(
+    tmp_path, monkeypatch, capsys, native_dir, skill_dir
+):
+    home = _fake_home(tmp_path, native_dir)
+    monkeypatch.setenv("HOME", str(home))
+    if native_dir == "_cursor":
+        (home / native_dir / "cli-config.json").write_text("{}")
+    link = home / skill_dir / "ringleader-memory-triage"
+    legacy = link.parent / "memory-triage"
+    legacy.mkdir(parents=True)
+    (legacy / "SKILL.md").write_text("independently managed workflow")
+
+    assert skills.cmd_install(["--yes"]) == 0
+    assert "# Native memory review workflow" in (link / "references/workflow.md").read_text()
+    link.unlink()
+    assert skills.cmd_update(["--yes"]) == 0
+    capsys.readouterr()
+    assert skills.cmd_status([]) == 0
+    assert "ringleader-memory-triage: linked" in capsys.readouterr().out
+    assert (legacy / "SKILL.md").read_text() == "independently managed workflow"

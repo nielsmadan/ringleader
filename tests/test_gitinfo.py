@@ -9,6 +9,7 @@ from ringleader.gitinfo import (
     GitRun,
     lookup_git_project,
     normalize_remote,
+    public_remote,
     resolve_git_project,
     resolve_many,
 )
@@ -191,3 +192,43 @@ def test_the_default_runner_reads_a_real_repository_and_a_real_non_repository(
         repo.resolve(),
     )
     assert lookup_git_project(str(plain)) is None
+
+
+@pytest.mark.parametrize(
+    ("origin", "clone", "key"),
+    [
+        (
+            "alice@host:project#review?.git",
+            "alice@host:project#review?.git",
+            "alice@host/project#review?",
+        ),
+        (
+            "bob@host:project#review?.git",
+            "bob@host:project#review?.git",
+            "bob@host/project#review?",
+        ),
+        ("/local/docs#one.git", "/local/docs#one.git", "/local/docs#one"),
+        ("/local/docs#two.git", "/local/docs#two.git", "/local/docs#two"),
+        (" ./literal?docs", " ./literal?docs", " ./literal?docs"),
+        ("  https://user:fixture-pass@host/docs?key=fixture", "https://host/docs", "host/docs"),
+        ("/local/docs?draft ", "/local/docs?draft ", "/local/docs?draft "),
+        (
+            "https://alice:fixture-pass@host/docs?private=fixture#fragment",
+            "https://host/docs",
+            "host/docs",
+        ),
+        ("ssh://alice:fixture-pass@host/docs", "ssh://alice@host/docs", "alice@host/docs"),
+    ],
+)
+def test_clone_routing_preserves_which_repository_is_addressed(tmp_path, origin, clone, key):
+    project = lookup_git_project(str(tmp_path), _runner({_TOP: str(tmp_path), _ORIGIN: origin}))
+    assert project is not None
+    assert (project.clone_url, project.key, public_remote(project.clone_url)) == (clone, key, clone)
+
+
+def test_ssh_locator_without_a_host_falls_back_to_checkout(tmp_path):
+    project = lookup_git_project(
+        str(tmp_path), _runner({_TOP: str(tmp_path), _ORIGIN: "ssh://user:fixture-pass@/docs"})
+    )
+    assert project is not None
+    assert (project.key, project.clone_url) == (str(tmp_path), None)

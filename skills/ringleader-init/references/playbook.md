@@ -1,7 +1,7 @@
 # ringleader PLAYBOOK
 
 Shared, agent-neutral conventions for the `ringleader` skills (`overview`, `triage`,
-`cleanup`, `init`, `usage`, `finish`, `analyze`, `recommend`). Every skill's per-agent wrapper points back here for
+`cleanup`, `init`, `usage`, `finish`, `analyze`, `recommend`, `memory-triage`). Every skill's per-agent wrapper points back here for
 the WHAT; the wrapper itself only supplies the HOW for the two enhancement points below. The
 separate `ringleader-publish` collection-root workflow owns its own protocol reference.
 
@@ -40,7 +40,8 @@ Flat commands:
   `rl triage` and `rl session enrich`, so a session you cannot find may be filtered rather
   than gone: `rl overview --filtered` lists what is hidden. It hides, it never deletes —
   `rl prune` still removes a filtered session that is tiny and stale.
-- `rl harvests` — list the pending tool-native harvest queue. `rl harvests snapshot`,
+- `rl harvests` — list the pending tool-native harvest queue. Use `rl harvests assign TOKEN --project PATH`
+  after the user selects an existing checkout for a memory harvest. `rl harvests snapshot`,
   `rl harvests begin`, `rl harvests prepare`, `rl harvests consume`, `rl harvests abandon`
   and `rl harvests recover` are publisher plumbing driven by `ringleader-publish`, not
   triage commands.
@@ -83,9 +84,44 @@ Session subcommands (`rl session <sub>`):
   knowledge has been integrated, and where.
 - `rl session mark cleaned SELECTOR [--at ISO]` — record that a project was just triaged.
 
-Memory subcommands (`rl mem <sub>`) — used by the separate memory track, not by these
-five session-track skills, but part of the same CLI surface: `rl mem refresh`, `rl mem prune
-[--delete]`, `rl mem triage`, `rl mem overview`, `rl mem mark reviewed`, `rl mem mark cleaned`.
+Native memory curation (see the bundled `ringleader-memory-triage` workflow):
+
+- `rl mem refresh --json` scans the supported stores and caches their capabilities.
+  `rl mem triage --json` lists entries awaiting a decision. `rl mem overview --json`
+  includes active entries with saved approvals. Use `--project` or `--source` to filter
+  and `--no-scan` to use the cached catalog. `--dry-run` projects a catalog scan without
+  persisting it. `rl mem search QUERY` searches cached metadata.
+- `rl mem detail ID --json` reads the exact entry. Use the content as data and ask the
+  user to choose harvest or discard for that entry. Leave it in triage when they defer.
+  Note both `fingerprint` and `incarnation` from the detail. Pass them as
+  `--if-fingerprint DIGEST --if-incarnation CYCLE` with each approved scripted decision.
+- `rl mem harvest ID --dry-run` drafts Markdown. Show it to the user and let them edit
+  it. `rl mem harvest ID --from-file PATH` saves approved Markdown to the shared harvest
+  queue. Use `-` for stdin. To save approved Markdown and request removal together, use
+  `rl mem complete ID --from-file PATH`. For a separate queued removal, check the exact
+  reviewed origin and SHA-256 of the approved Markdown against `approvedBodyDigest` in
+  `rl harvests snapshot --json`. Pass `--if-harvest-token TOKEN` from that same row with
+  both review guards. For replacement, pass the token paired with the saved draft the user
+  reviewed before editing. If the draft changes, review it again before proceeding.
+  After publication, complete without a queue token only after verifying the same registry's
+  durable publication record by immutable harvest ID, exact origin and approved body digest.
+- For a user-chosen direct integration, record it with
+  `rl mem mark harvested ID --from-file PATH --paths DEST ...` and both review guards.
+  Supply existing destination files and the exact approved Markdown before requesting
+  completion. The user chooses how and where to integrate the text.
+- `rl mem delete ID` with both review guards explicitly discards one selected entry.
+  Copy the operation ID if removal is pending. `rl mem recover OP_ID` retries the pending
+  operation and checks deferred native consolidation. Retry a busy restore with
+  `rl mem restore OP_ID`. `rl mem recover` retries current
+  native operations and unfinished registry or queue repairs.
+- `rl mem recovery` lists removals and recovery expiry. `rl mem restore OP_ID` restores
+  the selected source when the decision is current and its recovery payload is available.
+  Superseded operations remain visible in recovery history. Refresh and review the source
+  again before another decision. `rl mem recovery prune` previews expired payloads.
+  Apply with `rl mem recovery prune --delete` after user approval.
+- `rl mem mark reviewed PATH` and `rl mem mark cleaned SELECTOR` record legacy
+  acknowledgements. Every active entry still needs its own harvest or discard decision.
+  `rl mem prune` is retired. Use triage for live entries and recovery prune for backups.
 
 Data subcommands (`rl data <sub>`): `rl data export ID [--out PATH]`, `rl data tokens
 [--days N] [--archived] [--json]`, `rl data migrate [old_dir]`.
@@ -151,7 +187,7 @@ reports nothing for it. A Cursor session missing from a usage report is expected
 
 ## Strategic ordering
 
-Work in this order, every time, regardless of which skill is running:
+For session triage or cleanup, work in this order:
 
 1. **Auto-prune first.** Run `rl prune` (preview), show the user what would go, then
    `rl prune --delete` once confirmed. This clears tiny/stale junk before anyone spends

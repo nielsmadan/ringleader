@@ -19,8 +19,17 @@ def agent_store_env(
     scans or moves sessions can reach the machine's real stores. `names` renames a store
     directory for a layout that predates this mapping."""
     renamed = names or {}
-    return {
+    env = {
         var: str(root / f"{prefix}{renamed.get(store, store)}")
         for store, variables in AGENT_STORE_VARS.items()
         for var in variables
+    }
+    codex = Path(env["CODEX_SESSIONS_DIR"])
+    return {
+        **env,
+        "CODEX_HOME": str(codex),
+        "CODEX_SESSIONS_DIR": str(codex / "sessions"),
+        "CODEX_SQLITE_HOME": str(codex / "sqlite"),
+        "CLAUDE_CONFIG_DIR": str(root / f"{prefix}claude-config"),
+        "RINGLEADER_MEMORY_FIXTURE_ROOT": str(root.resolve()),
     }

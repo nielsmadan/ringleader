@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .. import harvests as store
+from ..memory_types import MemoryOrigin, origin_fields
 from ..publish_git import (
     PublishGitError,
     can_abandon,
@@ -17,13 +18,17 @@ from ..publish_git import (
 from ..publish_state import (
     PublishStateError,
     abandon_receipt,
+    assign_memory_harvest,
     begin_publish,
     consume_publish,
     list_receipts,
     load_receipt,
     prepare_publish,
     receipt_data,
+    reconcile_memory_queue_unlocked,
 )
+from ..stateio import publish_lock
+from . import default_registry
 
 
 def _write_json(data: object) -> int:
@@ -35,27 +40,38 @@ def _write_json(data: object) -> int:
 def _cmd_snapshot(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl harvests snapshot")
     ap.add_argument("--json", action="store_true")
-    ap.parse_args(argv)
+    ap.add_argument("--registry", type=Path, default=default_registry())
+    args = ap.parse_args(argv)
     receipts, _ = list_receipts()
     claimed_by = {item.token: receipt.receipt_id for receipt in receipts for item in receipt.items}
-    snapshot = store.snapshot_harvests()
+    claimed_ids = {
+        item.harvest_id: receipt.receipt_id for receipt in receipts for item in receipt.items
+    }
+    snapshot = store.pending_snapshot(args.registry)
     return _write_json(
         {
             "items": [
                 {
-                    "sessionId": item.session_id,
+                    **origin_fields(item.origin),
                     "name": item.name,
-                    "folderPath": item.folder_path,
-                    "repoUrl": item.repo_url,
-                    "cloneUrl": item.clone_url,
+                    **item.destination_fields(),
                     "harvestedAt": item.harvested_at,
                     "path": str(item.path),
                     "harvestId": item.harvest_id,
                     "digest": item.digest,
                     "token": item.token,
+                    **(
+                        {"approvedBodyDigest": item.body_digest}
+                        if isinstance(item.origin, MemoryOrigin)
+                        else {}
+                    ),
                     "contentBytes": item.content_bytes,
                     "repoKey": item.repo_key,
-                    "claimedBy": claimed_by.get(item.token),
+                    "claimedBy": (
+                        claimed_ids.get(item.harvest_id)
+                        if isinstance(item.origin, MemoryOrigin)
+                        else claimed_by.get(item.token)
+                    ),
                 }
                 for item in snapshot.items
             ],
@@ -64,6 +80,18 @@ def _cmd_snapshot(argv: list[str]) -> int:
                 for problem in snapshot.problems
             ],
         }
+    )
+
+
+def _cmd_assign(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="rl harvests assign")
+    ap.add_argument("token")
+    ap.add_argument("--project", type=Path, required=True)
+    ap.add_argument("--registry", type=Path, default=default_registry())
+    args = ap.parse_args(argv)
+    item = assign_memory_harvest(args.token, project=args.project, registry_path=args.registry)
+    return _write_json(
+        {"harvestId": item.harvest_id, "token": item.token, "destinationPath": item.folder_path}
     )
 
 
@@ -128,6 +156,7 @@ def _cmd_consume(argv: list[str]) -> int:
             "receiptId": result.receipt_id,
             "consumed": result.consumed,
             "sessionIds": list(result.session_ids),
+            **({"memoryIds": list(result.memory_ids)} if result.memory_ids else {}),
         }
     )
 
@@ -146,8 +175,19 @@ def _cmd_abandon(argv: list[str]) -> int:
 def _cmd_recover(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl harvests recover")
     ap.add_argument("--json", action="store_true")
-    ap.parse_args(argv)
-    receipts, problems = list_receipts()
+    ap.add_argument("--registry", type=Path, default=default_registry())
+    args = ap.parse_args(argv)
+    with publish_lock():
+        receipts, problems = list_receipts()
+        if not problems:
+            snapshot = store.snapshot_harvests()
+            for receipt in receipts:
+                for item in receipt.items:
+                    if item.harvest_id in snapshot.ambiguous_ids:
+                        raise PublishStateError(
+                            f"duplicate harvest ID in receipt: {item.harvest_id}"
+                        )
+            reconcile_memory_queue_unlocked(args.registry, snapshot=snapshot)
     return _write_json(
         {
             "receipts": [receipt_data(receipt) for receipt in receipts],
@@ -160,6 +200,7 @@ def _cmd_recover(argv: list[str]) -> int:
 
 _ACTIONS: dict[str, Callable[[list[str]], int]] = {
     "snapshot": _cmd_snapshot,
+    "assign": _cmd_assign,
     "begin": _cmd_begin,
     "prepare": _cmd_prepare,
     "consume": _cmd_consume,
@@ -172,16 +213,16 @@ SUBCOMMANDS: tuple[str, ...] = tuple(_ACTIONS)
 def _cmd_list(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(prog="rl harvests")
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--registry", type=Path, default=default_registry())
     args = ap.parse_args(argv)
-    rows = store.load_harvests()
+    rows = store.pending_snapshot(args.registry).items
     if args.json:
         json.dump(
             [
                 {
-                    "sessionId": h.session_id,
+                    **origin_fields(h.origin),
                     "name": h.name,
-                    "folderPath": h.folder_path,
-                    "repoUrl": h.repo_url,
+                    **h.destination_fields(include_clone=False),
                     "harvestedAt": h.harvested_at,
                     "path": str(h.path),
                     "content": h.content,
@@ -199,7 +240,7 @@ def _cmd_list(argv: list[str]) -> int:
         return 0
     for h in rows:
         preview = " ".join(h.content.split())[:80]
-        print(f"{h.name or h.session_id}  [{h.repo_url or h.folder_path or '?'}]")
+        print(f"{h.name or h.origin_id}  [{h.repo_url or h.folder_path or '?'}]")
         print(f"  {h.folder_path or ''}  — {preview}")
     print(f"\n{len(rows)} harvest(s)")
     return 0
@@ -209,7 +250,9 @@ def cmd_harvests(argv: list[str]) -> int:
     if argv and argv[0] in _ACTIONS:
         try:
             return _ACTIONS[argv[0]](argv[1:])
-        except (PublishStateError, PublishGitError) as error:
+        except BrokenPipeError:
+            raise
+        except (OSError, PublishStateError, PublishGitError) as error:
             print(f"rl-harvests: {error}", file=sys.stderr)
             return 1
     return _cmd_list(argv)

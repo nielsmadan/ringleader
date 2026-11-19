@@ -1,75 +1,17 @@
 from __future__ import annotations
 
-import argparse
-import sys
-from collections import defaultdict
-from datetime import UTC, datetime
-from pathlib import Path
+from .mem_output import MemoryParser
 
-from .. import memory, projects, registry
-from . import default_registry
-
-
-def _now() -> str:
-    return datetime.now(UTC).isoformat()
+_GUIDANCE = (
+    "Live memory pruning has been retired. Review entries with `rl mem triage` and use "
+    "`rl mem delete ID` for an explicitly approved discard. Use `rl mem recovery prune` "
+    "to preview expired recovery payloads."
+)
 
 
 def cmd_mem_prune(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem prune")
-    ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--project", action="append", default=None)
-    ap.add_argument("--delete", action="store_true")
-    args = ap.parse_args(argv)
-
-    reg = registry.load_registry(args.registry)
-    scanned = memory.scan_memory(memory.projects_dir(), recorded_threads=reg["threads"])
-    reg = registry.reconcile_memory(reg, scanned, _now())
-    registry.commit_registry(args.registry, reg)
-
-    cands = [e for e in reg["memoryEntries"] if e.get("obsoleteSignals")]
-    if args.project:
-        cands = projects.filter_by_projects(cands, args.project)
-    if not cands:
-        print("nothing to prune")
-        return 0
-    for e in cands:
-        print(
-            f"  [{','.join(e['obsoleteSignals'])}] {e.get('name') or e['path']}  "
-            f"{e.get('project') or ''}"
-        )
-    print(f"\n{len(cands)} obsolete memory entries")
-    if not args.delete:
-        print("(preview — re-run with --delete to remove these)")
-        return 0
-    try:
-        resp = input(f"Delete {len(cands)} memory files? [y/N] ").strip().lower()
-    except EOFError:
-        resp = ""
-    if resp not in ("y", "yes"):
-        print("aborted, nothing deleted")
-        return 0
-    deleted = 0
-    deleted_paths: set[str] = set()
-    for e in cands:
-        try:
-            Path(e["path"]).unlink(missing_ok=True)
-            deleted += 1
-            deleted_paths.add(e["path"])
-        except OSError as err:
-            print(f"skipped {e['path']}: {err}", file=sys.stderr)
-    reg["memoryEntries"] = [e for e in reg["memoryEntries"] if e["path"] not in deleted_paths]
-    registry.commit_registry(args.registry, reg)
-
-    by_dir = defaultdict(set)
-    for raw_path in deleted_paths:
-        p = Path(raw_path)
-        by_dir[p.parent].add(p.name)
-    for mem_dir, basenames in by_dir.items():
-        index_path = mem_dir / memory.INDEX_NAME
-        if not index_path.exists():
-            continue
-        index_text = index_path.read_text(encoding="utf-8")
-        index_path.write_text(memory.rewrite_index_without(index_text, basenames), encoding="utf-8")
-
-    print(f"deleted {deleted} memory files")
-    return 0
+    parser = MemoryParser("prune", argv, _GUIDANCE)
+    parser.add_argument("--project", action="append", help="retired project filter")
+    parser.add_argument("--delete", action="store_true", help="retired live memory deletion flag")
+    parser.parse_args(argv)
+    return parser.fail(_GUIDANCE, code=2)

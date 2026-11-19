@@ -5,6 +5,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 
 import pytest
+from ringleader.memory_types import MemoryOrigin, SessionOrigin
 from ringleader.publish_git import (
     PublishGitError,
     can_abandon,
@@ -88,7 +89,7 @@ def receipt(repo: Repo) -> PublishReceipt:
                 harvest_id="harvest",
                 digest="b" * 64,
                 token=f"harvest:{'b' * 64}",
-                session_id="session",
+                origin=SessionOrigin("session"),
                 relative_path="harvest.md",
             ),
         ),
@@ -303,6 +304,53 @@ def test_validate_prepared_changes_accepts_exact_documentation_paths(repo, recei
     prepared = _prepared_receipt(repo, receipt, report_paths)
 
     validate_prepared_changes(prepared, report_paths, prepared.expected_tree)
+
+
+@pytest.mark.parametrize("mixed", [False, True], ids=["memory", "mixed"])
+@pytest.mark.parametrize(
+    "blocked_path",
+    [
+        ".claude/rules/README.md",
+        "native-profile/rules/README.md",
+        "docs/AGENTS.override.md",
+        "docs/CLAUDE.local.md",
+    ],
+)
+def test_validate_memory_targets_excludes_agent_instructions(
+    repo, receipt, monkeypatch, mixed, blocked_path
+):
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(repo.path / "native-profile"))
+    memory = replace(
+        receipt.items[0],
+        harvest_id="memory-harvest",
+        origin=MemoryOrigin("memory", "claude-code", "fingerprint", "incarnation", "global", None),
+    )
+    receipt = replace(receipt, items=(*receipt.items, memory) if mixed else (memory,))
+    (repo.path / "README.md").write_text("approved knowledge\n")
+    allowed = _prepared_receipt(repo, receipt, ("README.md",))
+    validate_prepared_changes(allowed, allowed.changed_paths, allowed.expected_tree)
+
+    target = repo.path / blocked_path
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("agent instructions\n")
+    run_git(repo.path, "--literal-pathspecs", "add", "-f", "--", blocked_path)
+    blocked = _prepared_receipt(repo, receipt, (*allowed.changed_paths, blocked_path))
+    with pytest.raises(PublishGitError, match="agent instruction path"):
+        validate_prepared_changes(blocked, blocked.changed_paths, blocked.expected_tree)
+
+
+def test_validate_session_targets_uses_existing_allowlist_at_custom_claude_root(
+    repo, receipt, monkeypatch
+):
+    config = repo.path / "native-profile"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    path = "native-profile/rules/README.md"
+    target = repo.path / path
+    target.parent.mkdir(parents=True)
+    target.write_text("session harvest\n")
+    prepared = _prepared_receipt(repo, receipt, (path,))
+
+    validate_prepared_changes(prepared, prepared.changed_paths, prepared.expected_tree)
 
 
 def test_validate_prepared_changes_stages_hostile_pathspecs_literally(repo, receipt):
@@ -521,3 +569,69 @@ def test_can_abandon_requires_a_clean_begun_receipt(repo, receipt):
     assert not can_abandon(replace(receipt, state="prepared", outcome="no-change"))
     (repo.path / "README.md").write_text("changed\n")
     assert not can_abandon(receipt)
+
+
+@pytest.mark.parametrize("entry", ["checkout-file", "config-directory", "hardlink"])
+def test_memory_publish_lists_physical_instruction_targets(repo, receipt, monkeypatch, entry):
+    from ringleader.publish_git import memory_instruction_targets
+
+    checkout = repo.path
+    root = checkout / "docs"
+    root.mkdir()
+    guide = root / "guide.md"
+    guide.write_text("shared native guidance")
+    config = checkout.parent / "config"
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    if entry == "config-directory":
+        config.mkdir()
+        (config / "rules").symlink_to(root, target_is_directory=True)
+        expected = "docs"
+    else:
+        rules = checkout / ".claude" / "rules"
+        rules.mkdir(parents=True)
+        if entry == "checkout-file":
+            (rules / "project.md").symlink_to(guide)
+        else:
+            (rules / "project.md").hardlink_to(guide)
+        expected = "docs/guide.md"
+    inventory = memory_instruction_targets(checkout)
+    assert expected in inventory.aliases
+    assert inventory.protects(guide)
+    assert not inventory.protects(checkout / "README.md")
+    memory = replace(
+        receipt.items[0],
+        origin=MemoryOrigin("memory", "claude-code", "fingerprint", "incarnation", "global", None),
+    )
+    with pytest.raises(PublishGitError, match="agent instruction path"):
+        validate_prepared_changes(replace(receipt, items=(memory,)), ("docs/guide.md",), "unused")
+
+
+def test_configured_checkout_excludes_new_instruction_areas_before_edit(repo, monkeypatch):
+    from ringleader.publish_git import memory_instruction_targets
+
+    config = repo.path / "docs" / "agent"
+    monkeypatch.setenv("CODEX_HOME", str(config))
+    exclusions = memory_instruction_targets(repo.path)
+    assert "docs/agent/skills" in exclusions.aliases
+    assert exclusions.protects(config / "skills" / "review" / "README.md")
+
+
+def test_instruction_inventory_terminates_at_directory_cycles_and_enforces_budget(
+    tmp_path, monkeypatch
+):
+    from ringleader import instruction_targets
+
+    checkout = tmp_path / "repo"
+    docs = checkout / "docs"
+    docs.mkdir(parents=True)
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "rules").symlink_to(docs, target_is_directory=True)
+    (docs / "here").symlink_to(docs, target_is_directory=True)
+    targets = instruction_targets.instruction_targets(checkout, [config])
+    assert targets.aliases == ("docs",)
+    assert targets.protects(docs / "here" / "new.md")
+
+    monkeypatch.setattr(instruction_targets, "_MAX_ENTRIES", 2)
+    with pytest.raises(ValueError, match="Too many entries to verify"):
+        instruction_targets.instruction_targets(checkout, [config])

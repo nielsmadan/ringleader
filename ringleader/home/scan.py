@@ -6,13 +6,14 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
-from .. import harvests, registry, revalidate
+from .. import registry, revalidate
 from ..harvests import HarvestSnapshot
 from ..models import Model, ModelTask, describe
 from ..refresh import Refreshed
 from ..revalidate import Identity
 from ..tui.background import CancelToken, Done, Failed, start_daemon
 from ..tui.types import Clock, Presence, Refresher
+from .harvest_view import HarvestQueueRead, read_harvest_queue
 from .writer import Snapshot
 
 
@@ -21,11 +22,15 @@ class ScanLanded:
     snapshot: Snapshot
     note: str | None
     live_ids: frozenset[Identity] | None
-    harvests: HarvestSnapshot | None
+    harvest_queue: HarvestQueueRead
     enrich_model: str | None
     harvest_model: str | None
     warnings: tuple[str, ...]
     unavailable_sources: frozenset[str] = frozenset()
+
+    @property
+    def harvests(self) -> HarvestSnapshot | None:
+        return self.harvest_queue.snapshot
 
 
 type FullRefresher = Callable[[str, str], Refreshed]
@@ -105,15 +110,13 @@ class ScanService:
         warnings: list[str] = []
         reg, note, scanned, unavailable = self._refreshed(warnings)
         live_ids = self._live_ids(warnings)
-        harvest_snapshot = _guarded(
-            warnings, "harvests", lambda: harvests.snapshot_harvests(self._harvests)
-        )
-        self._harvests = harvest_snapshot
+        harvest_queue = read_harvest_queue(self._registry_path, self._harvests)
+        self._harvests = harvest_queue.snapshot
         return ScanLanded(
             snapshot=Snapshot(reg, generation, scanned=scanned, taken_at=self._monotonic()),
             note=note,
             live_ids=live_ids,
-            harvests=harvest_snapshot,
+            harvest_queue=harvest_queue,
             enrich_model=self._model_label(warnings, "enrich"),
             harvest_model=self._model_label(warnings, "harvest"),
             warnings=tuple(warnings),

@@ -27,4 +27,4 @@
 
 
  Waking soon: nothing snoozed wakes in the next 7 days
- q quit  u undo  ^r rescan                                                              ▏^p palette
+ 8 memories  q quit  u undo  ^r rescan                                                  ▏^p palette

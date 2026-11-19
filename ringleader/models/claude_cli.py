@@ -5,7 +5,7 @@ import shutil
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from ..progress import CancelCheck, never_cancelled
 from . import proc as model_proc
@@ -46,6 +46,7 @@ def _stats(envelope: Any, seconds: float) -> CallStats:
 
 @dataclass
 class ClaudeCliModel:
+    tool_free_completion: ClassVar[bool] = True
     name: str = "claude"
     model: str | None = None
     timeout: float | None = None

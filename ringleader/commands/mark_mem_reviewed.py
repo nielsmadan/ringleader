@@ -1,23 +1,24 @@
 from __future__ import annotations
 
 import argparse
-import sys
 
 from .. import registry
-from . import default_registry
+from .mem_output import MemoryParser
 
 
-def cmd_mark_mem_reviewed(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem mark reviewed")
-    ap.add_argument("path")
-    ap.add_argument("--registry", default=str(default_registry()))
-    args = ap.parse_args(argv)
+def _mark(parser: MemoryParser, args: argparse.Namespace) -> int:
     reg = registry.load_registry(args.registry)
     try:
         registry.mark_memory_reviewed(reg, args.path)
     except KeyError:
-        print(f"rl-mark-mem-reviewed: no memory entry at {args.path}", file=sys.stderr)
-        return 1
+        return parser.fail(f"No memory entry at {args.path}")
     registry.commit_registry(args.registry, reg)
-    print(f"reviewed {args.path}")
+    parser.emit({"path": args.path, "reviewed": True}, f"reviewed {args.path}")
     return 0
+
+
+def cmd_mark_mem_reviewed(argv: list[str]) -> int:
+    parser = MemoryParser("mark reviewed", argv, "Acknowledge a legacy Claude memory file by path.")
+    parser.add_argument("path")
+    args = parser.parse_args(argv)
+    return parser.run(lambda: _mark(parser, args))

@@ -85,8 +85,8 @@ class CodexCliModel:
             sf = Path(td) / "schema.json"
             sf.write_text(json.dumps(wire_schema), encoding="utf-8")
             proc = model_proc.run_model_process(
-                [*self.command_prefix, *self.argv(schema), "--output-schema", str(sf), prompt],
-                stdin_text=None,
+                [*self.command_prefix, *self.argv(schema), "--output-schema", str(sf), "-"],
+                stdin_text=prompt,
                 timeout=self.timeout,
                 cancelled=self.cancelled or never_cancelled,
             )

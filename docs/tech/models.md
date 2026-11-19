@@ -4,9 +4,9 @@
 
 ## Purpose
 
-Three verbs need a model — `rl session enrich` (classify status / whatItIs / name),
-`rl session harvest` (distill a finished session into markdown) and `rl analyze --label`
-(System-1 labels for flagged episodes, user messages and recurring issues). All go through a
+`rl session enrich` classifies sessions, `rl session harvest` distills finished sessions
+into Markdown, and `rl analyze --label` labels flagged episodes, user messages and
+recurring issues. All three use a
 `Model` protocol with three implementations, and all **no-op cleanly** when none is available
 ([0009](../decisions/0009-reuse-agent-cli-auth-and-store-no-secrets.md)).
 
@@ -46,6 +46,17 @@ analyze uses `analyze_model` (`rl config set analyze.model <name>`, `default` cl
 CLI adapters get `CALL_TIMEOUT_SECONDS[task]` (enrich 120 s, harvest 300 s, analyze 180 s) and the configured
 `ai_command_prefix` as `command_prefix`, which `complete_json` puts in front of the argv. `describe()` renders
 the choice, and `with_cancel()` returns a copy of a CLI adapter bound to a cancel check.
+
+### Native memory drafts
+
+The inbox uses the harvest model for automatic memory drafting only when its adapter
+explicitly supports tool-free completion. Claude uses an empty tool list and strict,
+empty MCP configuration. The direct `llm` call supplies no tools. Codex CLI retains
+the user's provider configuration, which can advertise tools during completion.
+Memory review offers native-text editing or an exact-entry skill handoff in that case.
+CLI model prompts supplied on standard input use a private temporary file. The child can read
+the complete prompt even after a slow startup while the parent polls for cancellation and timeout. See the
+[versioned Codex tool inventory check](../reference/agent-memory-management.md#codex-completion-tools).
 
 ### Enrich classification
 

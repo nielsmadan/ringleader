@@ -570,56 +570,9 @@ def test_reconcile_preserves_snoozed():
     assert reg2["threads"][0]["snoozedAt"] == "2026-07-01T00:00:00+00:00"
 
 
-from ringleader.memory import MemoryEntry
-
-
-def _entry(path, cwd, mtime, body="x", signals=None):
-    return MemoryEntry(
-        path=path,
-        encoded_dir="-enc",
-        project=cwd,
-        mtime=mtime,
-        name="n",
-        description="d",
-        mem_type="feedback",
-        body=body,
-        git_project_key="k",
-        git_project_label="proj",
-        git_root=cwd,
-        git_remote="r",
-        obsolete_signals=signals or [],
-    )
-
-
-def test_reconcile_memory_upserts_and_preserves_review():
-    reg = registry.empty_registry()
-    reg = registry.reconcile_memory(
-        reg, [_entry("/m/a.md", "/p", "2026-01-01T00:00:00+00:00")], "now"
-    )
-    registry.mark_memory_reviewed(reg, "/m/a.md", "2026-01-01T00:00:00+00:00")
-    # re-scan, same mtime -> review survives, not needing review
-    reg = registry.reconcile_memory(
-        reg, [_entry("/m/a.md", "/p", "2026-01-01T00:00:00+00:00")], "now2"
-    )
-    assert registry.memory_needing_review(reg) == []
-    # file changed -> mtime newer -> needs review again
-    reg = registry.reconcile_memory(
-        reg, [_entry("/m/a.md", "/p", "2026-02-01T00:00:00+00:00")], "now3"
-    )
-    assert [e["path"] for e in registry.memory_needing_review(reg)] == ["/m/a.md"]
-
-
-def test_reconcile_memory_drops_gone_entries_no_tombstone():
-    reg = registry.empty_registry()
-    reg = registry.reconcile_memory(reg, [_entry("/m/a.md", "/p", "t")], "now")
-    reg = registry.reconcile_memory(reg, [], "now2")  # a.md no longer scanned
-    assert reg["memoryEntries"] == []
-    assert reg["deleted"] == []
-
-
 def test_session_reconcile_preserves_memory_keys():
     reg = registry.empty_registry()
-    reg = registry.reconcile_memory(reg, [_entry("/m/a.md", "/p", "t")], "now")
+    reg["memoryEntries"] = [{"path": "/m/a.md", "project": "/p", "mtime": "t"}]
     reg = registry.mark_memory_project_cleaned(reg, "k", "when")
     reg = registry.reconcile(reg, [], "now2")  # session scan must not drop memory
     assert len(reg["memoryEntries"]) == 1

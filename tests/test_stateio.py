@@ -54,3 +54,14 @@ def test_publish_lock_blocks_another_process(tmp_path, monkeypatch):
     _wait_for_path(entered)
     child.join(2)
     assert child.exitcode == 0
+
+
+def test_atomic_write_bytes_succeeds_through_symlinked_parent(tmp_path):
+    parent = tmp_path / "actual"
+    parent.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(parent, target_is_directory=True)
+    target = parent / "state.json"
+    target.write_bytes(b"previous")
+    stateio.atomic_write_bytes(alias / target.name, b"new")
+    assert target.read_bytes() == b"new"

@@ -95,9 +95,16 @@ rl install             # skills, session-end hook, statusline capture
   recurring errors, scored per session and grouped by project, tool, skill and model. Reads from a
   local SQLite index; a model is used only for optional labels. → [Analysis](docs/features/analysis.md)
 
+## Review native memory
+
+Open **Memories** with `8` in `rl inbox`, or use `rl mem triage` and `rl mem detail ID`.
+Choose whether to harvest or discard each Claude Code or Codex entry. Harvests can
+join the shared publication queue or go into documentation you choose. Review
+[native memory commands and recovery](docs/user/cli.md#rl-mem).
+
 ## Skills
 
-`skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands, and
+`skills/` ships ten agent-neutral skills that drive `rl` instead of raw commands, and
 read natively in Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI:
 
 | Skill | Does |
@@ -111,8 +118,10 @@ read natively in Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI:
 | `ringleader-publish` | drain pending harvests into the living docs of matching repos |
 | `ringleader-analyze` | find where recent sessions went wrong and save the findings as a report |
 | `ringleader-recommend` | turn saved findings into proposed edits to your agent setup; proposes only |
+| `ringleader-memory-triage` | review native Claude Code and Codex memory and preserve approved knowledge |
 
-`memory-triage` is separate and lives in `loadout/skills/`.
+Use the bundled name `ringleader-memory-triage`. The repo's older Claude skill name
+redirects to it.
 
 ```sh
 rl install skills      # symlink into ~/.agents/skills, ~/.claude/skills and ~/.factory/skills
@@ -146,7 +155,7 @@ rl session search <query>           # find a session by name, id prefix or cache
 rl handoff triage --project K --agent A # an agent triages one project; --dry-run previews
 rl doctor                           # what's linked, registered, and how retention is set
 rl session <sub>                    # session plumbing: refresh, harvest, finish, archive, ...
-rl mem <sub>                        # memory plumbing
+rl mem <sub>                        # native memory review and recovery
 rl data <sub>                       # export, tokens, migrate, presence
 rl data presence status [--json]    # is live-session presence wired up
 rl workspace move <old> <new>       # move a checkout without stranding its sessions

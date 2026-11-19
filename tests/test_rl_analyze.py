@@ -44,7 +44,7 @@ def index_dir(tmp_path):
 
 
 def write_codex(tmp_path: Path) -> None:
-    day = tmp_path / "_codex" / "2026" / "10" / "02"
+    day = tmp_path / "_codex" / "sessions" / "2026" / "10" / "02"
     day.mkdir(parents=True)
     usage = {"input_tokens": 1000, "cached_input_tokens": 400, "output_tokens": 50}
     records = [
@@ -412,7 +412,7 @@ def test_codex_tokens_come_from_the_index_not_the_usage_reader(
 
 
 def test_session_resolves_a_codex_child_prefix_to_its_root(corpus, tmp_path, index_dir, capsys):
-    day = tmp_path / "_codex" / "2026" / "10" / "02"
+    day = tmp_path / "_codex" / "sessions" / "2026" / "10" / "02"
     spawn = {"subagent": {"thread_spawn": {"parent_thread_id": CODEX, "depth": 1}}}
     child = {
         "type": "session_meta",

@@ -10,6 +10,7 @@ from ringleader.models.base import Model, ModelError
 from ringleader.models.claude_cli import ClaudeCliModel
 from ringleader.models.codex_cli import CodexCliModel
 from ringleader.models.llm import LlmModel
+from ringleader.models.proc import run_model_process
 
 SCHEMA = {"type": "object", "properties": {"x": {"type": "string"}}, "required": ["x"]}
 NESTED_SCHEMA = {
@@ -154,6 +155,7 @@ def test_codex_complete_json_builds_command(monkeypatch):
 
     def fake_run(cmd, **kw):
         seen["cmd"] = cmd
+        seen["stdin"] = kw["stdin_text"]
         schema_path = cmd[cmd.index("--output-schema") + 1]
         seen["schema"] = json.loads(Path(schema_path).read_text())
         return types.SimpleNamespace(returncode=0, stdout=json.dumps({"x": "yo"}), stderr="")
@@ -167,7 +169,8 @@ def test_codex_complete_json_builds_command(monkeypatch):
     assert "--output-schema" in cmd
     assert "--skip-git-repo-check" in cmd
     assert "--sandbox" in cmd and "read-only" in cmd
-    assert "classify this" in cmd
+    assert cmd[-1] == "-"
+    assert seen["stdin"] == "classify this"
     assert seen["schema"]["additionalProperties"] is False
 
 
@@ -388,7 +391,7 @@ def test_claude_stats_are_none_when_the_envelope_has_no_usage(monkeypatch):
     assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (None, None, None)
 
 
-def test_codex_call_is_ephemeral_without_stdin(monkeypatch):
+def test_codex_call_is_ephemeral_and_reads_stdin(monkeypatch):
     seen = {}
 
     def fake_run(argv, **kw):
@@ -400,7 +403,7 @@ def test_codex_call_is_ephemeral_without_stdin(monkeypatch):
     _, stats = CodexCliModel().complete_json_with_stats("p", SCHEMA)
     assert "--ephemeral" in seen["argv"] and "--ignore-rules" in seen["argv"]
     assert "--output-schema" not in CodexCliModel().argv(SCHEMA)
-    assert seen["stdin_text"] is None
+    assert seen["stdin_text"] == "p"
     assert (stats.input_tokens, stats.output_tokens, stats.cost_usd) == (None, None, None)
 
 
@@ -470,3 +473,22 @@ def test_an_llm_call_that_is_not_cancelled_returns_its_result(monkeypatch):
     monkeypatch.setattr(LlmModel, "_complete", lambda self, prompt, schema: {"ok": prompt})
     model = models.with_cancel(LlmModel(), lambda: False)
     assert model.complete_json("p", {}) == {"ok": "p"}
+
+
+def test_codex_transports_a_large_prompt_exactly_through_stdin(tmp_path, monkeypatch):
+    import hashlib
+    import sys
+
+    prompt = "標準入力\r\n" * 130_000
+    reader = tmp_path / "reader.py"
+    reader.write_text(
+        "import hashlib, json, sys, time\n"
+        "time.sleep(0.5)\n"
+        "assert sys.argv[1:3] == ['codex', 'exec'] and sys.argv[-1] == '-'\n"
+        "print(json.dumps({'digest': hashlib.sha256(sys.stdin.buffer.read()).hexdigest()}))\n"
+    )
+    monkeypatch.setattr("ringleader.models.proc.run_model_process", run_model_process)
+    model = CodexCliModel(command_prefix=(sys.executable, str(reader)), timeout=4)
+    assert model.complete_json(prompt, SCHEMA) == {
+        "digest": hashlib.sha256(prompt.encode()).hexdigest()
+    }

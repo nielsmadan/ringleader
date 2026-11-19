@@ -67,27 +67,32 @@ def run_model_process(
     cwd: Path | None = None,
 ) -> ProcessResult:
     try:
-        proc = subprocess.Popen(
-            list(argv),
-            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            start_new_session=True,
-            cwd=cwd or neutral_cwd(),
-        )
+        with contextlib.ExitStack() as stack:
+            stdin = None
+            if stdin_text is not None:
+                stdin = stack.enter_context(tempfile.TemporaryFile())
+                stdin.write(stdin_text.encode("utf-8"))
+                stdin.seek(0)
+            proc = subprocess.Popen(
+                list(argv),
+                stdin=stdin if stdin is not None else subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                start_new_session=True,
+                cwd=cwd or neutral_cwd(),
+            )
     except OSError as e:
         raise ModelError(f"{argv[0]} invocation failed: {e}") from e
     with _live_lock:
         _live_groups.add(proc.pid)
     try:
         deadline = None if timeout is None else time.monotonic() + timeout
-        pending_input = stdin_text
         while True:
             try:
-                out, err = proc.communicate(input=pending_input, timeout=_POLL_SECONDS)
+                out, err = proc.communicate(timeout=_POLL_SECONDS)
             except subprocess.TimeoutExpired:
-                pending_input = None
+                pass
             else:
                 return ProcessResult(proc.returncode, out, err)
             if cancelled():

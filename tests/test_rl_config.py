@@ -40,6 +40,9 @@ def test_config_show_defaults(tmp_path):
     assert "ai: None" in r.stdout
     assert "llm.provider: anthropic" in r.stdout
     assert "archive.retention_days: 0" in r.stdout
+    assert "memory.recovery_retention_days: 30" in r.stdout
+    assert "memory.codex_sqlite_home: default" in r.stdout
+    assert "memory.claude_trust_file: default" in r.stdout
     assert "inbox.keys: vim" in r.stdout
 
 
@@ -69,6 +72,9 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "llm_provider": "openai",
         "roundup_stale_hours": 8,
         "archive_retention_days": 0,
+        "memory_recovery_retention_days": 30,
+        "memory_codex_sqlite_home": None,
+        "memory_claude_trust_file": None,
         "session_filters": [],
         "inbox_keys": "vim",
     }
@@ -115,6 +121,33 @@ def test_config_set_invalid_archive_retention_rejected(tmp_path):
         assert r.returncode == 2, bad
         assert bad in r.stderr
     assert not (tmp_path / "ringleader" / "config.json").exists()
+
+
+def test_config_memory_retention_can_expire_immediately_and_archive_can_keep_forever(tmp_path):
+    env = _env(tmp_path)
+    for key in ("archive.retention_days", "memory.recovery_retention_days"):
+        r = _run("config", "set", key, "0", env=env)
+        assert r.returncode == 0, r.stderr
+    r = _run("config", "show", env=env)
+    assert "archive.retention_days: 0" in r.stdout
+    assert "memory.recovery_retention_days: 0" in r.stdout
+    for bad in ("-1", "1.5", "never"):
+        r = _run("config", "set", "memory.recovery_retention_days", bad, env=env)
+        assert r.returncode == 2 and "0 = expire on completed removal" in r.stderr
+
+
+@pytest.mark.parametrize("key", ["memory.codex_sqlite_home", "memory.claude_trust_file"])
+def test_config_memory_paths_accept_absolute_override_and_default(tmp_path, key):
+    env = _env(tmp_path)
+    for bad in ("relative/path", str(tmp_path) + "/../other"):
+        r = _run("config", "set", key, bad, env=env)
+        assert r.returncode == 2 and "absolute path without traversal" in r.stderr
+    override = str(tmp_path / "chosen path")
+    for value in (override, "default"):
+        r = _run("config", "set", key, value, env=env)
+        assert r.returncode == 0, r.stderr
+        r = _run("config", "show", env=env)
+        assert f"{key}: {value}" in r.stdout
 
 
 def test_config_set_unknown_key_rejected(tmp_path):

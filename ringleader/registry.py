@@ -2,20 +2,19 @@ from __future__ import annotations
 
 import json
 import os
+import unicodedata
 from collections.abc import Callable, Iterable
 from copy import deepcopy
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
-from . import namefilter, overview
+from . import memory_catalog, namefilter
 from .agents import canonical_agent, source_of
+from .memory_types import MemoryScan
 from .slug import is_beneath
 from .sources.base import NormalizedSession, RawRef
 from .stateio import atomic_write_text, registry_lock
-
-if TYPE_CHECKING:
-    from .memory import MemoryEntry
 
 REGISTRY_VERSION = 2
 
@@ -74,11 +73,42 @@ def _normalized(data: dict[str, Any]) -> dict[str, Any]:
     data.setdefault("archived", [])
     data.setdefault("deleted", [])
     data.setdefault("projectsCleanedAt", {})
-    data.setdefault("memoryEntries", [])
+    data["memoryEntries"] = [
+        memory_catalog.normalize_entry(row) for row in data.get("memoryEntries", [])
+    ]
     data.setdefault("memoryProjectsCleanedAt", {})
     current_ids = {identity(row) for bucket in ("threads", "archived") for row in data[bucket]}
     data["deleted"] = [row for row in data["deleted"] if identity(row) not in current_ids]
     return data
+
+
+def owner_matches(owner: str, path: str | Path) -> bool:
+    candidate = Path(path).resolve()
+    original = Path(owner)
+    if original == candidate:
+        return True
+    try:
+        if (
+            original.resolve() != original
+            or not original.parent.samefile(candidate.parent)
+            or not original.samefile(candidate)
+        ):
+            return False
+        if original.name == candidate.name:
+            return True
+        # Two independently named hard links diverge on the next atomic registry write.
+        name = unicodedata.normalize("NFC", original.name).casefold()
+        if name != unicodedata.normalize("NFC", candidate.name).casefold():
+            return False
+        with os.scandir(original.parent) as entries:
+            return (
+                sum(
+                    unicodedata.normalize("NFC", entry.name).casefold() == name for entry in entries
+                )
+                == 1
+            )
+    except FileNotFoundError:
+        return False
 
 
 def load_registry(path: str | Path) -> dict[str, Any]:
@@ -114,6 +144,7 @@ class Registry(dict[str, Any]):
         self.path = path if path is not None else getattr(data, "path", None)
         self._set_baseline(data, baseline, baseline_text)
         self.scanned = False
+        self.native_scan: tuple[MemoryScan, str] | None = None
 
     def _set_baseline(
         self, data: dict[str, Any], baseline: dict[str, Any] | None, text: str | None
@@ -141,6 +172,7 @@ class Registry(dict[str, Any]):
         self.update(current)
         self._set_baseline(current, baseline, baseline_text)
         self.scanned = False
+        self.native_scan = None
 
     def adopt(self, other: Registry) -> None:
         self.replace(other, baseline=other._baseline, baseline_text=other._baseline_text)
@@ -305,15 +337,23 @@ def _merge_sessions(  # noqa: PLR0912
 def _merge_memory(
     before: dict[str, Any], after: dict[str, Any], current: dict[str, Any], *, scan: bool
 ) -> None:
-    old_rows, new_rows, latest_rows = (
-        {row["path"]: row for row in reg["memoryEntries"]} for reg in (before, after, current)
-    )
-    for path in old_rows.keys() | new_rows.keys():
+    old_rows, new_rows, latest_rows = map(memory_catalog.rows_by_id, (before, after, current))
+    before_states, current_states = map(memory_catalog.decision_states, (before, current))
+    for path in dict.fromkeys((*old_rows, *new_rows)):
         old, new, latest = (rows.get(path) for rows in (old_rows, new_rows, latest_rows))
+        row = new or old or {}
+        store = memory_catalog.store_key(path[0], row.get("storeId", ""))
+        if scan and (
+            before_states.get(path) != current_states.get(path)
+            or current.get("memoryScannedAt", {}).get(store, "")
+            > after.get("memoryScannedAt", {}).get(store, "")
+        ):
+            continue
         if new in (old, latest):
             continue
         if old is None:
             if latest is None:
+                assert new is not None
                 latest_rows[path] = deepcopy(new)
             elif not scan:
                 raise RegistryConflict(f"memory entry already exists: {path}")
@@ -325,9 +365,65 @@ def _merge_memory(
                 latest_rows.pop(path)
             elif not scan:
                 raise RegistryConflict(f"memory entry changed concurrently: {path}")
-        elif not scan or latest.get("mtime") == old.get("mtime"):
+        elif not scan or (latest.get("fingerprint"), latest.get("incarnation")) == (
+            old.get("fingerprint"),
+            old.get("incarnation"),
+        ):
             latest_rows[path] = _merge_fields(old, new, latest, scan=scan)
     current["memoryEntries"] = list(latest_rows.values())
+
+
+def _merge_memory_decisions(
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any]
+) -> None:
+    old, new, latest = (data.get("memoryDecisions", {}) for data in (before, after, current))
+    if old == new:
+        return
+    merged = dict(latest)
+    for key in old.keys() | new.keys():
+        if old.get(key) == new.get(key):
+            continue
+        if key not in new or (key in old and key not in latest):
+            raise RegistryConflict("Memory decision history changed")
+        state = _merge_fields(old.get(key, {}), new[key], latest.get(key, {}))
+        if state.get("lifecycleRevision", 0) < latest.get(key, {}).get("lifecycleRevision", 0):
+            raise RegistryConflict("Memory lifecycle revision moved backwards")
+        merged[key] = state
+    current["memoryDecisions"] = merged
+
+
+def replay_native_memory_scan(
+    current: dict[str, Any], baseline: dict[str, Any], scan: MemoryScan, started: str
+) -> None:
+    before, latest = map(memory_catalog.decision_states, (baseline, current))
+    protected = frozenset(
+        key for key in before.keys() | latest.keys() if before.get(key) != latest.get(key)
+    )
+    memory_catalog.apply_scan(current, scan, started, protected=protected, baseline=baseline)
+
+
+def _merge_memory_statuses(
+    before: dict[str, Any], after: dict[str, Any], current: dict[str, Any]
+) -> None:
+    for field in ("memorySources", "memoryStores"):
+        if field in after:
+            latest = current.get(field, {})
+            current[field] = latest | {
+                key: status
+                for key, status in after[field].items()
+                if status != before.get(field, {}).get(key)
+                and status["scannedAt"] >= latest.get(key, {}).get("scannedAt", "")
+            }
+
+
+def retain_native_memory_view(current: dict[str, Any], previous: Registry) -> None:
+    _merge_memory(previous.baseline, previous, current, scan=True)
+    for field in ("memoryScannedAt", "memoryAbsences"):
+        if field in previous:
+            current[field] = _merge_scan_times(
+                previous.baseline.get(field, {}), previous[field], current.get(field, {})
+            )
+    _merge_memory_statuses(previous.baseline, previous, current)
 
 
 def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
@@ -336,9 +432,23 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
     with registry_lock(Path(path)):
         current = _load(path)
         _merge_sessions(reg.baseline, reg, current, scan=reg.scanned)
-        _merge_memory(reg.baseline, reg, current, scan=reg.scanned)
+        if reg.native_scan is None:
+            _merge_memory(reg.baseline, reg, current, scan=reg.scanned)
+        else:
+            replay_native_memory_scan(current, reg.baseline, *reg.native_scan)
+        _merge_memory_decisions(reg.baseline, reg, current)
         clocks = {"lastScan", "lastRoundupAt"}
-        excluded = {*_SESSION_BUCKETS, "memoryEntries", "sourcesScannedAt", *clocks}
+        excluded = {
+            *_SESSION_BUCKETS,
+            "memoryEntries",
+            "memoryAbsences",
+            "memoryDecisions",
+            "memoryScannedAt",
+            "memoryStores",
+            "memorySources",
+            "sourcesScannedAt",
+            *clocks,
+        }
 
         def other(data: dict[str, Any]) -> dict[str, Any]:
             return {key: value for key, value in data.items() if key not in excluded}
@@ -354,6 +464,13 @@ def commit_registry(path: str | Path, reg: dict[str, Any]) -> None:
             reg.get("sourcesScannedAt") or {},
             current.get("sourcesScannedAt") or {},
         )
+        if "memoryScannedAt" in reg:
+            current["memoryScannedAt"] = _merge_scan_times(
+                reg.baseline.get("memoryScannedAt", {}),
+                reg["memoryScannedAt"],
+                current.get("memoryScannedAt", {}),
+            )
+        _merge_memory_statuses(reg.baseline, reg, current)
         for key in other(reg.baseline).keys() - other(reg).keys():
             if current.get(key) == reg.baseline[key]:
                 current.pop(key, None)
@@ -1050,62 +1167,22 @@ def purge_archived_session(
     return reg
 
 
-def _mem_entry_dict(m: MemoryEntry) -> dict[str, Any]:
-    d = asdict(m)
-    return {
-        "path": d["path"],
-        "project": d.get("project"),
-        "mtime": d["mtime"],
-        "gitProjectKey": d.get("git_project_key"),
-        "gitProjectLabel": d.get("git_project_label"),
-        "gitRoot": d.get("git_root"),
-        "gitRemote": d.get("git_remote"),
-        "name": d.get("name"),
-        "description": d.get("description"),
-        "memType": d.get("mem_type"),
-        "isInline": d.get("is_inline", False),
-        "obsoleteSignals": list(d.get("obsolete_signals") or []),
-        "reviewedAtMtime": None,
-        "disposition": None,
-    }
-
-
-def reconcile_memory(
-    reg: dict[str, Any], scanned: Iterable[MemoryEntry], now_iso: str
+def reconcile_native_memory(
+    reg: dict[str, Any], scanned: MemoryScan, started_at: str
 ) -> dict[str, Any]:
-    by_path = {e["path"]: e for e in reg.get("memoryEntries", [])}
-    entries = []
-    for m in scanned:
-        nd = _mem_entry_dict(m)
-        old = by_path.get(nd["path"])
-        if old is not None:
-            nd = {**old, **nd}
-            nd["reviewedAtMtime"] = old.get("reviewedAtMtime")
-            nd["disposition"] = old.get("disposition")
-        entries.append(nd)
-    reg = deepcopy(reg)
-    if isinstance(reg, Registry):
-        reg.scanned = True
-    reg["memoryEntries"] = entries  # gone entries simply drop (no tombstone)
-    reg["lastScan"] = now_iso
-    reg.setdefault("memoryProjectsCleanedAt", {})
-    return reg
-
-
-def memory_needing_review(reg: dict[str, Any]) -> list[dict[str, Any]]:
-    out = []
-    for e in reg.get("memoryEntries", []):
-        rev = e.get("reviewedAtMtime")
-        if rev is None or overview.newer_than(e["mtime"], rev):
-            out.append(e)
-    return out
+    updated = deepcopy(reg)
+    if isinstance(updated, Registry):
+        updated.scanned = True
+        updated.native_scan = scanned, started_at
+    memory_catalog.apply_scan(updated, scanned, started_at)
+    return updated
 
 
 def mark_memory_reviewed(
     reg: dict[str, Any], path: str, mtime: str | None = None
 ) -> dict[str, Any]:
     for e in reg.get("memoryEntries", []):
-        if e["path"] == path:
+        if e.get("path") == path:
             e["reviewedAtMtime"] = mtime if mtime is not None else e["mtime"]
             return reg
     raise KeyError(path)

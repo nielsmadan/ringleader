@@ -6,7 +6,7 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from types import ModuleType
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from ..progress import CancelCheck
 from .base import ModelError
@@ -45,6 +45,7 @@ def _watched(call: Callable[[], dict[str, Any]], cancelled: CancelCheck) -> dict
 
 @dataclass
 class LlmModel:
+    tool_free_completion: ClassVar[bool] = True
     name: str = "llm"
     provider: str = "anthropic"
     model: str | None = None

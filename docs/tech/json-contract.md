@@ -489,3 +489,65 @@ wheel runs it with that venv's `python`.
 `tests/test_contract_perf.py` (imports and timing), `tests/test_contract_golden.py` (goldens),
 `tests/test_rl_handoff.py` (`rl handoff triage`) and
 `tests/test_gui_world.py` (the world script).
+
+## Native memory JSON (version 1)
+
+The `rl mem` commands use a separate version-1 envelope. Each command with
+`--json` writes one UTF-8 object to stdout. Diagnostics go to stderr.
+
+- `refresh`, `overview`, `triage`, and `search` return `records`, `statuses`,
+  `stores`, `projectsCleanedAt`, `cached`, and `dryRun`. A catalog record includes
+  `source`, `memoryId`, `storeId`, `sourceRef`, `fingerprint`, `incarnation`,
+  provenance and display metadata, and its current `decision` or null. Legacy
+  cached rows can lack review fields until the first successful scan. An unobserved
+  harness has status `not-scanned`. Store status includes `state`, `completeness`,
+  `schemaVersion`, `reason` and `scannedAt`.
+- `detail` returns a single `record`, with `content` from the matching native
+  revision. `detail --no-scan` reads cached metadata. `harvest --dry-run` and
+  other decision previews include `dryRun`, `record`, `disposition`, `destinations`,
+  and the proposed `markdown` or null. Dispositions are `save-to-queue`,
+  `save-to-queue-and-remove`, `remove-with-saved-knowledge`, `discard` and
+  `record-direct-integration`. `destinations` lists any direct-integration files.
+  Execution rechecks evidence and native mutation eligibility.
+- Decision and single-operation recovery commands return `outcome`, with
+  `operationId`, `memoryId`, `state`, `cleanup`, `harvestPath` and `message`. A
+  decision that fails before its first durable journal returns a null `operationId`.
+  States are `harvested`, `removed`, `removal-pending`, `restored`, `refused` or
+  `failed`. A deferred native operation includes `pendingAction` (`remove` or `restore`)
+  and `retryVerb` (`recover` or `restore`). A durable pending decision exits 0. Failed or refused decisions also
+  include `error.message` and exit 1. Malformed arguments and missing guards exit 2
+  with `error.message`. Bulk `recover` returns `outcomes` and exits 1 if any
+  outcome failed or was refused.
+- `recovery` returns `records` with source and decision identity, restoration
+  status, cleanup, `recoveryExpiresAt`, `recoveryAvailable`, `restorable` and
+  `supersededBy` (a newer operation ID or null). Interrupted saves appear while
+  retryable. The `retry` boolean identifies current retry targets. A `diagnostic`
+  can describe damaged recovery content or ambiguous history. Superseded operations remain in
+  the history and bulk recovery retries only their unfinished registry or queue
+  work.
+  `recovery prune` returns `operationIds` and `deleted`, which indicates apply
+  mode. Recovery reports contain public metadata.
+- Scripted and JSON `complete`, `delete` and `mark harvested` require
+  `--if-fingerprint` and `--if-incarnation` from the reviewed record. Interactive
+  confirmation binds the displayed revision, evidence route and retention. Completing
+  a saved queue draft binds its exact approved content and token. A
+  draft replacement also requires `--if-harvest-token`. Use the returned operation
+  ID to retry recorded removal with `recover` or to request `restore`. Retry a busy
+  restore with `restore` again. A superseded terminal operation may return metadata-only
+  success for idempotent recovery.
+
+
+The existing session-only envelope and global pending harvest count retain their
+semantics. The all-queue count includes memory harvests. Shared harvest readers
+can encounter memory variants with `originKind: memory` and memory ID, source,
+fingerprint, incarnation and scope/project provenance in place of `sessionId`.
+Memory queue reads use the owning registry. `rl harvests --registry PATH --json`
+returns its full pending drafts. Assignment has separate destination fields. Memory consumption adds `memoryIds`
+when present. A memory item in `rl harvests snapshot --json` includes `approvedBodyDigest`,
+the SHA-256 of the exact UTF-8 body from the same queue read as its `token`. Use both with
+the reviewed origin to bind a later queued removal to the approved draft. Session-only
+queue records, JSON and receipts keep their existing shapes. Use a release with memory-aware
+parsers on a state directory containing the new queue or receipt variants. Older executables
+cannot parse those variants.
+An external consumer pinned to a session-only contract needs its own compatible
+update to display memory.

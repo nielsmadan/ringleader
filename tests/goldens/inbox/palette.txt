@@ -27,4 +27,4 @@ opencode  6d ago    parser cache schema 22  unclassified
 
 
  Waking soon: fix export login 29 (in 2d)
- q quit  u undo  ^r rescan
+ 8 memories  q quit  u undo  ^r rescan

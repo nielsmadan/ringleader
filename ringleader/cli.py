@@ -92,8 +92,23 @@ def _quiet_stdout() -> None:
 def _walk(node: dict[str, Any], crumbs: list[str], rest: list[str]) -> int:
     while rest:
         tok, rest = rest[0], rest[1:]
+        if crumbs and crumbs[0] == "mem" and tok in ("-h", "--help") and not rest:
+            _group_usage(crumbs, node, sys.stdout)
+            return 0
         entry = node.get(tok)
         if entry is None:
+            if crumbs and crumbs[0] == "mem":
+                from .commands.mem_output import MemoryParser, wants_json  # noqa: PLC0415
+
+                argv = [tok, *rest]
+                if wants_json(argv):
+                    parser = MemoryParser(" ".join(crumbs[1:]), argv, "Memory commands")
+                    message = (
+                        "A subcommand is required"
+                        if tok.startswith("-")
+                        else f"Unknown subcommand {tok!r}"
+                    )
+                    return parser.fail(message, code=2)
             where = f" in 'rl {' '.join(crumbs)}'" if crumbs else ""
             print(f"rl: unknown command '{tok}'{where}", file=sys.stderr)
             _usage(sys.stderr)

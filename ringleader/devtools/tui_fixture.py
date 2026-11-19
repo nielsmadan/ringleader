@@ -129,7 +129,7 @@ def _transcript_path(root: Path, plan: _Plan) -> Path:
     return {
         "claude-code": ClaudeCodeSource(projects_dir=root / "_claude").storage_for(plan.project)
         / f"{stem}.jsonl",
-        "codex": root / "_codex" / f"{plan.mtime:%Y/%m/%d}" / f"rollout-{stem}.jsonl",
+        "codex": root / "_codex" / "sessions" / f"{plan.mtime:%Y/%m/%d}" / f"rollout-{stem}.jsonl",
         "opencode": root / "xdg-data" / "opencode" / "storage" / "session" / f"{stem}.json",
         "pi": root / "_pi" / slug / f"{stem}.jsonl",
         "droid": root
@@ -384,3 +384,14 @@ def build_fixture(
     registry.apply_name_filters(reg, FILTERS)
     registry_path.write_text(json.dumps(reg, indent=1), encoding="utf-8")
     return Fixture(root=root, registry_path=registry_path, env=env)
+
+
+def write_memory_fixture(root: Path) -> None:
+    store = root / "_claude" / "demo" / "memory"
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "release.md").write_text(
+        "---\nname: Release checklist\ntype: project\n---\n"
+        "Run the packaging smoke test before creating a release tag.\n",
+        encoding="utf-8",
+    )
+    (store / "MEMORY.md").write_text("- [Release checklist](release.md)\n", encoding="utf-8")

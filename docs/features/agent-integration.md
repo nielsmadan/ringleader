@@ -1,8 +1,7 @@
 # Wire ringleader into the agents you use
 
-> **Problem:** ringleader curates sessions from five different agents, so it has to install
-> itself into five different configuration systems — and be removable from all of them without
-> leaving residue.
+> **Problem:** ringleader curates sessions across several agent CLIs and needs removable links
+> into their different configuration systems.
 
 ## Overview
 
@@ -34,7 +33,7 @@ Dormant-session views do not yet use presence to exclude running sessions.
 
 ## Skills
 
-Nine bundled skills at `skills/ringleader-*`, each an agent-neutral `SKILL.md`. Eight
+Ten bundled skills at `skills/ringleader-*`, each an agent-neutral `SKILL.md`. Nine
 also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 (`just sync-playbook`); `ringleader-publish` ships `references/protocol.md` instead:
 
@@ -49,11 +48,12 @@ also bundle a `references/playbook.md` synced from the canonical `PLAYBOOK.md`
 | `ringleader-publish` | drain pending harvests into repository docs |
 | `ringleader-analyze` | find where sessions went wrong, save findings as a report ([analysis](analysis.md)) |
 | `ringleader-recommend` | turn saved findings into proposed setup edits; never applies them |
+| `ringleader-memory-triage` | guide per-entry native memory review and recovery |
 
 `rl install skills` **symlinks** them into `~/.agents/skills` (Codex, OpenCode, Pi, Cursor CLI),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid) — the two agents with a native
-personal skills directory get their own, the rest share. `memory-triage` is separate and still
-lives in `loadout/skills/`.
+personal skills directory get their own, the rest share. The repo-local Claude
+`memory-triage` file redirects to the bundled workflow.
 
 ## Hooks
 

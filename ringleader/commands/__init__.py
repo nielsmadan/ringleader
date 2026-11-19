@@ -79,9 +79,18 @@ _SESSION = {
 _MEM = {
     "refresh": Lazy("mem_scan", "cmd_mem_scan"),
     "prune": Lazy("mem_prune", "cmd_mem_prune"),
-    "triage": Lazy("triage", "cmd_mem_triage"),
-    "overview": Lazy("overview", "cmd_mem_overview"),
+    "triage": Lazy("mem_scan", "cmd_mem_triage"),
+    "overview": Lazy("mem_scan", "cmd_mem_overview"),
+    "detail": Lazy("mem_scan", "cmd_mem_detail"),
+    "search": Lazy("mem_scan", "cmd_mem_search"),
+    "harvest": Lazy("mem", "cmd_harvest"),
+    "complete": Lazy("mem", "cmd_complete"),
+    "delete": Lazy("mem", "cmd_delete"),
+    "restore": Lazy("mem", "cmd_restore"),
+    "recover": Lazy("mem", "cmd_recover"),
+    "recovery": Lazy("mem", "cmd_recovery"),
     "mark": {
+        "harvested": Lazy("mem", "cmd_mark_harvested"),
         "cleaned": Lazy("mem_cleaned", "cmd_mem_cleaned"),
         "reviewed": Lazy("mark_mem_reviewed", "cmd_mark_mem_reviewed"),
     },
@@ -142,6 +151,7 @@ def _leaf_subcommands() -> dict[str, tuple[str, ...]]:
         analyze,
         config,
         harvests,
+        mem,
         setup,
         usage,
     )
@@ -151,6 +161,7 @@ def _leaf_subcommands() -> dict[str, tuple[str, ...]]:
         "usage": usage.SUBCOMMANDS,
         "analyze": analyze.SUBCOMMANDS,
         "harvests": harvests.SUBCOMMANDS,
+        "mem recovery": mem.RECOVERY_SUBCOMMANDS,
         "install": setup.nouns_for("install"),
         "update": setup.nouns_for("update"),
         "uninstall": setup.nouns_for("uninstall"),
@@ -159,7 +170,7 @@ def _leaf_subcommands() -> dict[str, tuple[str, ...]]:
 
 def command_paths() -> set[str]:
     """Every command a user can type, space-joined. Walking TABLE alone under-reports:
-    six of its leaves parse a further sub-verb themselves."""
+    some leaves parse a further sub-verb themselves."""
     out: set[str] = set()
     leaf_subcommands = _leaf_subcommands()
 

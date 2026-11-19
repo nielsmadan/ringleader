@@ -25,6 +25,7 @@ go deeper, per subsystem.
   signal detection, health, rollups, issues, labels and reports, with the
   [calibration](analysis.md#calibration) record for its thresholds.
 - [models.md](models.md) — `models/`: the `Model` seam and `active_model()` resolution.
+- [memory.md](memory.md) — native discovery, approval, transactional removal and recovery.
 - [publish.md](publish.md) — `harvests.py`, `publish_state.py`, `publish_git.py`: the harvest
   queue and the guarded write path into a repository.
 - [integration.md](integration.md) — `commands/skills.py`, `hooks.py`, `statusline.py`,
@@ -79,8 +80,9 @@ state dir and answers `rl analyze` from it.
   use locked bounded mutations. Native session publication has a different contract:
   create-only files, append-only name indexes, schema-gated SQL inserts, and durable
   intents. Never replace a shared native database or truncate an index for rollback.
-- **Destructive verbs preview by default.** `prune` and `mem prune` require `--delete`;
-  `workspace move` confirms; installers show a diff. The flag is the action, not the preview.
+- **Pruning previews by default.** `prune` and `mem recovery prune` require `--delete`
+  to apply. Native memory removal needs explicit per-entry approval. `workspace move`
+  confirms and installers show a diff.
 
 ## Why this shape
 

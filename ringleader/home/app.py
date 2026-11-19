@@ -39,6 +39,9 @@ from ..decisions import (
     HarvestSaveOp,
     KeepGoingOp,
     KeepOp,
+    MemoryAssignOp,
+    MemoryDecisionOp,
+    MemoryRecoveryOp,
     Op,
     OpContext,
     PruneOp,
@@ -50,6 +53,9 @@ from ..decisions import (
     lifecycle_reason,
 )
 from ..enrichment import Classified
+from ..memory_lifecycle import MemoryLifecycle
+from ..memory_operations import RecoveryListing, recovery_listing
+from ..memory_types import MemoryOrigin, MemoryRef
 from ..models import Model, ModelTask, active_model, proc
 from ..picker.app import Choice, PickerScreen, RefreshResult, ask_resume_choice, live_session_ids
 from ..progress import CancelCheck
@@ -61,8 +67,22 @@ from ..tui.modals import AgentPickModal, ConfirmModal
 from ..tui.types import Clock, Presence, Refresher
 from . import overlay
 from .base import AppState, InboxScreen, RoundupRun, ScreenTarget
-from .harvest_view import HarvestGroup, publish_all_cwd
-from .intents import ExitIntent, ResumeIntent, publish_handoff, triage_handoff
+from .harvest_view import (
+    HarvestGroup,
+    HarvestQueueRead,
+    needs_checkout,
+    publish_all_cwd,
+    read_harvest_queue,
+    routed_harvests,
+)
+from .intents import (
+    ExitIntent,
+    ResumeIntent,
+    memory_handoff,
+    publish_handoff,
+    publish_tokens,
+    triage_handoff,
+)
 from .jobs import (
     HarvestBlocked,
     HarvestEmpty,
@@ -81,6 +101,7 @@ from .roundup_run import EnrichDoneMessage, EnrichProgressMessage, RoundupDriver
 from .scan import ScanLanded, ScanService
 from .screens.harvests import HarvestsScreen
 from .screens.home import HomeScreen
+from .screens.memories import MemoriesScreen, RecoveryScreen
 from .screens.projects import ProjectsScreen
 from .screens.prune import PruneScreen
 from .screens.roundup import RoundupScreen
@@ -267,6 +288,7 @@ class InboxApp(App[ExitIntent | None]):
         now: Clock | None = None,
         models: ModelResolver | None = None,
         execute: Execute | None = None,
+        memory: MemoryLifecycle | None = None,
         read_only: bool = False,
         cwd: str | Path | None = None,
         delete_grace: float = DELETE_GRACE_SECONDS,
@@ -285,6 +307,9 @@ class InboxApp(App[ExitIntent | None]):
         )
         self.registry_path = str(registry_path)
         self.read_only = read_only
+        self.memory = memory or MemoryLifecycle()
+        self._pending_memories: dict[int, MemoryDecisionOp] = {}
+        self.unsaved_memory_drafts: list[MemoryDecisionOp] = []
         self._strict = strict
         self._now: Clock = now or (lambda: datetime.now(UTC))
         self._tz = tz or local_timezone()
@@ -310,6 +335,10 @@ class InboxApp(App[ExitIntent | None]):
         self._last_archived: str | None = None
         self._delete_grace = delete_grace
         self._leaving = False
+        self._reading_recovery = False
+        self._read_recovery_again = False
+        self._reading_harvests = False
+        self._read_harvests_again = False
         self._leave_intent: ExitIntent | None = None
         self._render_pending = False
         self._synced: tuple[InboxScreen, int] | None = None
@@ -371,6 +400,14 @@ class InboxApp(App[ExitIntent | None]):
 
     def _background_busy(self) -> bool:
         return not self.writer.idle or self.jobs.busy or self.roundups.enriching
+
+    @property
+    def pending_memories(self) -> set[str]:
+        return {op.ref.memory_id for op in self._pending_memories.values()}
+
+    @property
+    def leaving(self) -> bool:
+        return self._leaving
 
     @property
     def decided_count(self) -> int:
@@ -525,6 +562,7 @@ class InboxApp(App[ExitIntent | None]):
             now_epoch=self.now_epoch,
             presence=revalidate.probe(self._presence),
             unknown="refuse",
+            memory=self.memory,
             cancelled=cancelled,
             progress=progress,
         )
@@ -557,8 +595,19 @@ class InboxApp(App[ExitIntent | None]):
                 self._leave_if_settled()
 
     def _finished(self, event: Finished) -> None:
+        self._pending_memories.pop(event.ticket, None)
         self._batch_labels.pop(event.ticket, None)
         outcome = event.outcome
+        if isinstance(event.op, MemoryDecisionOp):
+            if not outcome.ok:
+                self.retain_memory_draft(event.op)
+            elif event.op.markdown is not None:
+                self.unsaved_memory_drafts = [
+                    draft
+                    for draft in self.unsaved_memory_drafts
+                    if draft.ref.memory_id != event.op.ref.memory_id
+                    or draft.markdown != event.op.markdown
+                ]
         if not outcome.ok and not outcome.wrote and isinstance(event.op, _DECISION_OPS):
             self._decided = max(0, self._decided - 1)
         if outcome.ok and isinstance(event.op, ArchiveOp | HarvestSaveOp):
@@ -583,9 +632,79 @@ class InboxApp(App[ExitIntent | None]):
         self.roundups.finished(event)
         for screen in self._inbox_screens():
             screen.op_finished(event)
+        if (
+            isinstance(
+                event.op, (HarvestSaveOp, MemoryAssignOp, MemoryDecisionOp, MemoryRecoveryOp)
+            )
+            and not self._leaving
+        ):
+            self._refresh_harvests()
         self._rerender()
         if event.internal is not None and self._strict:
             raise event.internal
+
+    def refresh_recovery(self) -> None:
+        if self._leaving:
+            return
+        if self._reading_recovery:
+            self._read_recovery_again = True
+            return
+        self._reading_recovery = True
+        path, now = Path(self.registry_path), self.clock()
+
+        def landed(result: Done[RecoveryListing] | Failed) -> None:
+            self._reading_recovery = False
+            refresh_again, self._read_recovery_again = self._read_recovery_again, False
+            screens = [s for s in self._inbox_screens() if isinstance(s, RecoveryScreen)]
+            if self._leaving or not screens:
+                return
+            for screen in screens:
+                screen.show_recovery(result)
+            if refresh_again:
+                self.refresh_recovery()
+
+        self.run_job(
+            lambda _t, _p: recovery_listing(path, now), name="rl-memory-recovery", on_result=landed
+        )
+
+    def _refresh_harvests(self) -> None:
+        if self._leaving:
+            return
+        if self._reading_harvests:
+            self._read_harvests_again = True
+            return
+        self._reading_harvests = True
+        registry_path = self.registry_path
+
+        def landed(result: Done[HarvestQueueRead] | Failed) -> None:
+            self._reading_harvests = False
+            if self._leaving:
+                return
+            if isinstance(result, Done):
+                self._adopt_harvests(result.value)
+            self._rerender()
+            if self._read_harvests_again:
+                self._read_harvests_again = False
+                self._refresh_harvests()
+
+        self.run_job(
+            lambda _t, _p: read_harvest_queue(registry_path),
+            name="rl-memory-queue",
+            on_result=landed,
+        )
+
+    def _adopt_harvests(self, read: HarvestQueueRead) -> None:
+        if read.started <= self._state.harvest_read_started:
+            return
+        snapshot = read.snapshot
+        if read.error is not None:
+            self._toast(f"Harvest queue unavailable: {read.error}", warning=True)
+        self._set(
+            harvests=None if snapshot is None else snapshot.items,
+            harvest_problems=0 if snapshot is None else len(snapshot.problems),
+            harvest_routed=read.routed,
+            harvest_read_started=read.started,
+        )
 
     def _inbox_screens(self) -> list[InboxScreen]:
         return [screen for screen in self.screen_stack if isinstance(screen, InboxScreen)]
@@ -606,11 +725,9 @@ class InboxApp(App[ExitIntent | None]):
             self._scanned_at = self._now()
         if not self._adopt(landed.snapshot) and not self._leaving:
             self.writer.submit([ReloadOp()], label="reload")
-        snapshot = landed.harvests
+        self._adopt_harvests(landed.harvest_queue)
         self._set(
             live_ids=landed.live_ids,
-            harvests=None if snapshot is None else snapshot.items,
-            harvest_problems=0 if snapshot is None else len(snapshot.problems),
             enrich_model=landed.enrich_model,
             harvest_model=landed.harvest_model,
             scan_note=landed.note,
@@ -656,6 +773,8 @@ class InboxApp(App[ExitIntent | None]):
                 self.push_screen(PruneScreen())
             case ScreenTarget.HARVESTS:
                 self.push_screen(HarvestsScreen())
+            case ScreenTarget.MEMORIES:
+                self.push_screen(MemoriesScreen())
             case ScreenTarget.USAGE:
                 self.push_screen(UsageScreen())
 
@@ -747,6 +866,9 @@ class InboxApp(App[ExitIntent | None]):
                 self._set(overlay=overlay.removed(self._state.overlay, replacing))
                 self._rerender()
             return None
+        self._pending_memories.update(
+            (ticket, op) for ticket, op in result.tickets if isinstance(op, MemoryDecisionOp)
+        )
         size = len(result.tickets)
         self._batch_labels.update((ticket, (label, size)) for ticket, _ in result.tickets)
         base = overlay.removed(self._state.overlay, replacing)
@@ -893,7 +1015,21 @@ class InboxApp(App[ExitIntent | None]):
             else f"undone: {label}"
         )
 
+    def retain_memory_draft(self, op: MemoryDecisionOp) -> None:
+        if op.markdown is None:
+            return
+        if op not in self.unsaved_memory_drafts:
+            self.unsaved_memory_drafts.append(op)
+        self._leaving = False
+        self._leave_intent = None
+        self._set()
+        self._rerender()
+        self._toast("Draft retained in this inbox · Memories → v to view and copy", warning=True)
+
     def _dropped(self, tickets: Sequence[int]) -> None:
+        for ticket in tickets:
+            if op := self._pending_memories.pop(ticket, None):
+                self.retain_memory_draft(op)
         self.roundups.dropped(tickets)
         for screen in self._inbox_screens():
             screen.ops_dropped(tickets)
@@ -940,6 +1076,9 @@ class InboxApp(App[ExitIntent | None]):
         if not self._leaving:
             self.rescan()
 
+    def start_memory_handoff(self, agent: str, ref: MemoryRef) -> None:
+        self.exit_with(memory_handoff(agent, ref, self._cwd, Path(self.registry_path)))
+
     def start_triage_handoff(self, project: ProjectRef) -> None:
         self._triage_flow(project)
 
@@ -974,6 +1113,28 @@ class InboxApp(App[ExitIntent | None]):
         self._leave(None)
 
     def _leave(self, intent: ExitIntent | None) -> None:
+        if self.unsaved_memory_drafts:
+            reviewed = tuple(self.unsaved_memory_drafts)
+            message = Text(
+                f"Leave and discard {plural(len(self.unsaved_memory_drafts), 'retained memory draft')}? "
+                "Choose n, then Memories → v to view and copy. [y/n]"
+            )
+
+            def confirmed(yes: bool | None) -> None:
+                if not yes:
+                    return
+                if tuple(self.unsaved_memory_drafts) != reviewed:
+                    self._toast(
+                        "Retained drafts changed. Review them in Memories → v.", warning=True
+                    )
+                    return
+                self._begin_leave(intent)
+
+            self.push_screen(ConfirmModal(message), confirmed)
+            return
+        self._begin_leave(intent)
+
+    def _begin_leave(self, intent: ExitIntent | None) -> None:
         self._leaving = True
         self._leave_intent = intent
         self._cancel_background(include_writer=False)
@@ -1048,6 +1209,20 @@ class InboxApp(App[ExitIntent | None]):
         if not items:
             self._toast("no pending harvests to publish")
             return
+        has_memories = any(isinstance(item.origin, MemoryOrigin) for item in items)
+        if self.read_only and has_memories:
+            self._toast("Read-only · publishing memory harvests is disabled", warning=True)
+            return
+        if any(needs_checkout(item, self._state.harvest_routed) for item in items):
+            self.go(ScreenTarget.HARVESTS)
+            self._toast("Select an unassigned memory harvest and press a to choose its checkout")
+            return
+        if group is not None and has_memories:
+            try:
+                publish_tokens(group)
+            except ValueError as error:
+                self._toast(str(error), warning=True)
+                return
         count = len(items)
         agent = await self.push_screen_wait(
             AgentPickModal(
@@ -1058,7 +1233,21 @@ class InboxApp(App[ExitIntent | None]):
         if agent is None:
             return
         home = Path(self._home_dir)
-        cwd = (group.folder if group is not None else None) or publish_all_cwd(everything, home)
+        if has_memories:
+            routed = await asyncio.to_thread(routed_harvests, items)
+            if any(needs_checkout(item, routed) for item in items):
+                self._toast(
+                    "The assigned checkout is unavailable. Select a checkout in Harvests.",
+                    warning=True,
+                )
+                self._refresh_harvests()
+                return
+        if group is not None and has_memories:
+            selected = next(item for item in group.items if isinstance(item.origin, MemoryOrigin))
+            assert selected.folder_path
+            cwd = selected.folder_path
+        else:
+            cwd = (group.folder if group is not None else None) or publish_all_cwd(everything, home)
         if home.is_relative_to(cwd):
             message = Text(
                 f"Publish all {plural(count, 'harvest')} from {overview.tilde(cwd)}? "
@@ -1066,4 +1255,11 @@ class InboxApp(App[ExitIntent | None]):
             )
             if not await self.push_screen_wait(ConfirmModal(message)):
                 return
-        self.exit_with(publish_handoff(agent, group, cwd))
+        self.exit_with(
+            publish_handoff(
+                agent,
+                group,
+                cwd,
+                memory_registry=Path(self.registry_path) if has_memories else None,
+            )
+        )

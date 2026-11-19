@@ -1,42 +1,38 @@
-# Curate accumulated agent memory
+# Curate native agent memory
 
-> **Problem:** agent memory files accumulate across every project — obsolete facts, notes that
-> belong in the repo's docs, duplicates of what the code already says.
+The Memories inbox (`8`) and `rl mem` review native Claude Code and Codex auto-memory.
+Each review covers one complete Claude topic or inline entry, or one Codex stage-1 record
+with its raw memory and rollout summary. Capability and store diagnostics distinguish an
+unsupported harness, a missing store, an incomplete scan and a complete empty store.
+See [native harness evidence](../reference/agent-memory-management.md).
 
-## Overview
+- **Harvest** keeps editable, approved Markdown in the shared [Harvests queue](harvest-and-publish.md)
+  or integrates it directly at the user's chosen destination. Source removal requires
+  durable saved knowledge. A global or unresolved entry can stay queued until the user
+  chooses its publishing checkout.
+- **Discard** authorizes removal of one reviewed native entry without a harvest.
+- **Defer** keeps the entry pending. Legacy reviewed and cleaned acknowledgements do
+  not replace a decision.
 
-A parallel track to the session pipeline, over memory entries instead of transcripts, with the
-same scan/reconcile/triage shape.
+The bundled `ringleader-memory-triage` skill guides the same decisions in an agent.
+In the inbox, drafts and discovery run in the background. Read-only mode allows discovery,
+full detail and diagnostics while keeping persisted state unchanged. Automatic
+drafting supports a tool-free Claude CLI or direct `llm` completion. With Codex CLI
+or another backend that cannot establish tool-free completion, edit the native text
+with `e`, supply reviewed Markdown with `--from-file`, or choose the exact-entry
+skill handoff. A queued draft can contain up to 128 KiB of UTF-8 Markdown. If an
+inbox submission fails or is undone, open Memories and press `v` to recover the
+submitted wording before leaving the inbox.
 
-```sh
-rl mem refresh                  # reconcile + emit entries to review
-rl mem triage                   # the memory-review inbox
-rl mem overview [<selector>]    # rollup, or a per-project deep dive
-rl mem prune                    # delete obsolete candidates (preview by default)
-rl mem mark reviewed <path>     # one entry handled
-rl mem mark cleaned <selector>  # a project just triaged
-```
+Native writes check the reviewed revision and relevant live activity. A durable decision
+can be waiting on native removal. Codex can also have finished selected-source removal
+while awaiting later consolidation of its derived summaries. Recovery shows these
+states separately. A pending removal retains the approved text for retry. Queue and
+publication evidence belong to the registry that approved the harvest. Use the same
+`--registry` for review, publishing and recovery. Each removal has a recovery window, 30 days by default, with explicit
+expiry cleanup. Restoring an available copy creates a fresh review cycle independently
+of publication.
 
-State lives in the same registry, under `memoryEntries` and `memoryProjectsCleanedAt`.
-
-## Driven by a skill
-
-These are plumbing for the `memory-triage` skill, which reads the inbox from `rl mem triage` and
-classifies each survivor: delete, integrate into the repo's docs, flag as global, or keep. It
-accepts an optional repo/dir scope.
-
-## Gotchas
-
-- **`rl mem prune` previews by default**, like `rl prune`; only `--delete` removes anything.
-- **`memory-triage` still lives in `loadout/skills/`**, not with the agent-neutral
-  `ringleader-*` skills.
-
-## Key entry points
-
-- `memory.py` — scan and classification helpers.
-- `commands/mem_scan.py`, `mem_prune.py`, `mem_cleaned.py`, `mark_mem_reviewed.py`.
-- `registry.reconcile_memory()`, `memory_needing_review()`.
-
-## Related
-
-- [tech/registry.md](../tech/registry.md) · [views-and-triage.md](views-and-triage.md)
+Entry points are `commands/mem_scan.py`, `commands/mem.py`, `home/screens/memories.py`
+and `skills/ringleader-memory-triage/`. See [memory architecture](../tech/memory.md)
+and the [memory JSON contract](../tech/json-contract.md#native-memory-json-version-1).

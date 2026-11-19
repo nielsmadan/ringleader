@@ -21,6 +21,9 @@ class Config:
     llm_provider: str = "anthropic"
     roundup_stale_hours: int = 8
     archive_retention_days: int = 0  # 0 = keep archived sessions forever
+    memory_recovery_retention_days: int = 30
+    memory_codex_sqlite_home: str | None = None
+    memory_claude_trust_file: str | None = None
     session_filters: list[str] = field(default_factory=list)
     inbox_keys: str = "vim"
 
@@ -49,6 +52,9 @@ def load_config(path: Path | None = None) -> Config:
         llm_provider=data.get("llm_provider", data.get("api_provider", "anthropic")),
         roundup_stale_hours=data.get("roundup_stale_hours", 8),
         archive_retention_days=data.get("archive_retention_days", 0),
+        memory_recovery_retention_days=data.get("memory_recovery_retention_days", 30),
+        memory_codex_sqlite_home=data.get("memory_codex_sqlite_home"),
+        memory_claude_trust_file=data.get("memory_claude_trust_file"),
         session_filters=list(data.get("session_filters", [])),
         inbox_keys=data.get("inbox_keys", "vim"),
     )

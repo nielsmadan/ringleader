@@ -28,6 +28,7 @@ class ScreenTarget(Enum):
     PRUNE = "prune"
     HARVESTS = "harvests"
     USAGE = "usage"
+    MEMORIES = "memories"
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ class AppState:
     live_ids: frozenset[Identity] | None = None
     harvests: tuple[Harvest, ...] | None = None
     harvest_problems: int = 0
+    harvest_routed: frozenset[str] = frozenset()
+    harvest_read_started: int = 0
     enrich_model: str | None = None
     harvest_model: str | None = None
     scan_note: str | None = None

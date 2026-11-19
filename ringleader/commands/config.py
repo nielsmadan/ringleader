@@ -3,14 +3,23 @@ from __future__ import annotations
 import shlex
 import sys
 from collections.abc import Callable
+from pathlib import Path
 
 from .. import namefilter, registry
-from ..config import key_preset, load_config, save_config
+from ..config import Config, key_preset, load_config, save_config
 from ..models import active_model, describe
 from . import default_registry
 
 _VALID_ENGINES = ("claude", "codex", "llm")
 _SET_ARGC = 2
+_MEMORY_PATHS = {
+    "memory.codex_sqlite_home": "memory_codex_sqlite_home",
+    "memory.claude_trust_file": "memory_claude_trust_file",
+}
+_RETENTION_FIELDS = {
+    "archive.retention_days": "archive_retention_days",
+    "memory.recovery_retention_days": "memory_recovery_retention_days",
+}
 
 
 def cmd_config(argv: list[str]) -> int:
@@ -34,6 +43,9 @@ def _show() -> int:
     print(f"analyze.model: {cfg.analyze_model or 'default'}")
     print(f"llm.provider: {cfg.llm_provider}")
     print(f"archive.retention_days: {cfg.archive_retention_days}")
+    print(f"memory.recovery_retention_days: {cfg.memory_recovery_retention_days}")
+    for label, field in _MEMORY_PATHS.items():
+        print(f"{label}: {getattr(cfg, field) or 'default'}")
     print(f"session.filters: {', '.join(cfg.session_filters) or 'none'}")
     print(f"inbox.keys: {cfg.inbox_keys}")
     for task in ("enrich", "harvest", "analyze"):
@@ -42,6 +54,36 @@ def _show() -> int:
             f"{task} model: {describe(model) if model else 'none — no model configured/available'}"
         )
     return 0
+
+
+def _retention_days(key: str, value: str) -> int:
+    try:
+        days = int(value)
+    except ValueError:
+        days = -1
+    if days < 0:
+        zero = "keep forever" if key == "archive.retention_days" else "expire on completed removal"
+        raise ValueError(f"invalid value '{value}' (must be a non-negative integer; 0 = {zero})")
+    return days
+
+
+def _memory_path(value: str) -> str | None:
+    if value == "default":
+        return None
+    try:
+        path = Path(value).expanduser()
+    except RuntimeError as exc:
+        raise ValueError(str(exc)) from exc
+    if not path.is_absolute() or ".." in path.parts or "\x00" in value:
+        raise ValueError("use an absolute path without traversal or 'default'")
+    return str(path)
+
+
+def _set_storage(cfg: Config, key: str, value: str) -> None:
+    if key in _MEMORY_PATHS:
+        setattr(cfg, _MEMORY_PATHS[key], _memory_path(value))
+    else:
+        setattr(cfg, _RETENTION_FIELDS[key], _retention_days(key, value))
 
 
 def _set(args: list[str]) -> int:
@@ -74,19 +116,12 @@ def _set(args: list[str]) -> int:
         cfg.analyze_model = None if value == "default" else value
     elif key == "llm.provider":
         cfg.llm_provider = value
-    elif key == "archive.retention_days":
+    elif key in _RETENTION_FIELDS or key in _MEMORY_PATHS:
         try:
-            days = int(value)
-        except ValueError:
-            days = -1
-        if days < 0:
-            print(
-                f"rl config set archive.retention_days: invalid value '{value}' "
-                "(must be a non-negative integer; 0 = keep forever)",
-                file=sys.stderr,
-            )
+            _set_storage(cfg, key, value)
+        except ValueError as exc:
+            print(f"rl config set {key}: {exc}", file=sys.stderr)
             return 2
-        cfg.archive_retention_days = days
     elif key == "inbox.keys":
         try:
             cfg.inbox_keys = key_preset(value)

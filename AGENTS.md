@@ -52,10 +52,16 @@ pruning them before the GC clock deletes them.
 - **`overview` and `triage` hit the disk before rendering.** Both auto-scan unless you pass
   `--no-scan`. On a large `~/.claude/projects` that scan dominates the runtime.
 - **The `rl session` / `rl mem` / `rl data` / `rl config` groups are plumbing** for the skills
-  in `skills/` (session track) or `loadout/skills/` (`memory-triage`), not for hand use.
+  in `skills/` and the inbox.
   `--json` on `rl inbox`, `rl data export`, `rl handoff triage` and the guarded `rl session` verbs
   is the circus desktop app's versioned contract (JSON-only stdout, `version: 1`): change it only with
   `docs/tech/json-contract.md` and the goldens in `tests/golden/`.
+- **Native memory review binds fingerprint and review incarnation.** Read full content
+  with `rl mem detail` and use both guards on scripted decisions. `rl mem prune` is retired.
+  Recovery prune previews expired payloads and applies only with `--delete`. Memory
+  recovery retention defaults to 30 days, with 0 expiring completed payloads immediately.
+  Native tests must isolate configuration, trust, stores and state. See
+  [docs/tech/memory.md](docs/tech/memory.md).
 - **`rl analyze` keeps a SQLite index and refreshes it on every run.** It lives at
   `analysis/index-v<FACTS_VERSION>.sqlite` under the state dir. `--no-refresh` reads it as it is
   (exit 3 with no complete index, or one a different rl version built) and `--index DIR` relocates it, its lock and `labels.sqlite`. The
@@ -81,11 +87,11 @@ pruning them before the GC clock deletes them.
 - **`rl usage` counts subagent spend, counts Codex forks once and prices 1h cache writes at 2x
   input.** Its exports carry `cache_write_1h` and `nested`, so an older `rl usage --merge` drops
   them. `rl analyze` totals use the same Claude model filter, so the two agree.
-- **Skills live at `skills/ringleader-*`, agent-neutral.** Nine skills —
+- **Skills live at `skills/ringleader-*`, agent-neutral.** Ten skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
   `ringleader-usage`, `ringleader-finish`, `ringleader-publish`, `ringleader-analyze`,
-  `ringleader-recommend` — each ship an
-  agent-neutral `SKILL.md`. Eight of them also bundle a `references/playbook.md` synced
+  `ringleader-recommend`, `ringleader-memory-triage` — each ship an
+  agent-neutral `SKILL.md`. Nine of them also bundle a `references/playbook.md` synced
   from the canonical `skills/PLAYBOOK.md` (`just sync-playbook`, which derives
   the list from the skills that ask for one); `ringleader-publish` ships its own protocol
   reference instead. The first four replace the old, single-purpose session skills
@@ -94,8 +100,9 @@ pruning them before the GC clock deletes them.
   `rl analyze` findings into a report and `ringleader-recommend` turns saved findings into
   proposed setup edits; `ringleader-finish` finishes
   the session you're currently in, harvesting it from live context instead of waiting for
-  triage to read the transcript later. `memory-triage` is untouched and still lives in
-  `loadout/skills/`. Wire them into an agent with `rl install
+  triage to read the transcript later. `ringleader-memory-triage` guides per-entry native
+  review. The tracked `.claude/skills/memory-triage` redirects to it. Wire the bundled set
+  into an agent with `rl install
   skills`, which symlinks the bundled skills into `~/.agents/skills` (Codex/OpenCode/Pi/Cursor),
   `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid — its own native personal
   skills dir, not the shared one); `rl update`/`rl uninstall` round out the surface,
@@ -211,14 +218,14 @@ rl analyze [<selector>] [--by X]    # failure signals, health, cache and token r
 rl analyze session <id>             # one session in detail
 rl analyze issues                   # error signatures recurring across sessions
 rl analyze reports [save ...]       # saved findings and recommendations
-rl harvests [--json]                # inbox of durable knowledge harvested out of sessions
+rl harvests [--json]                # shared queue for session and memory harvests
 rl session <sub>                    # session plumbing: refresh, set, archive, delete, ...
 rl session search <query>           # find sessions by name; id prefix and cached blurbs too
 rl session keep <id>                # keep long-term: out of triage for good (unkeep to undo)
 rl session enrich                   # classify pending sessions via an LLM (vs. by hand in the triage/cleanup skill)
 rl session harvest <id> [--dry-run] # distill a finished session into a harvest via an LLM
 rl session complete <id>            # harvest, then archive (no-op archive if harvest didn't run)
-rl mem <sub>                        # memory plumbing: refresh, prune, triage, overview, ...
+rl mem <sub>                        # native memory review, guarded removal and recovery
 rl data <sub>                       # export, tokens, migrate, presence
 rl data presence status [--json]    # is live-session presence wired up (install/uninstall too)
 rl config                           # select the AI engine for enrich (ai=claude/codex/llm; stores no secrets)
@@ -256,6 +263,8 @@ warning, fails the suite: fix the cause rather than relaxing the config, and do 
 finding with `type: ignore` or a blanket ignore.
 
 ## Reference
+
+After completing a feature, run `doc --update` to keep its docs current.
 
 `docs/overview.md` maps the docs tree. `docs/features/` is what each feature does,
 `docs/tech/` is how it's built (start at their `overview.md`), `docs/decisions/` holds the

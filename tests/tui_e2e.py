@@ -147,8 +147,6 @@ def isolated_env(root: Path, bin_dir: Path) -> dict[str, str]:
         "XDG_STATE_HOME": str(root / "xdg-state"),
         "XDG_CONFIG_HOME": str(root / "xdg-config"),
         "XDG_CACHE_HOME": str(root / "xdg-cache"),
-        "CLAUDE_CONFIG_DIR": str(root / "_claude-config"),
-        "CODEX_HOME": str(root / "_codex-home"),
         "OPENCODE_DB": str(root / "_opencode" / "opencode.db"),
         "OPENCODE_CONFIG_DIR": str(root / "_opencode-config"),
         "PI_CODING_AGENT_DIR": str(root / "_pi-agent"),

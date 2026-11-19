@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import time
+from collections.abc import Sequence
 from datetime import datetime
+from pathlib import Path
 from typing import ClassVar
 
 from rich.text import Text
@@ -10,12 +13,16 @@ from textual.widgets import Footer, Header, Log, OptionList, Static
 from textual.widgets.option_list import Option
 
 from ... import overview
+from ...decisions import MemoryAssignOp
 from ...harvests import Harvest
+from ...memory_types import MemoryOrigin
 from ...tui.keys import nav_bindings
+from ...tui.modals import CheckoutModal
 from ...tui.rows import highlighted_key
 from ..base import InboxScreen
-from ..harvest_view import HarvestGroup, harvest_groups, preview_line
+from ..harvest_view import HarvestGroup, harvest_groups, needs_checkout, preview_line
 from ..state import plural
+from ..writer import Finished
 
 NAME_WIDTH = 30
 AGE_WIDTH = 9
@@ -29,16 +36,18 @@ def group_header(group: HarvestGroup) -> Text:
 
 def harvest_row(item: Harvest, now_iso: str) -> Text:
     age = overview.age_human(item.harvested_at, now_iso) if item.harvested_at else "—"
-    name = item.name or item.session_id
+    name = item.name or item.origin_id
     shown = name if len(name) <= NAME_WIDTH else name[: NAME_WIDTH - 1] + "…"
     text = Text(f"  {shown:<{NAME_WIDTH}} ")
     text.append(f"{age:<{AGE_WIDTH}}", style="dim")
+    if isinstance(item.origin, MemoryOrigin):
+        text.append(f"memory · {item.origin.source}  ", style="dim")
     text.append(preview_line(item))
     return text
 
 
 def problems_line(count: int) -> str:
-    return f"{plural(count, 'harvest file')} could not be read"
+    return f"{plural(count, 'harvest file')} could not be queued"
 
 
 def harvest_options(groups: tuple[HarvestGroup, ...], now_iso: str) -> list[Option]:
@@ -72,7 +81,7 @@ class HarvestContentScreen(InboxScreen):
 
     def compose(self) -> ComposeResult:
         yield Header()
-        yield Static(Text(self.item.name or self.item.session_id), id="harvest-title")
+        yield Static(Text(self.item.name or self.item.origin_id), id="harvest-title")
         yield Log(id="harvest-content", auto_scroll=False)
         yield Footer()
 
@@ -89,6 +98,7 @@ class HarvestsScreen(InboxScreen):
         Binding("k", "cursor_up", "up", show=False),
         Binding("enter", "view", "view"),
         Binding("p", "publish", "publish"),
+        Binding("a", "assign", "assign checkout"),
         Binding("P", "publish_all", "publish all"),
         Binding("escape", "back", "back"),
     ]
@@ -114,8 +124,10 @@ class HarvestsScreen(InboxScreen):
     def __init__(self) -> None:
         super().__init__()
         self._groups: tuple[HarvestGroup, ...] = ()
-        self._grouped: tuple[Harvest, ...] | None = None
+        self._grouped: tuple[tuple[Harvest, ...] | None, frozenset[str]] | None = None
         self._listed: tuple[tuple[HarvestGroup, ...], datetime] | None = None
+        self._publish_ticket: tuple[int, str] | None = None
+        self._assigned: tuple[str, str, int] | None = None
 
     def compose(self) -> ComposeResult:
         yield Header()
@@ -134,9 +146,10 @@ class HarvestsScreen(InboxScreen):
             return
         state = self.inbox.state
         items = state.harvests
-        if items != self._grouped:
-            self._grouped = items
-            self._groups = harvest_groups(items) if items else ()
+        grouped = items, state.harvest_routed
+        if grouped != self._grouped:
+            self._grouped = grouped
+            self._groups = harvest_groups(items, routed=state.harvest_routed) if items else ()
         count = len(items or ())
         self.query_one("#harvests-title", Static).update(
             Text(
@@ -156,6 +169,8 @@ class HarvestsScreen(InboxScreen):
         empty = self.query_one("#harvests-empty", Static)
         empty.update(Text("Loading harvests…" if items is None else "No pending harvests."))
         empty.display = not self._groups
+        self.refresh_bindings()
+        self._continue_publish()
 
     def _render_rows(self, now_iso: str) -> None:
         rows = self.query_one("#harvest-rows", OptionList)
@@ -199,7 +214,87 @@ class HarvestsScreen(InboxScreen):
         event.stop()
         self.action_view()
 
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        if action == "assign":
+            item = self._item() if self.query("#harvest-rows") else None
+            return bool(
+                item
+                and needs_checkout(item, self.inbox.state.harvest_routed)
+                and not self.inbox.read_only
+                and self._publish_ticket is None
+            )
+        return super().check_action(action, parameters)
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        self.refresh_bindings()
+
+    def action_assign(self) -> None:
+        item = self._item()
+        if item:
+            self._assign(item, publish=False)
+
+    def _assign(self, item: Harvest, *, publish: bool) -> None:
+        if (
+            self.inbox.read_only
+            or self._publish_ticket
+            or not needs_checkout(item, self.inbox.state.harvest_routed)
+        ):
+            return
+
+        def chosen(value: str | None) -> None:
+            if value is None:
+                return
+            path = Path(value)
+            if not path.is_absolute():
+                self.notify("Enter an absolute checkout path", severity="warning")
+                return
+            batch = self.inbox.submit_batch(
+                [MemoryAssignOp(item.token, path)], label="assign memory harvest"
+            )
+            if publish and batch:
+                self._publish_ticket = batch.tickets[0][0], item.harvest_id
+
+        self.app.push_screen(CheckoutModal(item.name or item.origin_id), chosen)
+
+    def op_finished(self, event: Finished) -> None:
+        if self._publish_ticket and self._publish_ticket[0] == event.ticket:
+            _, harvest_id = self._publish_ticket
+            self._publish_ticket = None
+            if event.outcome.ok and event.outcome.path and not self.inbox.leaving:
+                self._assigned = harvest_id, event.outcome.path, time.monotonic_ns()
+
+    def ops_dropped(self, tickets: Sequence[int]) -> None:
+        if self._publish_ticket and self._publish_ticket[0] in tickets:
+            self._publish_ticket = None
+
+    def _continue_publish(self) -> None:
+        state = self.inbox.state
+        if not self._assigned or self.app.screen is not self:
+            return
+        harvest_id, checkout, assigned_at = self._assigned
+        if state.harvest_read_started <= assigned_at:
+            return
+        self._assigned = None
+        for group in self._groups:
+            for item in group.items:
+                if item.harvest_id == harvest_id and item.folder_path == checkout:
+                    if needs_checkout(item, state.harvest_routed):
+                        break
+                    rows = self.query_one("#harvest-rows", OptionList)
+                    rows.highlighted = rows.get_option_index(f"{ITEM_PREFIX}{item.token}")
+                    self.inbox.start_publish_handoff(group)
+                    return
+        self.notify(
+            "The assigned harvest is unavailable. Refresh and select it again.", severity="warning"
+        )
+
     def action_publish(self) -> None:
+        item = self._item()
+        if self._publish_ticket or self._assigned:
+            return
+        if item and needs_checkout(item, self.inbox.state.harvest_routed):
+            self._assign(item, publish=True)
+            return
         group = self._group()
         if group is not None:
             self.inbox.start_publish_handoff(group)

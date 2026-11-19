@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
 
-from . import overview
+from . import memory_catalog, overview
 
 
 def matches(thread: dict[str, Any], selector: str) -> bool:
@@ -46,6 +47,44 @@ class ProjectStat:
     mem_cleaned_at: str | None  # ISO of the last memory-triage run, or None
 
 
+def memory_group_key(row: dict[str, Any]) -> str:
+    if row.get("project") or row.get("gitProjectKey"):
+        return overview.group_key(row)
+    return "(global)" if row.get("scope") == "global" else "(unknown)"
+
+
+def memory_group_label(row: dict[str, Any]) -> str:
+    if row.get("project") or row.get("gitProjectLabel"):
+        return overview.group_label(row)
+    return "Global" if row.get("scope") == "global" else "Unresolved project"
+
+
+def _git_checkouts(sessions: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        path: session
+        for session in sessions
+        if session.get("gitProjectKey") and not session.get("locationPinned")
+        for path in (session.get("project"), session.get("gitRoot"))
+        if path
+    }
+
+
+def memory_project_rows(reg: dict[str, Any]) -> list[dict[str, Any]]:
+    active = _git_checkouts(reg["threads"])
+    archived = _git_checkouts(item.get("thread") or item for item in reg.get("archived", ()))
+    fields = ("gitRoot", "gitProjectLabel", "gitProjectKey")
+    rows = []
+    for row in reg.get("memoryEntries", ()):
+        if not memory_catalog.configured(reg, row):
+            continue
+        checkout = row.get("project")
+        identity = active.get(checkout)
+        if identity is None:
+            identity = row if row.get("gitProjectKey") else archived.get(checkout, row)
+        rows.append(row | {key: identity.get(key) for key in fields})
+    return rows
+
+
 def project_summary(
     reg: dict[str, Any],
     now_iso: str | None = None,
@@ -57,7 +96,7 @@ def project_summary(
     cleaned = reg.get("projectsCleanedAt", {})
     mem_cleaned = reg.get("memoryProjectsCleanedAt", {})
     mem_counts: dict[str, int] = {}
-    for e in reg.get("memoryEntries", []):
+    for e in memory_project_rows(reg):
         k = overview.group_key(e)
         mem_counts[k] = mem_counts.get(k, 0) + 1
     groups: dict[str, dict[str, Any]] = {}

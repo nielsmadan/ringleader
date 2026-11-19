@@ -58,6 +58,7 @@ _TARGET_TITLES = {
     ScreenTarget.PRUNE: "Prune",
     ScreenTarget.HARVESTS: "Harvests",
     ScreenTarget.USAGE: "Usage",
+    ScreenTarget.MEMORIES: "Memories",
 }
 
 

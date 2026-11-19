@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from ringleader import registry
 from ringleader.devtools.isolation import agent_store_env
-from ringleader.devtools.tui_fixture import build_fixture
+from ringleader.devtools.tui_fixture import build_fixture, write_memory_fixture
 from ringleader.home.app import InboxApp
 from ringleader.picker.app import PickerApp
 from ringleader.resume import Scope
@@ -191,6 +191,7 @@ def _context(args: argparse.Namespace, workdir: Path) -> ShotContext:
         return ShotContext(registry_path=copy, now=now, read_only=True)
     now = datetime.fromisoformat(args.now or DEFAULT_NOW)
     fixture = build_fixture(workdir, threads=args.fixture, now=now)
+    write_memory_fixture(workdir)
     os.environ.update(fixture.env)
     os.environ["HOME"] = str(workdir / "fixture-home")
     return ShotContext(registry_path=fixture.registry_path, now=now, read_only=False)

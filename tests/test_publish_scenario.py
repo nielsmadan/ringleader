@@ -283,8 +283,10 @@ def test_cli_finishing_retry_ignores_later_checkout_state(tmp_path, monkeypatch,
     consume_args = ["consume", receipt["receiptId"]]
     if commit is not None:
         consume_args.extend(("--commit", commit))
-    with pytest.raises(OSError, match="save failed"):
-        cmd_harvests(consume_args)
+    assert cmd_harvests(consume_args) == 1
+    failed = capsys.readouterr()
+    assert (failed.out, failed.err) == ("", "rl-harvests: save failed\n")
+    assert publish_state.load_receipt(receipt["receiptId"]).state == "finishing"
     monkeypatch.setattr(publish_state.registry, "commit_registry", real_save)
     assert not selected.path.exists()
     (checkout / "ordinary-work.txt").write_text("later work\n")

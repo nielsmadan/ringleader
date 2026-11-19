@@ -8,11 +8,11 @@ import threading
 from copy import deepcopy
 
 import pytest
-from ringleader import lifecycle, refresh, registry
+from ringleader import lifecycle, memory_catalog, memory_scan, refresh, registry
 from ringleader.cli import main
 from ringleader.commands import archive, enrich, keep, mark_mem_reviewed, mem_scan
 from ringleader.config import Config
-from ringleader.memory import MemoryEntry
+from ringleader.memory_types import MemoryObservation, MemoryScan, MemoryStoreStatus
 from ringleader.sources.base import NormalizedSession, stat_fingerprint
 
 NOW = "2026-09-21T12:00:00+00:00"
@@ -171,9 +171,19 @@ def test_memory_scan_preserves_review_and_unknown_metadata(tmp_path, monkeypatch
     def scan(_, **__):
         mark_mem_reviewed.cmd_mark_mem_reviewed([note, "--registry", str(path)])
         keep.cmd_keep(["same", "--yes", "--registry", str(path)])
-        return [MemoryEntry(note, "encoded", str(tmp_path), LATER, "note", None, None, "body")]
+        source, store = "claude-code", str(tmp_path)
+        row = memory_catalog.normalize_entry(
+            {"path": note, "fingerprint": "digest", "incarnation": "instance"}
+        )
+        ref = memory_catalog.reviewed_ref(row)
+        return MemoryScan(
+            (MemoryObservation(ref, "note", None, store, "project", LATER, None, None),),
+            (),
+            (MemoryStoreStatus(source, store, "ready", "complete", "markdown", None),),
+        )
 
-    monkeypatch.setattr(mem_scan.memory, "scan_memory", scan)
+    monkeypatch.setattr(memory_scan, "configured_sources", lambda _: [])
+    monkeypatch.setattr(memory_scan, "scan", scan)
     assert mem_scan.cmd_mem_scan(["--registry", str(path)]) == 0
     reg = registry.load_registry(path)
     assert reg["memoryEntries"][0]["reviewedAtMtime"] == NOW

@@ -36,13 +36,16 @@ PROBES: dict[str, str] = {
 _CODEX_FALLBACK = "CODEX_SESSION_ID"
 
 
-def current_session() -> tuple[str, str] | None:
+def known_sessions() -> tuple[tuple[str, str], ...]:
+    sessions = []
     for source, var in PROBES.items():
         value = os.environ.get(var, "").strip()
+        if not value and source == "codex":
+            value = os.environ.get(_CODEX_FALLBACK, "").strip()
         if value:
-            return source, value
-        if source == "codex":
-            fallback = os.environ.get(_CODEX_FALLBACK, "").strip()
-            if fallback:
-                return source, fallback
-    return None
+            sessions.append((source, value))
+    return tuple(sessions)
+
+
+def current_session() -> tuple[str, str] | None:
+    return next(iter(known_sessions()), None)

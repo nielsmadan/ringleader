@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 from ringleader import harvests, publish_state, registry
 from ringleader.commands import harvest as harvest_command
+from ringleader.commands.harvests import cmd_harvests
+from ringleader.memory_types import MemoryOrigin
 from ringleader.publish_git import PublishGitError
 from ringleader.publish_state import (
     PublishStateError,
@@ -1395,3 +1397,587 @@ def test_consume_preserves_remaining_harvest_across_selector_spellings(
     assert consume_publish(receipt.receipt_id, commit=None).consumed == 1
     assert registry.load_registry(registry_path)[bucket][0]["harvestPath"] == [str(paths[1])]
     assert [item.path for item in harvests.snapshot_harvests().items] == [paths[1]]
+
+
+def _interrupt_registry_projection(*_args):
+    raise OSError("projection interrupted")
+
+
+def test_mixed_memory_publish_recovers_assignment_and_finishing(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    checkout, branch, head = _clean_checkout(tmp_path)
+    reg_path = tmp_path / "registry.json"
+    origin = MemoryOrigin("memory001", "codex", "fingerprint", "incarnation", "project", "/source")
+    first_write = {
+        "origin": origin,
+        "harvest_id": "f" * 32,
+        "registry_path": reg_path,
+        "folder_path": None,
+        "repo_url": None,
+        "name": "style",
+        "harvested_at": "now",
+        "content": "  Exact wording.\n\n",
+    }
+    path = harvests.write_harvest(**first_write)
+    item = harvests.load_harvest_path(path)
+    reg = registry.empty_registry()
+    reg["memoryDecisions"] = {
+        "operation": {
+            "harvestId": item.harvest_id,
+            "harvestToken": item.token,
+            "sourceState": "present",
+            "harvestPath": ["/doc/previous.md", str(path)],
+        }
+    }
+    registry.save_registry(reg_path, reg)
+    with pytest.raises(PublishStateError, match="repository group"):
+        _begin(item, tmp_path)
+    with pytest.raises(PublishStateError, match="existing Git checkout"):
+        publish_state.assign_memory_harvest(item.token, project=tmp_path, registry_path=reg_path)
+    with monkeypatch.context() as failure, pytest.raises(OSError, match="projection interrupted"):
+        failure.setattr(registry, "commit_registry", _interrupt_registry_projection)
+        publish_state.assign_memory_harvest(item.token, project=checkout, registry_path=reg_path)
+    assert cmd_harvests(["recover", "--registry", str(reg_path)]) == 0
+    capsys.readouterr()
+    assigned = harvests.load_harvest_path(path)
+    assert assigned.origin == origin
+    assert assigned.content == item.content
+    assert assigned.harvest_id == item.harvest_id
+    assert assigned.repo_key == str(checkout)
+    assert assigned.token != item.token
+    with pytest.raises(PublishStateError, match="changed memory harvest"):
+        publish_state.assign_memory_harvest(item.token, project=checkout, registry_path=reg_path)
+    assert (
+        registry.load_registry(reg_path)["memoryDecisions"]["operation"]["harvestToken"]
+        == assigned.token
+    )
+    assert cmd_harvests(["snapshot", "--json"]) == 0
+    (row,) = json.loads(capsys.readouterr().out)["items"]
+    assert (row["destinationPath"], row["sourceProject"], row["originKind"]) == (
+        str(checkout),
+        "/source",
+        "memory",
+    )
+
+    session = harvests.load_harvest_path(
+        harvests.write_harvest(
+            session_id="s",
+            name="session",
+            folder_path=str(checkout),
+            repo_url=None,
+            harvested_at="now",
+            content="Another note",
+        )
+    )
+    bundle = tmp_path / "bundle"
+    receipt = begin_publish(
+        repo_key=assigned.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(reg_path),
+        tokens=[assigned.token, session.token],
+        bundle_path=bundle,
+    )
+    persisted = load_receipt(receipt.receipt_id)
+    assert persisted.items[0].origin == origin
+    assert persisted.items[1].session_id == "s"
+    receipt_items = publish_state.receipt_data(persisted)["items"]
+    assert receipt_items[0]["approvedBodyDigest"] == assigned.body_digest
+    assert set(receipt_items[1]) == {"harvestId", "digest", "token", "sessionId", "relativePath"}
+    assert "sourceProject: /source" in bundle.read_text()
+    with pytest.raises(PublishStateError, match="claimed"):
+        publish_state.assign_memory_harvest(
+            assigned.token, project=checkout, registry_path=reg_path
+        )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    with monkeypatch.context() as failure, pytest.raises(OSError, match="projection interrupted"):
+        failure.setattr(registry, "commit_registry", _interrupt_registry_projection)
+        consume_publish(receipt.receipt_id, commit=None)
+    assert load_receipt(receipt.receipt_id).state == "finishing"
+    assert harvests.snapshot_harvests().items == ()
+    with pytest.raises(ValueError, match="requires publish receipt recovery"):
+        harvests.write_harvest(**first_write)
+    assert cmd_harvests(["consume", receipt.receipt_id]) == 0
+    result = json.loads(capsys.readouterr().out)
+    assert result["sessionIds"] == ["s"] and result["memoryIds"] == [origin.memory_id]
+    after = registry.load_registry(reg_path)
+    evidence = after["memoryPublications"][assigned.harvest_id]
+    assert (
+        evidence["outcome"],
+        evidence["token"],
+        evidence["memoryFingerprint"],
+        evidence["memoryIncarnation"],
+        evidence["approvedBodyDigest"],
+    ) == ("no-change", assigned.token, origin.fingerprint, origin.incarnation, assigned.body_digest)
+    decision = after["memoryDecisions"]["operation"]
+    assert (decision["harvestPath"], decision["sourceState"], decision["harvestToken"]) == (
+        ["/doc/previous.md"],
+        "present",
+        None,
+    )
+
+
+def test_old_memory_receipt_can_finish_without_independent_body_proof(tmp_path):
+    checkout, branch, base = _clean_checkout(tmp_path)
+    reg_path = tmp_path / "registry.json"
+    path = harvests.write_harvest(
+        origin=MemoryOrigin("memory001", "codex", "fingerprint", "incarnation", "global", None),
+        folder_path=str(checkout),
+        repo_url=None,
+        name="style",
+        harvested_at="now",
+        content="Exact wording",
+        registry_path=reg_path,
+    )
+    item = harvests.load_harvest_path(path)
+    receipt = begin_publish(
+        repo_key=item.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=base,
+        registry_path=str(reg_path),
+        tokens=[item.token],
+        bundle_path=tmp_path / "bundle",
+    )
+    record = publish_state._receipt_path(receipt.receipt_id)
+    legacy = json.loads(record.read_text())
+    legacy["items"][0].pop("approvedBodyDigest")
+    record.write_text(json.dumps(legacy))
+    legacy_receipt = load_receipt(receipt.receipt_id)
+    assert publish_state.receipt_data(legacy_receipt) == legacy
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    assert consume_publish(receipt.receipt_id, commit=None).memory_ids == ("memory001",)
+    assert registry.load_registry(reg_path)["memoryPublications"][item.harvest_id]["token"] == (
+        item.token
+    )
+    assert list_receipts() == ((), ())
+
+
+@pytest.mark.parametrize("assigned_before_recovery", (False, True))
+def test_published_memory_evidence_survives_saved_queue_replay(
+    tmp_path, monkeypatch, capsys, assigned_before_recovery
+):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    reg_path = tmp_path / "registry.json"
+    checkout, branch, head = _clean_checkout(tmp_path)
+    old_root = tmp_path / "other"
+    old_root.mkdir()
+    old_checkout, _, _ = _clean_checkout(old_root)
+    origin = MemoryOrigin("note", "codex", "fp", "v1", "global", None)
+    kwargs = {
+        "origin": origin,
+        "harvest_id": "a" * 32,
+        "registry_path": reg_path,
+        "folder_path": str(old_checkout) if assigned_before_recovery else None,
+        "repo_url": None,
+        "name": "note",
+        "harvested_at": "2026-11-18",
+        "content": "Approved wording.",
+    }
+    path = harvests.write_harvest(**kwargs)
+    stale = path.read_bytes()
+    item = harvests.load_harvest_path(path)
+    reg = registry.empty_registry()
+    reg["memoryDecisions"] = {
+        "operation": {
+            "harvestId": item.harvest_id,
+            "harvestPath": ["/living/previous.md", str(path)],
+            "sourceState": "present",
+        },
+    }
+    registry.save_registry(reg_path, reg)
+    assigned = publish_state.assign_memory_harvest(
+        item.token, project=checkout, registry_path=reg_path
+    )
+    assigned_bytes = path.read_bytes()
+    receipt = begin_publish(
+        repo_key=assigned.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(reg_path),
+        tokens=[assigned.token],
+        bundle_path=tmp_path / "bundle",
+    )
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    assert consume_publish(receipt.receipt_id, commit=None).memory_ids == (origin.memory_id,)
+    completed = registry.load_registry(reg_path)
+    with pytest.raises(harvests.HarvestAlreadyPublished) as error:
+        harvests.write_harvest(**kwargs)
+    assert error.value.evidence == completed["memoryPublications"][assigned.harvest_id]
+    with pytest.raises(ValueError, match="conflicting memory publication evidence"):
+        harvests.write_harvest(
+            **{**kwargs, "origin": MemoryOrigin("note", "codex", "fp", "v2", "global", None)}
+        )
+    assert harvests.snapshot_harvests().items == ()
+
+    path.write_bytes(stale)
+    assert cmd_harvests(["recover", "--registry", str(reg_path)]) == 0
+    capsys.readouterr()
+    assert registry.load_registry(reg_path) == completed
+    with pytest.raises(PublishStateError, match="already published"):
+        publish_state.assign_memory_harvest(item.token, project=checkout, registry_path=reg_path)
+    path.write_bytes(assigned_bytes)
+    with pytest.raises(PublishStateError, match="already published"):
+        _begin(assigned, tmp_path)
+    assert path.read_bytes() == assigned_bytes
+    assert list_receipts() == ((), ())
+
+    fresh = harvests.load_harvest_path(
+        harvests.write_harvest(
+            **{
+                **kwargs,
+                "origin": MemoryOrigin("fresh-note", "codex", "fp", "v1", "global", None),
+                "harvest_id": "b" * 32,
+                "folder_path": str(checkout),
+            }
+        )
+    )
+    assert cmd_harvests(["snapshot", "--json", "--registry", str(reg_path)]) == 0
+    snapshot = json.loads(capsys.readouterr().out)
+    assert [row["token"] for row in snapshot["items"]] == [fresh.token]
+    assert cmd_harvests(["--json", "--registry", str(reg_path)]) == 0
+    assert [(row["path"], row["content"]) for row in json.loads(capsys.readouterr().out)] == [
+        (str(fresh.path), fresh.content)
+    ]
+    assert snapshot["problems"] == [
+        {"path": str(path), "message": f"memory harvest already published: {assigned.harvest_id}"}
+    ]
+    new_receipt = begin_publish(
+        repo_key=assigned.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(reg_path),
+        tokens=[row["token"] for row in snapshot["items"]],
+        bundle_path=tmp_path / "fresh-bundle",
+    )
+    assert [claim.harvest_id for claim in new_receipt.items] == [fresh.harvest_id]
+    assert path.read_bytes() == assigned_bytes
+
+
+def _queued_memory(tmp_path, checkout):
+    return harvests.load_harvest_path(
+        harvests.write_harvest(
+            origin=MemoryOrigin("note", "codex", "fp", "v1", "global", None),
+            harvest_id="a" * 32,
+            registry_path=tmp_path / "registry.json",
+            folder_path=str(checkout),
+            repo_url=None,
+            name="note",
+            harvested_at="2026-11-18",
+            content="Approved wording.",
+        )
+    )
+
+
+def _begin_queued_memory(item, tmp_path, checkout, branch, head):
+    return begin_publish(
+        repo_key=item.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(tmp_path / "registry.json"),
+        tokens=[item.token],
+        bundle_path=tmp_path / "bundle.md",
+    )
+
+
+def test_duplicate_memory_ids_block_publish_and_recovery_projection(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    checkout, branch, head = _clean_checkout(tmp_path)
+    item = _queued_memory(tmp_path, checkout)
+    receipt = _begin_queued_memory(item, tmp_path, checkout, branch, head)
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    reg_path = tmp_path / "registry.json"
+    reg = registry.empty_registry()
+    reg["memoryDecisions"] = {"operation": {"harvestId": item.harvest_id}}
+    registry.save_registry(reg_path, reg)
+    duplicate = item.path.with_name("other.md")
+    duplicate.write_text(
+        item.path.read_text()
+        .replace("memoryId: note", "memoryId: other")
+        .replace("Approved wording.", "Different draft.")
+    )
+    other = harvests.load_harvest_path(duplicate)
+
+    assert cmd_harvests(["snapshot"]) == 0
+    snapshot = json.loads(capsys.readouterr().out)
+    assert snapshot["items"] == []
+    assert {problem["path"] for problem in snapshot["problems"]} == {
+        str(item.path),
+        str(other.path),
+    }
+    with pytest.raises(PublishStateError, match="duplicate harvest ID"):
+        _begin(other, tmp_path)
+    with pytest.raises(PublishStateError, match="duplicate harvest ID"):
+        publish_state.assign_memory_harvest(item.token, project=checkout, registry_path=reg_path)
+    with pytest.raises(PublishStateError, match="duplicate harvest ID"):
+        consume_publish(receipt.receipt_id, commit=None)
+    assert cmd_harvests(["recover", "--registry", str(reg_path)]) == 1
+    recovery = capsys.readouterr()
+    assert f"duplicate harvest ID in receipt: {item.harvest_id}" in recovery.err
+    assert recovery.out == ""
+    assert registry.load_registry(reg_path)["memoryDecisions"] == reg["memoryDecisions"]
+    assert load_receipt(receipt.receipt_id).state == "prepared"
+    duplicate.unlink()
+    assert harvests.load_harvest_path(item.path) == item
+
+
+def test_memory_receipt_claim_survives_changed_token(tmp_path, monkeypatch, capsys):
+    from ringleader.paths import publish_receipts_dir
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    checkout, _, _ = _clean_checkout(tmp_path)
+    item = _queued_memory(tmp_path, checkout)
+    receipt = _begin(item, tmp_path)
+    reg_path = tmp_path / "registry.json"
+    reg = registry.load_registry(reg_path)
+    reg["memoryDecisions"] = {
+        "operation": {
+            "harvestId": item.harvest_id,
+            "harvestToken": item.token,
+            "harvestPath": [str(item.path)],
+            "destinationProject": str(checkout),
+        }
+    }
+    registry.commit_registry(reg_path, reg)
+    item.path.write_text(item.path.read_text().replace("Approved wording.", "Different draft."))
+    edited = harvests.load_harvest_path(item.path)
+    assert cmd_harvests(["snapshot"]) == 0
+    (row,) = json.loads(capsys.readouterr().out)["items"]
+    assert (row["token"], row["claimedBy"]) == (edited.token, receipt.receipt_id)
+    with pytest.raises(PublishStateError, match="already claimed"):
+        _begin(edited, tmp_path)
+
+    conflicting = publish_state.receipt_data(receipt)
+    other_id = uuid.uuid4().hex
+    conflicting["receiptId"] = other_id
+    conflicting["items"][0].update(digest=edited.digest, token=edited.token)
+    other_receipt = publish_receipts_dir() / f"{other_id}.json"
+    other_receipt.write_text(json.dumps(conflicting))
+    receipts, problems = list_receipts()
+    assert receipts == ()
+    assert {problem.path.stem: problem.message for problem in problems} == {
+        receipt.receipt_id: "duplicate memory harvest ID claim",
+        other_id: "duplicate memory harvest ID claim",
+    }
+    assert cmd_harvests(["recover", "--json", "--registry", str(reg_path)]) == 0
+    recovery = json.loads(capsys.readouterr().out)
+    assert recovery == {
+        "receipts": [],
+        "problems": [
+            {"path": str(problem.path), "message": problem.message} for problem in problems
+        ],
+    }
+    assert registry.load_registry(reg_path) == reg
+
+
+def test_conflicting_publication_evidence_blocks_consume_before_unlink(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    checkout, branch, head = _clean_checkout(tmp_path)
+    item = _queued_memory(tmp_path, checkout)
+    receipt = _begin_queued_memory(item, tmp_path, checkout, branch, head)
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    reg_path = tmp_path / "registry.json"
+    reg = registry.load_registry(reg_path)
+    reg["memoryPublications"] = {item.harvest_id: {"receiptId": "older receipt"}}
+    registry.commit_registry(reg_path, reg)
+
+    with pytest.raises(PublishStateError, match="conflicting memory publication evidence"):
+        consume_publish(receipt.receipt_id, commit=None)
+
+    assert harvests.load_harvest_path(item.path) == item
+    assert load_receipt(receipt.receipt_id).state == "prepared"
+
+
+def test_memory_receipt_rejects_mixed_origin(store, tmp_path):
+    (item,) = store("example/repo", ["text"])
+    receipt = _begin(item, tmp_path)
+    data = publish_state.receipt_data(receipt)
+    data["items"][0]["originKind"] = "memory"
+    with pytest.raises(PublishStateError, match="origin"):
+        publish_state._receipt_from_data(data)
+
+
+@pytest.mark.parametrize("leading", ["", "  "])
+def test_memory_assignment_stores_public_routing_and_filters_existing_queue_urls(
+    tmp_path, capsys, leading
+):
+    from ringleader.commands.harvests import cmd_harvests
+
+    checkout, branch, head = _clean_checkout(tmp_path)
+    private = (
+        leading
+        + "https://fixture-name:fixture-pass@example.test/org/docs.git?access=fixture-query#fixture-fragment"
+    )
+    public = "https://example.test/org/docs.git"
+    subprocess.run(["git", "-C", str(checkout), "config", "remote.origin.url", private], check=True)
+    reg_path = tmp_path / "registry.json"
+    queued = _queued_memory(tmp_path, checkout)
+    assigned = publish_state.assign_memory_harvest(
+        queued.token, project=checkout, registry_path=reg_path
+    )
+    text = assigned.path.read_text()
+    assert assigned.clone_url == public
+    assert (assigned.repo_key, assigned.repo_url) == (
+        "example.test/org/docs",
+        "example.test/org/docs",
+    )
+    assert "fixture-" not in text
+    assigned.path.write_text(text.replace(public, private))
+    assert cmd_harvests(["snapshot", "--json", "--registry", str(reg_path)]) == 0
+    (item,) = json.loads(capsys.readouterr().out)["items"]
+    assert item["destinationCloneUrl"] == public
+    assert cmd_harvests(["--json", "--registry", str(reg_path)]) == 0
+    (body,) = json.loads(capsys.readouterr().out)
+    assert body["destinationRepoUrl"] == "example.test/org/docs"
+    assert "destinationCloneUrl" not in body
+    bundle = tmp_path / "bundle"
+    begin_publish(
+        repo_key=assigned.repo_key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(reg_path),
+        tokens=[item["token"]],
+        bundle_path=bundle,
+    )
+    assert "destinationRepoUrl: example.test/org/docs" in bundle.read_text()
+    assert "fixture-" not in bundle.read_text()
+
+
+def test_memory_bundle_identifies_checkout_alias_of_configured_rule(tmp_path, monkeypatch):
+    checkout, branch, head = _clean_checkout(tmp_path)
+    config = tmp_path / "custom-configuration"
+    config.mkdir()
+    docs = checkout / "docs"
+    docs.mkdir()
+    (config / "rules").symlink_to(docs, target_is_directory=True)
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(config))
+    item = _queued_memory(tmp_path, checkout)
+
+    _begin_queued_memory(item, tmp_path, checkout, branch, head)
+
+    rendered = (tmp_path / "bundle.md").read_text()
+    label = "Protected instruction paths in this checkout (including descendants):"
+    paths = json.loads(rendered.split(label + "\n")[1].splitlines()[0])
+    assert paths == ["docs"]
+
+
+@pytest.mark.parametrize("config_exists", [True, False])
+def test_memory_bundle_reserves_future_rules_under_checkout_config_alias(tmp_path, config_exists):
+    checkout, branch, head = _clean_checkout(tmp_path)
+    config = checkout / "docs" / "agent"
+    if config_exists:
+        config.mkdir(parents=True)
+    (checkout / ".claude").symlink_to(config, target_is_directory=True)
+    item = _queued_memory(tmp_path, checkout)
+
+    _begin_queued_memory(item, tmp_path, checkout, branch, head)
+
+    label = "Protected instruction paths in this checkout (including descendants):"
+    rendered = (tmp_path / "bundle.md").read_text()
+    paths = json.loads(rendered.split(label + "\n")[1].splitlines()[0])
+    assert paths == [
+        "docs/agent/agents",
+        "docs/agent/commands",
+        "docs/agent/rules",
+        "docs/agent/skills",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("legacy_key", "locator"),
+    [
+        (
+            "  https///fixture-name:fixture-pass@example.test/org/docs.git?key=fixture-query#fragment",
+            "  https://fixture-name:fixture-pass@example.test/org/docs.git?key=fixture-query#fragment",
+        ),
+        (
+            "example.test/org/docs.git?key=fixture-query",
+            "https://example.test/org/docs.git?key=fixture-query",
+        ),
+    ],
+)
+def test_historical_session_routing_is_public_on_read_and_new_harvest(
+    tmp_path, capsys, legacy_key, locator
+):
+    from ringleader.harvesting import save_harvest_unlocked
+
+    checkout, branch, head = _clean_checkout(tmp_path)
+    path = tmp_path / "registry.json"
+    reg = registry.load_registry(path)
+    reg["threads"] = [
+        {
+            "sessionId": "old-session",
+            "gitRemote": legacy_key,
+            "gitCloneUrl": locator,
+            "project": str(checkout),
+        }
+    ]
+    registry.commit_registry(path, reg)
+    public = "https://example.test/org/docs.git"
+    key = "example.test/org/docs"
+    _, queued = save_harvest_unlocked(
+        "old-session", str(path), "Reviewed session knowledge", now_iso="2026-01-01"
+    )
+    new = queued.read_text()
+    assert f"repoUrl: {key}\n" in new and f"cloneUrl: {public}\n" in new
+    queued.write_text(
+        new.replace(f"repoUrl: {key}\n", f"repoUrl: {legacy_key}\n").replace(
+            f"cloneUrl: {public}\n", f"cloneUrl: {locator}\n"
+        )
+    )
+    assert cmd_harvests(["snapshot", "--json", "--registry", str(path)]) == 0
+    (item,) = json.loads(capsys.readouterr().out)["items"]
+    assert (item["repoUrl"], item["repoKey"], item["cloneUrl"]) == (key, key, public)
+    bundle = tmp_path / "bundle.md"
+    begin_publish(
+        repo_key=key,
+        checkout=str(checkout),
+        branch=branch,
+        base_commit=head,
+        registry_path=str(path),
+        tokens=[item["token"]],
+        bundle_path=bundle,
+    )
+    rendered = bundle.read_text()
+    assert key in rendered
+    assert "fixture-" not in rendered
+
+
+def test_consume_reports_receipt_sync_io_error_and_retries(tmp_path, monkeypatch, capsys):
+    import errno
+
+    from ringleader import stateio
+
+    checkout, branch, head = _clean_checkout(tmp_path)
+    item = _queued_memory(tmp_path, checkout)
+    receipt = _begin_queued_memory(item, tmp_path, checkout, branch, head)
+    prepare_publish(receipt.receipt_id, outcome="no-change")
+    sync = stateio.sync_directory
+
+    def failed_sync(directory, **kwargs):
+        if directory == publish_state._receipt_path(receipt.receipt_id).parent:
+            raise OSError(errno.EIO, "receipt directory sync")
+        sync(directory, **kwargs)
+
+    with monkeypatch.context() as fault:
+        fault.setattr(stateio, "sync_directory", failed_sync)
+        assert cmd_harvests(["consume", receipt.receipt_id]) == 1
+    output = capsys.readouterr()
+    assert (output.out, output.err) == (
+        "",
+        f"rl-harvests: [Errno {errno.EIO}] receipt directory sync\n",
+    )
+    assert load_receipt(receipt.receipt_id).state == "finishing"
+    assert harvests.load_harvest_path(item.path).token == item.token
+    assert cmd_harvests(["consume", receipt.receipt_id]) == 0
+    assert json.loads(capsys.readouterr().out) == {
+        "receiptId": receipt.receipt_id,
+        "consumed": 1,
+        "sessionIds": [],
+        "memoryIds": ["note"],
+    }

@@ -313,3 +313,34 @@ class SnoozeModal(ModalScreen[str | None]):
 
     def action_cancel(self) -> None:
         self.dismiss(None)
+
+
+class CheckoutModal(ModalScreen[str | None]):
+    BINDINGS: ClassVar[list[BindingType]] = [Binding("escape", "cancel", "cancel")]
+    DEFAULT_CSS = f"""
+    CheckoutModal {{ align: center middle; }}
+    #checkout-box {{{_BOX_CSS} max-width: 100%; }}
+    """
+
+    def __init__(self, name: str) -> None:
+        super().__init__()
+        self._name = name
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(Text(f"Assign {self._name} to an existing Git checkout")),
+            Input(placeholder="Absolute checkout path", id="checkout"),
+            Label(Text("Enter assigns this harvest · Esc cancels")),
+            id="checkout-box",
+        )
+
+    def on_mount(self) -> None:
+        self.query_one(Input).focus()
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        event.stop()
+        if event.value.strip():
+            self.dismiss(event.value)
+
+    def action_cancel(self) -> None:
+        self.dismiss(None)

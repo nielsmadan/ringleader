@@ -3,46 +3,14 @@ from __future__ import annotations
 import argparse
 import json
 from datetime import UTC, datetime
-from typing import Any
 
 from .. import jsonout, overview, projects, refresh, registry
-from .. import memory as memmod
 from ..agents import source_of
 from . import default_registry
 
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def _memory_inbox(registry_path: str, projects_sel: list[str] | None, no_scan: bool) -> int:
-    reg = registry.load_registry(registry_path)
-    scanned = memmod.scan_memory(memmod.projects_dir(), recorded_threads=reg["threads"])
-    reg = registry.reconcile_memory(reg, scanned, _now())
-    registry.commit_registry(registry_path, reg)
-    rows = registry.memory_needing_review(reg)
-    if projects_sel:
-        rows = projects.filter_by_projects(rows, projects_sel)
-    groups: dict[str, list[dict[str, Any]]] = {}
-    for e in rows:
-        groups.setdefault(overview.group_key(e), []).append(e)
-    if not groups:
-        print("no memory awaiting review")
-        return 0
-    for _key, items in sorted(groups.items(), key=lambda kv: -len(kv[1])):
-        label = overview.group_label(items[0])
-        obs = sum(1 for e in items if e.get("obsoleteSignals"))
-        print(f"{label}: {len(items)} entries ({obs} obsolete-candidate)")
-    return 0
-
-
-def cmd_mem_triage(argv: list[str]) -> int:
-    ap = argparse.ArgumentParser(prog="rl mem triage")
-    ap.add_argument("--registry", default=str(default_registry()))
-    ap.add_argument("--project", action="append", default=None)
-    ap.add_argument("--no-scan", action="store_true")
-    a = ap.parse_args(argv)
-    return _memory_inbox(a.registry, a.project, a.no_scan)
 
 
 def cmd_triage(argv: list[str]) -> int:

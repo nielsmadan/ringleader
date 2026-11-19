@@ -27,6 +27,8 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
 - [reference/](reference/agent-session-management.md): how the **external** agent CLIs store and
   index sessions — verified findings stamped with date and version. Not our code; it goes stale
   when an agent ships, not when we refactor.
+  [Native agent memory](reference/agent-memory-management.md) records CLI capability,
+  pinned memory schemas and the native lock verification procedure.
   [Agent worktrees](reference/agent-worktrees.md) compares native creation, session binding,
   setup, isolation, and cleanup across the five harnesses, separating CLI and desktop behavior.
   [Cass comparison](reference/coding-agent-session-search.md) covers overlap with an external
@@ -48,5 +50,5 @@ re-verified when a dependency moves, not when we change.
 ## A note on state
 
 Nothing under `docs/` describes machine-local state. `registry.json`, `archive/`, `harvests/`
-`publish/`, `conversion/` and `analysis/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
+`publish/`, `memory/`, `conversion/` and `analysis/` live under `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set) and
 are never committed — see [tech/registry.md](tech/registry.md).

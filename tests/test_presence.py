@@ -564,6 +564,27 @@ def test_hook_state_reads_verified_states(tmp_path, state):
     assert client.hook_state("claude") == state
 
 
+def test_hook_status_retains_the_public_config_path(tmp_path):
+    settings = tmp_path / ".claude" / "settings.json"
+    runner = FakeRunner(
+        results={
+            "hooks status": ok(
+                {"protocol": 1, "agent": "claude", "state": "installed", "path": str(settings)}
+            )
+        }
+    )
+    client = PresenceClient(executable=tmp_path / "hls", runner=runner)
+
+    status = client.hook_status("claude")
+
+    assert (status.state, status.path, status.detail) == (
+        "installed",
+        settings,
+        f"installed at {settings}",
+    )
+    assert client.hook_state("claude") == "installed"
+
+
 def test_uninstall_removes_only_the_ringleader_consumer(tmp_path):
     exe = active_binary(tmp_path)
     runner = FakeRunner(

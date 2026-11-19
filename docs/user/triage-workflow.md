@@ -65,7 +65,7 @@ the delete waits 10 seconds, and `u` brings it back. An archive is final for the
 Sessions that are running, or that `rl` cannot tell about because presence is not installed
 (`rl data presence install`), are refused rather than touched. `r` resumes the highlighted
 session, `enter` opens its detail, and `t` quits the inbox and starts an agent with the triage skill on that project. `1`
-to `7` jump between screens (Resume, Roundup, Prune, Harvests, Usage), and `ctrl+p` searches
+to `8` jump between screens (Resume, Roundup, Prune, Harvests, Usage, Memories), and `ctrl+p` searches
 them. `q` waits for queued changes to finish. `rl inbox --read-only` lets you look without
 changing anything.
 

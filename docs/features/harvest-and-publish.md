@@ -5,7 +5,7 @@
 
 ## Overview
 
-A **harvest** is markdown distilled out of a session — summary, gotchas, decisions, what
+A **session harvest** is Markdown distilled out of a session — summary, gotchas, decisions, what
 changed. It lands in a machine-local queue, and is later **published** into a repository's living
 documentation.
 
@@ -36,6 +36,13 @@ when an agent integrated the knowledge directly into docs.
 - refuses to write `AGENTS.md` or `CLAUDE.md`;
 - rejects any path that escapes the checkout;
 - records a receipt first, so an interrupted publish can be resumed rather than half-applied.
+
+Native memory and sessions use the same pending queue. Memory keeps its source scope
+and project as provenance. An unassigned memory item remains visible while the user
+chooses an existing destination checkout. Publishing either origin uses the same
+adapter, verified receipt and explicit accepted no-change path. Only session origins
+are archived during consumption. A memory recovery copy can expire or be restored
+independently of publishing. See [memory curation](memory-curation.md).
 
 ## `harvestPath` holds two kinds of path
 

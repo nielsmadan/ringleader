@@ -15,7 +15,7 @@ rl doctor             # what's linked, registered, and how retention is set
 
 ## Skills
 
-`skills/` ships nine agent-neutral skills that drive `rl` instead of raw commands:
+`skills/` ships ten agent-neutral skills that drive `rl` instead of raw commands:
 
 | Skill | Does |
 |---|---|
@@ -28,17 +28,22 @@ rl doctor             # what's linked, registered, and how retention is set
 | `ringleader-publish` | drain pending harvests into the living docs of matching repos |
 | `ringleader-analyze` | find where recent sessions went wrong and save the findings as a report |
 | `ringleader-recommend` | turn saved findings into proposed edits to instruction files, skills and config; proposes only |
+| `ringleader-memory-triage` | review native Claude Code and Codex auto-memory one entry at a time |
 
-The eight session-track skills share an agent-neutral `SKILL.md` plus a bundled
+Nine skills include a bundled
 `references/playbook.md`, synced from the canonical `skills/PLAYBOOK.md`
 (`just sync-playbook`). `ringleader-publish` owns its focused publishing protocol.
 
-All nine read natively in **Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI** — no
+All ten read natively in **Claude Code, Codex, Droid, OpenCode, Pi and Cursor CLI** — no
 per-agent plugin format. `rl install skills` symlinks them into `~/.agents/skills` (Codex,
 OpenCode, Pi, Cursor CLI),
 `~/.claude/skills` (Claude Code) and `~/.factory/skills` (Droid).
 
-`memory-triage` is separate and lives in `loadout/skills/`.
+Run `rl install skills` for first-time setup or `rl update skills` to add the new skill to
+a wired setup. Check the link with `rl doctor` before choosing an agent in the Memories
+inbox's no-model handoff. Invoke `ringleader-memory-triage` by its bundled name. The
+repo-local Claude `memory-triage` is a compatibility redirect. An independently
+managed Loadout copy requires its own update.
 
 > Skills are **symlinked**, so editing the repo changes what every wired agent runs, immediately.
 

@@ -1,7 +1,9 @@
+from dataclasses import replace
 from pathlib import Path
 
 from ringleader.harvests import Harvest
 from ringleader.home.harvest_view import harvest_groups, preview_line, publish_all_cwd
+from ringleader.memory_types import MemoryOrigin, SessionOrigin
 
 
 def _harvest(sid, *, folder=None, repo=None, content="body"):
@@ -9,7 +11,7 @@ def _harvest(sid, *, folder=None, repo=None, content="body"):
         path=Path(f"/h/{sid}.md"),
         harvest_id=sid,
         digest="d",
-        session_id=sid,
+        origin=SessionOrigin(sid),
         name=sid,
         folder_path=folder,
         repo_url=repo,
@@ -34,6 +36,51 @@ def test_harvests_group_by_repository_largest_first(tmp_path):
         ("github.com/me/remote-only", "me/remote-only", None, 1),
         (None, "no repository", None, 1),
     ]
+
+
+def test_memory_harvests_group_by_checkout_even_with_shared_remote(tmp_path):
+    a, b, c = (tmp_path / name for name in ("a", "b", "c"))
+    for checkout in (a, b, c):
+        checkout.mkdir()
+    remote = "git@github.com:me/app.git"
+    memory_a, memory_b = (
+        replace(
+            _harvest(f"memory-{checkout.name}", folder=str(checkout), repo=remote),
+            origin=MemoryOrigin(checkout.name, "codex", "fp", "incarnation", "global", None),
+        )
+        for checkout in (a, b)
+    )
+    session_a = _harvest("session-a", folder=str(a), repo=remote)
+    session_c = _harvest("session-c", folder=str(c), repo=remote)
+
+    groups = harvest_groups((session_c, memory_a, session_a, memory_b))
+
+    assert [(group.folder, group.items) for group in groups] == [
+        (str(a), (memory_a, session_a)),
+        (str(b), (memory_b,)),
+        (str(c), (session_c,)),
+    ]
+
+
+def test_mixed_harvest_group_uses_memory_destination(tmp_path):
+    old = tmp_path / "old"
+    selected = tmp_path / "selected"
+    old.mkdir()
+    selected.mkdir()
+    remote = "https://github.com/me/app"
+    session = _harvest("s1", folder=str(old), repo=remote)
+    memory = replace(
+        _harvest("memory", folder=str(selected), repo=remote),
+        origin=MemoryOrigin("memory", "codex", "fp", "incarnation", "project", str(old)),
+    )
+
+    (group,) = harvest_groups((session, memory))
+
+    assert (group.label, group.folder, group.items) == (
+        "selected",
+        str(selected),
+        (session, memory),
+    )
 
 
 def test_publish_all_cwd_is_the_common_path_of_existing_folders(tmp_path):

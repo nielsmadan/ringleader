@@ -14,6 +14,7 @@ from ..decisions import (
     ClassifyOp,
     Executor,
     GroupResult,
+    MemoryScanOp,
     Op,
     OpContext,
     Outcome,
@@ -101,7 +102,7 @@ class _Entry:
     label: str
 
 
-_UNDOABLE_EXCLUDED = (ReloadOp, ClassifyOp, StampRoundupOp)
+_UNDOABLE_EXCLUDED = (MemoryScanOp, ReloadOp, ClassifyOp, StampRoundupOp)
 
 
 class Writer:

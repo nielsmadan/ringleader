@@ -109,6 +109,13 @@ class HookOutcome:
 
 
 @dataclass(frozen=True)
+class HookStatus:
+    state: str
+    detail: str
+    path: Path | None = None
+
+
+@dataclass(frozen=True)
 class InstallOutcome:
     binary: str
     reused_active: bool
@@ -430,36 +437,43 @@ class PresenceClient:
         return ConsumerList(names, _envelope_problems(payload.get("problems")))
 
     def hook_state(self, agent: str) -> str:
-        state, _ = self._hook_status(self.executable, agent)
-        return state
+        return self.hook_status(agent).state
 
-    def _hook_status(self, binary: Path, agent: str) -> tuple[str, str]:
+    def hook_status(self, agent: str) -> HookStatus:
+        return self._hook_status(self.executable, agent)
+
+    def _hook_status(self, binary: Path, agent: str) -> HookStatus:
         args = ["hooks", "status", "--agent", agent, "--json"]
         command = f"`hooklinesinker {' '.join(args)}`"
         result = self._invoke(binary, args)
         if isinstance(result, str):
-            return "unknown", result
+            return HookStatus("unknown", result)
         if result.returncode != 0:
             detail = (result.stderr or result.stdout).strip() or "no output"
-            return "unknown", f"{command} exited {result.returncode}: {detail}"
+            return HookStatus("unknown", f"{command} exited {result.returncode}: {detail}")
         payload = _load_json(result.stdout)
         if payload is None:
-            return "unknown", f"could not parse {command}: {result.stdout[:200]}"
-        if payload.get("protocol") != PROTOCOL:
-            return "unknown", (
+            return HookStatus("unknown", f"could not parse {command}: {result.stdout[:200]}")
+        protocol = payload.get("protocol")
+        if type(protocol) is not int or protocol != PROTOCOL:
+            return HookStatus(
+                "unknown",
                 f"hooklinesinker speaks protocol {payload.get('protocol')}, "
-                f"ringleader speaks protocol {PROTOCOL}"
+                f"ringleader speaks protocol {PROTOCOL}",
             )
         if payload.get("agent") != agent:
-            return (
+            return HookStatus(
                 "unknown",
                 f"{command} reported agent {payload.get('agent')!r}, expected {agent!r}",
             )
         state = payload.get("state")
         if state not in ("installed", "missing", "drifted", "unsupported"):
-            return "unknown", f"{command} reported unrecognized state {state!r}"
-        path = payload.get("path")
-        return state, f"{state} at {path}" if path else state
+            return HookStatus("unknown", f"{command} reported unrecognized state {state!r}")
+        raw_path = payload.get("path")
+        path = Path(raw_path) if isinstance(raw_path, str) and "\x00" not in raw_path else None
+        if path is not None and (not path.is_absolute() or ".." in path.parts):
+            path = None
+        return HookStatus(state, f"{state} at {raw_path}" if raw_path else state, path)
 
     def _probe(self, binary: Path) -> BinaryInfo | None:
         result = self._invoke(binary, ["version", "--json"])
@@ -516,8 +530,8 @@ class PresenceClient:
         detail = (result.stdout or result.stderr).strip()
         if result.returncode != 0:
             return HookOutcome(agent, False, detail)
-        state, status_detail = self._hook_status(binary, agent)
-        return HookOutcome(agent, state == "installed", status_detail)
+        status = self._hook_status(binary, agent)
+        return HookOutcome(agent, status.state == "installed", status.detail)
 
     def uninstall_consumer(self) -> UninstallOutcome:
         if not self.is_installed():

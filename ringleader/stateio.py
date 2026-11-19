@@ -59,6 +59,17 @@ def registry_lock(path: Path) -> Iterator[None]:
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
+def sync_directory(path: Path, *, follow_symlinks: bool = False) -> None:
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    if not follow_symlinks:
+        flags |= os.O_NOFOLLOW
+    fd = os.open(path, flags)
+    try:
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
 def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, raw_tmp = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -70,11 +81,7 @@ def atomic_write_bytes(path: Path, data: bytes, *, mode: int = 0o600) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp, path)
-        dir_fd = os.open(path.parent, os.O_RDONLY)
-        try:
-            os.fsync(dir_fd)
-        finally:
-            os.close(dir_fd)
+        sync_directory(path.parent, follow_symlinks=True)
     finally:
         tmp.unlink(missing_ok=True)
 

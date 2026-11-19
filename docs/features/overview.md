@@ -27,10 +27,10 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
   lineage, deterministic compact conversion, and crash recovery.
 - [workspace-portability.md](workspace-portability.md) — moving a checkout without stranding its
   sessions; why the registry has to be pinned and why a move refuses to merge.
-- [agent-integration.md](agent-integration.md) — the nine bundled skills, the session-end hook,
+- [agent-integration.md](agent-integration.md) — the ten bundled skills, the session-end hook,
   the status-line capture, and the ownership rules that keep uninstall safe.
-- [memory-curation.md](memory-curation.md) — the parallel `rl mem` track behind the
-  `memory-triage` skill.
+- [memory-curation.md](memory-curation.md) — native review and recovery through the Memories inbox,
+  `rl mem` and `ringleader-memory-triage`.
 
 ## Where the behavior lives
 
@@ -46,7 +46,7 @@ symbol-first, not a usage tutorial. For human how-to walkthroughs see
 | [session-portability](session-portability.md) | [session-portability internals](../tech/session-portability.md), `portability/`, `commands/conversion.py` |
 | [workspace-portability](workspace-portability.md) | [sources](../tech/sources.md), [scanning-and-refresh](../tech/scanning-and-refresh.md) |
 | [agent-integration](agent-integration.md) | [integration](../tech/integration.md) |
-| [memory-curation](memory-curation.md) | [registry](../tech/registry.md), `memory.py` |
+| [memory-curation](memory-curation.md) | [native memory](../tech/memory.md), [registry](../tech/registry.md) |
 
 > The command surface itself — every flag, every default — is a *user* reference and lives in
 > [`../user/cli.md`](../user/cli.md), not here.

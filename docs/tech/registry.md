@@ -21,7 +21,7 @@ the repo ([0010](../decisions/0010-keep-machine-local-state-outside-the-repo.md)
 `load_registry()` returns a dict-compatible snapshot with a private baseline.
 After bounded edits, `commit_registry()` locks `<registry>.lock`, reloads the file and
 applies the changes relative to that baseline. Session rows match by `(source, sessionId)`,
-memory rows by path, and nested mappings by field. Unrelated concurrent edits survive;
+memory rows by source and native memory ID, and nested mappings by field. Unrelated concurrent edits survive;
 conflicting edits to the same field raise `RegistryConflict` before any registry write.
 A successful commit refreshes the caller's snapshot and baseline. A commit or
 `mutate_registry` whose result equals what it loaded from disk skips the write and its two
@@ -35,7 +35,7 @@ number of rows. Loading removes stale deleted tombstones for identities that als
 have live or archived rows before capturing the baseline; old GC duplicates cannot
 mask subsequent decisions or lifecycle changes.
 
-`reconcile()` and `reconcile_memory()` retain baseline provenance. Scan-derived conflicts
+`reconcile()` and `reconcile_native_memory()` retain baseline provenance. Scan-derived conflicts
 keep the newer committed value, pinned locations remain pinned, and scans cannot erase
 sessions added while discovery ran or resurrect a concurrently archived session.
 Unknown top-level fields and record metadata survive scans. Lifecycle moves retain the
@@ -79,14 +79,25 @@ APIs release the lock on failure. `persist=False` refreshes create no file or lo
 | `archived` | archived sessions, each with the full thread record for restore |
 | `deleted` | tombstones for removed or excluded sessions; excluded transcripts remain on disk |
 | `conversionLineage` | authoritative operation-keyed source/target conversion and fork relations |
-| `memoryEntries` | the memory track's parallel working set |
+| `memoryEntries` | active native memory metadata keyed by source and memory ID, including the first observation time, observed revision generation and validated Git project metadata. Legacy Claude paths acquire an ID on load. Native content stays in its source. |
+| `memoryAbsences` | last confirmed disappearance per source and memory ID. A later appearance starts a fresh review cycle even when the native identity and content match. |
+| `memoryScannedAt` / `memoryStores` / `memorySources` | per-store memory scan times, completeness and capability snapshots for cached views. A complete store observation may drop missing entries. A complete configuration inventory marks omitted stores inactive, preserving their cached rows for a future return. |
+| `memoryDecisions` | operation-ID keyed projection of harvest/discard, reviewed identity, source state, consolidation, recovery expiry and journal reference. Queue token and destination can change independently of native progress. |
+| `memoryPublications` | consumed memory publication evidence keyed by immutable harvest ID, including disposition, destination and approved-body digest when available. |
 | `projectsCleanedAt` / `memoryProjectsCleanedAt` | per-project "last triaged" stamps |
-| `lastScan` / `lastRoundupAt` | staleness signals: `lastScan` feeds the overview's staleness banner (memory scans advance it too), `lastRoundupAt` is what `rl inbox` checks before a roundup |
+| `lastScan` / `lastRoundupAt` | staleness signals: `lastScan` feeds the session overview's staleness banner, `lastRoundupAt` is what `rl inbox` checks before a roundup |
 | `sourcesScannedAt` | per source, when a scan last discovered it in full; each source's baseline for a scoped scan (`rl resume --last`) |
 
 `archived` and `deleted` are deliberately separate lists: an archived transcript still exists
 and is restorable, a deleted one does not. Collapsing them would make `unarchive` unable to
 tell what it may bring back.
+
+The memory merge normalizes legacy path-only Claude rows in baseline, current and
+proposed state. Active rows retain both the native and review-cycle incarnations.
+Scan times merge per store outside generic field merges and never advance session
+`lastScan`. Decisions merge per operation and field, with monotonic lifecycle revisions.
+Conflicts resolve through the field's authority or refuse. The registry holds no
+native bodies or operation snapshots. See [native memory](memory.md).
 
 ### Thread fields
 
@@ -180,7 +191,7 @@ mid-scan with an earlier mtime would otherwise be skipped by every later scoped 
 
 ## Key entry points
 
-- `reconcile()` / `reconcile_memory()` — merge a scan.
+- `reconcile()` / `reconcile_native_memory()` — merge a scan.
 - `cached_session()` — the parse-skip decision.
 - `apply_classification()` / `apply_name()` — write judgment fields.
 - `archive_session()` / `restore_session()` / `purge_archived_session()` — the archive lifecycle.

@@ -6,7 +6,8 @@ from typing import Any
 
 from textual.message import Message
 
-from .. import decisions, revalidate
+from .. import decisions, harvesting, revalidate
+from ..memory_types import MemoryRecord
 from ..models import Model, with_cancel
 from ..revalidate import PresenceProbe, Seen
 from ..tui.background import CancelToken, Done, Failed, Job, start_daemon
@@ -55,6 +56,20 @@ def harvest_job(
             return HarvestReady(None)
         markdown = decisions.harvest_markdown(thread, with_cancel(model, token.is_cancelled))
         return HarvestEmpty() if markdown is None else HarvestReady(markdown)
+
+    return job
+
+
+def memory_harvest_job(record: MemoryRecord, model: Model) -> Job[HarvestResult, None]:
+    def job(token: CancelToken, _progress: Callable[[None], None]) -> HarvestResult:
+        if token.is_cancelled():
+            return HarvestEmpty()
+        draft = harvesting.memory_harvest_markdown(record, with_cancel(model, token.is_cancelled))
+        return (
+            HarvestReady(draft)
+            if draft is not None and not token.is_cancelled()
+            else HarvestEmpty()
+        )
 
     return job
 

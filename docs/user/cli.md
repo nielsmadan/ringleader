@@ -11,7 +11,7 @@ agent session it prints usage.
 rl
 ├── start <agent>               fresh conversation here, optionally in a worktree
 ├── resume [<query>]            find and continue a session in its agent or another
-├── inbox                       TUI home: triage, resume, roundup, prune, harvests, usage
+├── inbox                       TUI home: triage, resume, roundup, prune, harvests, usage, memories
 ├── roundup                     refresh + sweep + prune + enrich, plan first
 ├── overview [<selector>]       the view: project rollup, or a deep-dive
 ├── triage                      sessions awaiting a decision
@@ -29,7 +29,7 @@ rl
 ├── install | update | uninstall  <skills|statusline|hooks|all>
 ├── config                      show | set <key> <value>
 ├── session <sub>               session plumbing (see below)
-├── mem <sub>                   memory plumbing (see below)
+├── mem <sub>                   native memory review and recovery (see below)
 ├── data <sub>                  export | tokens | migrate | presence
 └── workspace <sub>             move | retarget
 ```
@@ -42,7 +42,7 @@ rl
 |---|---|---|
 | `rl start <agent>` | Start a fresh conversation in the current directory. Choose `claude` (or `claude-code`), `codex`, `cursor`, `droid`, `opencode`, or `pi`. Bare `rl start` prints help. See [Starting a fresh session](#starting-a-fresh-session) for worktree behavior. | `--worktree`, `--dry-run` |
 | `rl resume [<query>]` | Textual picker over every agent's sessions, most recent first, filtered as you type: an exact name first, then a name prefix, a name substring, a fuzzy name/project-label/session-id-prefix match, and last a session whose summary or prompt contains every typed word. `ctrl+j`/`ctrl+k` move, `ctrl+t` widens to this tree, `ctrl+r`/`F5` refresh, `ctrl+a` to everywhere, `enter` picks, `escape` or `ctrl+c` quits. A `<query>` that is an unambiguous session-id prefix, or a qualified `<source>:<sessionId>`, skips the picker; any other text pre-fills the filter. Then resume the existing session (default), fork a new session in its own agent (`--fork` picks that without asking; `--worktree` forks into a worktree; Claude Code and Pi forks are named `<name>-fork-N`, which the picker lets you edit), or hand it to another — `--to` tries a native conversion first and asks before falling back to a Markdown handoff; `--markdown` skips straight to the handoff. | `--last`, `--fork`, `--worktree`, `--to claude\|codex\|cursor\|droid\|opencode\|pi`, `--markdown`, `--strict`, `--dry-run`, `--all`, `--recursive`, `--registry`, `--operations`, `--verified` |
-| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. These are the default `vim` keys; `rl config set inbox.keys circus` switches to the circus app's (see [the triage workflow](triage-workflow.md#triage-in-the-inbox)). | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
+| `rl inbox` | The daily home TUI; bare `rl` in a terminal opens it. Home shows what's waiting and the next step. `1`-`8` jump to Home, Projects, Resume, Roundup, Prune, Harvests, Usage, Memories; `escape`/`ctrl+c` back, `q` quit (also `ctrl+c` on Home), `u` undo, `ctrl+r` rescan, `ctrl+p` palette. In triage: `a` archive, `h` harvest, `g` keep going, `s` snooze, `K` keep, `d` delete (undo within 10 s), `space`/`*` mark, `enter` detail, `r` resume, `t` triage with an agent. These are the default `vim` keys; `rl config set inbox.keys circus` switches to the circus app's (see [the triage workflow](triage-workflow.md#triage-in-the-inbox)). | `--read-only`, `--registry`, `--json` (print the inbox as one JSON document and exit), `--scan` (with `--json`, rescan first) |
 | `rl roundup` | Scan, print the plan, then archive finished sessions, prune (**deletes**), purge expired archives and enrich. Each session is rechecked before it is touched; Ctrl-C stops at the next boundary and exits 130. Over 25 pending sessions it asks which to enrich on a terminal, else enriches the last 7 days'. | `--enrich all\|recent\|none`, `--preview`, `--yes`, `--registry` |
 | `rl overview [<selector>]` | Project rollup by default; `<selector>` deep-dives one repo. | `-s/--sessions`, `--status`, `--archived`, `--snoozed`, `--kept`, `--checkouts`, `--cwd`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
@@ -200,16 +200,139 @@ failure prints `rl-<verb>: <message>` to stderr and exits 1. See
 
 ## `rl mem`
 
-Backs the `memory-triage` skill.
+Review Claude Code and Codex native auto-memory. Each entry is a complete Claude
+topic or Codex stage-1 record. The catalog distinguishes a complete empty store
+from an absent or partially read store. It also reports why the other CLI harnesses
+have no supported native entries. Incomplete scans can retain previously seen rows.
 
 | Command | Does |
 |---|---|
-| `rl mem refresh` | Reconcile + emit memory entries to review. `--project` |
-| `rl mem prune` | Delete obsolete-candidate entries. **Previews unless `--delete`.** `--project` |
-| `rl mem triage` | The memory-review inbox. `--project`, `--no-scan` |
-| `rl mem overview [<selector>]` | Memory rollup, or a `<selector>` deep-dive. `--project`, `--no-scan` |
-| `rl mem mark cleaned <selector>` | Record a project's memory as just-triaged. |
-| `rl mem mark reviewed <path>` | Mark one entry reviewed. |
+| `rl mem refresh` | Scan native stores and refresh the catalog. |
+| `rl mem overview [SELECTOR]` | Show source availability and active entries, including saved decisions. |
+| `rl mem triage` | List entries waiting for an explicit harvest or discard decision. |
+| `rl mem detail ID` | Read the current entry and its review fingerprint and incarnation. `--no-scan` reads metadata only. |
+| `rl mem search QUERY` | Search cached IDs, names, descriptions and paths. |
+| `rl mem harvest ID` | Save a harvest to the shared queue. `--from-file PATH` supplies exact approved Markdown. `--dry-run` prints a draft. |
+| `rl mem complete ID` | Remove the source after checking its saved harvest, publication or recorded direct integration. `--from-file PATH` saves approved Markdown and requests removal together. |
+| `rl mem mark harvested ID --from-file PATH --paths DEST ...` | Record the user's direct integration and its existing destination files. |
+| `rl mem delete ID` | Discard one reviewed entry with configurable recovery. |
+| `rl mem recovery` | List interrupted saves, native removals, recovery deadlines and consolidation status. |
+| `rl mem restore OP_ID` | Restore the selected native entry while its backup is available. |
+| `rl mem recover [OP_ID]` | Retry recorded operations and check pending native consolidation. |
+| `rl mem recovery prune [--delete]` | Preview or purge expired recovery payloads. |
+| `rl mem mark reviewed PATH` | Record a legacy acknowledgement for a Claude memory file. |
+| `rl mem mark cleaned SELECTOR` | Record a legacy project acknowledgement. |
+
+Use `--project` and `--source` to filter the catalog. `--no-scan` reads cached metadata
+without accessing native settings or stores. `--dry-run` on refresh, overview and triage
+projects a scan in memory. `--json` emits one versioned document. Memory selectors accept a
+unique ID prefix or the original Claude file path.
+
+In a terminal, confirm the displayed source revision before removal or recording direct
+integration. Scripted and JSON `complete`, `delete` and `mark harvested` require both
+`--if-fingerprint DIGEST` and `--if-incarnation CYCLE` from `mem detail`. Pass
+`--if-harvest-token TOKEN` from the reviewed queue item for separate queued removal or
+replacement. Use a literal `-` for approved Markdown on stdin. After a restore, refresh
+the catalog to obtain the new review incarnation.
+
+Decision previews show the proposed disposition and any direct-integration destinations.
+A completion preview without a new draft checks the saved knowledge, and a direct-integration
+preview checks the destination files. Interactive completion binds the specific saved
+draft, direct integration or publication it displays, together with the recovery policy.
+If the approval changes before confirmation, review it again.
+When a newer decision supersedes an older one, recovery lists the older operation as history.
+
+The legacy `rl mem prune` command exits with migration guidance. Review live entries with
+`rl mem triage` and discard individual entries with `rl mem delete`. Preview expired recovery
+payloads with `rl mem recovery prune`. The reviewed and cleaned acknowledgements remain
+available alongside per-entry decisions.
+
+
+### Review, save and remove one entry
+
+In `rl inbox`, press **8**, select an entry and press **Enter** to read it in full.
+Use **e** to start from its native text, **h** to draft or reopen a saved harvest,
+or **d** to confirm discard. **Ctrl+S** in the draft editor opens the removal
+confirmation. If **h** offers an agent handoff, first make
+[`ringleader-memory-triage`](agent-setup.md#skills) available in that agent.
+Use **s** in Memories for the source diagnostics and **r** for recovery. The
+read-only inbox can refresh and read full entries without persisting the catalog.
+
+For review with CLI tools, keep the ID, fingerprint and incarnation from the same
+detail response. Substitute those values for the shell variables below. Read the
+whole entry, then choose harvest, discard, or defer. A deferred entry stays in triage.
+
+```sh
+rl mem triage --json
+rl mem detail "$memory_id" --json
+rl mem harvest "$memory_id" --from-file "$approved_markdown" \
+  --if-fingerprint "$fingerprint" --if-incarnation "$incarnation" --json
+rl harvests snapshot --json
+```
+
+Saving puts the exact edited Markdown in the shared Harvests queue. In the snapshot,
+find the memory row with the matching ID, source, fingerprint, incarnation and source
+scope/project. Check that `approvedBodyDigest` matches the SHA-256 of the approved file's
+exact bytes. Set `queue_token` to the token from that row. Use the same registry for the
+snapshot and memory commands. Run the guarded command after approving removal with that
+exact draft saved.
+
+```sh
+rl mem complete "$memory_id" \
+  --if-fingerprint "$fingerprint" --if-incarnation "$incarnation" \
+  --if-harvest-token "$queue_token" --json
+```
+
+If the token changes, check the new row against the original approval before using its
+token. A different draft needs fresh approval. For replacement, use the token paired
+with the saved draft you reviewed before editing. If a save was interrupted, recover
+its operation before reviewing the current draft. If you choose discard, use
+`rl mem delete` with the same ID and review guards. `rl mem harvest ID --dry-run`
+drafts with a tool-free harvest model. With Codex CLI, an unavailable model or an
+adapter without verified tool-free completion, use `--from-file` or open Memories
+to edit the native text or choose the exact-entry handoff.
+
+The queue accepts up to 128 KiB per memory draft and can hold it without a
+publishing destination. Use the same registry throughout review and publishing.
+`rl harvests --registry PATH --json` reads its full queued Markdown. Choose an
+existing checkout and assign its current token with
+`rl harvests assign TOKEN --project /absolute/checkout`, or assign it in Harvests
+with **a**. The chosen checkout is separate from the memory's original scope and
+project. Publish via `ringleader-publish` when ready. After publication, complete with the
+same review guards and no queue token only after checking the same registry's durable
+`memoryPublications[harvestId]` record against the approved draft's saved harvest ID, full
+memory origin and `approvedBodyDigest`. Pause if the evidence is missing or differs.
+
+For direct integration into living documentation, leave the edits uncommitted and
+run `rl mem mark harvested` with the exact approved text, the existing destination
+files and both review guards. Then run `rl mem complete`. Completion rechecks the
+destination evidence before removal.
+
+### Pending operations and recovery
+
+If an agent is still using the store, or quietness cannot be verified, a durable
+approval can return `removal-pending`. For hook coverage problems, compare the expected
+and reported paths in the outcome message. `rl data presence status` reports general
+hook installation. The current triaging agent can keep its own store busy. When quiet,
+retry the removal with `rl mem recover OP_ID`.
+If a restore reports busy, retry that action with `rl mem restore OP_ID`. The recovery
+listing and deferred restore message print a runnable command with the operation ID and
+the selected `--registry` path.
+
+Codex can finish deleting the selected row and its input artifacts while waiting
+for Codex itself to consolidate mixed summaries. Recovery shows that cleanup as
+pending, completed, failed or unknown. No new agent run is started for cleanup.
+Later native activity can generate new memory.
+
+Recovery payloads expire 30 days after source removal by default. Set
+`memory.recovery_retention_days` to `0` for immediate expiry on completion.
+For session archives, `archive.retention_days=0` disables expiry instead.
+An already approved removal keeps its journaled policy on retry, even if the
+setting changed. It also keeps the approved Markdown. The inbox and interactive
+CLI display the effective policy before removal. For a saved queue entry, interactive
+completion binds the approval to the exact Markdown and token shown. Preview expired payloads with
+`rl mem recovery prune` and apply with `--delete`. Queue and publication evidence
+survive recovery expiry. A successful restore does not change published docs.
 
 ## `rl data`
 
@@ -254,6 +377,9 @@ to the explicit presence command or onboarding skill.
 | `analyze.model` | model for `rl analyze` labels; `default` clears it (claude engine then uses `haiku`) |
 | `llm.provider` | provider for the `llm` engine |
 | `archive.retention_days` | non-negative int; `0` = keep archives and handoff exports forever. Above `0`, `prune --delete` and `roundup` also remove `handoffs/*.md` exports older than this many days (an unscoped `prune` only) |
+| `memory.recovery_retention_days` | nonnegative integer, default `30`. `0` expires the payload immediately after completed removal. |
+| `memory.codex_sqlite_home` | absolute path to the effective Codex SQLite home. `default` uses native configuration. |
+| `memory.claude_trust_file` | absolute path to the native trust document for a custom Claude configuration. `default` uses the native default when applicable. |
 | `inbox.keys` | `vim` (default) \| `circus` — the `rl inbox` triage keys; `circus` matches the circus app's Inbox |
 
 `roundup_stale_hours` (default 8) is read from the same file but **cannot be set with
@@ -285,7 +411,7 @@ it alone.
 - **`overview` and `triage` scan the disk first** unless you pass `--no-scan`.
 - **`session search` never scans.** It reads the registry as it stands, so run
   `rl session refresh` first if a session created minutes ago is missing.
-- **`prune` and `mem prune` preview by default**; only `--delete` removes anything. `rl roundup`
+- **`prune` and `mem recovery prune` preview by default.** Use `--delete` to apply. `rl roundup`
   runs prune *with* deletion.
 - State lives in `~/.local/share/ringleader/` (`$XDG_DATA_HOME/ringleader` if set), not the repo.
 

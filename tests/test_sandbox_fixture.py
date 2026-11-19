@@ -91,10 +91,10 @@ def test_build_restores_exact_fixture_state(tmp_path, capsys):
     assert (target / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl").read_bytes() == (
         fixture / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
     ).read_bytes()
-    assert (target / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl").read_bytes() == (
-        fixture / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl"
-    ).read_bytes()
-    assert (target / "session_index.jsonl").read_bytes() == (
+    assert (
+        target / "codex" / "sessions" / "2026" / "01" / "01" / "rollout-two.jsonl"
+    ).read_bytes() == (fixture / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl").read_bytes()
+    assert (target / "codex" / "session_index.jsonl").read_bytes() == (
         fixture / "session_index.jsonl"
     ).read_bytes()
     assert json.loads((target / "claude-settings.json").read_text()) == {"cleanupPeriodDays": 7}
@@ -105,7 +105,7 @@ def test_build_restores_exact_fixture_state(tmp_path, capsys):
         target / "claude" / "-Users-dev-wrksp-oss-project" / "one.jsonl"
     ).stat().st_mtime == pytest.approx(2_000_000_000 - 2 * sandbox.DAY)
     assert (
-        target / "codex" / "2026" / "01" / "01" / "rollout-two.jsonl"
+        target / "codex" / "sessions" / "2026" / "01" / "01" / "rollout-two.jsonl"
     ).stat().st_mtime == pytest.approx(2_000_000_000 - 14 * sandbox.DAY)
     assert fingerprint in capsys.readouterr().out
 
@@ -160,7 +160,11 @@ def test_shell_environment_isolates_every_ringleader_input(tmp_path):
         "SHELL": "/bin/zsh",
         "XDG_DATA_HOME": str(target / "data"),
         "SESSION_TRACKER_PROJECTS_DIR": str(target / "claude"),
-        "CODEX_SESSIONS_DIR": str(target / "codex"),
+        "CODEX_HOME": str(target / "codex"),
+        "CODEX_SQLITE_HOME": str(target / "codex/sqlite"),
+        "CLAUDE_CONFIG_DIR": str(target / "claude-config"),
+        "RINGLEADER_MEMORY_FIXTURE_ROOT": str(target.resolve()),
+        "CODEX_SESSIONS_DIR": str(target / "codex/sessions"),
         "PI_SESSIONS_DIR": str(target / "pi"),
         "FACTORY_HOME_OVERRIDE": str(target / "droid"),
         "CURSOR_CONFIG_DIR": str(target / "cursor"),
@@ -191,7 +195,7 @@ def test_enter_shell_starts_the_user_shell_with_sandbox_environment(tmp_path):
     assert invocation["environment"]["PATH"] == f"{REPO / '.venv' / 'bin'}:/usr/bin"
     assert invocation["environment"]["XDG_DATA_HOME"] == str(target / "data")
     assert invocation["environment"]["SESSION_TRACKER_PROJECTS_DIR"] == str(target / "claude")
-    assert invocation["environment"]["CODEX_SESSIONS_DIR"] == str(target / "codex")
+    assert invocation["environment"]["CODEX_SESSIONS_DIR"] == str(target / "codex/sessions")
     assert invocation["environment"]["FACTORY_HOME_OVERRIDE"] == str(target / "droid")
     assert invocation["environment"]["RINGLEADER_CLAUDE_SETTINGS"] == str(
         target / "claude-settings.json"
@@ -326,3 +330,35 @@ def test_sandbox_reset_recipe_rebuilds_without_entering_shell():
 
     assert result.returncode == 0
     assert result.stderr.strip() == "uv run python scripts/sandbox.py"
+
+
+def test_ensure_migrates_old_codex_layout_with_registry_progress(tmp_path):
+    fixture, descriptor = _fixture(tmp_path)
+    target = tmp_path / ".sandbox"
+    sandbox.build(fixture, target, descriptor)
+    home = target / "codex"
+    (home / "sessions/2026").rename(home / "2026")
+    (home / "sessions").rmdir()
+    (home / "session_index.jsonl").rename(target / "session_index.jsonl")
+    registry_file = target / "data/ringleader/registry.json"
+    registry_file.parent.mkdir(exist_ok=True)
+    registry_file.write_text('{"progress":1}')
+    sandbox.ensure_sandbox(fixture, target, descriptor)
+    assert (home / "sessions/2026/01/01/rollout-two.jsonl").read_bytes() == (
+        fixture / "codex/2026/01/01/rollout-two.jsonl"
+    ).read_bytes()
+    assert (home / "session_index.jsonl").read_bytes() == (
+        fixture / "session_index.jsonl"
+    ).read_bytes()
+    assert json.loads(registry_file.read_text()) == {"progress": 1}
+
+
+def test_old_layout_upgrade_refuses_a_link_to_an_external_store(tmp_path):
+    target = tmp_path / ".sandbox"
+    target.mkdir()
+    elsewhere = tmp_path / "external"
+    (elsewhere / "2026").mkdir(parents=True)
+    (target / "codex").symlink_to(elsewhere, target_is_directory=True)
+    with pytest.raises(sandbox.FixtureError, match="symlink"):
+        sandbox._upgrade_codex_layout(target)
+    assert list(elsewhere.iterdir()) == [elsewhere / "2026"]

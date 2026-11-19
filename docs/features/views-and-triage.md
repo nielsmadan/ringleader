@@ -58,7 +58,8 @@ run the roundup when stale, review snoozed sessions that woke, triage undecided 
 last 7 days, publish pending harvests, triage the oldest project with a backlog, else resume the
 most recent in-flight session. `enter` runs the highlighted step.
 
-`1`-`7` jump to Home, Projects, Resume, Roundup, Prune, Harvests and Usage; `escape` goes back,
+From Home, `1`–`8` open Home, Projects, Resume, Roundup, Prune, Harvests, Usage and Memories.
+`escape` goes back,
 `q` leaves, `ctrl+r` rescans, `ctrl+p` opens a palette of screens, next steps and a few read-only
 `rl` verbs (usage, harvests, doctor, `config show`, ...) whose output shows in a scrollable screen.
 

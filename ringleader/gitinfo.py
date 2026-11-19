@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from collections.abc import Callable, Iterable
 from concurrent.futures import ThreadPoolExecutor
@@ -8,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 
 @dataclass
@@ -35,23 +37,59 @@ class GitLookupFailedError(Exception):
     for a reason other than the directory not being a repository."""
 
 
+_URI = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*://")
+_REMOTE_HELPER = re.compile(r"^[A-Za-z][A-Za-z0-9+.\-]*::")
+_SCP = re.compile(r"(?:(?P<login>[^/:@]+)@)?(?P<host>\[[^]]+\]|[^/:@]+):(?P<path>.+)", re.DOTALL)
+
+
+def public_remote(url: str | None) -> str | None:
+    if not url:
+        return None
+    candidate = url.lstrip()
+    if _REMOTE_HELPER.match(candidate):
+        return None
+    if not _URI.match(candidate):
+        return url
+    try:
+        parts = urlsplit(candidate)
+        if parts.scheme not in {"https", "http", "ssh", "git", "file"}:
+            return None
+        host = parts.hostname or ""
+        if not host and parts.scheme != "file":
+            return None
+        if ":" in host:
+            host = f"[{host}]"
+        if parts.port is not None:
+            host = f"{host}:{parts.port}"
+        if parts.scheme == "ssh" and parts.username:
+            host = f"{parts.username}@{host}"
+        return urlunsplit((parts.scheme, host, parts.path, "", ""))
+    except ValueError:
+        return None
+
+
 def normalize_remote(url: str) -> str:
-    u = url.strip()
-    u = u.removesuffix(".git")
-    if u.startswith("git@"):  # git@host:org/repo
-        u = u[4:].replace(":", "/", 1)
+    value = (public_remote(url) or "").removesuffix(".git")
+    if _URI.match(value):
+        parts = urlsplit(value)
+        if parts.scheme == "file":
+            return value
+        login = parts.username if parts.scheme == "ssh" else None
+        host = parts.hostname or ""
+        path = parts.path.lstrip("/")
+    elif match := _SCP.fullmatch(value):
+        host, login, path = match.group("host", "login", "path")
     else:
-        for pre in ("https://", "http://", "ssh://", "git://"):
-            if u.startswith(pre):
-                u = u[len(pre) :]
-                break
-        head, _, tail = u.partition("/")  # strip user@host
-        if "@" in head:
-            head = head.split("@", 1)[1]
-        if ":" in head:  # strip :port from host
-            head = head.rsplit(":", 1)[0]
-        u = head + ("/" + tail if tail else "")
-    return u
+        return value
+    authority = f"{login}@{host}" if login and login != "git" else host
+    return f"{authority}/{path}" if path else authority
+
+
+def public_routing(key: str | None, locator: str | None) -> tuple[str | None, str | None]:
+    public = public_remote(locator)
+    if locator and (_URI.match(locator.lstrip()) or _REMOTE_HELPER.match(locator.lstrip())):
+        return normalize_remote(public) if key and public else None, public
+    return public_remote(key), public
 
 
 def _default_runner(cmd: list[str]) -> GitRun:
@@ -91,7 +129,7 @@ def lookup_git_project(cwd: str, runner: GitRunner = _default_runner) -> GitProj
     origin = runner(["git", "-C", cwd, "config", "--get", "remote.origin.url"])
     if origin.returncode not in (0, _CONFIG_KEY_MISSING):
         raise GitLookupFailedError(f"{cwd}: git config failed ({origin.returncode})")
-    remote_raw = origin.stdout.strip() if origin.returncode == 0 else ""
+    remote_raw = public_remote(origin.stdout.removesuffix("\n")) if origin.returncode == 0 else None
     remote = normalize_remote(remote_raw) if remote_raw else None
     if remote:
         return GitProject(

@@ -19,6 +19,7 @@ from ringleader.home.screens.home import HomeScreen
 from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.roundup import RoundupScreen
 from ringleader.home.writer import Snapshot
+from ringleader.memory_types import SessionOrigin
 from ringleader.picker.app import Choice, PickerScreen
 from ringleader.resume import launchable_agents
 from ringleader.tui.modals import ConfirmModal, SnoozeModal
@@ -152,11 +153,15 @@ async def test_a_landed_scan_updates_the_counts(tmp_path):
     }
     gate = Gate(result=scanned)
     app = _app(path, refresher=gate)
+
+    def scan_drawn() -> bool:
+        text = screen_text(app)
+        return "triage 3" in text and "scanned just now" in text
+
     async with app.run_test(size=(100, 30)) as pilot:
         await until(pilot, lambda: "triage 1" in screen_text(app))
         gate.release.set()
-        await until(pilot, lambda: "triage 3" in screen_text(app))
-        assert "scanned just now" in screen_text(app)
+        await until(pilot, scan_drawn)
 
 
 async def test_a_scan_older_than_the_adopted_snapshot_is_dropped_for_a_reload(tmp_path):
@@ -492,7 +497,7 @@ def _harvest(sid, folder):
         path=Path(f"/h/{sid}.md"),
         harvest_id=sid,
         digest="d",
-        session_id=sid,
+        origin=SessionOrigin(sid),
         name=sid,
         folder_path=folder,
         repo_url=None,

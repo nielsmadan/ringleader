@@ -549,7 +549,7 @@ def test_the_usage_command_flushes_the_start_cache_it_filled(tmp_path):
 
 
 def test_the_default_usage_run_flushes_the_start_cache_it_filled(tmp_path):
-    _forked_rollout(tmp_path / "_codex")
+    _forked_rollout(tmp_path / "_codex" / "sessions")
 
     assert usage_cmd.cmd_usage(["--json"]) == 0
     assert paths.codex_starts_path().is_file()

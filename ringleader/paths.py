@@ -4,6 +4,26 @@ import os
 import sys
 from pathlib import Path
 
+AGENT_INSTRUCTION_BASENAMES = frozenset(
+    {"agents.md", "agents.override.md", "claude.md", "claude.local.md", "gemini.md", "skill.md"}
+)
+AGENT_INSTRUCTION_DIRS = frozenset({"rules", "skills", "agents", "commands"})
+AGENT_CONFIG_DIRS = frozenset({".claude", ".agents", ".codex"})
+
+
+def claude_config_dir(home: Path | None = None) -> Path:
+    return Path(os.environ.get("CLAUDE_CONFIG_DIR") or (home or Path.home()) / ".claude")
+
+
+def managed_claude_root(boundary: Path | None) -> Path | None:
+    if boundary is not None:
+        return boundary / "managed-claude"
+    if sys.platform == "darwin":
+        return Path("/Library/Application Support/ClaudeCode")
+    if sys.platform.startswith("linux"):
+        return Path("/etc/claude-code")
+    return None
+
 
 def exists_or_report(p: Path) -> bool:
     """Whether `p` exists, reporting a stat failure instead of raising or hiding it.

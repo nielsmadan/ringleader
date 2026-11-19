@@ -1,0 +1,18 @@
+ ⭘                       rl inbox — scanned just now
+ Memories · 2 to review · 2 entries · read-only
+ Enter reads the selected entry · 1 source or store notice · s for details
+Unresolved project · claude-code · 2 to review
+  note · markdown
+  other · markdown
+
+
+
+
+
+
+
+
+
+
+
+ esc back  s sources  r recovery  ^r refresh  q quit  u undo        ▏^p palette

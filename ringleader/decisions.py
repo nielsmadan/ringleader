@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from datetime import datetime
 from functools import partial
+from pathlib import Path
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from . import (
@@ -18,10 +20,14 @@ from . import (
 )
 from .batch import Txn, run_batch
 from .codes import OutcomeCode
+from .config import load_config
 from .enrichment import Classified
+from .memory_lifecycle import MemoryLifecycle, MemoryOutcome, RemovalReview, prune_memory_recovery
+from .memory_types import MemoryRef
 from .models.base import Model, ModelError
 from .presence import PresenceUnavailable
 from .progress import CancelCheck
+from .publish_state import assign_memory_harvest
 from .revalidate import Identity, PresenceProbe, Refusal, Seen, UnknownPresence
 from .roundup import PhasesResult, RoundupPlan, RoundupProgress
 
@@ -85,9 +91,45 @@ class ReloadOp:
     pass
 
 
+@dataclass(frozen=True)
+class MemoryScanOp:
+    projected: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class MemoryDecisionOp:
+    ref: MemoryRef
+    decision: Literal["harvest", "discard"]
+    markdown: str | None
+    expected_token: str | None
+    retention_days: int
+    review: RemovalReview | None = None
+
+
+@dataclass(frozen=True)
+class MemoryRecoveryOp:
+    operation_id: str
+    restore: bool
+
+
+@dataclass(frozen=True)
+class MemoryPruneOp:
+    pass
+
+
+@dataclass(frozen=True)
+class MemoryAssignOp:
+    token: str
+    project: Path
+
+
+_MEMORY_OPS = (MemoryScanOp, MemoryDecisionOp, MemoryRecoveryOp, MemoryPruneOp, MemoryAssignOp)
+type MemoryOp = MemoryScanOp | MemoryDecisionOp | MemoryRecoveryOp | MemoryPruneOp | MemoryAssignOp
+
+
 type MarkOp = KeepGoingOp | SnoozeOp | KeepOp
 type SingleOp = ArchiveOp | DeleteOp | MarkOp | HarvestSaveOp
-type Op = SingleOp | PruneOp | RoundupPhasesOp | ClassifyOp | StampRoundupOp | ReloadOp
+type Op = SingleOp | PruneOp | RoundupPhasesOp | ClassifyOp | StampRoundupOp | ReloadOp | MemoryOp
 
 
 @dataclass(frozen=True)
@@ -100,6 +142,7 @@ class OpContext:
     unknown: UnknownPresence
     cancelled: CancelCheck
     progress: Callable[[RoundupProgress], None]
+    memory: MemoryLifecycle = field(default_factory=MemoryLifecycle)
 
 
 @dataclass(frozen=True)
@@ -137,12 +180,14 @@ def identities(op: Op) -> tuple[Identity, ...]:
             return tuple(item.identity for item in op.items)
         case RoundupPhasesOp():
             return tuple(item.identity for item in (*op.plan.sweep_items, *op.plan.prune_items))
-        case ClassifyOp() | StampRoundupOp() | ReloadOp():
+        case _:
             return ()
 
 
 def is_delete(op: Op) -> bool:
-    return isinstance(op, DeleteOp)
+    return isinstance(op, (DeleteOp, MemoryDecisionOp, MemoryPruneOp)) or (
+        isinstance(op, MemoryRecoveryOp) and not op.restore
+    )
 
 
 def lifecycle_reason(thread: dict[str, Any], decision: Decision) -> str | None:
@@ -416,18 +461,88 @@ def _label(op: Op) -> str:
     match op:
         case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp() | HarvestSaveOp():
             return op.seen.label
-        case PruneOp():
-            return "prune"
-        case RoundupPhasesOp() | StampRoundupOp():
-            return "roundup"
-        case ClassifyOp():
-            return "classify"
-        case ReloadOp():
-            return "reload"
+        case MemoryDecisionOp():
+            return f"{op.decision} memory"
+        case MemoryRecoveryOp():
+            return "restore memory" if op.restore else "recover memory"
+        case _:
+            return {
+                PruneOp: "prune",
+                RoundupPhasesOp: "roundup",
+                StampRoundupOp: "roundup",
+                ClassifyOp: "classify",
+                ReloadOp: "reload",
+                MemoryScanOp: "scan memories",
+                MemoryPruneOp: "prune expired recovery",
+                MemoryAssignOp: "assign memory harvest",
+            }[type(op)]
+
+
+def _memory_result(out: MemoryOutcome) -> Outcome:
+    state = "restore deferred" if out.pending_action == "restore" else out.state
+    message = f"{state}: {out.message}"
+    if out.operation_id:
+        message += f" · {out.operation_id}"
+    if out.pending_action == "restore":
+        message += " · retry restore when the store is quiet"
+    return Outcome(out.state not in {"refused", "failed"}, message, bool(out.operation_id))
+
+
+def _memory_write(op: MemoryOp, ctx: OpContext) -> Outcome:
+    path = Path(ctx.registry_path)
+    now = datetime.fromisoformat(ctx.now_iso())
+    if ctx.cancelled():
+        return Outcome(False, "Memory action cancelled", False)
+    match op:
+        case MemoryScanOp():
+            registry.commit_registry(path, op.projected)
+            return Outcome(True, "", True)
+        case MemoryDecisionOp():
+            return _memory_result(
+                ctx.memory.decide(
+                    op.ref,
+                    decision=op.decision,
+                    markdown=op.markdown,
+                    expected_harvest_token=op.expected_token,
+                    registry_path=path,
+                    now=now,
+                    retention_days=load_config().memory_recovery_retention_days
+                    if op.review
+                    else op.retention_days,
+                    remove=True,
+                    require_retention_match=op.review is None,
+                    review=op.review,
+                )
+            )
+        case MemoryRecoveryOp():
+            return _memory_result(
+                ctx.memory.recover(
+                    op.operation_id,
+                    registry_path=path,
+                    now=now,
+                    restore=op.restore,
+                ),
+            )
+        case MemoryPruneOp():
+            removed = prune_memory_recovery(registry_path=path, now=now, delete=True)
+            return Outcome(True, f"Purged {len(removed)} expired recovery copies", bool(removed))
+        case MemoryAssignOp():
+            item = assign_memory_harvest(op.token, project=op.project, registry_path=path)
+            return Outcome(
+                True, f"Assigned harvest to {item.folder_path}", True, path=item.folder_path
+            )
 
 
 def _dispatch(op: Op, ctx: OpContext) -> Outcome:
     match op:
+        case (
+            MemoryScanOp()
+            | MemoryDecisionOp()
+            | MemoryRecoveryOp()
+            | MemoryPruneOp()
+            | MemoryAssignOp()
+        ):
+            return _memory_write(op, ctx)
         case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp():
             return _one(op, ctx)
         case HarvestSaveOp():
@@ -448,7 +563,7 @@ def execute(op: Op, ctx: OpContext) -> Outcome:
     try:
         return _dispatch(op, ctx)
     except KeyError:
-        if isinstance(op, _BULK_OPS):
+        if isinstance(op, (*_BULK_OPS, *_MEMORY_OPS)):
             raise
         return _gone(op)
     except (NotImplementedError, RecursionError):

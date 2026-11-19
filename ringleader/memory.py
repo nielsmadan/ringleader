@@ -1,23 +1,8 @@
 from __future__ import annotations
 
 import re
-import sys
-from collections.abc import Iterable, Iterator
-from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-
-from .gitinfo import GitResolver, git_identities, lookup_git_project
-
-# Claude Code only: per-project memory/*.md files have no Codex equivalent (Codex's
-# memories_1.sqlite is out of scope).
-from .sources.base import iso_mtime
-from .sources.claude_code import default_projects_dir
-from .transcript import first_cwd
-
-# Explicit re-export: callers use memory.projects_dir().
-projects_dir = default_projects_dir
 
 INDEX_NAME = "MEMORY.md"
 _NONTRIVIAL_LINE_LEN = 25
@@ -26,26 +11,6 @@ _FIXED_RE = re.compile(r"\b(FIXED|DONE)\b")
 _STATUS_RE = re.compile(
     r"(?i)status \(as of|\bsteps?\s+\d+[-–]?\d*\s+(complete|done)|\b\d+\s+tests?\s+passing"  # noqa: RUF001 -- the char class intentionally matches both hyphen and en dash variants of a numeric range
 )
-_LINK_RE = re.compile(r"\]\(([^)]+\.md)\)")
-
-
-@dataclass
-class MemoryEntry:
-    path: str
-    encoded_dir: str
-    project: str | None
-    mtime: str
-    name: str | None
-    description: str | None
-    mem_type: str | None
-    body: str
-    is_inline: bool = False
-    git_project_key: str | None = None
-    git_project_label: str | None = None
-    git_root: str | None = None
-    git_remote: str | None = None
-    repo_gone: bool = False
-    obsolete_signals: list[str] = field(default_factory=list)
 
 
 def parse_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -106,102 +71,3 @@ def detect_obsolete(body: str, *, repo_gone: bool, repo_doc_text: str | None) ->
         if lines and all(_normalize(ln) in doc for ln in lines):
             signals.append("already-in-doc")
     return signals
-
-
-def parse_index_links(text: str) -> list[str]:
-    return [m for m in _LINK_RE.findall(text) if Path(m).name != INDEX_NAME]
-
-
-def rewrite_index_without(text: str, targets: set[str]) -> str:
-    keep = []
-    for line in text.splitlines():
-        links = _LINK_RE.findall(line)
-        if links and any(link in targets for link in links):
-            continue
-        keep.append(line)
-    return "\n".join(keep).rstrip() + "\n"
-
-
-def iter_memory_dirs(root: str | Path) -> Iterator[Path]:
-    root = Path(root)
-    if not root.exists():
-        return
-    for d in sorted(root.glob("*/memory")):
-        if d.is_dir():
-            yield d
-
-
-def _resolve_cwd(project_dir: Path) -> str | None:
-    for tp in sorted(project_dir.glob("*.jsonl")):
-        try:
-            cwd = first_cwd(tp)
-        except OSError:
-            continue
-        if cwd:
-            return cwd
-    return None
-
-
-def scan_memory(
-    root: str | Path,
-    git_resolver: GitResolver | None = None,
-    *,
-    recorded_threads: Iterable[dict[str, Any]] = (),
-    now: datetime | None = None,
-) -> list[MemoryEntry]:
-    """`recorded_threads` are the registry's session threads: a cwd one of them
-    checked recently reuses that git identity instead of running git again."""
-    mem_dirs = list(iter_memory_dirs(root))
-    cwds = {mem_dir: _resolve_cwd(mem_dir.parent) for mem_dir in mem_dirs}
-    identities = git_identities(
-        (cwd for cwd in cwds.values() if cwd is not None),
-        recorded_threads,
-        git_resolver or lookup_git_project,
-        now or datetime.now(UTC),
-    )
-    out: list[MemoryEntry] = []
-    for mem_dir in mem_dirs:
-        encoded = mem_dir.parent.name
-        cwd = cwds[mem_dir]
-        gp = identities[cwd].project if cwd is not None else None
-        repo_gone = False
-        if cwd:
-            repo_gone = not Path(cwd).exists()
-        doc = repo_doc_path(cwd)
-        doc_text = None
-        if doc:
-            try:
-                doc_text = doc.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                doc_text = None
-        for f in sorted(mem_dir.glob("*.md")):
-            if f.name == INDEX_NAME:
-                continue
-            try:
-                text = f.read_text(encoding="utf-8", errors="ignore")
-            except OSError as e:
-                print(f"skipped {f}: {e}", file=sys.stderr)
-                continue
-            meta, body = parse_frontmatter(text)
-            md = meta.get("metadata", {}) if isinstance(meta.get("metadata"), dict) else {}
-            out.append(
-                MemoryEntry(
-                    path=str(f),
-                    encoded_dir=encoded,
-                    project=cwd,
-                    mtime=iso_mtime(f.stat()),
-                    name=meta.get("name"),
-                    description=meta.get("description"),
-                    mem_type=md.get("type"),
-                    body=body.strip(),
-                    git_project_key=getattr(gp, "key", None),
-                    git_project_label=getattr(gp, "label", None),
-                    git_root=getattr(gp, "root", None),
-                    git_remote=getattr(gp, "remote", None),
-                    repo_gone=repo_gone,
-                    obsolete_signals=detect_obsolete(
-                        body, repo_gone=repo_gone, repo_doc_text=doc_text
-                    ),
-                )
-            )
-    return out

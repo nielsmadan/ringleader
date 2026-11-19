@@ -11,6 +11,7 @@ from ringleader.home.base import ScreenTarget
 from ringleader.home.palette import PALETTE_EXCLUDED, PALETTE_VERBS, Entry, InboxCommands, verb_argv
 from ringleader.home.screens.harvests import HarvestsScreen
 from ringleader.home.screens.home import HomeScreen
+from ringleader.home.screens.memories import MemoriesScreen
 from ringleader.home.screens.output import OutputScreen
 from ringleader.home.screens.projects import ProjectsScreen
 from ringleader.home.screens.prune import PruneScreen
@@ -184,6 +185,7 @@ TARGET_SCREENS = {
     ScreenTarget.PRUNE: PruneScreen,
     ScreenTarget.HARVESTS: HarvestsScreen,
     ScreenTarget.USAGE: UsageScreen,
+    ScreenTarget.MEMORIES: MemoriesScreen,
 }
 
 

@@ -269,7 +269,7 @@
         "finishing"
       ],
       "decision": null,
-      "file": "/fixture/_codex/2026/07/13/rollout-eeeacbe2-26e8-7555-5790-f82ec1d3fcff.jsonl",
+      "file": "/fixture/_codex/sessions/2026/07/13/rollout-eeeacbe2-26e8-7555-5790-f82ec1d3fcff.jsonl",
       "file_fingerprint": "1:2:22729:1783930612000000000:1783930612000000000",
       "finish_on_exit": true,
       "git_branch": null,

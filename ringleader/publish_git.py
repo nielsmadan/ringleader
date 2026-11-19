@@ -5,8 +5,19 @@ import re
 import subprocess
 from collections.abc import Sequence
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
+from itertools import pairwise
+from pathlib import Path, PurePath, PurePosixPath
 from typing import TYPE_CHECKING
+
+from .instruction_targets import InstructionTargets, instruction_targets
+from .memory_types import MemoryOrigin
+from .paths import (
+    AGENT_CONFIG_DIRS,
+    AGENT_INSTRUCTION_BASENAMES,
+    AGENT_INSTRUCTION_DIRS,
+    claude_config_dir,
+    managed_claude_root,
+)
 
 if TYPE_CHECKING:
     from .publish_state import PublishReceipt
@@ -212,14 +223,54 @@ def is_documentation_path(path: str) -> bool:
     return basename.startswith(("readme", "changelog", "contributing", "security", "support"))
 
 
-def _report_paths_are_contained(checkout_root: str, paths: Sequence[str]) -> bool:
-    root = Path(checkout_root).resolve()
+def _memory_instruction_path(path: Path, claude_config: PurePath) -> bool:
+    target = PurePath(str(path).casefold())
+    if target.is_relative_to(claude_config):
+        area = next(iter(target.relative_to(claude_config).parts), None)
+        if area in AGENT_INSTRUCTION_DIRS:
+            return True
+    parts = target.parts
+    return parts[-1] in AGENT_INSTRUCTION_BASENAMES or any(
+        parent in AGENT_CONFIG_DIRS and child in AGENT_INSTRUCTION_DIRS
+        for parent, child in pairwise(parts)
+    )
+
+
+def memory_instruction_targets(checkout: Path) -> InstructionTargets:
+    fixture = os.environ.get("RINGLEADER_MEMORY_FIXTURE_ROOT")
+    boundary = Path(fixture) if fixture else None
+    home = boundary / "home" if boundary else Path.home()
+    codex_home = Path(os.environ.get("CODEX_HOME") or home / ".codex")
+    configs = (claude_config_dir(home), codex_home, home / ".agents", managed_claude_root(boundary))
+    try:
+        return instruction_targets(checkout, (p for p in configs if p is not None))
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise PublishGitError(f"Cannot verify agent instruction targets: {exc}") from exc
+
+
+def _validate_report_targets(receipt: PublishReceipt, paths: Sequence[str]) -> None:
+    root = Path(receipt.checkout).resolve()
+    includes_memory = any(isinstance(item.origin, MemoryOrigin) for item in receipt.items)
+    claude_config = (
+        PurePath(str(claude_config_dir().resolve()).casefold()) if includes_memory else None
+    )
+    protected = memory_instruction_targets(root) if includes_memory else None
     for value in paths:
-        path = _validated_report_path(value)
-        resolved = (root / path).resolve()
+        path = root / _validated_report_path(value)
+        resolved = path.resolve()
         if not resolved.is_relative_to(root):
-            return False
-    return True
+            raise PublishGitError("integrator report has an unsafe checkout path")
+        if (
+            protected
+            and claude_config is not None
+            and (
+                protected.protects(resolved)
+                or any(
+                    _memory_instruction_path(target, claude_config) for target in (path, resolved)
+                )
+            )
+        ):
+            raise PublishGitError("integrator changed an agent instruction path")
 
 
 def _diff_is_empty(checkout: str | Path, *args: str) -> bool:
@@ -281,9 +332,7 @@ def validate_prepared_changes(
         raise PublishGitError("checkout root does not match the recorded checkout")
     if state.branch != receipt.branch or state.head != receipt.base_commit:
         raise PublishGitError("integrator changed branch or HEAD")
-    contained = _report_paths_are_contained(state.root, report_paths)
-    if not contained:
-        raise PublishGitError("integrator report has an unsafe checkout path")
+    _validate_report_targets(receipt, report_paths)
     if _has_staged_gitlink(receipt.checkout):
         raise PublishGitError("integrator changed a submodule")
     actual_paths = status_paths(state.status)

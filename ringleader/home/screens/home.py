@@ -13,7 +13,7 @@ from ...agents import source_of
 from ...revalidate import Identity
 from ...tui.keys import nav_bindings
 from ...tui.rows import highlighted_key, set_rows
-from ..base import InboxScreen
+from ..base import InboxScreen, ScreenTarget
 from ..state import HomeState, NextStep
 
 
@@ -102,6 +102,7 @@ def waking_line(threads: tuple[dict[str, Any], ...], now_iso: str) -> str:
 class HomeScreen(InboxScreen):
     BINDINGS: ClassVar[list[BindingType]] = [
         *nav_bindings(),
+        Binding("8", "memories", "memories"),
         Binding("escape", "back", "back", show=False),
         Binding("j", "cursor_down", "down", show=False),
         Binding("k", "cursor_up", "up", show=False),
@@ -219,6 +220,9 @@ class HomeScreen(InboxScreen):
     def action_cursor_up(self) -> None:
         if isinstance(self.focused, OptionList):
             self.focused.action_cursor_up()
+
+    def action_memories(self) -> None:
+        self.inbox.go(ScreenTarget.MEMORIES)
 
     def action_back(self) -> None:
         return None

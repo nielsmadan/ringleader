@@ -33,7 +33,7 @@ Textual is the package's only runtime dependency (`textual>=8`).
 | `home/intents.py`, `home/launch.py` | exit intents and the pure handoff builders, and running one after the app has exited (the launch checks are shared with `rl handoff triage` in `ringleader/handoff.py`) |
 | `home/keymap.py` | the `vim` and `circus` key presets (`inbox.keys`), the triage hint built from them, and `with_bindings` |
 | `home/palette.py` | the command palette provider and its verb allowlist |
-| `home/screens/` | `home`, `triage`, `projects`, `roundup`, `prune`, `harvests`, `detail`, `output`, `usage` |
+| `home/screens/` | `home`, `triage`, `projects`, `roundup`, `prune`, `harvests`, `detail`, `output`, `usage`, `memories` |
 | `tui/` | shared: `background` (daemon jobs), `modals`, `rows`, `keys`, `runner`, `snapshot` |
 
 `commands/inbox.py::cmd_inbox` builds the app and runs it. After `run()` returns it aborts
@@ -165,6 +165,10 @@ subtitle shows the scan's age, `scanning…` or `scan failed`, and `presence unk
 not tell. Each scan passes the previous `HarvestSnapshot` to `harvests.snapshot_harvests`, which
 reuses a harvest whose file still has the same `(mtime_ns, size)` and rereads the rest.
 
+The scan-landing pilot waits within its normal timeout for the updated count and completed
+scan header in the same rendered frame. Textual can render the count before its asynchronous
+header watcher catches up.
+
 ### Model jobs
 
 Harvest-and-archive and the roundup's enrich pool are app-owned daemon jobs
@@ -182,7 +186,7 @@ App-wide (non-priority except `ctrl+c`, so a focused `Input` still receives ordi
 
 | Key | Does |
 |---|---|
-| `1`–`7` | Home, Projects, Resume, Roundup, Prune, Harvests, Usage |
+| `1`–`8` | Home, Projects, Resume, Roundup, Prune, Harvests, Usage, Memories |
 | `q` | leave (the barrier above) |
 | `u` (`z`) | undo the newest queued decision |
 | `ctrl+r` | rescan (queued when one is running) |
@@ -312,7 +316,7 @@ the harvests' folders and asks first when that is `$HOME` or above.
 --unclassified --no-scan`, `doctor`, `config show`. Each runs as `python -P -m ringleader <argv>` in
 its own process group (`-P`, so a `ringleader/` directory in the cwd cannot shadow the installed
 package) and its captured output shows in `OutputScreen` (600 s limit, 2 M characters,
-cancelled on quit and whenever the screen is unmounted, so `1`–`7` away from Usage stop its
+cancelled on quit and whenever the screen is unmounted, so navigation away from Usage stop its
 run). The output is written once per run, not on every state change. `PALETTE_EXCLUDED` names every other top-level verb with a reason, and a test
 requires each to be in exactly one of the two.
 
@@ -329,6 +333,58 @@ a handoff. `scripts/tui_shot.py --registry PATH` always runs read-only on a copy
 The app calls `begin_capture_print(stdout=False, stderr=True)`. Lines printed to stderr from any
 thread, such as the scanner's `skipped <source> …`, become warning toasts, coalesced to one per
 second by `home/prints.py::PrintCoalescer`.
+
+
+## Memories and the shared Harvests queue
+
+`8` opens Memories, with `Enter` for the full native entry, `s` for source and store
+diagnostics, `r` for recovery and `Ctrl+R` to refresh. `home/screens/memories.py` reads
+native detail and drafts through cancellable background jobs. Opening and refreshing
+the catalog do not call a model. The list preserves selection by memory ID. Memory
+overlay and scan state are separate from session rows and their decision count.
+
+`e` starts from native text. `h` can reopen a saved draft or confirm removal using
+recorded integration or publication evidence. With no saved knowledge it starts model
+drafting with a tool-free backend. With an unavailable or tool-capable backend, the
+user can edit the native text or choose an exact-entry agent handoff.
+The handoff requires
+`ringleader-memory-triage` in the selected agent and preserves the registry and discovery
+working directory. `c` cancels drafting. `Ctrl+S` in the editor opens save-and-remove
+confirmation. `d` confirms discard. Recovery offers restore, retry and explicit expired
+payload pruning. The inbox runs one history read at a time. Refreshing or reopening
+Recovery during a read schedules one follow-up for the mounted screen. The CLI and
+inbox share a removal preview that binds the reviewed reference, evidence route, exact
+queued text and token when applicable, and effective retention. The Writer checks that
+review under the publication lock.
+A pending removal opens its approved draft read-only. Press `r` there to review a
+retry. When a Writer submission fails or the user undoes it, Memories retains the
+exact submitted text and original guards in the running inbox. Press `v` on the
+list to inspect retained drafts, `n` to cycle between them, and `c` to copy the
+selected draft. Reopen the current entry and
+review it before submitting again. Leaving the inbox discards these in-memory
+drafts after confirmation. If the retained submissions change while that prompt is open,
+the inbox stays open so the user can review the updated drafts.
+
+All persisted scan results and mutations go through the existing Writer, including
+the grace period, undo and quit/drain behavior for destructive requests. Read-only
+discovery reconciles ephemeral observations against the latest disk decisions and scan
+clocks. It preserves eligible observations through partial scans and never queues a
+persistence request. Memory removal uses the lifecycle's rich per-store presence
+context, independent of the session-ID presence probe.
+
+The draft editor stores exact raw lines and their boundary separators separately from
+the terminal-safe display. History stores structural slices, so undo and redo can
+preserve adjacent standalone CR and LF boundaries. Pasted text is literal. Raw control
+markers are underlined and cursor inspection shows the code point. Repeated redraws
+reuse cached draft serialization between edits. A measured 20-row redraw of one 80 KB
+wrapped line with 8,000 raw controls took 0.779 s on macOS (0.374 s before control
+highlighting). This specialized redraw cost remains. Isolated terminal verification also
+covered editing and preserving a 4.18 MB draft with ordinary line lengths.
+
+Harvests shows both origins. On an unassigned memory group, `a` assigns a verified
+checkout and `p` can assign and continue to the publisher. Cancel retains the unassigned
+item. The publisher receives exact tokens, checkout scope and registry. See
+[native lifecycle](memory.md) and [publishing](publish.md).
 
 ## Key entry points
 

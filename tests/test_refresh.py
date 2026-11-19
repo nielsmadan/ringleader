@@ -571,13 +571,16 @@ def test_scoped_refresh_registers_a_new_session_and_keeps_what_it_did_not_look_a
 
 
 def test_scoped_refresh_measures_change_from_the_last_session_scan_not_a_memory_scan(tmp_path):
+    from ringleader.memory_types import MemoryScan
+
     root = tmp_path / "projects"
     _claude_session(root, "/Users/me/proj", "s1")
     reg_path = _fully_scanned(tmp_path, root)
     _claude_session(root, "/Users/me/proj", "s2")
     reg = registry.load_registry(reg_path)
     registry.commit_registry(
-        reg_path, registry.reconcile_memory(reg, [], "2099-01-01T00:00:00+00:00")
+        reg_path,
+        registry.reconcile_native_memory(reg, MemoryScan((), (), ()), "2099-01-01T00:00:00+00:00"),
     )
 
     reg, _ = _scoped(reg_path, root, "/Users/me/proj")

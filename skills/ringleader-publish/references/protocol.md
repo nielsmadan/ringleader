@@ -15,8 +15,13 @@ discarding work or rewriting history.
 
 ## Recovery
 
-Run `rl harvests recover --json` before a body-free snapshot. For each receipt, inspect its
-recorded checkout, branch, base, tree, paths, and commit.
+Run `rl harvests recover --json --registry "$registry"` before a body-free snapshot. If
+recovery reports receipt problems, stop before acting on any receipt. Only act on receipts
+whose checkout is under the allowed root. For an exact-token request, act on a receipt
+only when its registry equals the requested registry and every recorded item token
+is in scope. Retain a receipt that mixes selected and unselected items and report the
+conflict. For each eligible receipt, inspect its recorded checkout, branch, base,
+tree, paths, and commit.
 
 - `begun`: if checkout is clean at the recorded base, run `rl harvests abandon <receipt-id>`;
   otherwise report and stop.
@@ -33,13 +38,32 @@ recorded checkout, branch, base, tree, paths, and commit.
   on an item-integrity, archive, registry, or receipt-removal failure.
 
 Never run the adapter again for a receipt whose commit or accepted no-change result is
-verifiable. Whenever recovery reaches archiving, use the receipt's recorded registry path:
+verifiable. Archive only session origins and use the receipt's recorded registry path:
 `rl session archive "$session_id" --registry "$registry"`.
 
 ## Snapshot and grouping
 
-Run `rl harvests snapshot --json`; it has tokens and metadata but not bodies. Group unclaimed
-items by normalized `repoUrl`, otherwise by canonical recorded Git root from `folderPath`.
+Run `rl harvests snapshot --json --registry "$registry"` for tokens and metadata. The snapshot
+reports copies of already-published memory drafts in `problems` and excludes them from
+pending items. For an exact-token request, filter to those exact tokens before grouping.
+Report missing, changed or claimed tokens without substituting other items. If an
+explicitly approved assignment changes a selected token, use the returned replacement
+for that same harvest ID and verify it in the refreshed snapshot. A receipt resolved
+during recovery already handled its tokens. Group unclaimed session items by normalized
+`repoUrl`, otherwise by canonical recorded Git root from `folderPath`.
+For a memory item, group by both the repository identity and its explicit canonical
+`destinationPath`. Keep assigned memory for different checkouts in separate groups even
+when they share a remote. When one checkout has assigned memory for an identity, add the
+session items for that identity to its group. When several checkouts have assigned memory
+for one identity, add sessions to the group matching their recorded checkout and keep the
+remaining sessions together in their own group. An unassigned memory
+stays queued until the user chooses an existing checkout. Ask which checkout to use, confirm
+the assignment and run `rl harvests assign "$token" --project "$checkout" --registry "$registry"`.
+Refresh the snapshot for the new token. Verify the selected checkout under the same discovery
+and cleanliness rules, including its current remote. For a memory group without an
+already selected integration method, ask the user to choose it before editing. The
+/doc adapter remains available under the same receipt and local commit rules. Preserve
+original scope and project in source provenance.
 Retain and report items with neither identity or with conflicting remote/path evidence. Do
 not merge by basename. A group above 100 items or 128 KiB UTF-8 harvest content is oversized:
 retain the entire group without truncation or partial processing.
@@ -52,7 +76,11 @@ candidates. A candidate must remain under the canonical invocation root and have
 `git rev-parse --show-toplevel` equal its canonical root. For remote groups, its normalized
 origin must match.
 
-Prefer a recorded path only when it verifies this identity and is clean. Otherwise choose one
+For a group with assigned memory, use the exact destination checkout when it verifies the
+repository identity and is clean. Retain the group if that checkout is unavailable or
+fails validation. The user can explicitly assign a new checkout in a later run.
+
+For a session-only group, prefer a recorded path when it verifies this identity and is clean. Otherwise choose one
 unique remote match. Multiple matches are ambiguous even if one is clean; report their paths.
 When no checkout matches, offer the group for cloning under the next section. Before every receipt, require an attached local branch,
 an existing commit, no Git operation, and empty output from:
@@ -101,6 +129,12 @@ completion and report into an outcome; it must not use `docs/session-harvests`. 
 no suitable living-doc home, propose a real home or return `declined`. The generic adapter
 assesses and edits existing living docs itself under the same contract and report rules.
 
+For any bundle containing memory, give the adapter the target exclusions below before
+invoking it. The bundle lists checkout-relative paths used as native instructions, including
+physical aliases. Exclude each listed path and its descendants. Check the proposed targets
+and their resolved paths before authorizing any edits. Use a living-doc destination
+that passes the exclusions, or decline the group if the adapter cannot honor them.
+
 After `declined` or clean `failed`, use `rl harvests abandon <receipt-id>` only if clean at
 the recorded base; otherwise retain the receipt and report exact state. Recheck branch and
 HEAD after any adapter outcome.
@@ -115,6 +149,18 @@ allowlist is exactly: a path nested under `docs`, `doc`, or `documentation` (cas
 or a basename beginning with `readme`, `changelog`, `contributing`, `security`, or `support`.
 Always reject a `.git` path segment and `AGENTS.md` or `CLAUDE.md` basenames
 (case-insensitive).
+
+For a receipt containing memory, including a mixed receipt, also exclude
+`AGENTS.override.md`, `CLAUDE.local.md`, `GEMINI.md` and `SKILL.md` basenames and
+paths in `rules`, `skills`, `agents` or `commands` directly under `.claude`, `.agents`
+or `.codex` at any depth. Apply the same directory exclusions under the resolved active
+Claude configuration directory. Resolve `CLAUDE_CONFIG_DIR` from the publisher's invocation
+directory when set, otherwise use the home directory's `.claude`. Run `rl harvests prepare`
+from that same invocation directory. Check both the proposed
+path and its canonical target case-insensitively before editing or staging. For example,
+a `rules/README.md` under that configuration directory is a rule and the repository's
+ordinary `README.md` is eligible.
+`rl harvests prepare` applies the same memory target exclusions when validating Git changes.
 
 Then read NUL status and compare every changed path/status to the validated report; reject
 unreported paths and submodules. Convert validated report paths to a NUL file, then stage
@@ -160,7 +206,7 @@ A hook that aborts, edits, or creates another commit is uncertain state: retain 
 
 ## No-change
 
-For `handled-no-change`, require the adapter's explicit acceptance, unchanged branch and
+For `handled-no-change`, explain which material is already represented or why it needs no documentation change. Obtain the user's explicit acceptance via the adapter, unchanged branch and
 HEAD, and the same clean/base verification. Then run:
 
 ```sh
@@ -171,14 +217,15 @@ Create no empty commit.
 
 ## Archive and consume
 
-For each still-live receipt session, run the archive command with the receipt's explicit
+For each still-live receipt item carrying sessionId, run the archive command with the receipt's explicit
 registry path before consuming:
 
 ```sh
 rl session archive "$session_id" --registry "$registry"
 ```
 
-Already archived or absent registry records need no action. If any archive fails, retain the
+Memory items carry their own origin and require no session lookup or archive. Already
+archived or absent session registry records need no action. If any archive fails, retain the
 receipt and every remaining item. Consume only exact successfully handled receipt items:
 
 ```sh
@@ -189,11 +236,13 @@ rl harvests consume "$receipt_id"                      # accepted no-change
 The first consume verifies Git while the receipt is prepared, then durably records the exact
 result as finishing before deletion. If consumption is partial or fails, stop; recovery
 resumes that finishing receipt without rechecking later checkout state. Successful handled
-items are deleted/consumed. Skipped and failed items remain.
+items are deleted/consumed. Memory consumption records durable evidence by harvest ID,
+including the approved-body digest when available. It is independent of recovery
+payload expiry and can prove a later source completion. Skipped and failed items remain.
 
 ## Final report
 
-Produce one row per repository: checkout; committed, no-change, recovered, skipped, or
+Produce one row per group: checkout; committed, no-change, recovered, skipped, or
 failed outcome; commit and changed paths where applicable; consumed and retained counts;
 retained reason; upstream and push remote. Only call a repository published after its
 verified commit or accepted no-change outcome has been consumed.

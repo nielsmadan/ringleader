@@ -1,10 +1,10 @@
 # Smoke checklist
 
-The nine `ringleader-*` skills (`ringleader-overview`, `ringleader-init`,
+The ten `ringleader-*` skills (`ringleader-overview`, `ringleader-init`,
 `ringleader-triage`, `ringleader-cleanup`, `ringleader-usage`, `ringleader-finish`,
-`ringleader-publish`, `ringleader-analyze`, and `ringleader-recommend`) are markdown (agent-driven flows over the `rl` CLI), so there's no
-unit-test harness for them —
-`just test` covers `rl` itself. This is a manual run list for exercising the skills end to
+`ringleader-publish`, `ringleader-analyze`, `ringleader-recommend` and
+`ringleader-memory-triage`) are agent-driven Markdown flows over the CLI. `just test`
+covers the CLI, fixture workflows and bundle wiring. This is a manual run list for exercising the skills end to
 end before a release. Each row gives the command(s) to run and what "working" looks like.
 
 `just sandbox` runs `rl install skills --yes` before opening the test shell, so the
@@ -49,3 +49,5 @@ Every command below then reads and writes only `.sandbox/`; exit the shell and r
 | 12a | `ringleader-analyze` hands a cold index to the user | With no analysis index built, drive `ringleader-analyze` inside an agent | `rl analyze --json --no-refresh` exits 3; the skill says the index isn't built, tells the user to run `rl analyze` in a terminal, builds nothing and stops. |
 | 12b | `ringleader-analyze` writes a findings report | With the index built (`rl analyze` run once in a terminal), drive `ringleader-analyze` over the last 7 days | The skill reads the worst sessions and their episodes, passes no `--label`, and saves a report via `rl analyze reports save findings -`; `rl analyze reports --kind findings --json` lists it with its window. |
 | 12c | `ringleader-recommend` cites its findings and edits nothing | After 12b, drive `ringleader-recommend` | A report is saved with `rl analyze reports save recommendations - --based-on <id>`; its `based_on` names the findings report; no skill, instruction or config file changes (`git status` in the repo and `~/.claude` is clean of edits). |
+| 13 | `ringleader-memory-triage` reviews one exact entry at a time | With disposable native stores and state, use `rl mem triage --json` and `rl mem detail ID --json`. Choose one harvest, defer a second, approve editable Markdown, and leave the harvest unassigned until choosing a checkout. Try the same catalog in a read-only inbox. | Both review guards accompany approval. In a quiet fixture the selected source is removed and the approved text appears in the shared queue. A live or unknown store instead reports a pending operation ID. The deferred entry stays in triage. Read-only scanning preserves the fixture files and state. |
+| 14 | Codex workspace locking works against the native Rust primitive | Follow the isolated [native memory lock probe](../docs/reference/agent-memory-management.md#codex). | Both lock directions exclude the other process and the same inode can be reacquired for v1 and v2. Record the actual platform. |

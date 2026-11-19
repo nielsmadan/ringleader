@@ -18,6 +18,7 @@ with [Agent setup](agent-setup.md).
   handoff, compatibility, and recovery.
 - [The triage workflow](triage-workflow.md) — the recurring loop: what to look at, what to
   decide, and how to park what you're not deciding yet.
+- [Reviewing native memory](cli.md#rl-mem) — per-entry decisions, publication and source recovery.
 - [Finishing a session](finishing-a-session.md) — harvesting from inside a live session, and why
   finishing doesn't archive immediately.
 - [Archives and retention](archives-and-retention.md) — what archiving does, how to undo it by

@@ -85,7 +85,7 @@ async def test_unreadable_files_are_counted(tmp_path):
     app = _app(_fixture(tmp_path))
     async with app.run_test(size=(100, 30)) as pilot:
         await _open(app, pilot)
-        assert "1 harvest file could not be read" in screen_text(app)
+        assert "1 harvest file could not be queued" in screen_text(app)
 
 
 async def test_p_hands_the_group_to_an_agent_in_its_folder(tmp_path, monkeypatch):
@@ -157,9 +157,9 @@ async def test_a_rerender_with_the_same_harvests_does_not_regroup_them(tmp_path,
     grouped = []
     original = harvests_screen.harvest_groups
 
-    def counted(items):
+    def counted(items, *, routed=None):
         grouped.append(items)
-        return original(items)
+        return original(items, routed=routed)
 
     monkeypatch.setattr(harvests_screen, "harvest_groups", counted)
     _harvest("a1", None)

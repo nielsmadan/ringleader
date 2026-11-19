@@ -41,8 +41,17 @@ def test_help_lists_commands(capsys):
         (["mem", "prune"], commands.mem_prune.cmd_mem_prune),
         (["mem", "mark", "cleaned"], commands.mem_cleaned.cmd_mem_cleaned),
         (["mem", "mark", "reviewed"], commands.mark_mem_reviewed.cmd_mark_mem_reviewed),
-        (["mem", "triage"], commands.triage.cmd_mem_triage),
-        (["mem", "overview"], commands.overview.cmd_mem_overview),
+        (["mem", "triage"], commands.mem_scan.cmd_mem_triage),
+        (["mem", "overview"], commands.mem_scan.cmd_mem_overview),
+        (["mem", "detail"], commands.mem_scan.cmd_mem_detail),
+        (["mem", "search"], commands.mem_scan.cmd_mem_search),
+        (["mem", "harvest"], commands.mem.cmd_harvest),
+        (["mem", "complete"], commands.mem.cmd_complete),
+        (["mem", "delete"], commands.mem.cmd_delete),
+        (["mem", "restore"], commands.mem.cmd_restore),
+        (["mem", "recover"], commands.mem.cmd_recover),
+        (["mem", "recovery"], commands.mem.cmd_recovery),
+        (["mem", "mark", "harvested"], commands.mem.cmd_mark_harvested),
         (["data", "export"], commands.export.cmd_export),
         (["data", "tokens"], commands.tokens.cmd_tokens),
         (["data", "migrate"], commands.migrate.cmd_migrate),
@@ -235,16 +244,19 @@ def test_stream_without_isatty_is_not_a_terminal():
     assert cli._is_tty(object()) is False
 
 
-def test_output_into_a_closed_pipe_exits_one_without_a_traceback():
+@pytest.mark.parametrize("argv", [["flood"], ["harvests", "snapshot"]])
+def test_output_into_a_closed_pipe_exits_one_without_a_traceback(argv):
     script = (
         "import sys\n"
         "from ringleader import cli\n"
+        "from ringleader.commands import harvests\n"
         "def flood(argv):\n"
         "    for _ in range(100_000):\n"
         "        print('x' * 100)\n"
         "    return 0\n"
         "cli.TABLE['flood'] = flood\n"
-        "sys.exit(cli.main(['flood']))\n"
+        "harvests._ACTIONS['snapshot'] = flood\n"
+        f"sys.exit(cli.main({argv!r}))\n"
     )
     proc = subprocess.Popen(
         [sys.executable, "-c", script], stdout=subprocess.PIPE, stderr=subprocess.PIPE

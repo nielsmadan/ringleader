@@ -217,3 +217,129 @@ def test_a_file_replaced_by_a_symlink_is_reread_and_refused(tmp_path, monkeypatc
     path.symlink_to(target)
     second = harvests.snapshot_harvests(first)
     assert ([p.path for p in second.problems], second.items) == ([path], ())
+
+
+def test_preallocated_memory_harvest_preserves_approved_markdown(tmp_path, monkeypatch):
+    from ringleader.memory_types import MemoryOrigin
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    origin = MemoryOrigin("note", "claude-code", "revision", "incarnation", "global", None)
+    markdown = "  An indented preference\n\n"
+    kwargs = {
+        "harvest_id": "f" * 32,
+        "origin": origin,
+        "registry_path": tmp_path / "registry.json",
+        "folder_path": None,
+        "repo_url": None,
+        "harvested_at": "today",
+        "name": "preference",
+    }
+    path = harvests.write_harvest(content=markdown, **kwargs).rename(
+        harvests.harvests_dir() / "renamed.md"
+    )
+    assert harvests.write_harvest(content=markdown, **kwargs) == path
+    with pytest.raises(ValueError, match="already exists"):
+        harvests.write_harvest(content="different", **kwargs)
+    item = harvests.load_harvest_path(path)
+    assert (item.origin, item.content, item.repo_key) == (origin, markdown, None)
+    assert harvests.snapshot_harvests().items == (item,)
+    with pytest.raises(ValueError, match="preallocated"):
+        harvests.write_harvest(content=markdown, **{**kwargs, "harvest_id": "../escape"})
+
+
+@pytest.mark.parametrize(
+    "corrupt",
+    [
+        "originKind: unknown",
+        "sessionId: both",
+        "memoryFingerprint: ",
+        "sourceScope: nowhere",
+        "source: ",
+        "memoryIncarnation: ",
+        "folderPath: /implicit",
+    ],
+)
+def test_bad_memory_origin_is_quarantined(tmp_path, monkeypatch, corrupt):
+    from ringleader.memory_types import MemoryOrigin
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    path = harvests.write_harvest(
+        origin=MemoryOrigin("id", "codex", "fp", "v1", "project", "/p"),
+        folder_path=None,
+        repo_url=None,
+        name="test",
+        harvested_at="now",
+        content="body",
+    )
+    key = corrupt.split(":")[0]
+    lines = [line for line in path.read_text().splitlines() if not line.startswith(key + ":")]
+    lines.insert(1, corrupt)
+    path.write_text("\n".join(lines))
+    snapshot = harvests.snapshot_harvests()
+    assert [problem.path for problem in snapshot.problems] == [path]
+    assert snapshot.items == ()
+
+
+@pytest.mark.parametrize("field", ("name", "harvestedAt"))
+def test_nested_memory_display_field_leaves_valid_session_visible(tmp_path, monkeypatch, field):
+    from ringleader.memory_types import MemoryOrigin
+
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
+    legacy = harvests.harvests_dir() / "legacy.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("---\nsessionId: s1\nharvestedAt: 2026-11-18\n---\n\nbody\n")
+    path = harvests.write_harvest(
+        origin=MemoryOrigin("note", "codex", "fp", "v1", "global", None),
+        folder_path=None,
+        repo_url=None,
+        name="memory",
+        harvested_at="2026-11-18",
+        content="body",
+    )
+    value = {"name": "memory", "harvestedAt": "2026-11-18"}[field]
+    path.write_text(path.read_text().replace(f"{field}: {value}", f"{field}:\n  malformed: nested"))
+    snapshot = harvests.snapshot_harvests()
+
+    assert [item.path for item in snapshot.items] == [legacy]
+    assert snapshot.problems == (harvests.HarvestProblem(path, f"invalid {field}"),)
+
+
+def test_memory_harvest_job_returns_editable_text_and_handles_empty_and_cancel():
+    from ringleader.home.jobs import HarvestEmpty, HarvestReady, memory_harvest_job
+    from ringleader.memory_types import MemoryRecord, MemoryRef
+    from ringleader.tui.background import CancelToken
+
+    record = MemoryRecord(
+        MemoryRef("codex", "id", "store", "row", "rev", "inc"),
+        "Style",
+        None,
+        "/repo",
+        "project",
+        "now",
+        "user",
+        None,
+        content="Prefer terse messages for tools.",
+    )
+    calls = []
+    replies = iter(["Draft with scope.", "", "late draft"])
+    token = CancelToken()
+
+    class Model:
+        tool_free_completion = True
+
+        def complete_json(self, prompt, schema):
+            calls.append((prompt, schema["required"]))
+            result = next(replies)
+            if result == "late draft":
+                token.cancel()
+            return {"markdown": result}
+
+    job = memory_harvest_job(record, Model())
+    assert job(token, lambda _: None) == HarvestReady("Draft with scope.")
+    assert job(token, lambda _: None) == HarvestEmpty()
+    assert job(token, lambda _: None) == HarvestEmpty()
+    assert job(token, lambda _: None) == HarvestEmpty()
+    assert len(calls) == 3
+    assert record.content in calls[0][0]
+    assert '"project": "/repo"' in calls[0][0]
+    assert calls[0][1] == ["markdown"]
