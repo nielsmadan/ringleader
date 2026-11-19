@@ -113,6 +113,7 @@ verbs = [
     ["session", "harvest"],
     ["session", "snooze"],
     ["session", "keep"],
+    ["session", "unkeep"],
     ["session", "mark", "reviewed"],
     ["data", "export"],
 ]
@@ -131,6 +132,7 @@ PLAIN_VERBS = (
     "session harvest",
     "session snooze",
     "session keep",
+    "session unkeep",
     "session mark reviewed",
     "data export",
 )
@@ -157,7 +159,9 @@ def test_a_guarded_verb_loads_its_stack_on_demand(monkeypatch, tmp_path):
 def test_plain_verbs_stay_off_the_decision_stack(monkeypatch, tmp_path):
     fixture = gui_world(monkeypatch, tmp_path, threads=20, transcripts=True)
     threads = registry.load_registry(fixture.registry_path)["threads"]
-    ids = [registry.qualified_id(t) for t in threads if t.get("source") == "claude-code"]
+    ids = iter(registry.qualified_id(t) for t in threads if t.get("source") == "claude-code")
+    by_verb = {verb: next(ids) for verb in PLAIN_VERBS if verb != "session unkeep"}
+    by_verb["session unkeep"] = by_verb["session keep"]
     notes = tmp_path / "notes.md"
     notes.write_text("# notes\n", encoding="utf-8")
     result = _run(
@@ -165,7 +169,7 @@ def test_plain_verbs_stay_off_the_decision_stack(monkeypatch, tmp_path):
         subprocess_env(fixture),
         str(fixture.registry_path),
         str(notes),
-        *ids[: len(PLAIN_VERBS)],
+        *(by_verb[verb] for verb in PLAIN_VERBS),
     )
     assert result.returncode == 0, result.stderr
     steps = json.loads(result.stderr.strip().splitlines()[-1])

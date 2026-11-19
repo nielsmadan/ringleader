@@ -435,6 +435,7 @@ VERBS = {
     "harvest": ["session", "harvest"],
     "snooze": ["session", "snooze"],
     "keep": ["session", "keep"],
+    "unkeep": ["session", "unkeep"],
     "keep_going": ["session", "mark", "reviewed"],
 }
 FUTURE_UNTIL = "--until=2026-10-20T09:00:00+02:00"
@@ -664,11 +665,13 @@ def test_guarded_delete_that_the_disk_refuses_is_coded_other(decide_world, capsy
     assert Path(row["file"]).exists()
 
 
-@pytest.mark.parametrize("action", ["snooze", "keep", "keep_going"])
+@pytest.mark.parametrize("action", ["snooze", "keep", "unkeep", "keep_going"])
 def test_a_stamp_only_guarded_verb_skips_revalidation_presence_and_fingerprint(
     decide_world, capsys, monkeypatch, action
 ):
     row = _target(decide_world, capsys)
+    if action == "unkeep":
+        _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
     _live(monkeypatch, frozenset({("claude", row["session_id"])}))
     until = [FUTURE_UNTIL] if action == "snooze" else []
     stale = "--if-mtime=2020-01-01T00:00:00+00:00"
@@ -738,6 +741,50 @@ def test_guarded_keep_of_an_archived_session_fails_without_restoring_it(
         "keep", row["id"], "failed", f"{row['id']}: no longer in the registry", code="gone"
     )
     assert _registry_thread(decide_world, row["id"]) is None
+
+
+def test_guarded_unkeep_returns_a_kept_session_to_the_inbox(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    listed = _list(decide_world, capsys)
+    assert row["id"] in {r["id"] for r in listed["kept"]}
+    doc = _guarded(decide_world, capsys, "unkeep", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome(
+        "unkeep",
+        row["id"],
+        "ok",
+        f"unkept {row['label']} — back in the triage inbox",
+        wrote=True,
+    )
+    thread = _registry_thread(decide_world, row["id"])
+    assert (thread["decision"], thread["keptAt"]) == (None, None)
+    assert row["id"] in {r["id"] for r in _list(decide_world, capsys)["sessions"]}
+
+
+def test_guarded_unkeep_of_a_session_that_is_not_kept_writes_nothing(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    doc = _guarded(decide_world, capsys, "unkeep", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome("unkeep", row["id"], "ok", f"{row['label']} is not kept")
+
+
+def test_guarded_unkeep_leaves_another_decision_alone(decide_world, capsys):
+    row = _target(decide_world, capsys)
+
+    def harvest(reg):
+        registry.find_session(reg, row["id"])["decision"] = "harvested"
+
+    _edit_registry(decide_world, harvest)
+    doc = _guarded(decide_world, capsys, "unkeep", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome("unkeep", row["id"], "ok", f"{row['label']} is not kept")
+    assert _registry_thread(decide_world, row["id"])["decision"] == "harvested"
+
+
+def test_guarded_unkeep_of_a_missing_session_is_gone(decide_world, capsys):
+    missing = "claude-code:does-not-exist"
+    doc = _guarded(decide_world, capsys, "unkeep", missing, "--if-mtime=2026-10-01")
+    assert doc == _outcome(
+        "unkeep", missing, "failed", f"{missing}: no longer in the registry", code="gone"
+    )
 
 
 def test_guarded_mark_reviewed_on_a_missing_session_fails_without_writing(decide_world, capsys):
@@ -978,6 +1025,16 @@ def test_guarded_human_ok_prints_the_message_and_path(decide_world, capsys):
     assert not Path(row["file"]).exists()
 
 
+def test_guarded_human_unkeep_prints_the_message_with_exit_0(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    argv = [*_verb("unkeep", row["id"], f"--if-mtime={row['mtime']}"), *_reg_arg(decide_world)]
+    assert cli.main(argv) == 0
+    assert capsys.readouterr().out == f"unkept {row['label']} — back in the triage inbox\n"
+    assert cli.main(argv) == 0
+    assert capsys.readouterr().out == f"{row['label']} is not kept\n"
+
+
 def test_guarded_human_refusal_goes_to_stderr_with_exit_1(decide_world, capsys):
     row = _target(decide_world, capsys)
     argv = _verb("archive", row["id"], "--if-mtime=2020-01-01T00:00:00+00:00")
@@ -1062,6 +1119,7 @@ def test_guarded_human_error_is_reported_with_the_verb_prefix(world, tmp_path, c
             "--if-fingerprint needs --if-mtime",
         ),
         (["session", "keep", "a", "--if-mtime=m"], "ID must be qualified"),
+        (["session", "unkeep", "claude-code:a", "--json"], "--json needs --if-mtime"),
         (["session", "harvest", "--archive", "--if-mtime=m"], "needs a session ID"),
         (["session", "harvest", "claude-code:a", "--if-mtime=m"], "needs --archive"),
         (["session", "snooze", "claude-code:a", "--if-mtime=m"], "needs --until"),
@@ -1099,6 +1157,7 @@ def test_guarded_human_error_is_reported_with_the_verb_prefix(world, tmp_path, c
         "json-without-if-mtime",
         "if-fingerprint-without-if-mtime",
         "unqualified-id",
+        "unkeep-json-without-if-mtime",
         "harvest-without-id",
         "harvest-without-archive",
         "snooze-without-until",

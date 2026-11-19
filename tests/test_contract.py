@@ -266,6 +266,18 @@ def test_home_rows_hold_referenced_sessions_missing_from_the_list():
     assert home["rows"][0]["snoozed_until"] == (NOW_DT + timedelta(days=2)).isoformat()
 
 
+def test_list_payload_lists_kept_sessions_apart_from_the_inbox():
+    newer = _thread("newer", days=2, decision="keep", keptAt=_ago(1))
+    older = _thread("older", days=40, project="/w/other", decision="keep", keptAt=_ago(30))
+    hidden = _thread("hidden", days=3, decision="keep", keptAt=_ago(2), filteredBy="zz*")
+    doc = _payload(_reg([newer, _thread("open", days=1), older, hidden]))
+    assert [row["id"] for row in doc["kept"]] == ["claude-code:older", "claude-code:newer"]
+    assert [row["id"] for row in doc["sessions"]] == ["claude-code:open"]
+    assert set(doc["kept"][0]) == set(contract.SESSION_ROW_KEYS)
+    assert (doc["kept"][1]["decision"], doc["kept"][1]["kept_at"]) == ("keep", _ago(1))
+    assert "kept" in doc["kept"][1]["badges"]
+
+
 def test_list_payload_lists_launchable_agents_with_their_install_state():
     agents = (contract.AgentView("claude-code", True), contract.AgentView("codex", False))
     assert _payload(_reg([]), agents=agents)["agents"] == [

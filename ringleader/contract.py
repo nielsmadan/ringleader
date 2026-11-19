@@ -15,7 +15,7 @@ from .home import state as home_state
 
 if TYPE_CHECKING:
     from . import decisions
-    from .decisions import Decision
+    from .decisions import GuardedAction
     from .revalidate import Identity
 
 CONTRACT_VERSION: Final = 1
@@ -207,6 +207,10 @@ def inbox_threads(reg: dict[str, Any], now_iso: str) -> list[dict[str, Any]]:
     return sorted(overview.triage_inbox(home_state.visible_threads(reg), now_iso), key=_inbox_order)
 
 
+def kept_threads(reg: dict[str, Any]) -> list[dict[str, Any]]:
+    return sorted(filter(overview.is_kept, home_state.visible_threads(reg)), key=_inbox_order)
+
+
 def _roundup_age(last_at: Any, now_iso: str) -> str | None:
     if not isinstance(last_at, str) or not last_at:
         return None
@@ -316,6 +320,7 @@ def list_payload(
         "agents": _agents(surroundings.agents),
         "home": _home(state, {row["id"] for row in rows}, presence.live),
         "sessions": rows,
+        "kept": [session_row(t, now_iso, presence.live) for t in kept_threads(reg)],
     }
 
 
@@ -400,7 +405,7 @@ def from_outcome(outcome: decisions.Outcome) -> GuiOutcome:
     )
 
 
-def outcome_payload(action: Decision, qualified: str, result: GuiOutcome) -> dict[str, Any]:
+def outcome_payload(action: GuardedAction, qualified: str, result: GuiOutcome) -> dict[str, Any]:
     return {
         "version": CONTRACT_VERSION,
         "kind": "outcome",

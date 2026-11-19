@@ -25,7 +25,7 @@ from . import (
 )
 
 if TYPE_CHECKING:
-    from .decisions import Decision
+    from .decisions import GuardedAction
 
 _EXPECTED = (OSError, ValueError, KeyError, RuntimeError)
 _SIGTERM_EXIT = 143
@@ -132,7 +132,7 @@ def _flag(ap: argparse.ArgumentParser, dest: str) -> str:
 def _validate_guarded(
     ap: argparse.ArgumentParser,
     args: argparse.Namespace,
-    action: Decision,
+    action: GuardedAction,
     rejected: tuple[str, ...],
 ) -> None:
     for dest in rejected:
@@ -177,7 +177,7 @@ def run_guarded(
     ap: argparse.ArgumentParser,
     args: argparse.Namespace,
     *,
-    action: Decision,
+    action: GuardedAction,
     verb: str,
     rejected: tuple[str, ...],
 ) -> int:

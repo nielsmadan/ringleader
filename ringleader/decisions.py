@@ -32,6 +32,7 @@ from .revalidate import Identity, PresenceProbe, Refusal, Seen, UnknownPresence
 from .roundup import PhasesResult, RoundupPlan, RoundupProgress
 
 type Decision = Literal["archive", "harvest", "keep_going", "snooze", "keep", "delete"]
+type GuardedAction = Decision | Literal["unkeep"]
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,11 @@ class SnoozeOp:
 
 @dataclass(frozen=True)
 class KeepOp:
+    seen: Seen
+
+
+@dataclass(frozen=True)
+class UnkeepOp:
     seen: Seen
 
 
@@ -127,7 +133,7 @@ _MEMORY_OPS = (MemoryScanOp, MemoryDecisionOp, MemoryRecoveryOp, MemoryPruneOp, 
 type MemoryOp = MemoryScanOp | MemoryDecisionOp | MemoryRecoveryOp | MemoryPruneOp | MemoryAssignOp
 
 
-type MarkOp = KeepGoingOp | SnoozeOp | KeepOp
+type MarkOp = KeepGoingOp | SnoozeOp | KeepOp | UnkeepOp
 type SingleOp = ArchiveOp | DeleteOp | MarkOp | HarvestSaveOp
 type Op = SingleOp | PruneOp | RoundupPhasesOp | ClassifyOp | StampRoundupOp | ReloadOp | MemoryOp
 
@@ -174,7 +180,15 @@ _HARVEST_LISTS = ("gotchas", "decisions", "whatChanged")
 
 def identities(op: Op) -> tuple[Identity, ...]:
     match op:
-        case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp() | HarvestSaveOp():
+        case (
+            ArchiveOp()
+            | DeleteOp()
+            | KeepGoingOp()
+            | SnoozeOp()
+            | KeepOp()
+            | UnkeepOp()
+            | HarvestSaveOp()
+        ):
             return (op.seen.identity,)
         case PruneOp():
             return tuple(item.identity for item in op.items)
@@ -319,6 +333,11 @@ def _apply_mark(reg: dict[str, Any], op: MarkOp, ctx: OpContext) -> Outcome:
         case KeepOp():
             registry.keep_thread(reg, selector, ctx.now_iso())
             return Outcome(ok=True, message=f"kept long-term: {op.seen.label}", wrote=True)
+        case UnkeepOp():
+            if not registry.unkeep_thread(reg, selector):
+                return Outcome(ok=True, message=f"{op.seen.label} is not kept", wrote=False)
+            message = f"unkept {op.seen.label} — back in the triage inbox"
+            return Outcome(ok=True, message=message, wrote=True)
 
 
 def _archive_harvested(op: HarvestSaveOp, ctx: OpContext, saved: str | None) -> Outcome:
@@ -459,7 +478,15 @@ def _stamp(op: StampRoundupOp, ctx: OpContext) -> Outcome:
 
 def _label(op: Op) -> str:
     match op:
-        case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp() | HarvestSaveOp():
+        case (
+            ArchiveOp()
+            | DeleteOp()
+            | KeepGoingOp()
+            | SnoozeOp()
+            | KeepOp()
+            | UnkeepOp()
+            | HarvestSaveOp()
+        ):
             return op.seen.label
         case MemoryDecisionOp():
             return f"{op.decision} memory"
@@ -543,7 +570,7 @@ def _dispatch(op: Op, ctx: OpContext) -> Outcome:
             | MemoryAssignOp()
         ):
             return _memory_write(op, ctx)
-        case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp():
+        case ArchiveOp() | DeleteOp() | KeepGoingOp() | SnoozeOp() | KeepOp() | UnkeepOp():
             return _one(op, ctx)
         case HarvestSaveOp():
             return _harvest_save(op, ctx)
@@ -587,7 +614,7 @@ class Executor(Protocol):
 
 def group_key(op: Op) -> str | None:
     match op:
-        case KeepGoingOp() | SnoozeOp() | KeepOp():
+        case KeepGoingOp() | SnoozeOp() | KeepOp() | UnkeepOp():
             return "mark"
         case ArchiveOp():
             return "archive"
@@ -661,7 +688,7 @@ def _claim_any(position: int) -> bool:
 def execute_group(
     ops: Sequence[Op], ctx: OpContext, claim: Claim = _claim_any
 ) -> list[GroupResult | None]:
-    marks = [op for op in ops if isinstance(op, KeepGoingOp | SnoozeOp | KeepOp)]
+    marks = [op for op in ops if isinstance(op, KeepGoingOp | SnoozeOp | KeepOp | UnkeepOp)]
     archives = [op for op in ops if isinstance(op, ArchiveOp)]
     deletes = [op for op in ops if isinstance(op, DeleteOp)]
     if len(marks) == len(ops):

@@ -49,6 +49,10 @@ def test_fake_hooklinesinker_reports_one_running_visible_session(tmp_path):
 
 
 def _list_rows(reg):
+    return _list(reg)["sessions"]
+
+
+def _list(reg):
     return contract.list_payload(
         reg,
         NOW_DT.isoformat(),
@@ -57,7 +61,14 @@ def _list_rows(reg):
         surroundings=contract.Surroundings(
             contract.PresenceView.unknown("not probed", "failed"), 24, 0, ()
         ),
-    )["sessions"]
+    )
+
+
+def test_the_default_world_keeps_sessions_in_two_projects(tmp_path):
+    world = gui_world.build_world(tmp_path / "w", now=NOW_DT)
+    kept = _list(registry.load_registry(world.registry_path))["kept"]
+    assert len({row["project"] for row in kept}) == 2
+    assert {row["decision"] for row in kept} == {"keep"}
 
 
 def test_fake_harvest_is_empty_only_for_proj_00(tmp_path):

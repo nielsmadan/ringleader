@@ -16,7 +16,16 @@ from . import (
     resume,
     revalidate,
 )
-from .decisions import ArchiveOp, DeleteOp, HarvestSaveOp, KeepGoingOp, KeepOp, OpContext, SnoozeOp
+from .decisions import (
+    ArchiveOp,
+    DeleteOp,
+    HarvestSaveOp,
+    KeepGoingOp,
+    KeepOp,
+    OpContext,
+    SnoozeOp,
+    UnkeepOp,
+)
 from .models import Model, ModelError
 from .revalidate import Seen
 
@@ -114,7 +123,7 @@ def _seen(
 
 
 def decide(  # noqa: PLR0913 -- the shared guarded-decision signature
-    action: decisions.Decision,
+    action: decisions.GuardedAction,
     qualified: str,
     *,
     registry_path: str,
@@ -135,10 +144,12 @@ def decide(  # noqa: PLR0913 -- the shared guarded-decision signature
             return _run(KeepGoingOp(seen), ctx)
         case "keep":
             return _run(KeepOp(seen), ctx)
+        case "unkeep":
+            return _run(UnkeepOp(seen), ctx)
         case "snooze":
             if until is None:
                 raise ValueError("snooze needs an until time")
             return _snooze(seen, until, now, ctx)
         case "harvest":
             return _harvest(thread, seen, ctx)
-    raise ValueError(f"unknown decision {action!r}")
+    raise ValueError(f"unknown action {action!r}")

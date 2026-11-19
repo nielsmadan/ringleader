@@ -27,6 +27,7 @@ rl session delete        ID GUARD
 rl session harvest       ID --archive GUARD
 rl session snooze        ID --until=ISO GUARD
 rl session keep          ID GUARD
+rl session unkeep        ID GUARD
 rl session mark reviewed ID GUARD
 
 GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
@@ -52,7 +53,7 @@ GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
   project and prints the directory and argv without launching anything (see `handoff` below). The
   client launches the same command without `--dry-run --json` in a terminal: `rl` then `chdir`s
   to that directory and `execvpe`s the agent, as `rl resume` does.
-- **The six session verbs** apply one decision to one session when called with the guard; see
+- **The seven session verbs** apply one decision to one session when called with the guard; see
   Guarded decisions. Without `--json` and without any `--if-*` flag they are the plain verbs and
   behave as they always did.
 
@@ -75,8 +76,8 @@ Each violation is a usage error: exit 2, usage on stderr, nothing on stdout.
   --current`, `--from-file` and `--dry-run`; `snooze --for`. The error names the flag.
 - `harvest` needs `--archive` on the guarded path (the guarded harvest saves and archives), and
   `--archive` without `--if-mtime` is a usage error. `snooze` needs `--until`.
-- `keep --yes` is accepted and ignored on the guarded path. `snooze`, `keep` and `mark reviewed`
-  accept `--if-fingerprint` and do not use it.
+- `keep --yes` is accepted and ignored on the guarded path. `snooze`, `keep`, `unkeep` and
+  `mark reviewed` accept `--if-fingerprint` and do not use it.
 - `--until` that is unparsable, naive or in the past is a `refused` outcome, not a usage error.
 
 ## Output and exit codes
@@ -105,7 +106,7 @@ Without `--json` a guarded verb prints for humans:
 - Warnings: `rl-<verb>: <warning>` on stderr.
 - The expected exceptions above: `rl-<verb>: <error>` on stderr, exit 1.
 
-`<verb>` is `archive`, `delete`, `harvest`, `snooze`, `keep` or `mark-reviewed`.
+`<verb>` is `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep` or `mark-reviewed`.
 
 ## Startup cost
 
@@ -115,7 +116,7 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
   `__init__` is light, and each command module is loaded lazily when it is dispatched.
 - `contract_io.py`, `guarded.py` and `guard_args.py` live in the top-level package, not in
   `ringleader/commands/`: importing any module there runs `commands/__init__.py`.
-- `inbox`, `export` and the six session verbs import `contract_io` only after argument parsing
+- `inbox`, `export` and the seven session verbs import `contract_io` only after argument parsing
   selected a machine mode, so plain invocations never load it. `contract_io.run_guarded` imports
   `guarded` (and with it `decisions` and `models`) on demand; `inbox --json` and `export --json`
   never load them.
@@ -151,8 +152,9 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
 | `agents` | `Agent[]` | The agents `rl` can launch, in `scanner.SOURCE_TYPES` order: `{source, agent, installed}`. `source` and `agent` are as on `SessionRow`; `installed` is whether the agent's launch binary is on `PATH` (`shutil.which`). It feeds the client's agent picker for `rl handoff`. |
 | `home` | `Home` | The inbox home screen's data; see `home` below. |
 | `sessions` | `SessionRow[]` | See below. |
+| `kept` | `SessionRow[]` | `contract.kept_threads`: sessions kept long-term (`overview.is_kept`: `decision` is `keep`) among the visible threads, in the same order as `sessions`. Disjoint from `sessions`: the triage inbox excludes kept sessions. A kept session can also appear in `home.rows` (it may be in flight), so a client merging the two deduplicates by `id`. |
 
-Membership is `contract.inbox_threads`: `overview.triage_inbox` over `home.state.visible_threads`
+Membership of `sessions` is `contract.inbox_threads`: `overview.triage_inbox` over `home.state.visible_threads`
 (filtered sessions excluded, woke threads included), sorted by parsed `mtime` (a naive time is
 treated as UTC) then by id, oldest first. Splitting into sections, ordering within a split and
 project grouping belong to the client; the rule that decides which side a row falls on is
@@ -260,7 +262,7 @@ The output of a guarded session verb with `--json`.
 | Key | Type | Meaning |
 |---|---|---|
 | `version`, `kind` | `1`, `"outcome"` | |
-| `action` | string | The decision applied: `archive`, `delete`, `harvest`, `snooze`, `keep` or `keep_going` (`mark reviewed`). |
+| `action` | string | The action applied: `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep` or `keep_going` (`mark reviewed`). |
 | `id` | string | The requested ID. |
 | `status` | string | `ok`, `refused`, `empty` or `failed`. |
 | `reason` | string or null | For `refused`: the first refusal reason. Otherwise `null`. |
@@ -302,7 +304,7 @@ contract change.
 |---|---|---|
 | `changed` | refused | `--if-mtime` differs from the registry, or the transcript's size or mtime on disk differs from `--if-fingerprint` |
 | `no_fingerprint` | refused | `archive`, `delete` or `harvest` without a valid five-field `--if-fingerprint` |
-| `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `keep_going`, `snooze`) |
+| `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `unkeep`, `keep_going`, `snooze`) |
 | `transcript_missing` | refused | the stamped transcript is not on disk |
 | `running` | refused | presence reports the session running |
 | `presence_unknown` | refused | presence could not answer, so the session is treated as running |
@@ -322,7 +324,7 @@ never changes a code.
 
 ## Guarded decisions
 
-Each guarded verb maps to one decision (`action` in the outcome document):
+Each guarded verb maps to one action (`action` in the outcome document):
 
 | Verb | `action` | Operation |
 |---|---|---|
@@ -331,6 +333,7 @@ Each guarded verb maps to one decision (`action` in the outcome document):
 | `harvest --archive` | `harvest` | gate, model, `HarvestSaveOp` |
 | `snooze` | `snooze` | `SnoozeOp` |
 | `keep` | `keep` | `KeepOp` |
+| `unkeep` | `unkeep` | `UnkeepOp` |
 | `mark reviewed` | `keep_going` | `KeepGoingOp` |
 
 `--if-mtime` is the `mtime` the user saw. `harvest --archive` saves the harvest and archives the
@@ -343,7 +346,7 @@ is produced only by harvest.
 | Action | Revalidated | Presence checked |
 |---|---|---|
 | `archive`, `delete`, `harvest` | yes, stamp required | yes |
-| `snooze`, `keep`, `keep_going` | no | no |
+| `snooze`, `keep`, `unkeep`, `keep_going` | no | no |
 
 - **Revalidation** (`revalidate.changed_reason`) compares `--if-mtime` with the registry thread's
   `mtime` and, when `--if-fingerprint` carries a content stamp, the transcript's size and mtime
@@ -368,7 +371,8 @@ is produced only by harvest.
   harvest …` for harvest). `delete` is also refused when the transcript or a companion lies
   outside its source's session store.
 - **Locks.** `archive` and `harvest` run under `stateio.publish_lock()`; `delete` runs inside
-  `registry.mutate_registry`; `snooze`, `keep` and `keep_going` use `mutate_registry` only.
+  `registry.mutate_registry`; `snooze`, `keep`, `unkeep` and `keep_going` use `mutate_registry`
+  only.
   Harvest's save step reuses the publish lock through `save_harvest_unlocked`. There is no outer
   lock around any guarded operation: `stateio.publish_lock` opens a new file descriptor and takes
   `LOCK_EX` each time, so it is not reentrant, and an outer `publish_lock` around an op that
@@ -392,10 +396,16 @@ is produced only by harvest.
   stored normalized to UTC (`contract.normalize_until`, `astimezone(UTC).isoformat()`) because `overview.snooze_active` compares ISO strings (`now_iso < until`), which orders correctly only when both sides are in the same zone; do not keep the user's offset. Failures are refusals: unparsable input gives
   `--until is not an ISO 8601 time: …`, a naive time `--until needs a timezone offset`, a past
   time `snooze time must be in the future`.
-- **Missing session on a non-revalidated op.** `keep`, `keep_going` and `snooze` do not
+- **Missing session on a non-revalidated op.** `keep`, `unkeep`, `keep_going` and `snooze` do not
   revalidate; if the session has left the registry, `decisions.execute` turns the `KeyError` into
   a not-ok outcome with no refusal, which is reported as `failed` (message `… no longer in the
   registry`). It is not special-cased.
+- **Unkeep.** `unkeep` clears `decision` and `keptAt` (`ok`, `wrote: true`), as the plain verb
+  does. The session is back in the triage inbox unless something else holds it out: an active
+  snooze, or a `reviewedAtMtime` equal to its `mtime` (it was marked reviewed before it was kept
+  and has not changed since). A session that is not kept, including one with another decision
+  such as `harvested`, is left alone: `ok` with `wrote: false` and the message `… is not kept`,
+  so a repeated unkeep is harmless. The plain `rl session unkeep` exits 1 in that case.
 - **Mark reviewed.** The guarded `mark reviewed` records `--if-mtime` as the reviewed mtime. The
   plain `rl session mark reviewed` records the live file mtime.
 - A decision is never retried automatically by `rl`.
@@ -421,8 +431,9 @@ registry.
 - **Harvest needs `--archive`.** The guarded harvest saves and archives in one decision, so the
   flag makes that explicit and keeps it distinct from plain `rl session harvest`, which only
   saves.
-- **Same ops as the TUI.** The guarded verbs run the `decisions.py` ops, so revalidation, presence
-  and locks are not reimplemented. The only stricter rule is the required fingerprint for
+- **Same ops as the TUI.** The guarded verbs run the `decisions.py` ops and executor the TUI uses,
+  so revalidation, presence and locks are not reimplemented. `UnkeepOp` is the one op only the
+  guarded path builds; the TUI has no unkeep. The only stricter rule is the required fingerprint for
   `archive`, `delete` and `harvest`.
 - **No delete grace here.** A guarded `delete` acts immediately; the client owns the undo window
   (10 s, the TUI's `DELETE_GRACE_SECONDS`).
@@ -444,7 +455,8 @@ client that checks it. Key sets are pinned by `contract.SESSION_ROW_KEYS` and th
 documents. Change the contract and the circus client (types, Rust envelope, goldens) together.
 
 The `agents` and `home` keys on the list document, the `handoff` document, `code` on the outcome
-document and `presence.code` on the list were added as compatible changes.
+document and `presence.code` on the list were added as compatible changes, and so were the
+`kept` key on the list and the `unkeep` verb (a new `action` value on the outcome).
 
 The `scan` key on the list document was added as a compatible change, and the standalone `scan`
 document kind was removed when the machine interface moved onto the existing commands; clients

@@ -30,6 +30,7 @@ from ringleader.decisions import (
     RoundupPhasesOp,
     SnoozeOp,
     StampRoundupOp,
+    UnkeepOp,
 )
 from ringleader.enrichment import Classification, Classified
 from ringleader.roundup import RoundupPlan
@@ -612,13 +613,15 @@ def _counting_presence(ctx):
 
 
 def test_a_mark_group_applies_each_op_in_one_registry_write(tmp_path, monkeypatch):
-    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2", "s3")]
-    path = _write(tmp_path, threads[:2])
+    threads = [_thread(tmp_path, sid) for sid in ("s1", "s2", "s3", "s4")]
+    threads[3]["decision"] = "keep"
+    path = _write(tmp_path, [*threads[:2], threads[3]])
     writes = _counting_writes(monkeypatch)
     ops = [
         KeepOp(_seen(threads[0])),
         SnoozeOp(_seen(threads[1]), UNTIL),
         KeepGoingOp(_seen(threads[2])),
+        UnkeepOp(_seen(threads[3])),
     ]
 
     results = decisions.execute_group(ops, _ctx(path, tmp_path))
@@ -627,10 +630,12 @@ def test_a_mark_group_applies_each_op_in_one_registry_write(tmp_path, monkeypatc
         (True, "kept long-term: s1-title"),
         (True, "snoozed s2-title until 2026-07-07"),
         (False, "s3-title: no longer in the registry"),
+        (True, "unkept s4-title — back in the triage inbox"),
     ]
     assert len(writes) == 1
     saved = {t["sessionId"]: t for t in _load(path)["threads"]}
     assert (saved["s1"]["decision"], saved["s2"]["snoozedUntil"]) == ("keep", UNTIL)
+    assert saved["s4"]["decision"] is None
 
 
 def test_a_delete_group_probes_presence_once_and_rechecks_each_session(tmp_path, monkeypatch):
@@ -742,12 +747,13 @@ def test_group_keys_split_marks_archives_and_deletes(tmp_path):
             KeepOp(seen),
             SnoozeOp(seen, UNTIL),
             KeepGoingOp(seen),
+            UnkeepOp(seen),
             ArchiveOp(seen),
             DeleteOp(seen),
             HarvestSaveOp(seen, None),
             PruneOp(()),
         )
-    ] == ["mark", "mark", "mark", "archive", "delete", None, None]
+    ] == ["mark", "mark", "mark", "mark", "archive", "delete", None, None]
 
 
 def _registry_locked(path):

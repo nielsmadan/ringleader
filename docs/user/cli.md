@@ -165,16 +165,17 @@ export) plus registry-only parking decisions. File lifecycle verbs (`finish`, `c
 | `rl session unarchive <id>` | Undo an archive; the session is resumable again. |
 | `rl session delete <id>` | Delete one session's files, leaving a `deleted` record. Guard flags. |
 
-**Guard flags.** `archive`, `delete`, `harvest`, `snooze`, `keep` and `mark reviewed` take a guard
+**Guard flags.** `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep` and `mark reviewed` take a guard
 that makes the call a guarded decision for programs such as the circus desktop app:
 `--if-mtime <mtime>` (the mtime the caller saw, compared as an exact string; required for the
-guard; `archive`, `delete` and `harvest` revalidate it and check presence, while `snooze`, `keep`
-and `mark reviewed` take it as the stamp only, and `mark reviewed` records it),
+guard; `archive`, `delete` and `harvest` revalidate it and check presence, while `snooze`, `keep`,
+`unkeep` and `mark reviewed` take it as the stamp only, and `mark reviewed` records it),
 `--if-fingerprint <fp>` (needed by `archive`, `delete` and `harvest`, which refuse without it;
 ignored by the others) and `--json` (print the outcome as one JSON document: exit 0 whatever its
 status, exit 1 with an `error` document when the call itself fails, exit 2 on a usage error). Any of the three
 selects the guarded path; `--json` or `--if-fingerprint` alone needs `--if-mtime`. The guarded
-`harvest` needs `--archive` and saves then archives; `snooze` needs `--until`. Without the guard
+`harvest` needs `--archive` and saves then archives; `snooze` needs `--until`; a guarded `unkeep` of a
+session that is not kept succeeds and changes nothing. Without the guard
 the verbs are unchanged. A guarded call without `--json` prints the message, and on refusal or
 failure prints `rl-<verb>: <message>` to stderr and exits 1. See
 [tech/json-contract.md](../tech/json-contract.md).
@@ -186,7 +187,7 @@ failure prints `rl-<verb>: <message>` to stderr and exits 1. See
 | `rl session snooze <id>` | Hide from the default view but keep it live. `--until <iso>`, `--for <days>` (not with the guard). Guard flags. |
 | `rl session wake <id>` | Un-snooze. |
 | `rl session keep <id>` | Keep long-term: stays live, leaves triage for good. `--yes`. Guard flags. |
-| `rl session unkeep <id>` | Undo a keep; back to the triage inbox. |
+| `rl session unkeep <id>` | Undo a keep; back to the triage inbox. Guard flags. |
 
 **Bookkeeping**
 

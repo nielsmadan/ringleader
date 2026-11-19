@@ -85,7 +85,12 @@ def cmd_unkeep(argv: list[str]) -> int:
     )
     ap.add_argument("id")
     ap.add_argument("--registry", default=str(default_registry()))
+    guard_args.add_guard_args(ap)
     args = ap.parse_args(argv)
+    if guard_args.guarded_requested(args):
+        from .. import contract_io  # noqa: PLC0415 -- keeps the plain verb off the decision stack
+
+        return contract_io.run_guarded(ap, args, action="unkeep", verb="unkeep", rejected=())
 
     reg = registry.load_registry(args.registry)
     try:
