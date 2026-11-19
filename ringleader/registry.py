@@ -1064,14 +1064,17 @@ def without_finish_mark(thread: dict[str, Any]) -> dict[str, Any]:
 
 
 def unkeep_thread(reg: dict[str, Any], session_id: str) -> bool:
-    """Undo `keep_thread`, returning the session to the triage inbox. Returns False if
-    the session wasn't kept — a non-"keep" decision (e.g. "harvested") is left alone."""
+    """Undo `keep_thread`, returning the session to the triage inbox: a reviewed mark or
+    snooze from before the keep is cleared too. Returns False if the session wasn't kept —
+    a non-"keep" decision (e.g. "harvested") is left alone."""
     t = find_session(reg, session_id)
     if t is not None:
         if t.get("decision") != "keep":
             return False
         t["decision"] = None
         t["keptAt"] = None
+        t["reviewedAtMtime"] = None
+        t["snoozedAt"] = None
         return True
     raise KeyError(session_id)
 

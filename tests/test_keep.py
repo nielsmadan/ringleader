@@ -101,6 +101,21 @@ def test_unkept_session_returns_to_the_inbox():
     assert [t["sessionId"] for t in overview.triage_inbox(reg["threads"], NOW)] == ["s1"]
 
 
+@pytest.mark.parametrize(
+    "hold",
+    [
+        {"reviewedAtMtime": "2026-08-01T00:00:00+00:00", "mtime": "2026-08-01T00:00:00+00:00"},
+        {"snoozedAt": NOW, "snoozedUntil": "2999-01-01T00:00:00+00:00"},
+        {"snoozedAt": NOW, "snoozedUntil": None},
+    ],
+    ids=["reviewed", "snoozed-until", "snoozed-indefinitely"],
+)
+def test_unkept_session_returns_to_the_inbox_past_an_earlier_hold(hold):
+    reg = _reg(_t("s1", decision="keep", keptAt=NOW, **hold))
+    registry.unkeep_thread(reg, "s1")
+    assert [t["sessionId"] for t in overview.triage_inbox(reg["threads"], NOW)] == ["s1"]
+
+
 # --- metrics / views --------------------------------------------------------
 
 

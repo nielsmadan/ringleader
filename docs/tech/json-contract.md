@@ -400,12 +400,11 @@ is produced only by harvest.
   revalidate; if the session has left the registry, `decisions.execute` turns the `KeyError` into
   a not-ok outcome with no refusal, which is reported as `failed` (message `… no longer in the
   registry`). It is not special-cased.
-- **Unkeep.** `unkeep` clears `decision` and `keptAt` (`ok`, `wrote: true`), as the plain verb
-  does. The session is back in the triage inbox unless something else holds it out: an active
-  snooze, or a `reviewedAtMtime` equal to its `mtime` (it was marked reviewed before it was kept
-  and has not changed since). A session that is not kept, including one with another decision
-  such as `harvested`, is left alone: `ok` with `wrote: false` and the message `… is not kept`,
-  so a repeated unkeep is harmless. The plain `rl session unkeep` exits 1 in that case.
+- **Unkeep.** `unkeep` clears `decision`, `keptAt`, `reviewedAtMtime` and `snoozedAt` (`ok`,
+  `wrote: true`), as the plain verb does, so the session is back in the triage inbox even if it
+  was marked reviewed or snoozed before it was kept. A session that is not kept, including one
+  with another decision such as `harvested`, is left alone: `ok` with `wrote: false` and the
+  message `… is not kept`, so a repeated unkeep is harmless. The plain `rl session unkeep` exits 1 in that case.
 - **Mark reviewed.** The guarded `mark reviewed` records `--if-mtime` as the reviewed mtime. The
   plain `rl session mark reviewed` records the live file mtime.
 - A decision is never retried automatically by `rl`.

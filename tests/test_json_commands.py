@@ -787,6 +787,31 @@ def test_guarded_unkeep_of_a_missing_session_is_gone(decide_world, capsys):
     )
 
 
+@pytest.mark.parametrize("guarded_verb", [True, False], ids=["guarded", "plain"])
+@pytest.mark.parametrize(
+    "hold",
+    [
+        lambda t: t.update(reviewedAtMtime=t["mtime"]),
+        lambda t: t.update(snoozedAt="2026-10-01T00:00:00+00:00", snoozedUntil="2999-01-01"),
+    ],
+    ids=["reviewed", "snoozed"],
+)
+def test_unkeep_returns_a_session_held_before_the_keep_to_the_inbox(
+    decide_world, capsys, hold, guarded_verb
+):
+    row = _target(decide_world, capsys)
+    _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    _edit_registry(decide_world, lambda reg: hold(registry.find_session(reg, row["id"])))
+    if guarded_verb:
+        _guarded(decide_world, capsys, "unkeep", row["id"], f"--if-mtime={row['mtime']}")
+    else:
+        assert cli.main([*VERBS["unkeep"], row["id"], *_reg_arg(decide_world)]) == 0
+        assert capsys.readouterr().out == f"unkept {row['id']} — back in the triage inbox\n"
+    listed = _list(decide_world, capsys)
+    assert row["id"] in {r["id"] for r in listed["sessions"]}
+    assert row["id"] not in {r["id"] for r in listed["kept"]}
+
+
 def test_guarded_mark_reviewed_on_a_missing_session_fails_without_writing(decide_world, capsys):
     doc = _guarded(
         decide_world, capsys, "keep_going", "claude-code:does-not-exist", "--if-mtime=2026-10-01"
