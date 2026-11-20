@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .. import namefilter, registry
-from ..config import Config, key_preset, load_config, save_config
+from ..config import USAGE_DEFAULTS, Config, key_preset, load_config, save_config, usage_preference
 from ..models import active_model, describe
 from . import default_registry
 
@@ -48,6 +48,12 @@ def _show() -> int:
         print(f"{label}: {getattr(cfg, field) or 'default'}")
     print(f"session.filters: {', '.join(cfg.session_filters) or 'none'}")
     print(f"inbox.keys: {cfg.inbox_keys}")
+    for key in USAGE_DEFAULTS:
+        try:
+            preference = usage_preference(key, getattr(cfg, key.replace(".", "_")))
+        except ValueError:
+            preference = "invalid — use rl config set"
+        print(f"{key}: {preference}")
     for task in ("enrich", "harvest", "analyze"):
         model = active_model(cfg, task)
         print(
@@ -86,6 +92,19 @@ def _set_storage(cfg: Config, key: str, value: str) -> None:
         setattr(cfg, _RETENTION_FIELDS[key], _retention_days(key, value))
 
 
+def _set_preference(cfg: Config, key: str, value: str) -> None:
+    if key == "inbox.keys":
+        cfg.inbox_keys = key_preset(value)
+        return
+    parsed: object = USAGE_DEFAULTS[key] if value == "default" else value
+    if key == "usage.cache_seconds" and value != "default":
+        try:
+            parsed = int(value)
+        except ValueError:
+            raise ValueError("usage.cache_seconds must be an integer from 0 to 3600") from None
+    setattr(cfg, key.replace(".", "_"), usage_preference(key, parsed))
+
+
 def _set(args: list[str]) -> int:
     if len(args) != _SET_ARGC:
         print("usage: rl config set <key> <value>", file=sys.stderr)
@@ -122,9 +141,9 @@ def _set(args: list[str]) -> int:
         except ValueError as exc:
             print(f"rl config set {key}: {exc}", file=sys.stderr)
             return 2
-    elif key == "inbox.keys":
+    elif key in USAGE_DEFAULTS or key == "inbox.keys":
         try:
-            cfg.inbox_keys = key_preset(value)
+            _set_preference(cfg, key, value)
         except ValueError as error:
             print(f"rl config set: {error}", file=sys.stderr)
             return 2

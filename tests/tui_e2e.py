@@ -20,6 +20,7 @@ KEY_ENTER = "\r"
 KEY_ESCAPE = "\x1b"
 KEY_DOWN = "\x1b[B"
 KEY_UP = "\x1b[A"
+KEY_SHIFT_TAB = "\x1b[Z"
 
 FAKE_AGENTS = ("claude", "codex", "opencode", "pi", "droid")
 
@@ -134,7 +135,15 @@ def run_scenario(scenario: Scenario) -> ScenarioResult:
 
 
 def isolated_env(root: Path, bin_dir: Path) -> dict[str, str]:
-    dropped = {"COLUMNS", "LINES", "CODEX_SESSION_ID", *session_env.PROBES.values()}
+    dropped = {
+        "COLUMNS",
+        "LINES",
+        "CODEX_SESSION_ID",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_MANAGEMENT_KEY",
+        *session_env.PROBES.values(),
+    }
     home = root / "home"
     home.mkdir(parents=True, exist_ok=True)
     return {
@@ -143,6 +152,7 @@ def isolated_env(root: Path, bin_dir: Path) -> dict[str, str]:
         "HOME": str(home),
         "TERM": "xterm-256color",
         **agent_store_env(root),
+        "CLAUDE_SECURESTORAGE_CONFIG_DIR": str(root / "_claude-secure"),
         "XDG_DATA_HOME": str(root / "xdg-data"),
         "XDG_STATE_HOME": str(root / "xdg-state"),
         "XDG_CONFIG_HOME": str(root / "xdg-config"),

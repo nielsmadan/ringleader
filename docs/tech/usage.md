@@ -1,13 +1,15 @@
 # Usage analytics
 
-`ringleader/usage/`: reading token spend out of five agents' local state, plus
-subscription-window state.
+`ringleader/usage/` reads local token accounting and quota captures, plus on-demand
+subscription and OpenRouter reports.
 
 ## Purpose
 
 Answer "where did my tokens go" without an API call, by parsing what each agent already wrote to
 disk. Five readers normalize into one `UsageRecord` stream that the aggregation and rendering
 layers treat identically.
+
+Remote reports use provider-specific units and scopes. The CLI owns the remote fetch and cache.
 
 ## How it works
 
@@ -116,11 +118,126 @@ twice. `rl usage --merge <dir>` is the consumer.
 - `usage/aggregate.py` — `READERS`, `rollup()`, `in_window()`.
 - `usage/pricing.py` — `PRICES`, `estimate()`.
 - `usage/claude_limits.py` — `read_windows()`, `default_capture_path()`.
-- `commands/usage.py` — `cmd_usage()` and its three sub-dispatches.
+- `commands/usage.py` — local accounting and remote command routing.
+
+### Remote reporting foundations
+
+Bare `rl usage`, `rl usage local` and `rl data tokens` share `local_summary()`.
+The remote models in `remote_types.py` are separate from `UsageRecord` and
+`WindowSnapshot`. Their version 1 JSON explicitly serializes validated data, preserves
+unknown values as null, rejects boolean/nonfinite numbers and uses opaque identity labels.
+The standalone document has `version: 1`, `kind: subscription|token` and a `results` array.
+Every result carries provider, scope, identity, status, fetched_at, cached, stale, data and
+diagnostic fields. Status is `ok`, `not_configured`, `uncached` or `error`; diagnostics carry
+code, message and nullable retry_at. Data follows the scope's dataclass in `remote_types.py`.
+The JSON goldens in `tests/goldens/usage/` pin subscription window fields and the three
+OpenRouter report shapes, including null versus zero. Legacy local JSON retains its existing
+shape.
+
+`remote_http.py` launches an internal fixed-endpoint GET worker with a 15-second parent
+deadline. The parent and worker both check the production endpoint allowlist. Fixture tests
+inject a transport or connection. Request headers travel through framed private
+stdin and bounded stdout carries the reply. The HTTP and Keychain helpers receive an allowlisted
+environment. The worker verifies TLS, refuses redirects and reads bodies for successful responses.
+Throttling replies return their status and Retry-After headers without a body read. Ringleader
+maps failures to fixed diagnostics and discards subprocess stderr. Timeout and
+cancellation kill and reap the child.
+
+`remote_cache.py` stores normalized snapshots in `usage/remote-v1.json` under the state dir.
+Snapshots are partitioned by provider, report, credential/profile fingerprint and query bounds.
+`Retry-After` on HTTP 429 or 503 sets endpoint backoff for up to 24 hours, across query ranges
+and explicit refreshes. The retry time tells the user when to run the command again. Successful
+snapshots survive failed refreshes, whose attached data remains explicitly stale. Cache-only
+commands read the cache once and select the last fetched scope without consulting credentials.
+The compact internal format remains version 1 and reads earlier version 1 snapshots. Older
+development builds require the earlier encoding. A dedicated nonblocking lock waits at most
+one second and protects reload/merge plus owner-only atomic replacement.
+The cache validates stored timestamps against the wall clock after reading them. Writes
+keep the original attempt time for ordering, so overlapping attempts can save independent
+results and late older successes cannot replace newer ones. A successful replacement of an
+invalid cache reports `cache_repaired`. An unsupported cache version is preserved and reported safely.
+An ordinary endpoint failure preserves overlapping Retry-After instructions. A newer success
+clears earlier instructions for that endpoint.
+
+The config stores only `usage.claude_auth`, `usage.codex_auth` and `usage.cache_seconds`
+preferences. Validation is lazy at the remote command boundary, so malformed remote settings
+cannot break local accounting; `rl config set` validates values before saving them.
+
+### Subscription providers
+
+`subscription.py` coordinates independent Claude and Codex quota reports. Claude can
+reuse a fresh snapshot for the resolved OAuth credential and profile. Each online Codex
+call fetches because the account ID is only available from the app-server response. If a
+successful reply has a missing or empty `accountId`, the snapshot uses the `unknown`
+cache key and a null report identity. Cached output shows the last fetched identity and
+marks elapsed reset times as expired without showing them as current utilization.
+
+`claude_credentials.py` reads the environment token or the selected agent profile.
+Agent credentials require a future expiry and the `user:profile` OAuth scope. On macOS the
+native Keychain path requires both Claude profile overrides to be unset and `HOME` to match the
+real UID's account home. `claude_keychain.py` uses an exact service query in a bounded,
+noninteractive helper and reports access denials or multiple matches. Custom profiles use
+the exact credentials file. Tests isolate profile state and stub the native credential reader.
+The OAuth adapter makes one GET to the fixed usage endpoint and normalizes overall and
+model-scoped quota windows. Flat model windows fill missing scoped fields by exact normalized
+model ID first, then by a display alias with a single owner. Ambiguous flat windows stay separate.
+The credential path, request headers and quota parser adapt CodexBar at the revision
+and source paths recorded in [Third-party notices](../../THIRD_PARTY_NOTICES.md).
+
+`codex_subscription.py` verifies Codex CLI 0.170.0 or newer, initializes its bounded
+stdio app-server client with explicit gateway OAuth, and requests only account quota.
+It prefers current metered buckets over the legacy single-bucket reply. The subprocess
+uses normal Codex configuration with Claude and OpenRouter report credentials removed from its
+environment. Startup may load plugins and Codex may persist its ordinary auth refresh.
+Ringleader sends no login or inference requests.
+
+### OpenRouter reports
+
+`token.py` coordinates independent key, activity, and credits reports. `openrouter.py`
+uses the fixed `/api/v1/key` endpoint with the ordinary API key and the fixed
+`/api/v1/activity` and `/api/v1/credits` endpoints with the management key. Results use
+a credential fingerprint for identity and keep the scopes and OpenRouter and external BYOK
+figures separate. [Key API](https://openrouter.ai/docs/api/api-reference/api-keys/get-current-api-key)
+[Activity API](https://openrouter.ai/docs/api/api-reference/analytics/get-user-activity-grouped-by-endpoint)
+[Credits API](https://openrouter.ai/docs/api/api-reference/credits/get-remaining-credits)
+
+Activity uses one request for the provider's rolling 30 completed UTC days, validates
+calendar dates, and filters rows to the inclusive requested range. If the UTC date
+changes during the request, the report returns a diagnostic and a subsequent invocation
+can request the new period. Cache lookup uses exact dates online and the requested day
+count offline. Endpoint backoff applies across date ranges for the same credential.
+Allowed fields are validated and strings containing supplied credentials are rejected
+before any output or cache write.
+
+An actual report error returns exit 1 with other results intact. Cache-only read errors
+also return exit 1. A successful live report with a cache warning retains status `ok`
+and is usable. Cold cache-only lookups carry status `uncached` and are informational.
+
+### Inbox usage views
+
+`home/screens/usage.py` uses the same cancellable CLI runner as the command palette.
+Local runs the two offline reports in sequence, restores completed output on return to the
+view, and reruns them on `r`. Subscription and Token request cache-only results on activation.
+`r` starts a remote refresh, `c` cancels, and switching views invalidates the previous job's
+generation. The private `--_inbox` flag returns a bounded, structured subprocess reply and is
+mutually exclusive with public `--json`. The screen retains the last displayed data by provider
+and scope. Retained snapshots keep their original identity and fetch time under **Previous report**
+while loading or after cancellation. They also appear when completion does not supply a snapshot
+at least as recent as the retained one. The inbox displays at most 30 activity rows and reports the
+full row count. It offers the cache-only command for the latest saved report or an explicit fetch
+command when saving the preview failed. The public CLI renders the full activity report in text
+and JSON.
+The CLI manages the cache and the runner manages processes. Usage reads run outside the registry
+writer queue.
+
+Strict Textual tests cover navigation, cancellation, late completion, narrow rendering,
+and CLI output through an injected fixture transport. The real PTY scenario exercises the
+same CLI with isolated stores and empty credentials. For provider documentation and opt-in
+manual checks, see [provider usage](../reference/provider-usage.md).
 
 ## Gotchas
 
-- **Claude windows need `rl install statusline` first**, and only populate after the first API
+- **Captured Claude windows need `rl install statusline` first**, and only populate after the first API
   response in a session. Before that, `rl usage windows` reports nothing for Claude and says so.
   Pro/Max only, Claude Code v2.1.80+.
 - **A percentage over 1000 is an epoch**, not a percentage — see `_EPOCH_LEAK_FLOOR`.
@@ -189,5 +306,6 @@ reporting surface. The cost is that pricing is a table we maintain.
 ## Related
 
 - [features/usage-analytics.md](../features/usage-analytics.md)
+- [reference/provider-usage.md](../reference/provider-usage.md)
 - [reference/agent-session-management.md](../reference/agent-session-management.md) — where each
   agent puts its transcripts

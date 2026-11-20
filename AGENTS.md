@@ -92,6 +92,10 @@ pruning them before the GC clock deletes them.
 - **`rl usage` counts subagent spend, counts Codex forks once and prices 1h cache writes at 2x
   input.** Its exports carry `cache_write_1h` and `nested`, so an older `rl usage --merge` drops
   them. `rl analyze` totals use the same Claude model filter, so the two agree.
+- **Local usage and `--cached` remote reports are offline.** `rl usage subscription` and
+  `rl usage token` can contact providers. The inbox opens the remote views with `--cached`
+  and `r` requests a refresh. Test with isolated profiles, state and fixture transports.
+  See [docs/tech/usage.md](docs/tech/usage.md).
 - **Skills live at `skills/ringleader-*`, agent-neutral.** Ten skills —
   `ringleader-overview`, `ringleader-init`, `ringleader-triage`, `ringleader-cleanup`,
   `ringleader-usage`, `ringleader-finish`, `ringleader-publish`, `ringleader-analyze`,
@@ -219,6 +223,8 @@ rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/droid/opencode/pi
 rl usage session <id>               # where one session's tokens went
 rl usage windows                    # 5h/weekly limits: codex from disk, claude if captured
+rl usage subscription [--cached]    # Claude and Codex subscription quotas
+rl usage token [--cached]           # OpenRouter key spend, activity, and credits
 rl install statusline               # capture claude's 5h/weekly limits via the statusLine hook
 rl analyze [<selector>] [--by X]    # failure signals, health, cache and token rollups from a SQLite index
 rl analyze session <id>             # one session in detail

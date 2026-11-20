@@ -126,8 +126,8 @@ Native memory curation (see the bundled `ringleader-memory-triage` workflow):
 Data subcommands (`rl data <sub>`): `rl data export ID [--out PATH]`, `rl data tokens
 [--days N] [--archived] [--json]`, `rl data migrate [old_dir]`.
 
-Usage subcommands (`rl usage`) — read-only token accounting across every harness, used by
-the `usage` skill:
+Usage subcommands (`rl usage`) cover local token accounting, subscription quotas and
+OpenRouter reports. The `usage` skill uses them to inspect usage:
 
 - `rl usage [--source X] [--days N] [--since D] [--until D] [--all] [--archived] [--by day|project|session|model|source] [--breakdown] [--limit N] [--merge DIR] [--json]`
   — token totals, ranked by the chosen grouping. `--archived` also counts sessions
@@ -140,7 +140,27 @@ the `usage` skill:
   expired capture reports "no current snapshot", never a stale percentage. Droid, OpenCode
   and Pi have nothing here — never report a window for them.
 - `rl usage export [--out PATH]` — write this machine's records for `--merge` on another.
-- `rl data tokens` is the Claude-only alias of `rl usage`.
+- `rl usage local` accepts the same local accounting flags as bare `rl usage`.
+  `rl usage local session ID [--json]`, `rl usage local windows [--json]` and
+  `rl usage local export [--out PATH]` are explicit local spellings of the older commands.
+  These commands read local state and never access provider credentials or the network.
+- `rl usage subscription [--source claude|codex] [--cached | --refresh] [--json]`
+  reports independent provider quota windows. `--cached` reads the last saved
+  snapshots offline. Request live data only when the user asks for it. Claude uses
+  `CLAUDE_CODE_OAUTH_TOKEN` with the `user:profile` scope, or the exact agent profile
+  after `rl config set usage.claude_auth agent`. Codex needs `rl config set
+  usage.codex_auth agent` and Codex CLI 0.170.0 or newer.
+- `rl usage token [--source openrouter] [--report all|key|activity|credits] [--days 1..30]
+  [--cached | --refresh] [--json]` reports OpenRouter key spend, management-visible
+  activity, and authenticated-user credits separately. The key report uses
+  `OPENROUTER_API_KEY`. Activity and credits use `OPENROUTER_MANAGEMENT_KEY`.
+  Activity covers completed UTC days and defaults to 30. Use `--cached` for an offline
+  read and fetch live data only when requested.
+- Saved subscription and token reports show the last fetched scope and timestamp.
+  Report older snapshots as historical and keep quota, local tokens and provider
+  spend in their own scopes.
+- `rl data tokens` runs the local usage summary with `--source claude` preselected.
+  The repeatable `--source` flag can add other local sources.
 
 Analysis subcommands (`rl analyze`) — a read-only view of where sessions went wrong, built
 from a local index. Used by the `analyze` and `recommend` skills:

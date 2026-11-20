@@ -1,15 +1,15 @@
 from ringleader.commands import tokens as tokens_cmd
 
 
-def test_alias_forwards_to_usage_scoped_to_claude(monkeypatch):
+def test_alias_forwards_to_local_usage_scoped_to_claude(monkeypatch):
     seen = {}
 
-    def fake_cmd_usage(argv, prog="rl usage"):
+    def fake_local_summary(argv, prog="rl usage"):
         seen["argv"] = argv
         seen["prog"] = prog
         return 0
 
-    monkeypatch.setattr(tokens_cmd, "cmd_usage", fake_cmd_usage)
+    monkeypatch.setattr(tokens_cmd, "local_summary", fake_local_summary)
 
     rc = tokens_cmd.cmd_tokens(["--days", "3", "--json"])
 

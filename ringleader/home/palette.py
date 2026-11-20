@@ -27,6 +27,8 @@ PALETTE_VERBS: tuple[VerbCommand, ...] = (
     VerbCommand(("usage",), "token usage across agents, last 7 days", False),
     VerbCommand(("usage", "--breakdown"), "token usage broken down per session", False),
     VerbCommand(("usage", "windows"), "5-hour and weekly limit windows", False),
+    VerbCommand(("usage", "subscription", "--cached"), "saved Claude and Codex quotas", False),
+    VerbCommand(("usage", "token", "--cached"), "saved OpenRouter reports", False),
     VerbCommand(("harvests",), "pending harvests waiting to be published", False),
     VerbCommand(("overview", "--sessions", "--no-scan"), "every session, from the registry", True),
     VerbCommand(

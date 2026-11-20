@@ -7,6 +7,7 @@ from ringleader.home.state import project_queue
 
 from tui_e2e import (
     KEY_ENTER,
+    KEY_SHIFT_TAB,
     Expect,
     ExpectExit,
     Scenario,
@@ -80,6 +81,42 @@ def test_bare_rl_opens_the_inbox_on_the_default_registry(tmp_path):
     )
 
     assert result.exit_status == 0
+
+
+def test_usage_view_switch_and_refresh_in_a_real_terminal(tmp_path):
+    fixture, env, _ = _world(tmp_path)
+    result = run_scenario(
+        Scenario(
+            argv=("inbox", "--registry", str(fixture.registry_path)),
+            env=env,
+            steps=(
+                Expect("Next:"),
+                Send("7"),
+                Expect("exit 0"),
+                Send("\t"),
+                Expect("No saved subscription snapshot."),
+                Send("\t"),
+                Expect("No saved OpenRouter snapshot."),
+                Send(KEY_SHIFT_TAB),
+                Expect("No saved subscription snapshot."),
+                Expect("Saved reports · r to refresh"),
+                Send("r"),
+                Expect("Refresh failed · r to refresh"),
+                Expect("CLAUDE_CODE_OAUTH_TOKEN"),
+                Expect("Enable Codex usage with rl config set usage.codex_auth agent."),
+                Send("1"),
+                Expect("Next:"),
+                Send("q"),
+                ExpectExit(),
+            ),
+        )
+    )
+
+    assert result.exit_status == 0
+    refresh_screen = result.screens[-3]
+    assert "Refresh failed · r to refresh" in refresh_screen
+    assert "CLAUDE_CODE_OAUTH_TOKEN" in refresh_screen
+    assert "Previous report" not in refresh_screen
 
 
 def test_resuming_a_session_from_the_picker_execs_its_agent(tmp_path):

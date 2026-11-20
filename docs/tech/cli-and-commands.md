@@ -18,7 +18,7 @@ parsing of its own. Each leaf command owns its own `argparse.ArgumentParser`, wh
 
 `commands.TABLE` is a **nested dict**: a string maps to either a callable (a leaf command) or
 another dict (a group). There is no registration decorator and no plugin scan — the table is
-written out literally, so the whole surface is greppable in one file.
+written out literally, so every router entry is greppable in one file.
 
 ```
 TABLE = {
@@ -74,15 +74,17 @@ convention throughout:
   or `decisions`. The verb passes the contract action, its `rl-<verb>` name and the argparse dests
   that the guarded path rejects. See [json-contract.md](json-contract.md).
 
-Two handlers do their own sub-dispatch instead of nesting in `TABLE`: `usage` (`session`,
-`windows`, `export`) and `config` (`show`, `set`). Both predate the group convention and
-hand-roll the check on `argv[0]`.
+The `usage` and `config` handlers dispatch on `argv[0]` inside their modules. `usage` handles
+`local`, `subscription`, `token` and the legacy `session`, `windows` and `export` aliases.
+`usage.SUBCOMMANDS` enumerates the inventory, including `local session`, `local windows` and
+`local export` as explicit suffixes because `command_paths()` expands it one level.
+`config.SUBCOMMANDS` lists `show`, `set` and `filter`.
 
 ## Key entry points
 
 - `cli.main()` — the router.
 - `guard_args.py` / `contract_io.run_guarded` — the guarded path of the session verbs.
-- `commands.TABLE` — the whole surface, one literal.
+- `commands.TABLE` — the router's command registry.
 - `commands/__init__.py` `_SESSION` / `_MEM` / `_DATA` / `_WORKSPACE` / `_SHELL` / `_HANDOFF` — the groups.
 - `cli._FLAT` / `cli._GROUPS` — help ordering.
 
@@ -91,8 +93,8 @@ hand-roll the check on `argv[0]`.
 - **`rl config --help` fails.** `config` hand-rolls dispatch and treats `--help` as an unknown
   subcommand, printing `unknown subcommand '--help'` and exiting 2. Same shape in `rl session
   mark --help`. The nested-group path handles this correctly; these two do not.
-- **`rl data tokens` is not `rl usage`.** It calls `cmd_usage` with `--source claude` prepended,
-  so it reports Claude Code only while accepting every other usage flag.
+- **`rl data tokens` runs the local usage summary.** It calls `local_summary` with `--source claude`
+  prepended. The repeatable `--source` flag adds other local sources to the report.
 - **A leaf's return of `None` means success**, via `entry(rest) or 0`. A handler that wants a
   nonzero exit must return the int explicitly.
 - **Adding a command needs two edits** — `TABLE` and, for a top-level verb, `_FLAT`.

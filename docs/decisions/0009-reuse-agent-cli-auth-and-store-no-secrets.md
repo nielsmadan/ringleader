@@ -28,3 +28,6 @@ credential.
   ours — the `Model` seam absorbs that.
 
 See [tech/models.md](../tech/models.md).
+
+The [usage authentication decision](0016-keep-local-and-provider-usage-scopes-separate.md)
+covers quota and spend reporting. The decision above applies to model calls.

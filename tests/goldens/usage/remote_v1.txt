@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "kind": "subscription",
+  "results": [
+    {
+      "provider": "claude",
+      "scope": "subscription",
+      "identity": "credential:460078566754eddd",
+      "status": "ok",
+      "fetched_at": "2026-11-19T12:00:00+00:00",
+      "cached": false,
+      "stale": false,
+      "data": {
+        "plan": null,
+        "account_label": null,
+        "windows": [
+          {
+            "key": "five_hour",
+            "label": "5h",
+            "used_percent": 0.0,
+            "duration_minutes": 300,
+            "resets_at": null
+          },
+          {
+            "key": "weekly",
+            "label": "Weekly",
+            "used_percent": null,
+            "duration_minutes": null,
+            "resets_at": null
+          }
+        ]
+      },
+      "diagnostic": null
+    }
+  ]
+}

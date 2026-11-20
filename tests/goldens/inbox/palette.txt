@@ -14,13 +14,13 @@
   token usage broken down per session
   rl usage windows
   5-hour and weekly limit windows
+  rl usage subscription --cached
+  saved Claude and Codex quotas
+  rl usage token --cached
+  saved OpenRouter reports
   rl triage --unclassified --no-scan
   sessions never classified, from the registry
 ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
-opencode  6d ago    parser cache schema 22  unclassified
-
-
-
 
 
 

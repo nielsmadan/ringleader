@@ -292,21 +292,128 @@ def _cmd_export(argv: list[str], prog: str) -> int:
     return 0
 
 
+def _remote_options(parser: argparse.ArgumentParser) -> None:
+    from ..usage.remote_types import ReportMode  # noqa: PLC0415
+
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--cached",
+        dest="mode",
+        action="store_const",
+        const=ReportMode.CACHED,
+        default=ReportMode.DEFAULT,
+        help="read saved snapshots offline",
+    )
+    mode.add_argument(
+        "--refresh",
+        dest="mode",
+        action="store_const",
+        const=ReportMode.REFRESH,
+        help="fetch even with a fresh snapshot",
+    )
+    output = parser.add_mutually_exclusive_group()
+    output.add_argument("--json", action="store_true")
+    output.add_argument("--_inbox", action="store_true", help=argparse.SUPPRESS)
+
+
+def _cmd_subscription(argv: list[str], prog: str) -> int:
+    from ..usage.remote_cache import utc_now  # noqa: PLC0415
+    from ..usage.remote_render import inbox_reports_json, remote_exit_code, render_results  # noqa: PLC0415
+    from ..usage.remote_types import ReportMode  # noqa: PLC0415
+    from ..usage.subscription import SOURCES, subscription_results  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(
+        prog=f"{prog} subscription",
+        description="Claude and Codex subscription quota windows.",
+    )
+    parser.add_argument("--source", action="append", choices=SOURCES)
+    _remote_options(parser)
+    args = parser.parse_args(argv)
+    results = subscription_results(args.source or (), mode=args.mode, now=utc_now(), clock=utc_now)
+    if args._inbox:
+        print(inbox_reports_json(results))
+    else:
+        render_results(results, kind="subscription", json_output=args.json, now=utc_now())
+    return remote_exit_code(
+        results, cached=args.mode is ReportMode.CACHED, explicit=args.source is not None
+    )
+
+
+def _cmd_token(argv: list[str], prog: str) -> int:
+    from ..usage.openrouter import SCOPES  # noqa: PLC0415
+    from ..usage.remote_cache import MAX_ACTIVITY_DAYS, utc_now  # noqa: PLC0415
+    from ..usage.remote_render import inbox_reports_json, remote_exit_code, render_results  # noqa: PLC0415
+    from ..usage.remote_types import ReportMode  # noqa: PLC0415
+    from ..usage.token import token_results  # noqa: PLC0415
+
+    parser = argparse.ArgumentParser(
+        prog=f"{prog} token",
+        description="OpenRouter API key spend, activity and credits.",
+    )
+    parser.add_argument("--source", choices=("openrouter",))
+    parser.add_argument("--report", choices=("all", *SCOPES), default="all")
+    parser.add_argument(
+        "--days",
+        metavar=f"1..{MAX_ACTIVITY_DAYS}",
+        type=int,
+        choices=range(1, MAX_ACTIVITY_DAYS + 1),
+        help=f"completed UTC days (activity only, default {MAX_ACTIVITY_DAYS})",
+    )
+    _remote_options(parser)
+    args = parser.parse_args(argv)
+    if args.days is not None and args.report in ("key", "credits"):
+        parser.error("--days applies only to the activity report")
+    results = token_results(
+        args.report,
+        days=args.days if args.days is not None else MAX_ACTIVITY_DAYS,
+        mode=args.mode,
+        now=utc_now(),
+        clock=utc_now,
+    )
+    if args._inbox:
+        print(inbox_reports_json(results))
+    else:
+        render_results(results, kind="token", json_output=args.json, now=utc_now())
+    return remote_exit_code(
+        results, cached=args.mode is ReportMode.CACHED, explicit=args.report != "all"
+    )
+
+
 # dispatched from, and enumerated by `commands.command_paths()`
-_ACTIONS: dict[str, Callable[[list[str], str], int]] = {
+_LOCAL_ACTIONS: dict[str, Callable[[list[str], str], int]] = {
     "session": _cmd_session,
     "windows": _cmd_windows,
     "export": _cmd_export,
 }
-SUBCOMMANDS: tuple[str, ...] = tuple(_ACTIONS)
 
 
 def cmd_usage(argv: list[str], prog: str = "rl usage") -> int:
     if argv and argv[0] in _ACTIONS:
         return _ACTIONS[argv[0]](argv[1:], prog)
+    return local_summary(argv, prog=prog, epilog=f"Commands: {', '.join(SUBCOMMANDS)}.")
+
+
+def cmd_local(argv: list[str], prog: str) -> int:
+    prog = f"{prog} local"
+    if argv and argv[0] in _LOCAL_ACTIONS:
+        return _LOCAL_ACTIONS[argv[0]](argv[1:], prog)
+    return local_summary(argv, prog=prog, epilog=f"Commands: {', '.join(_LOCAL_ACTIONS)}.")
+
+
+_ACTIONS = {
+    **_LOCAL_ACTIONS,
+    "local": cmd_local,
+    "subscription": _cmd_subscription,
+    "token": _cmd_token,
+}
+SUBCOMMANDS = (*_ACTIONS, *(f"local {key}" for key in _LOCAL_ACTIONS))
+
+
+def local_summary(argv: list[str], *, prog: str, epilog: str | None = None) -> int:
     ap = argparse.ArgumentParser(
         prog=prog,
         description="Token usage across coding-agent harnesses, read from local agent state.",
+        epilog=epilog,
     )
     ap.add_argument("--source", action="append", choices=sorted(aggregate.READERS))
     ap.add_argument("--days", type=int, default=7)

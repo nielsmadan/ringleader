@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.13"
 dependencies = ["markdown-it-py>=4.2,<5", "textual>=8"]
 license = "MIT"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 authors = [{ name = "Niels Madan" }]
 
 [project.optional-dependencies]

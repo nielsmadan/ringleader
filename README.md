@@ -91,8 +91,9 @@ rl install             # skills, session-end hook, statusline capture
   `eval "$(rl shell init zsh)"` in your shell rc, "cd there" leaves your shell in its directory.
   → [Resuming sessions](docs/features/resuming-sessions.md)
 - **Prune** — remove the tiny, stale dead-ends. Previews by default; only `--delete` deletes.
-- **Usage** — where your tokens went, across five harnesses, plus 5h/weekly subscription
-  windows. → [Usage analytics](docs/user/usage-analytics.md)
+- **Usage** — local token accounting across five harnesses, Claude and Codex subscription
+  quotas, and OpenRouter spend, activity, and credits. Open Usage with `7` in the inbox.
+  → [Usage analytics](docs/user/usage-analytics.md)
 - **Analyze** — where sessions went wrong: retry loops, failure streaks, rewinds, cache rebuilds,
   recurring errors, scored per session and grouped by project, tool, skill and model. Reads from a
   local SQLite index; a model is used only for optional labels. → [Analysis](docs/features/analysis.md)
@@ -148,6 +149,9 @@ rl overview [<selector>] [--json]   # the view; project rollup by default
 rl triage [--json]                  # sessions awaiting a decision
 rl prune [--delete]                 # delete tiny + stale sessions
 rl usage [--breakdown] [--by X]     # token usage across claude/codex/droid/opencode/pi
+rl usage local windows             # captured subscription windows from disk
+rl usage subscription [--cached]   # Claude and Codex quota windows
+rl usage token [--cached]          # OpenRouter key spend, activity, and credits
 rl analyze [<selector>] [--by X]    # where sessions went wrong and where tokens went, from a SQLite index
 rl analyze session <id>             # one session in detail
 rl analyze issues                   # error signatures that recur across sessions
@@ -280,7 +284,7 @@ Guides for **using** ringleader live in [`docs/user/`](docs/user/index.md):
 - [The triage workflow](docs/user/triage-workflow.md) — the recurring loop.
 - [Finishing a session](docs/user/finishing-a-session.md) — harvesting, and why finish ≠ archive.
 - [Archives and retention](docs/user/archives-and-retention.md) — including a manual restore.
-- [Usage analytics](docs/user/usage-analytics.md) — tokens, windows, multi-machine merge.
+- [Usage analytics](docs/user/usage-analytics.md) — local tokens, quotas, OpenRouter, and multi-machine merge.
 - [CLI reference](docs/user/cli.md) — every command at a glance.
 
 Docs for **building** ringleader are in [`docs/overview.md`](docs/overview.md):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
+from functools import partial
 from typing import ClassVar
 
 from rich.text import Text
@@ -28,14 +29,16 @@ def joined_output(runs: Sequence[runner.CommandRun]) -> str:
 
 
 def run_commands(
-    argvs: Sequence[Sequence[str]], columns: int
+    argvs: Sequence[Sequence[str]], columns: int, *, stdout_only: bool = False
 ) -> Callable[[CancelToken, Callable[[None], None]], tuple[runner.CommandRun, ...]]:
+    run_rl = partial(runner.run_rl, stdout_only=True) if stdout_only else runner.run_rl
+
     def job(token: CancelToken, _progress: Callable[[None], None]) -> tuple[runner.CommandRun, ...]:
         runs: list[runner.CommandRun] = []
         for argv in argvs:
             if token.is_cancelled():
                 break
-            runs.append(runner.run_rl(argv, cancelled=token.is_cancelled, columns=columns))
+            runs.append(run_rl(argv, cancelled=token.is_cancelled, columns=columns))
         return tuple(runs)
 
     return job
@@ -74,9 +77,6 @@ class OutputScreen(InboxScreen):
         self._cancelled = False
         self._shown: tuple[int, bool, bool] | None = None
 
-    def commands(self) -> Sequence[Sequence[str]]:
-        return [self.argv]
-
     @property
     def running(self) -> bool:
         return self._token is not None
@@ -104,7 +104,7 @@ class OutputScreen(InboxScreen):
         self._cancelled = False
         columns = max(MIN_COLUMNS, self.size.width or 80)
         self._token = self.inbox.run_job(
-            run_commands(self.commands(), columns),
+            run_commands((self.argv,), columns),
             name="rl-output",
             on_result=lambda result: self._finished(generation, result),
         )

@@ -8,6 +8,10 @@ description: Explain where an agent session's tokens went and how to spend fewer
 Everything about calling `rl` and JSON conventions is in `references/playbook.md`; this
 file adds the flow. Read-only — this skill never deletes or edits sessions.
 
+`rl usage local` is the explicit offline entry point. `rl usage local session`,
+`rl usage local windows` and `rl usage local export` retain the same arguments and output
+as their root aliases; bare `rl usage` also remains local.
+
 ## Flow
 
 1. **Survey.** Run `rl usage --breakdown --json`. Note the heaviest projects and the
@@ -15,9 +19,15 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
    the prompt cache is missing.
 2. **Windows.** If the user is asking about limits, run `rl usage windows`. It reports
    Codex's 5h/weekly consumption directly (no setup needed), and Claude's too once
-   captured. If Claude shows as uncaptured, tell the user to run `rl install statusline`
-   (one-time, wires a capture snippet into their statusLine command) rather than falling
-   back to `claude /usage`.
+   captured. `rl install statusline` enables local Claude captures with a one-time
+   statusLine snippet. To consult saved remote reports, use `rl usage subscription
+   --cached`. For a requested live check, use `rl usage subscription`, optionally
+   selecting each `--source claude` or `--source codex`. Use `--refresh` to bypass
+   freshness checks. Keep stale or expired quotas clearly labeled.
+   For OpenRouter spend, activity, or credits, use `rl usage token --cached` for saved
+   results and `rl usage token` for a requested live check. Select an individual
+   `--report key`, `--report activity`, or `--report credits` as needed. Keep API key
+   caps, management-visible activity, and the authenticated user's balance separate.
 3. **Drill in.** For each heavy session, run `rl usage session <id> --json`: turns, the
    full token split, cache hit rate, the top turns, and context growth. `turns` counts every
    turn, subagents included; `main_turns` counts the main thread, and `top_turns` and
@@ -46,8 +56,9 @@ file adds the flow. Read-only — this skill never deletes or edits sessions.
 
 ## Notes
 
-- Tokens are the unit of truth. Cost is an estimate — present it as one, and omit it when
-  `rl` reports none.
+- Use tokens as the primary unit for local usage. Label local price estimates and omit cost
+  when `rl` reports none. OpenRouter spend and credit figures come from provider-reported data.
+  Include the report's scope and fetch time when summarizing them.
 - Per-tool token attribution does not exist on disk. Do not invent it; reason from turn
   totals and the transcript instead.
 - **Droid is never priced** — Factory bills its own credits, so `rl` reports no cost for it and

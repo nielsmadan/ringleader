@@ -17,8 +17,11 @@ rl
 ├── triage                      sessions awaiting a decision
 ├── prune                       delete tiny + stale sessions (preview by default)
 ├── usage                       token usage across claude/codex/droid/opencode/pi
+│   ├── local [session|windows|export] explicit local accounting and nested aliases
+│   ├── subscription            Claude and Codex quota windows
+│   ├── token                   OpenRouter key spend, activity, and credits
 │   ├── session <id>            where one session's tokens went
-│   ├── windows                 5h/weekly subscription limits
+│   ├── windows                 local 5h/weekly subscription captures
 │   └── export                  dump usage for merging across machines
 ├── analyze [<selector>]        where sessions went wrong and where tokens went
 │   ├── session <id>            one session in detail
@@ -48,8 +51,11 @@ rl
 | `rl triage` | Sessions not yet reviewed/harvested/parked. | `-u/--unclassified`, `--project`, `--source`, `--recent`, `--no-scan`, `--json` |
 | `rl prune` | Delete tiny + stale sessions. **Previews unless `--delete`.** | `--delete`, `--older-than` (7), `--max-turns` (12), `--project` |
 | `rl usage` | Token usage from local transcript files and agent databases. | `--by day\|model\|project\|session\|source`, `--breakdown`, `--source`, `--days`/`--since`/`--until` (`YYYY-MM-DD`), `--all`, `--archived`, `--limit`, `--merge`, `--json` |
+| `rl usage local` | Explicit local accounting; same output and flags as bare `rl usage`. Nested `local session`, `local windows` and `local export` accept their root aliases' arguments. | Same flags as `rl usage` |
+| `rl usage subscription` | Fetch or read saved Claude and Codex quota windows. Both sources are shown by default. | `--source claude\|codex` (repeatable), `--cached\|--refresh`, `--json` |
+| `rl usage token` | Fetch or read saved OpenRouter key spend, endpoint activity, and credits. All three scopes are shown by default. | `--source openrouter`, `--report all\|key\|activity\|credits`, `--days 1..30` (activity only), `--cached\|--refresh`, `--json` |
 | `rl usage session <id>` | One session's spend: turns (main and subagent), split, cache rate, top main-thread turns. | `--json` |
-| `rl usage windows` | 5h/weekly windows. Codex from disk; Claude needs `rl install statusline`. | |
+| `rl usage windows` | Local 5h/weekly snapshots. Codex from disk; Claude needs `rl install statusline`. | `--json` |
 | `rl usage export` | Write usage records out, to `--merge` elsewhere. | `--out` |
 | `rl analyze [<selector>]` | Index Claude and Codex transcripts and report failure signals, health, cache rebuilds and token rollups. Refreshes a SQLite index first; the first run reads every transcript. Default window is the last 7 days of data. On a terminal labels default to `--label recent` with a cost estimate and a confirmation; an agent session, a pipe, a redirected stderr or `--json` labels nothing unless `--label` is passed. `--until` alone reads all history up to that day. `--source` takes `claude` or `claude-code`. | `--project`, `--source`, `--days`/`--since`/`--until`, `--all`, `--archived`, `--by project\|folder\|skill\|plugin\|mcp_server\|tool\|model\|agent`, `--worst`, `--issues`, `--label recent\|all\|none`, `--yes`, `--no-refresh`, `--rebuild`, `--index`, `--registry`, `--json` |
 | `rl analyze session <id>` | One session: outcome, health, signals, episodes with evidence, messages, compactions, context growth, skills, tools, subagents. | `--label`, `--yes`, `--no-refresh`, `--rebuild`, `--index`, `--registry`, `--json` |
@@ -340,7 +346,7 @@ survive recovery expiry. A successful restore does not change published docs.
 | Command | Does |
 |---|---|
 | `rl data export <id>…` | Render a session to markdown. `--out`. With `--json`, print the end of up to 16 transcripts as one JSON document; `--max-chars` sets the cap per transcript. |
-| `rl data tokens` | `rl usage` pinned to `--source claude`; same flags otherwise. |
+| `rl data tokens` | Run the local usage summary with `--source claude` preselected. Accepts the local summary flags, including additional `--source` values. |
 | `rl data migrate [<old_dir>]` | One-time move of legacy repo-root state into `~/.local/share/ringleader/`. Safe to re-run. |
 | `rl data presence install` | Register Ringleader with Hooklinesinker and install status hooks. Confirms first; `--agent` is repeatable and defaults to detected agents. `--yes`, `--json` |
 | `rl data presence status` | Report the active and bundled binaries, consumer registration, hooks, running-session count, and problems. `--json` |
@@ -388,6 +394,11 @@ to the explicit presence command or onboarding skill.
 | `memory.codex_sqlite_home` | absolute path to the effective Codex SQLite home. `default` uses native configuration. |
 | `memory.claude_trust_file` | absolute path to the native trust document for a custom Claude configuration. `default` uses the native default when applicable. |
 | `inbox.keys` | `vim` (default) \| `circus` — the `rl inbox` triage keys; `circus` matches the circus app's Inbox |
+| `usage.claude_auth` | `env` (default) for an environment OAuth token, or `agent` to reuse the selected Claude Code profile. `default` resets to `env`. |
+| `usage.codex_auth` | `disabled` (default), or `agent` to reuse the Codex CLI login. `default` resets to `disabled`. |
+| `usage.cache_seconds` | Integer from `0` to `3600` for online usage cache freshness. The default is `60`. `default` resets to `60`. |
+
+See the [usage guide](usage-analytics.md#on-demand-subscription-quotas) for credential setup.
 
 `roundup_stale_hours` (default 8) is read from the same file but **cannot be set with
 `rl config set`** — edit `config.json` under the state dir to change it.

@@ -127,6 +127,19 @@ async def test_typing_a_verb_opens_an_output_screen_that_ran_it(tmp_path, fake_r
     assert fake_run.calls == [("usage", "windows")]
 
 
+@pytest.mark.parametrize("view", ["subscription", "token"])
+async def test_usage_remote_palette_commands_stay_cached_on_rerun(tmp_path, fake_run, view):
+    app = _app(build_fixture(tmp_path, threads=5, now=NOW_DT).registry_path)
+    title = f"rl usage {view} --cached"
+    async with app.run_test(size=(100, 30)) as pilot:
+        await _type(pilot, app, f"usage {view}")
+        await _choose(pilot, app, title)
+        await until(pilot, lambda: f"BODY of usage {view} --cached" in screen_text(app))
+        await pilot.press("r")
+        await until(pilot, lambda: len(fake_run.calls) == 2 and app.idle)
+    assert fake_run.calls == [("usage", view, "--cached")] * 2
+
+
 async def test_registry_verbs_run_against_the_apps_registry(tmp_path, fake_run):
     path = build_fixture(tmp_path, threads=5, now=NOW_DT).registry_path
     app = _app(path)

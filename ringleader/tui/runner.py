@@ -56,7 +56,7 @@ def _drain(fd: int, stop: threading.Event, sink: Callable[[str], None]) -> None:
     sink(decoder.decode(b"", final=True))
 
 
-def run_rl(
+def run_rl(  # noqa: PLR0913 -- preserve the process injection points for both output modes
     argv: Sequence[str],
     *,
     cancelled: CancelCheck,
@@ -64,6 +64,7 @@ def run_rl(
     python: str | None = None,
     env: Mapping[str, str] | None = None,
     timeout: float = TIMEOUT_SECONDS,
+    stdout_only: bool = False,
 ) -> CommandRun:
     started = time.monotonic()
     child_env = {
@@ -77,7 +78,7 @@ def run_rl(
         process = subprocess.Popen(
             [python or sys.executable, "-P", "-m", "ringleader", *argv],
             stdout=write_fd,
-            stderr=subprocess.STDOUT,
+            stderr=subprocess.DEVNULL if stdout_only else subprocess.STDOUT,
             stdin=subprocess.DEVNULL,
             start_new_session=True,
             env=child_env,
@@ -101,13 +102,14 @@ def run_rl(
             chunks.append(chunk[:room])
             kept += len(chunks[-1])
 
-    reader = threading.Thread(
-        target=_drain, args=(read_fd, stop, keep), name="rl-run-reader", daemon=True
-    )
-    reader.start()
+    reader: threading.Thread | None = None
     was_cancelled = False
     timed_out = False
     try:
+        reader = threading.Thread(
+            target=_drain, args=(read_fd, stop, keep), name="rl-run-reader", daemon=True
+        )
+        reader.start()
         while process.poll() is None:
             timed_out = time.monotonic() - started >= timeout
             if cancelled() or timed_out:
@@ -118,16 +120,26 @@ def run_rl(
         process.wait()
         reader.join(READER_JOIN_SECONDS)
     finally:
-        stop.set()
-        reader.join()
-        os.close(read_fd)
+        try:
+            if process.returncode is None:
+                _stop_group(process)
+        finally:
+            stop.set()
+            if reader is not None and reader.ident is not None:
+                reader.join()
+            os.close(read_fd)
     notes = [
         *(["[output truncated]"] if truncated.is_set() else []),
         *([f"[timed out after {timeout:.0f}s]"] if timed_out else []),
     ]
+    output = "".join(chunks)
+    if stdout_only and truncated.is_set():
+        output = ""
+    elif notes:
+        output = "\n".join([output, *notes])
     return CommandRun(
         argv=tuple(argv),
         returncode=None if was_cancelled else process.returncode,
-        output="\n".join(["".join(chunks), *notes]) if notes else "".join(chunks),
+        output=output,
         seconds=time.monotonic() - started,
     )

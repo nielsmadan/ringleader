@@ -67,8 +67,8 @@ Sessions that are running, or that `rl` cannot tell about because presence is no
 (`rl data presence install`), are refused rather than touched. `r` resumes the highlighted
 session, `enter` opens its detail, and `t` quits the inbox and starts an agent with the triage skill on that project. `1`
 to `8` jump between screens (Resume, Roundup, Prune, Harvests, Usage, Memories), and `ctrl+p` searches
-them. `q` waits for queued changes to finish. `rl inbox --read-only` lets you look without
-changing anything.
+them. `q` waits for queued changes to finish. `rl inbox --read-only` lets you browse
+without changing session decisions or launching agents.
 
 These are the default `vim` keys. `rl config set inbox.keys circus` switches the inbox to the
 circus app's keys:

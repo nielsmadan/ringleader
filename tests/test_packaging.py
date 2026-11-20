@@ -4,6 +4,7 @@ import hashlib
 import importlib.util
 import shutil
 import subprocess
+import tarfile
 import tomllib
 import zipfile
 from pathlib import Path
@@ -130,7 +131,7 @@ def test_vendor_placeholder_is_tracked():
 def stage_project(root: Path) -> Path:
     project = root / "project"
     project.mkdir()
-    for name in ("pyproject.toml", "README.md", ".gitignore"):
+    for name in ("pyproject.toml", "README.md", ".gitignore", "LICENSE", "THIRD_PARTY_NOTICES.md"):
         shutil.copy(REPO / name, project / name)
     shutil.copytree(
         REPO / "ringleader",
@@ -168,6 +169,7 @@ def build_wheel(project: Path) -> zipfile.ZipFile:
         capture_output=True,
         text=True,
         check=False,
+        timeout=120,
     )
     assert result.returncode == 0, result.stderr
     built = sorted((project / "dist").glob("*.whl"))
@@ -176,6 +178,36 @@ def build_wheel(project: Path) -> zipfile.ZipFile:
 
 
 needs_uv = pytest.mark.skipif(shutil.which("uv") is None, reason="uv is not on PATH")
+
+
+@needs_uv
+def test_distributions_ship_both_license_files(tmp_path):
+    project = stage_project(tmp_path)
+    dist = project / "dist"
+    result = subprocess.run(
+        ["uv", "build", "--out-dir", str(dist)],
+        cwd=project,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=120,
+    )
+    assert result.returncode == 0, result.stderr
+    (sdist,) = sorted(dist.glob("*.tar.gz"))
+    (wheel,) = sorted(dist.glob("*.whl"))
+    names = ("LICENSE", "THIRD_PARTY_NOTICES.md")
+    with zipfile.ZipFile(wheel) as built, tarfile.open(sdist, "r:gz") as source:
+        (metadata,) = [name for name in built.namelist() if name.endswith(".dist-info/METADATA")]
+        wheel_info = metadata.removesuffix("/METADATA")
+        for name in names:
+            expected = (REPO / name).read_bytes()
+            assert built.read(f"{wheel_info}/licenses/{name}") == expected
+            assert f"License-File: {name}\n" in built.read(metadata).decode()
+            (member,) = [path for path in source.getnames() if path.endswith(f"/{name}")]
+            handle = source.extractfile(member)
+            assert handle is not None
+            with handle:
+                assert handle.read() == expected
 
 
 @needs_uv

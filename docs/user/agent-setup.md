@@ -96,6 +96,27 @@ right after the line that reads stdin (e.g. `input=$(cat)`).
 `rl doctor` reports which target is in use, whether the snippet is installed, and whether a
 current capture exists.
 
+## On-demand usage
+
+Quota and provider reports use credentials supplied by the shell or an agent login that you
+enable explicitly. Claude defaults to `CLAUDE_CODE_OAUTH_TOKEN` with the `user:profile` scope.
+OpenRouter accepts `OPENROUTER_API_KEY` for key spend and `OPENROUTER_MANAGEMENT_KEY` for activity
+and credits. Supply these through the environment of the terminal that runs `rl` or opens the
+inbox. Ringleader's config holds the auth preferences.
+
+To reuse a signed-in agent profile, choose the provider you want to enable.
+
+```sh
+rl config set usage.claude_auth agent
+rl config set usage.codex_auth agent
+```
+
+Claude checks the selected profile and requires an unexpired token with `user:profile`. Renew
+expired credentials by signing in to Claude Code. Codex requires CLI 0.170.0 or newer and uses
+the existing Codex login. `rl config set usage.claude_auth env` and `rl config set
+usage.codex_auth disabled` restore the defaults. See the [usage guide](usage-analytics.md) for
+profile selection, macOS Keychain availability and test commands.
+
 ## The AI engine
 
 `rl session enrich` and `rl session harvest` need a model. Ringleader **stores no secrets** — by

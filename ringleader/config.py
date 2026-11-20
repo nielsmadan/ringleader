@@ -9,6 +9,7 @@ from .paths import config_path
 
 type KeyPreset = Literal["vim", "circus"]
 KEY_PRESETS: Final[tuple[KeyPreset, ...]] = get_args(KeyPreset.__value__)
+MAX_USAGE_CACHE_SECONDS = 3600
 
 
 @dataclass
@@ -26,6 +27,32 @@ class Config:
     memory_claude_trust_file: str | None = None
     session_filters: list[str] = field(default_factory=list)
     inbox_keys: str = "vim"
+    usage_claude_auth: str = "env"
+    usage_codex_auth: str = "disabled"
+    usage_cache_seconds: int = 60
+
+
+USAGE_DEFAULTS: Final[dict[str, str | int]] = {
+    "usage.claude_auth": Config.usage_claude_auth,
+    "usage.codex_auth": Config.usage_codex_auth,
+    "usage.cache_seconds": Config.usage_cache_seconds,
+}
+
+
+def usage_preference(key: str, value: object) -> str | int:
+    if key == "usage.cache_seconds":
+        if type(value) is int and 0 <= value <= MAX_USAGE_CACHE_SECONDS:
+            return value
+        raise ValueError("usage.cache_seconds must be an integer from 0 to 3600")
+    choices = {
+        "usage.claude_auth": ("env", "agent"),
+        "usage.codex_auth": ("disabled", "agent"),
+    }
+    if key not in choices:
+        raise ValueError("unknown usage preference")
+    if isinstance(value, str) and value in choices[key]:
+        return value
+    raise ValueError(f"{key} must be one of {', '.join(choices[key])}")
 
 
 def key_preset(value: object) -> KeyPreset:
@@ -57,6 +84,9 @@ def load_config(path: Path | None = None) -> Config:
         memory_claude_trust_file=data.get("memory_claude_trust_file"),
         session_filters=list(data.get("session_filters", [])),
         inbox_keys=data.get("inbox_keys", "vim"),
+        usage_claude_auth=data.get("usage_claude_auth", Config.usage_claude_auth),
+        usage_codex_auth=data.get("usage_codex_auth", Config.usage_codex_auth),
+        usage_cache_seconds=data.get("usage_cache_seconds", Config.usage_cache_seconds),
     )
 
 

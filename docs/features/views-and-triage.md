@@ -82,12 +82,14 @@ circus` switches to the circus app's (`e` harvest, `E` archive, `r` keep going, 
 keep, `#` delete, `x` mark, `enter`/`o` resume, `v` detail, `z` undo). Bulk archive and delete confirm with the count; bulk harvest is
 refused.
 
-Every write goes through one queue that rechecks the session right before it is touched, and a
-session that is running, or that presence cannot vouch for, is refused. `q` waits for queued work
+Session changes go through one queue that rechecks the session right before it is touched. The
+queue refuses a session that is running or that presence cannot vouch for. `q` waits for queued work
 to finish; a second `q` offers to discard what has not started. Triage with an agent and publish
 with an agent quit the app and start the agent in the right directory.
 
-`rl inbox --read-only` browses without writing and prints launches as a dry run.
+`rl inbox --read-only` scans without persisting registry updates, disables session and memory
+decisions and prints launches as dry runs. An explicit Usage refresh can update the provider cache.
+When Codex usage access is enabled, its app-server can also save a normal auth refresh.
 
 ## `rl roundup`
 

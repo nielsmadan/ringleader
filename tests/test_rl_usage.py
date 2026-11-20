@@ -504,3 +504,107 @@ def test_cmd_usage_total_includes_subagent_tokens(tmp_path, capsys):
 
     assert rc == 0
     assert json.loads(capsys.readouterr().out)["total_tokens"] == 240
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--all"],
+        ["--all", "--breakdown", "--json"],
+        ["--since", "2026-08-02", "--until", "2026-08-18", "--json"],
+        ["--days", "2", "--archived", "--json"],
+    ],
+)
+def test_local_alias_is_byte_identical_to_legacy_report(fake_records, monkeypatch, capsys, flags):
+    fake_records += [_rec(ts="2026-08-01T10:00:00Z"), _rec(ts="2026-08-17T10:00:00Z")]
+    monkeypatch.setattr(usage_cmd, "collect_archived", lambda _: [_rec(session="archived")])
+    assert usage_cmd.cmd_usage(flags) == 0
+    legacy = capsys.readouterr().out
+    assert usage_cmd.cmd_usage(["local", *flags]) == 0
+    assert capsys.readouterr().out == legacy
+
+
+@pytest.mark.parametrize(
+    "suffix", [["session", "s1", "--json"], ["windows", "--json"], ["windows"]]
+)
+def test_local_nested_aliases_are_byte_identical(fake_records, monkeypatch, capsys, suffix):
+    fake_records.append(_rec())
+    monkeypatch.setattr(usage_cmd, "collect_windows", list)
+    monkeypatch.setattr(usage_cmd, "collect_claude_windows", list)
+    assert usage_cmd.cmd_usage(suffix) == 0
+    legacy = capsys.readouterr().out
+    assert usage_cmd.cmd_usage(["local", *suffix]) == 0
+    assert capsys.readouterr().out == legacy
+
+
+def test_local_export_and_merge_preserve_legacy_bytes(fake_records, tmp_path, capsys):
+    from ringleader.usage.transfer import write_export
+
+    fake_records.append(_rec())
+    out = tmp_path / "machine.json"
+    assert usage_cmd.cmd_usage(["export", "--out", str(out)]) == 0
+    legacy_export = out.read_bytes()
+    legacy_message = capsys.readouterr().out
+    assert usage_cmd.cmd_usage(["local", "export", "--out", str(out)]) == 0
+    assert out.read_bytes() == legacy_export
+    assert capsys.readouterr().out == legacy_message
+    write_export(
+        [_rec(session="remote", project="exported", inp=10, out=5, cr=0, cw=0)],
+        tmp_path / "exported.json",
+        machine="fixture-other-machine",
+    )
+    flags = ["--merge", str(tmp_path), "--all", "--json"]
+    assert usage_cmd.cmd_usage(flags) == 0
+    legacy = capsys.readouterr().out
+    merged = json.loads(legacy)
+    assert merged["total_tokens"] == 685
+    assert {row["key"] for row in merged["rows"]} == {"p", "exported"}
+    assert usage_cmd.cmd_usage(["local", *flags]) == 0
+    assert capsys.readouterr().out == legacy
+
+
+def test_data_tokens_remains_local_and_has_identical_claude_json(fake_records, capsys):
+    from ringleader.commands.tokens import cmd_tokens
+
+    fake_records.append(_rec())
+    assert usage_cmd.cmd_usage(["--source", "claude", "--all", "--json"]) == 0
+    legacy = capsys.readouterr().out
+    assert cmd_tokens(["--all", "--json"]) == 0
+    assert capsys.readouterr().out == legacy
+
+
+def test_usage_paths_are_enumerated_and_visible_in_help(capsys):
+    from ringleader.commands import command_paths
+    from ringleader.commands.tokens import cmd_tokens
+
+    assert {path for path in command_paths() if path == "usage" or path.startswith("usage ")} == {
+        "usage",
+        "usage session",
+        "usage windows",
+        "usage export",
+        "usage local",
+        "usage local session",
+        "usage local windows",
+        "usage local export",
+        "usage subscription",
+        "usage token",
+    }
+    for prefix, commands in (
+        (
+            [],
+            "session, windows, export, local, subscription, token, local session, local windows, local export",
+        ),
+        (["local"], "session, windows, export"),
+    ):
+        with pytest.raises(SystemExit) as exit_info:
+            usage_cmd.cmd_usage([*prefix, "--help"])
+        assert exit_info.value.code == 0
+        text = " ".join(capsys.readouterr().out.split())
+        assert text.endswith(f"Commands: {commands}.")
+    with pytest.raises(SystemExit) as alias_help:
+        cmd_tokens(["--help"])
+    assert alias_help.value.code == 0
+    text = capsys.readouterr().out
+    assert text.startswith("usage: rl data tokens ")
+    assert "Commands:" not in text
+    assert "--source" in text

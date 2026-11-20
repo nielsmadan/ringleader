@@ -67,6 +67,15 @@ def _no_real_model_cli(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("ringleader.models.proc.run_model_process", refuse)
 
 
+@pytest.fixture(autouse=True)
+def _no_native_usage_keychain(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse() -> NoReturn:
+        raise AssertionError("a test reached the native Claude Keychain adapter")
+
+    monkeypatch.setattr("ringleader.usage.claude_keychain.read_credentials", refuse)
+    monkeypatch.setattr("ringleader.usage.claude_keychain._load_frameworks", refuse)
+
+
 @pytest.fixture(scope="session")
 def skill_dirs():
     """The bundled skills, discovered once. Shared so the files that check them cannot
@@ -81,6 +90,8 @@ def isolate_agent_environment(monkeypatch, tmp_path):
     # keeps `rl doctor` from finding — and running — the machine's real hooklinesinker
     monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "_data"))
     monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "_state"))
+    monkeypatch.setenv("HOME", str(tmp_path / "_home"))
+    monkeypatch.setenv("CLAUDE_SECURESTORAGE_CONFIG_DIR", str(tmp_path / "_claude-secure"))
     for name in (
         "CODEX_THREAD_ID",
         "CODEX_SESSION_ID",
@@ -93,6 +104,9 @@ def isolate_agent_environment(monkeypatch, tmp_path):
         "QWEN_HOME",
         "KIMI_CODE_HOME",
         "ANTHROPIC_MODEL",
+        "CLAUDE_CODE_OAUTH_TOKEN",
+        "OPENROUTER_API_KEY",
+        "OPENROUTER_MANAGEMENT_KEY",
     ):
         monkeypatch.delenv(name, raising=False)
     monkeypatch.setattr(claude, "MANAGED_SETTINGS", {})

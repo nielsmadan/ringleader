@@ -313,20 +313,28 @@ the harvests' folders and asks first when that is `$HOME` or above.
 
 ### Palette
 
-`ctrl+p` lists navigation, the current next steps and `PALETTE_VERBS`: `usage`, `usage
---breakdown`, `usage windows`, `harvests`, `overview --sessions --no-scan`, `triage
---unclassified --no-scan`, `doctor`, `config show`. Each runs as `python -P -m ringleader <argv>` in
-its own process group (`-P`, so a `ringleader/` directory in the cwd cannot shadow the installed
-package) and its captured output shows in `OutputScreen` (600 s limit, 2 M characters,
-cancelled on quit and whenever the screen is unmounted, so navigation away from Usage stop its
-run). The output is written once per run, not on every state change. `PALETTE_EXCLUDED` names every other top-level verb with a reason, and a test
-requires each to be in exactly one of the two.
+`ctrl+p` lists navigation, the current next steps and `PALETTE_VERBS`. Usage entries include
+the local report, its breakdown and captured windows, plus `usage subscription --cached`
+and `usage token --cached`. Each command runs as `python -P -m ringleader <argv>` in its own
+process group and `OutputScreen` displays the captured output. The runner limits each command
+to 600 s and 2 million output characters. Quitting or unmounting the screen cancels the job.
+`PALETTE_EXCLUDED` names the other top-level verbs with a reason, and a test checks coverage.
+
+`7` opens `UsageScreen`, which uses the same runner. Local runs `usage` followed by
+`usage windows`, retains completed output when switching views, and reruns both on `r`.
+Subscription and Token read saved reports on selection and fetch on `r`. View changes cancel
+the previous job and invalidate its result callback. `c` waits for cancellation to settle
+before re-enabling refresh. The view retains remote snapshots by provider and report scope.
+See [Usage](usage.md#inbox-usage-views).
 
 ### Read-only mode
 
-`rl inbox --read-only` scans without persisting, refuses every write, starts no model call, and
-turns exit intents into a dry run: `rl resume --dry-run` for a resume, the directory and argv for
-a handoff. `scripts/tui_shot.py --registry PATH` always runs read-only on a copy.
+`rl inbox --read-only` scans without persisting, disables registry and memory decisions, and
+uses `rl resume --dry-run` for a resume or prints the directory and argv for a handoff.
+Local Usage can update the derived Codex replay cache at `analysis/codex-own-starts.json`.
+Explicit remote Usage refreshes can update the provider cache. The Codex app-server can also save an
+auth refresh when Codex usage access is enabled. `scripts/tui_shot.py --registry PATH` runs
+read-only on a copy.
 `cmd_inbox` handles `--json` (and `--scan`) before the Textual check and rejects `--json` with
 `--read-only`; that machine mode is specified in `json-contract.md`.
 

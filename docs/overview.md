@@ -31,6 +31,8 @@ Map of the `docs/` tree. `README.md` (repo root) is the authoritative user-facin
   pinned memory schemas and the native lock verification procedure.
   [Agent worktrees](reference/agent-worktrees.md) compares native creation, session binding,
   setup, isolation, and cleanup across the five harnesses, separating CLI and desktop behavior.
+  [Provider usage](reference/provider-usage.md) records quota and reporting protocols and
+  manual verification commands.
   [Cass comparison](reference/coding-agent-session-search.md) covers overlap with an external
   session-search tool and possible complementary uses.
 - tests/: repeatable manual measurements and recorded baselines — the

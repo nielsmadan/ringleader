@@ -1,5 +1,5 @@
  ⭘                                 rl inbox — scanned just now
- rl usage, then rl usage windows
+              Local                        Subscription                         Token
  exit 0 · 1.0s
 BODY of usage
 
@@ -27,4 +27,4 @@ BODY of usage windows
 
 
 
- esc back  r re-run  q quit  u undo  ^r rescan                                          ▏^p palette
+ tab next view  esc back  r refresh  q quit  u undo  ^r rescan                          ▏^p palette

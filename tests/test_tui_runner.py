@@ -7,6 +7,8 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+from ringleader.tui import runner
 from ringleader.tui.runner import run_rl
 
 
@@ -86,12 +88,56 @@ def test_cancelling_kills_the_child_and_its_grandchild(tmp_path):
     assert _wait_gone(grandchild)
 
 
+@pytest.mark.parametrize("failed_stage", ["reader", "cancel check"])
+def test_an_exception_after_launch_reaps_the_child(tmp_path, monkeypatch, failed_stage):
+    python = _script(tmp_path, "exec sleep 60\n")
+    popen = runner.subprocess.Popen
+    start = threading.Thread.start
+    children = []
+
+    def spawn(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def start_reader(thread):
+        if failed_stage == "reader" and thread.name == "rl-run-reader":
+            raise RuntimeError("fixture launch failure")
+        start(thread)
+
+    def cancelled():
+        raise RuntimeError("fixture launch failure")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", spawn)
+    monkeypatch.setattr(threading.Thread, "start", start_reader)
+
+    try:
+        with pytest.raises(RuntimeError, match="fixture launch failure"):
+            run_rl(["x"], cancelled=cancelled, columns=80, python=python, timeout=5)
+        (child,) = children
+        assert child.returncode in (-signal.SIGTERM, -signal.SIGKILL)
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        for child in children:
+            if child.returncode is None:
+                child.kill()
+                child.wait(timeout=5)
+
+
 def test_output_beyond_the_cap_is_truncated_with_a_marker(tmp_path, monkeypatch):
     monkeypatch.setattr("ringleader.tui.runner.MAX_OUTPUT_CHARS", 50)
     python = _script(tmp_path, "yes xxxxxxxxx | head -n 1000\n")
     run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python)
     assert run.output.endswith("\n[output truncated]")
     assert run.output.count("x") <= 50
+
+
+def test_structured_stdout_rejects_a_truncated_document(tmp_path, monkeypatch):
+    monkeypatch.setattr("ringleader.tui.runner.MAX_OUTPUT_CHARS", 2)
+    python = _script(tmp_path, "printf '[] '\nprintf 'diagnostic\\n' >&2\n")
+    run = run_rl(["x"], cancelled=lambda: False, columns=80, python=python, stdout_only=True)
+    assert (run.returncode, run.output) == (0, "")
 
 
 def test_a_child_past_the_deadline_is_stopped_and_marked(tmp_path, monkeypatch):

@@ -77,6 +77,9 @@ def test_config_set_and_show_roundtrip(tmp_path):
         "memory_claude_trust_file": None,
         "session_filters": [],
         "inbox_keys": "vim",
+        "usage_claude_auth": "env",
+        "usage_codex_auth": "disabled",
+        "usage_cache_seconds": 60,
     }
 
 
@@ -339,3 +342,60 @@ def test_rl_inbox_refuses_a_stored_preset_it_does_not_know(tmp_path, stored):
         f"rl inbox: inbox.keys is {stored!r}; it must be one of vim, circus"
         " — set it with rl config set inbox.keys\n"
     )
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("usage.claude_auth", "agent"),
+        ("usage.codex_auth", "agent"),
+        ("usage.cache_seconds", "3600"),
+    ],
+)
+def test_config_usage_preferences_roundtrip_and_reset(tmp_path, key, value):
+    env = _env(tmp_path)
+    assert _run("config", "set", key, value, env=env).returncode == 0
+    assert f"{key}: {value}" in _run("config", "show", env=env).stdout
+    assert _run("config", "set", key, "default", env=env).returncode == 0
+    defaults = {
+        "usage.claude_auth": "env",
+        "usage.codex_auth": "disabled",
+        "usage.cache_seconds": "60",
+    }
+    assert f"{key}: {defaults[key]}" in _run("config", "show", env=env).stdout
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("usage.claude_auth", "automatic"),
+        ("usage.codex_auth", "env"),
+        ("usage.cache_seconds", "true"),
+        ("usage.cache_seconds", "60.0"),
+        ("usage.cache_seconds", "-1"),
+        ("usage.cache_seconds", "3601"),
+    ],
+)
+def test_config_usage_rejects_invalid_preferences(tmp_path, key, value):
+    env = _env(tmp_path)
+    result = _run("config", "set", key, value, env=env)
+    assert result.returncode == 2 and key in result.stderr
+    assert not (tmp_path / "ringleader" / "config.json").exists()
+
+
+def test_invalid_usage_config_does_not_break_offline_local_and_show_is_safe(tmp_path):
+    env = _env(tmp_path)
+    config_file = tmp_path / "ringleader" / "config.json"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        json.dumps(
+            {"usage_cache_seconds": "fake-secret", "usage_claude_auth": {"token": "fake-secret"}}
+        )
+    )
+    shown = _run("config", "show", env=env)
+    assert shown.returncode == 0
+    assert "usage.cache_seconds: invalid" in shown.stdout
+    assert "fake-secret" not in shown.stdout
+    local = _run("usage", "local", "--json", env=env)
+    assert local.returncode == 0
+    assert json.loads(local.stdout)["total_tokens"] == 0

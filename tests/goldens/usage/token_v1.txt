@@ -1,0 +1,77 @@
+{
+  "version": 1,
+  "kind": "token",
+  "results": [
+    {
+      "provider": "openrouter",
+      "scope": "key",
+      "identity": "credential:dcd0a9bf1892ca45",
+      "status": "ok",
+      "fetched_at": "2026-11-20T00:00:03+00:00",
+      "cached": false,
+      "stale": false,
+      "data": {
+        "usage_usd": 25.5,
+        "usage_daily_usd": 0.0,
+        "usage_weekly_usd": 7.2,
+        "usage_monthly_usd": 12.25,
+        "byok_usage_usd": 1.5,
+        "byok_usage_daily_usd": 5e-08,
+        "byok_usage_weekly_usd": 0.5,
+        "byok_usage_monthly_usd": 0.7,
+        "limit_usd": null,
+        "limit_remaining_usd": null,
+        "limit_reset": null,
+        "include_byok_in_limit": false
+      },
+      "diagnostic": null
+    },
+    {
+      "provider": "openrouter",
+      "scope": "activity",
+      "identity": "credential:de529bc17e6bcbb1",
+      "status": "ok",
+      "fetched_at": "2026-11-20T00:00:03+00:00",
+      "cached": false,
+      "stale": false,
+      "data": {
+        "since": "2026-11-19",
+        "until": "2026-11-19",
+        "timezone": "UTC",
+        "account_scope": "Management key scope (account or workspace)",
+        "rows": [
+          {
+            "date": "2026-11-19",
+            "model": "openai/gpt-4.1",
+            "model_permaslug": "openai/gpt-4.1-2025-04-14",
+            "provider_name": "Fixture Provider",
+            "endpoint_id": "550e8400-e29b-41d4-a716-446655440000",
+            "prompt_tokens": 10,
+            "completion_tokens": 125,
+            "cached_tokens": 49,
+            "reasoning_tokens": 135,
+            "requests": 5,
+            "usage_usd": 0.015,
+            "byok_usage_usd": 0.012
+          }
+        ]
+      },
+      "diagnostic": null
+    },
+    {
+      "provider": "openrouter",
+      "scope": "credits",
+      "identity": "credential:de529bc17e6bcbb1",
+      "status": "ok",
+      "fetched_at": "2026-11-20T00:00:03+00:00",
+      "cached": false,
+      "stale": false,
+      "data": {
+        "total_credits_usd": 25.5,
+        "total_usage_usd": 40.5,
+        "balance_usd": -15.0
+      },
+      "diagnostic": null
+    }
+  ]
+}
