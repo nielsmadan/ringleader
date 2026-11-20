@@ -179,7 +179,7 @@ def session_row(
         "decision": thread.get("decision"),
         "reviewed_at_mtime": thread.get("reviewedAtMtime"),
         "snoozed_at": thread.get("snoozedAt"),
-        "snoozed_until": thread.get("snoozedUntil"),
+        "snoozed_until": thread.get("snoozedUntil") if thread.get("snoozedAt") else None,
         "kept_at": thread.get("keptAt"),
         "finish_on_exit": bool(thread.get("finishOnExit")),
         "file_fingerprint": thread.get("fileFingerprint"),
@@ -209,6 +209,17 @@ def inbox_threads(reg: dict[str, Any], now_iso: str) -> list[dict[str, Any]]:
 
 def kept_threads(reg: dict[str, Any]) -> list[dict[str, Any]]:
     return sorted(filter(overview.is_kept, home_state.visible_threads(reg)), key=_inbox_order)
+
+
+def snoozed_threads(reg: dict[str, Any], now_iso: str) -> list[dict[str, Any]]:
+    return sorted(
+        (
+            t
+            for t in home_state.visible_threads(reg)
+            if overview.snooze_active(t, now_iso) and not overview.is_kept(t)
+        ),
+        key=_inbox_order,
+    )
 
 
 def _roundup_age(last_at: Any, now_iso: str) -> str | None:
@@ -321,6 +332,7 @@ def list_payload(
         "home": _home(state, {row["id"] for row in rows}, presence.live),
         "sessions": rows,
         "kept": [session_row(t, now_iso, presence.live) for t in kept_threads(reg)],
+        "snoozed": [session_row(t, now_iso, presence.live) for t in snoozed_threads(reg, now_iso)],
     }
 
 

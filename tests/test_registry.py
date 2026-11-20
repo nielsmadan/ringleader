@@ -2,7 +2,7 @@ import json
 from copy import deepcopy
 
 import pytest
-from ringleader import registry
+from ringleader import overview, registry
 from ringleader.registry import (
     apply_name_filters,
     commit_registry,
@@ -557,10 +557,36 @@ from ringleader.registry import snooze_thread, wake_thread
 def test_snooze_and_wake():
     reg = reconcile(empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00")], NOW)
     assert reg["threads"][0]["snoozedAt"] is None
-    snooze_thread(reg, "s1", "2026-07-01T00:00:00+00:00")
+    snooze_thread(reg, "s1", "2026-07-01T00:00:00+00:00", until="2026-08-01T00:00:00+00:00")
     assert reg["threads"][0]["snoozedAt"] == "2026-07-01T00:00:00+00:00"
-    wake_thread(reg, "s1")
-    assert reg["threads"][0]["snoozedAt"] is None
+    assert wake_thread(reg, "s1", NOW) is True
+    t = reg["threads"][0]
+    assert (t["snoozedAt"], t["snoozedUntil"]) == (None, None)
+
+
+def test_wake_of_a_session_that_is_not_snoozed_changes_nothing():
+    reg = reconcile(empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00")], NOW)
+    reg["threads"][0]["reviewedAtMtime"] = reg["threads"][0]["mtime"]
+    assert wake_thread(reg, "s1", NOW) is False
+    assert reg["threads"][0]["reviewedAtMtime"] == reg["threads"][0]["mtime"]
+
+
+def test_wake_of_an_expired_snooze_keeps_a_later_reviewed_mark():
+    reg = reconcile(empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00")], NOW)
+    snooze_thread(reg, "s1", "2026-06-02T00:00:00+00:00", until="2026-06-05T00:00:00+00:00")
+    t = reg["threads"][0]
+    t["reviewedAtMtime"] = t["mtime"]
+    assert wake_thread(reg, "s1", NOW) is False
+    assert (t["reviewedAtMtime"], t["snoozedAt"]) == (t["mtime"], "2026-06-02T00:00:00+00:00")
+
+
+def test_woken_session_returns_to_the_inbox_past_a_reviewed_mark():
+    reg = reconcile(empty_registry(), [_meta("s1", "2026-06-01T00:00:00+00:00")], NOW)
+    t = reg["threads"][0]
+    t["reviewedAtMtime"] = t["mtime"]
+    snooze_thread(reg, "s1", "2026-07-01T00:00:00+00:00")
+    wake_thread(reg, "s1", NOW)
+    assert [x["sessionId"] for x in overview.triage_inbox(reg["threads"], NOW)] == ["s1"]
 
 
 def test_reconcile_preserves_snoozed():

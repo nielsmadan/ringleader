@@ -123,10 +123,10 @@ def test_inbox_threads_breaks_mtime_ties_by_qualified_id():
 NO_ONE_LIVE = contract.PresenceView.ok(frozenset())
 
 
-def _payload(reg, presence=NO_ONE_LIVE, stale_hours=8, harvests=0, agents=()):
+def _payload(reg, presence=NO_ONE_LIVE, stale_hours=8, harvests=0, agents=(), now=NOW):
     return contract.list_payload(
         reg,
-        NOW,
+        now,
         registry_path="/fixture/registry.json",
         scan=None,
         surroundings=contract.Surroundings(presence, stale_hours, harvests, agents),
@@ -276,6 +276,44 @@ def test_list_payload_lists_kept_sessions_apart_from_the_inbox():
     assert set(doc["kept"][0]) == set(contract.SESSION_ROW_KEYS)
     assert (doc["kept"][1]["decision"], doc["kept"][1]["kept_at"]) == ("keep", _ago(1))
     assert "kept" in doc["kept"][1]["badges"]
+
+
+def test_list_payload_lists_snoozed_sessions_apart_from_the_inbox_and_kept():
+    later = _thread("later", days=2, snoozedAt=_ago(1), snoozedUntil=_ago(-20))
+    sleeper = _soon("sleeper", 40)
+    forever = _thread("forever", days=5, snoozedAt=_ago(3))
+    kept = _thread("kept", days=4, decision="keep", snoozedAt=_ago(1), snoozedUntil=_ago(-5))
+    hidden = _thread("hidden", days=3, snoozedAt=_ago(1), filteredBy="zz*")
+    harvested = _thread("harvested", days=3, decision="harvested", snoozedAt=_ago(1))
+    open_ = _thread("open", days=1)
+    doc = _payload(_reg([later, open_, sleeper, forever, kept, hidden, harvested]))
+    assert [row["id"] for row in doc["snoozed"]] == [
+        "claude-code:sleeper",
+        "claude-code:forever",
+        "claude-code:harvested",
+        "claude-code:later",
+    ]
+    assert [row["id"] for row in doc["sessions"]] == ["claude-code:open"]
+    assert [row["id"] for row in doc["kept"]] == ["claude-code:kept"]
+    assert set(doc["snoozed"][0]) == set(contract.SESSION_ROW_KEYS)
+    assert (doc["snoozed"][3]["snoozed_at"], doc["snoozed"][3]["snoozed_until"]) == (
+        _ago(1),
+        _ago(-20),
+    )
+    assert "snoozed" in doc["snoozed"][3]["badges"]
+
+
+def test_a_snoozed_session_moves_to_the_inbox_once_its_wake_date_passes():
+    reg = _reg([_soon("sleeper", 5)])
+    awake = _payload(reg, now=(NOW_DT + timedelta(days=3)).isoformat())
+    assert [row["id"] for row in _payload(reg)["snoozed"]] == ["claude-code:sleeper"]
+    assert [row["id"] for row in awake["sessions"]] == ["claude-code:sleeper"]
+    assert awake["snoozed"] == []
+
+
+def test_session_row_drops_a_wake_date_left_behind_by_an_ended_snooze():
+    stale = _thread("woken", snoozedAt=None, snoozedUntil=_ago(-4))
+    assert contract.session_row(stale, NOW, frozenset())["snoozed_until"] is None
 
 
 def test_list_payload_lists_launchable_agents_with_their_install_state():

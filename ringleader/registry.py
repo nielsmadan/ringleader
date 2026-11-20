@@ -9,7 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-from . import memory_catalog, namefilter
+from . import memory_catalog, namefilter, overview
 from .agents import canonical_agent, source_of
 from .memory_types import MemoryScan
 from .slug import is_beneath
@@ -1020,11 +1020,16 @@ def snooze_thread(
     raise KeyError(session_id)
 
 
-def wake_thread(reg: dict[str, Any], session_id: str) -> dict[str, Any]:
+def wake_thread(reg: dict[str, Any], session_id: str, now_iso: str) -> bool:
+    """End an active snooze and any reviewed mark; False if the snooze isn't active."""
     t = find_session(reg, session_id)
     if t is not None:
+        if not overview.snooze_active(t, now_iso):
+            return False
         t["snoozedAt"] = None
-        return reg
+        t["snoozedUntil"] = None
+        t["reviewedAtMtime"] = None
+        return True
     raise KeyError(session_id)
 
 
@@ -1075,6 +1080,7 @@ def unkeep_thread(reg: dict[str, Any], session_id: str) -> bool:
         t["keptAt"] = None
         t["reviewedAtMtime"] = None
         t["snoozedAt"] = None
+        t["snoozedUntil"] = None
         return True
     raise KeyError(session_id)
 

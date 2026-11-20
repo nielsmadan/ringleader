@@ -15,8 +15,8 @@ def add_guard_args(ap: argparse.ArgumentParser) -> None:
         metavar="MTIME",
         help=(
             "the mtime the caller saw; archive, delete and harvest act only if the session still"
-            " has it (compared as an exact string) and is not running; snooze, keep, unkeep and"
-            " mark reviewed take it as the stamp only (mark reviewed records it)"
+            " has it (compared as an exact string) and is not running; snooze, keep, unkeep, wake"
+            " and mark reviewed take it as the stamp only (mark reviewed records it)"
         ),
     )
     ap.add_argument(
@@ -25,8 +25,8 @@ def add_guard_args(ap: argparse.ArgumentParser) -> None:
         metavar="FP",
         help=(
             "with --if-mtime, act only if the transcript still has this content fingerprint"
-            " (archive, delete and harvest; accepted and ignored by snooze, keep, unkeep and mark"
-            " reviewed)"
+            " (archive, delete and harvest; accepted and ignored by snooze, keep, unkeep, wake and"
+            " mark reviewed)"
         ),
     )
 

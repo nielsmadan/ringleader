@@ -114,6 +114,7 @@ verbs = [
     ["session", "snooze"],
     ["session", "keep"],
     ["session", "unkeep"],
+    ["session", "wake"],
     ["session", "mark", "reviewed"],
     ["data", "export"],
 ]
@@ -133,6 +134,7 @@ PLAIN_VERBS = (
     "session snooze",
     "session keep",
     "session unkeep",
+    "session wake",
     "session mark reviewed",
     "data export",
 )
@@ -160,8 +162,9 @@ def test_plain_verbs_stay_off_the_decision_stack(monkeypatch, tmp_path):
     fixture = gui_world(monkeypatch, tmp_path, threads=20, transcripts=True)
     threads = registry.load_registry(fixture.registry_path)["threads"]
     ids = iter(registry.qualified_id(t) for t in threads if t.get("source") == "claude-code")
-    by_verb = {verb: next(ids) for verb in PLAIN_VERBS if verb != "session unkeep"}
-    by_verb["session unkeep"] = by_verb["session keep"]
+    reused = {"session unkeep": "session keep", "session wake": "session snooze"}
+    by_verb = {verb: next(ids) for verb in PLAIN_VERBS if verb not in reused}
+    by_verb |= {verb: by_verb[source] for verb, source in reused.items()}
     notes = tmp_path / "notes.md"
     notes.write_text("# notes\n", encoding="utf-8")
     result = _run(

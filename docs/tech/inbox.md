@@ -92,7 +92,7 @@ changed. A Triage mark redraws only the rows it flipped.
 
 `Writer` is one daemon thread draining a queue in order. Consecutive ready ops of one kind
 form a group of up to `GROUP_LIMIT` (`prune.DELETE_BATCH`, 25): marks (keep going, snooze,
-keep, unkeep), archives and deletes each run inside one registry transaction (`batch.run_batch`, see
+keep, unkeep, wake), archives and deletes each run inside one registry transaction (`batch.run_batch`, see
 [registry.md](registry.md)) that rechecks each session right before acting on it. Ops stay in
 the queue while their group runs: the executor *claims* each one as its turn comes, which moves
 it to running and delivers its `Started`. An op withdrawn before its claim — by `cancel(ticket)`,
@@ -103,9 +103,10 @@ still finishes those ops with the failure. Harvest, prune, roundup, classify, st
 ops always run alone. The writer takes one `decisions.Executor` holding both `execute` and
 `execute_group`; the app's default is `decisions.EXECUTOR`, a test can inject its own executor
 object (which then groups too), and a plain callable is wrapped as `decisions.OneByOne`. Ops
-are `ArchiveOp`, `DeleteOp`, `KeepGoingOp`, `SnoozeOp`, `KeepOp`, `UnkeepOp`, `HarvestSaveOp`,
+are `ArchiveOp`, `DeleteOp`, `KeepGoingOp`, `SnoozeOp`, `KeepOp`, `UnkeepOp`, `WakeOp`, `HarvestSaveOp`,
 `PruneOp`, `RoundupPhasesOp`, `ClassifyOp`, `StampRoundupOp` and `ReloadOp` (`decisions.py`);
-no screen builds an `UnkeepOp`, only the guarded `rl session unkeep`. Screens call
+no screen builds an `UnkeepOp` or a `WakeOp`, only the guarded `rl session unkeep` and
+`rl session wake`. Screens call
 `InboxApp` methods that build ops and `submit` them; they never write. `writer.waiting` counts
 ops that have not started; `writer.unfinished` adds the ones claimed but not yet finished.
 

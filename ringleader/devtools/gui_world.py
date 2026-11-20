@@ -20,6 +20,7 @@ MARKER = ".gui-world"
 MIN_THREADS = 2
 FORBIDDEN_HOME_DIRS = (".local/share", ".claude", ".codex", ".factory", ".pi", ".cursor")
 RUNNING_WINDOW = timedelta(days=7)
+EXTRA_SNOOZES = (timedelta(days=2), timedelta(days=14), timedelta(days=30))
 EMPTY_HARVEST = {"summary": "", "gotchas": [], "decisions": [], "whatChanged": []}
 FULL_HARVEST = {
     "summary": "Synthetic harvest from the GUI world.",
@@ -73,6 +74,15 @@ def _running_thread(reg: dict[str, object], now: datetime) -> dict[str, object]:
     return max(recent, key=lambda t: datetime.fromisoformat(str(t["mtime"])), default=newest)
 
 
+def _snooze_more(reg: dict[str, object], now: datetime, running: dict[str, object]) -> None:
+    plain = (t for t in contract.inbox_threads(reg, now.isoformat()) if t is not running)
+    others = [t for t in plain if not (t.get("snoozedAt") or t.get("finishOnExit"))]
+    start = now.replace(microsecond=0)
+    for thread, wait in zip(others, EXTRA_SNOOZES, strict=False):
+        thread["snoozedAt"] = (start - timedelta(days=1)).isoformat()
+        thread["snoozedUntil"] = (start + wait).isoformat()
+
+
 def _write_executable(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
@@ -106,6 +116,8 @@ def build_world(root: Path, *, now: datetime, threads: int = 80) -> World:
     with _isolated_environ(fixture.env):
         reg = registry.load_registry(fixture.registry_path)
         running = _running_thread(reg, now)
+        _snooze_more(reg, now, running)
+        registry.commit_registry(fixture.registry_path, reg)
     _write_config(root, root / "xdg-data" / "ringleader" / "config.json")
     (root / "claude-settings.json").write_text(
         json.dumps({"cleanupPeriodDays": 30}), encoding="utf-8"

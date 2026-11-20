@@ -28,6 +28,7 @@ rl session harvest       ID --archive GUARD
 rl session snooze        ID --until=ISO GUARD
 rl session keep          ID GUARD
 rl session unkeep        ID GUARD
+rl session wake          ID GUARD
 rl session mark reviewed ID GUARD
 
 GUARD := [--json] --if-mtime=MTIME [--if-fingerprint=FP] [--registry=PATH]
@@ -76,8 +77,8 @@ Each violation is a usage error: exit 2, usage on stderr, nothing on stdout.
   --current`, `--from-file` and `--dry-run`; `snooze --for`. The error names the flag.
 - `harvest` needs `--archive` on the guarded path (the guarded harvest saves and archives), and
   `--archive` without `--if-mtime` is a usage error. `snooze` needs `--until`.
-- `keep --yes` is accepted and ignored on the guarded path. `snooze`, `keep`, `unkeep` and
-  `mark reviewed` accept `--if-fingerprint` and do not use it.
+- `keep --yes` is accepted and ignored on the guarded path. `snooze`, `keep`, `unkeep`, `wake`
+  and `mark reviewed` accept `--if-fingerprint` and do not use it.
 - `--until` that is unparsable, naive or in the past is a `refused` outcome, not a usage error.
 
 ## Output and exit codes
@@ -106,7 +107,7 @@ Without `--json` a guarded verb prints for humans:
 - Warnings: `rl-<verb>: <warning>` on stderr.
 - The expected exceptions above: `rl-<verb>: <error>` on stderr, exit 1.
 
-`<verb>` is `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep` or `mark-reviewed`.
+`<verb>` is `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep`, `wake` or `mark-reviewed`.
 
 ## Startup cost
 
@@ -153,6 +154,7 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
 | `home` | `Home` | The inbox home screen's data; see `home` below. |
 | `sessions` | `SessionRow[]` | See below. |
 | `kept` | `SessionRow[]` | `contract.kept_threads`: sessions kept long-term (`overview.is_kept`: `decision` is `keep`) among the visible threads, in the same order as `sessions`. Disjoint from `sessions`: the triage inbox excludes kept sessions. A kept session can also appear in `home.rows` (it may be in flight), so a client merging the two deduplicates by `id`. |
+| `snoozed` | `SessionRow[]` | `contract.snoozed_threads`: sessions with an active snooze (`overview.snooze_active`: `snoozedAt` set and `snoozedUntil` null or still ahead) among the visible threads, except kept ones, in the same order as `sessions`. A session is in at most one of `sessions`, `kept` and `snoozed`: a kept session that is also snoozed is listed under `kept` only. A harvested session that is still snoozed is listed here, though waking it does not return it to `sessions`. Once `snoozedUntil` passes, the session leaves `snoozed` and is back in `sessions` unless it is harvested or was marked reviewed at its current `mtime`. `home.waking_soon` and `home.rows` can repeat its id (and also hold kept sessions that are snoozed), so a client merging them deduplicates by `id`. |
 
 Membership of `sessions` is `contract.inbox_threads`: `overview.triage_inbox` over `home.state.visible_threads`
 (filtered sessions excluded, woke threads included), sorted by parsed `mtime` (a naive time is
@@ -189,7 +191,7 @@ project grouping belong to the client; the rule that decides which side a row fa
 | `decision` | string or null | The recorded decision (`keep`, `harvested`, …). |
 | `reviewed_at_mtime` | string or null | `mtime` the user last marked "keep going" at. |
 | `snoozed_at` | string or null | When the snooze was set. |
-| `snoozed_until` | string or null | When it ends. |
+| `snoozed_until` | string or null | When it ends; null for an indefinite snooze, and always null when `snoozed_at` is (a wake date left behind by an ended snooze is not reported). |
 | `kept_at` | string or null | When it was kept long-term. |
 | `finish_on_exit` | boolean | Marked by the ringleader-finish skill. |
 | `file_fingerprint` | string or null | `fileFingerprint`; the stamp the guarded verbs revalidate against. |
@@ -262,7 +264,7 @@ The output of a guarded session verb with `--json`.
 | Key | Type | Meaning |
 |---|---|---|
 | `version`, `kind` | `1`, `"outcome"` | |
-| `action` | string | The action applied: `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep` or `keep_going` (`mark reviewed`). |
+| `action` | string | The action applied: `archive`, `delete`, `harvest`, `snooze`, `keep`, `unkeep`, `wake` or `keep_going` (`mark reviewed`). |
 | `id` | string | The requested ID. |
 | `status` | string | `ok`, `refused`, `empty` or `failed`. |
 | `reason` | string or null | For `refused`: the first refusal reason. Otherwise `null`. |
@@ -304,7 +306,7 @@ contract change.
 |---|---|---|
 | `changed` | refused | `--if-mtime` differs from the registry, or the transcript's size or mtime on disk differs from `--if-fingerprint` |
 | `no_fingerprint` | refused | `archive`, `delete` or `harvest` without a valid five-field `--if-fingerprint` |
-| `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `unkeep`, `keep_going`, `snooze`) |
+| `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `unkeep`, `wake`, `keep_going`, `snooze`) |
 | `transcript_missing` | refused | the stamped transcript is not on disk |
 | `running` | refused | presence reports the session running |
 | `presence_unknown` | refused | presence could not answer, so the session is treated as running |
@@ -334,6 +336,7 @@ Each guarded verb maps to one action (`action` in the outcome document):
 | `snooze` | `snooze` | `SnoozeOp` |
 | `keep` | `keep` | `KeepOp` |
 | `unkeep` | `unkeep` | `UnkeepOp` |
+| `wake` | `wake` | `WakeOp` |
 | `mark reviewed` | `keep_going` | `KeepGoingOp` |
 
 `--if-mtime` is the `mtime` the user saw. `harvest --archive` saves the harvest and archives the
@@ -346,7 +349,7 @@ is produced only by harvest.
 | Action | Revalidated | Presence checked |
 |---|---|---|
 | `archive`, `delete`, `harvest` | yes, stamp required | yes |
-| `snooze`, `keep`, `unkeep`, `keep_going` | no | no |
+| `snooze`, `keep`, `unkeep`, `wake`, `keep_going` | no | no |
 
 - **Revalidation** (`revalidate.changed_reason`) compares `--if-mtime` with the registry thread's
   `mtime` and, when `--if-fingerprint` carries a content stamp, the transcript's size and mtime
@@ -371,8 +374,8 @@ is produced only by harvest.
   harvest …` for harvest). `delete` is also refused when the transcript or a companion lies
   outside its source's session store.
 - **Locks.** `archive` and `harvest` run under `stateio.publish_lock()`; `delete` runs inside
-  `registry.mutate_registry`; `snooze`, `keep`, `unkeep` and `keep_going` use `mutate_registry`
-  only.
+  `registry.mutate_registry`; `snooze`, `keep`, `unkeep`, `wake` and `keep_going` use
+  `mutate_registry` only.
   Harvest's save step reuses the publish lock through `save_harvest_unlocked`. There is no outer
   lock around any guarded operation: `stateio.publish_lock` opens a new file descriptor and takes
   `LOCK_EX` each time, so it is not reentrant, and an outer `publish_lock` around an op that
@@ -396,15 +399,21 @@ is produced only by harvest.
   stored normalized to UTC (`contract.normalize_until`, `astimezone(UTC).isoformat()`) because `overview.snooze_active` compares ISO strings (`now_iso < until`), which orders correctly only when both sides are in the same zone; do not keep the user's offset. Failures are refusals: unparsable input gives
   `--until is not an ISO 8601 time: …`, a naive time `--until needs a timezone offset`, a past
   time `snooze time must be in the future`.
-- **Missing session on a non-revalidated op.** `keep`, `unkeep`, `keep_going` and `snooze` do not
+- **Missing session on a non-revalidated op.** `keep`, `unkeep`, `wake`, `keep_going` and `snooze` do not
   revalidate; if the session has left the registry, `decisions.execute` turns the `KeyError` into
   a not-ok outcome with no refusal, which is reported as `failed` (message `… no longer in the
   registry`). It is not special-cased.
-- **Unkeep.** `unkeep` clears `decision`, `keptAt`, `reviewedAtMtime` and `snoozedAt` (`ok`,
-  `wrote: true`), as the plain verb does, so the session is back in the triage inbox even if it
+- **Unkeep.** `unkeep` clears `decision`, `keptAt`, `reviewedAtMtime`, `snoozedAt` and
+  `snoozedUntil` (`ok`, `wrote: true`), as the plain verb does, so the session is back in the triage inbox even if it
   was marked reviewed or snoozed before it was kept. A session that is not kept, including one
   with another decision such as `harvested`, is left alone: `ok` with `wrote: false` and the
   message `… is not kept`, so a repeated unkeep is harmless. The plain `rl session unkeep` exits 1 in that case.
+- **Wake.** `wake` ends an active snooze: it clears `snoozedAt`, `snoozedUntil` and
+  `reviewedAtMtime` (`ok`, `wrote: true`, message `woke …`), as the plain verb does, so the session
+  is back in the triage inbox even if it was marked reviewed before the snooze; a kept session stays
+  in `kept`, and a harvested one is in none of the lists. A session whose snooze is not active,
+  including one whose `snoozedUntil` has already passed, is left alone: `ok` with `wrote: false`
+  and the message `… is not snoozed`. The plain `rl session wake` exits 1 in that case.
 - **Mark reviewed.** The guarded `mark reviewed` records `--if-mtime` as the reviewed mtime. The
   plain `rl session mark reviewed` records the live file mtime.
 - A decision is never retried automatically by `rl`.
@@ -431,8 +440,8 @@ registry.
   flag makes that explicit and keeps it distinct from plain `rl session harvest`, which only
   saves.
 - **Same ops as the TUI.** The guarded verbs run the `decisions.py` ops and executor the TUI uses,
-  so revalidation, presence and locks are not reimplemented. `UnkeepOp` is the one op only the
-  guarded path builds; the TUI has no unkeep. The only stricter rule is the required fingerprint for
+  so revalidation, presence and locks are not reimplemented. `UnkeepOp` and `WakeOp` are the ops
+  only the guarded path builds; the TUI has no unkeep or wake. The only stricter rule is the required fingerprint for
   `archive`, `delete` and `harvest`.
 - **No delete grace here.** A guarded `delete` acts immediately; the client owns the undo window
   (10 s, the TUI's `DELETE_GRACE_SECONDS`).
@@ -455,7 +464,9 @@ documents. Change the contract and the circus client (types, Rust envelope, gold
 
 The `agents` and `home` keys on the list document, the `handoff` document, `code` on the outcome
 document and `presence.code` on the list were added as compatible changes, and so were the
-`kept` key on the list and the `unkeep` verb (a new `action` value on the outcome).
+`kept` key on the list and the `unkeep` verb (a new `action` value on the outcome), and the
+`snoozed` key on the list and the `wake` verb. Nulling `snoozed_until` when `snoozed_at` is null
+only drops a value that no longer meant anything.
 
 The `scan` key on the list document was added as a compatible change, and the standalone `scan`
 document kind was removed when the machine interface moved onto the existing commands; clients

@@ -61,6 +61,13 @@ def test_unkeep_thread_clears_keep():
     assert t["keptAt"] is None
 
 
+def test_unkeep_thread_clears_the_snooze_wake_date():
+    reg = _reg(_t("s1", decision="keep", snoozedAt=NOW, snoozedUntil="2999-01-01T00:00:00+00:00"))
+    registry.unkeep_thread(reg, "s1")
+    t = reg["threads"][0]
+    assert (t["snoozedAt"], t["snoozedUntil"]) == (None, None)
+
+
 def test_unkeep_thread_leaves_a_non_keep_decision_alone():
     reg = _reg(_t("s1", decision="harvested"))
     assert registry.unkeep_thread(reg, "s1") is False

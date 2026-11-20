@@ -1,7 +1,7 @@
 import json
 import subprocess
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from ringleader import contract, harvesting, presence, registry
@@ -69,6 +69,28 @@ def test_the_default_world_keeps_sessions_in_two_projects(tmp_path):
     kept = _list(registry.load_registry(world.registry_path))["kept"]
     assert len({row["project"] for row in kept}) == 2
     assert {row["decision"] for row in kept} == {"keep"}
+
+
+def test_the_default_world_snoozes_sessions_waking_soon_and_later(tmp_path):
+    world = gui_world.build_world(tmp_path / "w", now=NOW_DT)
+    doc = _list(registry.load_registry(world.registry_path))
+    soon = set(doc["home"]["waking_soon"])
+    snoozed = {row["id"] for row in doc["snoozed"]}
+    assert len(soon) >= 2
+    assert soon < snoozed
+    assert len(snoozed - soon) >= 2
+    assert world.running_id in {row["id"] for row in doc["sessions"]}
+
+
+def test_the_extra_snoozes_leave_the_fixture_roles_alone(tmp_path):
+    world = gui_world.build_world(tmp_path / "w", now=NOW_DT)
+    threads = registry.load_registry(world.registry_path)["threads"]
+    expired = [
+        t for t in threads if t.get("snoozedUntil", "") and t["snoozedUntil"] < NOW_DT.isoformat()
+    ]
+    finishing = [t for t in threads if t.get("finishOnExit")]
+    assert [t["snoozedAt"] for t in expired] == [(NOW_DT - timedelta(days=9)).isoformat()]
+    assert [t["snoozedAt"] for t in finishing] == [None]
 
 
 def test_fake_harvest_is_empty_only_for_proj_00(tmp_path):

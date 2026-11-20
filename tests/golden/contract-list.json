@@ -772,5 +772,45 @@
       "woke": false
     }
   ],
+  "snoozed": [
+    {
+      "age_days": 106.5,
+      "age_human": "106d ago",
+      "agent": "pi",
+      "badges": [
+        "snoozed"
+      ],
+      "decision": null,
+      "file": "/fixture/_pi/-fixture-work-proj-00/85f1115b-b2ff-f17b-3f66-5edef10637ce.jsonl",
+      "file_fingerprint": "1:17:36126:1782868157000000000:1782868157000000000",
+      "finish_on_exit": false,
+      "git_branch": null,
+      "git_project_key": null,
+      "git_project_label": null,
+      "id": "pi:85f1115b-b2ff-f17b-3f66-5edef10637ce",
+      "in_recent": false,
+      "kept_at": null,
+      "label": "schema export hooks 17",
+      "last_prompt": "please schema deploy export refactor picker parser",
+      "lifecycle_block": null,
+      "message_count": 18,
+      "mtime": "2026-07-01T01:09:17+00:00",
+      "project": "/fixture/work/proj-00",
+      "project_key": "/fixture/work/proj-00",
+      "project_label": "…/work/proj-00",
+      "project_short": "…/work/proj-00",
+      "reviewed_at_mtime": null,
+      "running": false,
+      "session_id": "85f1115b-b2ff-f17b-3f66-5edef10637ce",
+      "size_bytes": 36126,
+      "size_human": "35.3KB",
+      "snoozed_at": "2026-10-11T12:00:00+00:00",
+      "snoozed_until": "2026-10-18T01:00:00+00:00",
+      "source": "pi",
+      "status": "unclassified",
+      "what_it_is": null,
+      "woke": false
+    }
+  ],
   "version": 1
 }

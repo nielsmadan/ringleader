@@ -25,6 +25,7 @@ from .decisions import (
     OpContext,
     SnoozeOp,
     UnkeepOp,
+    WakeOp,
 )
 from .models import Model, ModelError
 from .revalidate import Seen
@@ -146,6 +147,8 @@ def decide(  # noqa: PLR0913 -- the shared guarded-decision signature
             return _run(KeepOp(seen), ctx)
         case "unkeep":
             return _run(UnkeepOp(seen), ctx)
+        case "wake":
+            return _run(WakeOp(seen), ctx)
         case "snooze":
             if until is None:
                 raise ValueError("snooze needs an until time")

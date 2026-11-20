@@ -436,6 +436,7 @@ VERBS = {
     "snooze": ["session", "snooze"],
     "keep": ["session", "keep"],
     "unkeep": ["session", "unkeep"],
+    "wake": ["session", "wake"],
     "keep_going": ["session", "mark", "reviewed"],
 }
 FUTURE_UNTIL = "--until=2026-10-20T09:00:00+02:00"
@@ -665,13 +666,15 @@ def test_guarded_delete_that_the_disk_refuses_is_coded_other(decide_world, capsy
     assert Path(row["file"]).exists()
 
 
-@pytest.mark.parametrize("action", ["snooze", "keep", "unkeep", "keep_going"])
+@pytest.mark.parametrize("action", ["snooze", "keep", "unkeep", "wake", "keep_going"])
 def test_a_stamp_only_guarded_verb_skips_revalidation_presence_and_fingerprint(
     decide_world, capsys, monkeypatch, action
 ):
     row = _target(decide_world, capsys)
     if action == "unkeep":
         _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    if action == "wake":
+        _snooze(decide_world, capsys, row)
     _live(monkeypatch, frozenset({("claude", row["session_id"])}))
     until = [FUTURE_UNTIL] if action == "snooze" else []
     stale = "--if-mtime=2020-01-01T00:00:00+00:00"
@@ -810,6 +813,116 @@ def test_unkeep_returns_a_session_held_before_the_keep_to_the_inbox(
     listed = _list(decide_world, capsys)
     assert row["id"] in {r["id"] for r in listed["sessions"]}
     assert row["id"] not in {r["id"] for r in listed["kept"]}
+
+
+def _snooze(fixture, capsys, row):
+    until = "--until=2999-01-01T00:00:00+00:00"
+    _guarded(fixture, capsys, "snooze", row["id"], f"--if-mtime={row['mtime']}", until)
+
+
+def test_guarded_wake_returns_a_snoozed_session_to_the_inbox(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    _snooze(decide_world, capsys, row)
+    assert row["id"] in {r["id"] for r in _list(decide_world, capsys)["snoozed"]}
+    doc = _guarded(decide_world, capsys, "wake", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome("wake", row["id"], "ok", f"woke {row['label']}", wrote=True)
+    thread = _registry_thread(decide_world, row["id"])
+    assert (thread["snoozedAt"], thread["snoozedUntil"]) == (None, None)
+    listed = _list(decide_world, capsys)
+    assert row["id"] in {r["id"] for r in listed["sessions"]}
+    assert row["id"] not in {r["id"] for r in listed["snoozed"]}
+
+
+def test_guarded_wake_of_a_session_that_is_not_snoozed_writes_nothing(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    doc = _guarded(decide_world, capsys, "wake", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome("wake", row["id"], "ok", f"{row['label']} is not snoozed")
+
+
+def test_guarded_wake_of_an_expired_snooze_writes_nothing(decide_world, capsys):
+    row = _target(decide_world, capsys)
+
+    def expire(reg):
+        thread = registry.find_session(reg, row["id"])
+        thread.update(snoozedAt="2026-01-01T00:00:00+00:00", snoozedUntil="2026-01-02")
+
+    _edit_registry(decide_world, expire)
+    doc = _guarded(decide_world, capsys, "wake", row["id"], f"--if-mtime={row['mtime']}")
+    assert doc == _outcome("wake", row["id"], "ok", f"{row['label']} is not snoozed")
+    assert _registry_thread(decide_world, row["id"])["snoozedAt"] == "2026-01-01T00:00:00+00:00"
+
+
+@pytest.mark.parametrize("guarded_verb", [True, False], ids=["guarded", "plain"])
+def test_wake_of_a_kept_session_clears_the_snooze_and_leaves_it_kept(
+    decide_world, capsys, guarded_verb
+):
+    row = _target(decide_world, capsys)
+    _snooze(decide_world, capsys, row)
+    _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    if guarded_verb:
+        doc = _guarded(decide_world, capsys, "wake", row["id"], f"--if-mtime={row['mtime']}")
+        assert doc == _outcome("wake", row["id"], "ok", f"woke {row['label']}", wrote=True)
+    else:
+        assert cli.main([*VERBS["wake"], row["id"], *_reg_arg(decide_world)]) == 0
+        capsys.readouterr()
+    kept = next(r for r in _list(decide_world, capsys)["kept"] if r["id"] == row["id"])
+    assert (kept["snoozed_at"], kept["snoozed_until"]) == (None, None)
+
+
+def test_plain_wake_of_a_session_that_is_not_snoozed_fails_without_writing(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    before = decide_world.registry_path.read_bytes()
+    assert cli.main([*VERBS["wake"], row["id"], *_reg_arg(decide_world)]) == 1
+    assert capsys.readouterr().err == f"rl-wake: {row['id']} is not snoozed\n"
+    assert decide_world.registry_path.read_bytes() == before
+
+
+def test_plain_wake_of_an_unknown_session_fails(decide_world, capsys):
+    assert cli.main([*VERBS["wake"], "claude-code:nope", *_reg_arg(decide_world)]) == 1
+    assert capsys.readouterr().err == "rl-wake: unknown session claude-code:nope\n"
+
+
+def test_guarded_wake_of_a_missing_session_is_gone(decide_world, capsys):
+    missing = "claude-code:does-not-exist"
+    doc = _guarded(decide_world, capsys, "wake", missing, "--if-mtime=2026-10-01")
+    assert doc == _outcome(
+        "wake", missing, "failed", f"{missing}: no longer in the registry", code="gone"
+    )
+
+
+@pytest.mark.parametrize("guarded_verb", [True, False], ids=["guarded", "plain"])
+def test_wake_returns_a_session_reviewed_before_the_snooze_to_the_inbox(
+    decide_world, capsys, guarded_verb
+):
+    row = _target(decide_world, capsys)
+    _guarded(decide_world, capsys, "keep_going", row["id"], f"--if-mtime={row['mtime']}")
+    _snooze(decide_world, capsys, row)
+    if guarded_verb:
+        _guarded(decide_world, capsys, "wake", row["id"], f"--if-mtime={row['mtime']}")
+    else:
+        assert cli.main([*VERBS["wake"], row["id"], *_reg_arg(decide_world)]) == 0
+        assert capsys.readouterr().out == f"woke {row['id']}\n"
+    listed = _list(decide_world, capsys)
+    assert row["id"] in {r["id"] for r in listed["sessions"]}
+    assert row["id"] not in {r["id"] for r in listed["snoozed"]}
+
+
+@pytest.mark.parametrize("guarded_verb", [True, False], ids=["guarded", "plain"])
+@pytest.mark.parametrize("action", ["unkeep", "wake"])
+def test_ending_a_snooze_leaves_no_wake_date_on_the_row(decide_world, capsys, action, guarded_verb):
+    row = _target(decide_world, capsys)
+    _snooze(decide_world, capsys, row)
+    if action == "unkeep":
+        _guarded(decide_world, capsys, "keep", row["id"], f"--if-mtime={row['mtime']}")
+    if guarded_verb:
+        _guarded(decide_world, capsys, action, row["id"], f"--if-mtime={row['mtime']}")
+    else:
+        assert cli.main([*VERBS[action], row["id"], *_reg_arg(decide_world)]) == 0
+        capsys.readouterr()
+    listed = _list(decide_world, capsys)
+    woken = next(r for r in listed["sessions"] if r["id"] == row["id"])
+    assert (woken["snoozed_at"], woken["snoozed_until"]) == (None, None)
+    assert _registry_thread(decide_world, row["id"])["snoozedUntil"] is None
 
 
 def test_guarded_mark_reviewed_on_a_missing_session_fails_without_writing(decide_world, capsys):
@@ -1060,6 +1173,16 @@ def test_guarded_human_unkeep_prints_the_message_with_exit_0(decide_world, capsy
     assert capsys.readouterr().out == f"{row['label']} is not kept\n"
 
 
+def test_guarded_human_wake_prints_the_message_with_exit_0(decide_world, capsys):
+    row = _target(decide_world, capsys)
+    _snooze(decide_world, capsys, row)
+    argv = [*_verb("wake", row["id"], f"--if-mtime={row['mtime']}"), *_reg_arg(decide_world)]
+    assert cli.main(argv) == 0
+    assert capsys.readouterr().out == f"woke {row['label']}\n"
+    assert cli.main(argv) == 0
+    assert capsys.readouterr().out == f"{row['label']} is not snoozed\n"
+
+
 def test_guarded_human_refusal_goes_to_stderr_with_exit_1(decide_world, capsys):
     row = _target(decide_world, capsys)
     argv = _verb("archive", row["id"], "--if-mtime=2020-01-01T00:00:00+00:00")
@@ -1145,6 +1268,7 @@ def test_guarded_human_error_is_reported_with_the_verb_prefix(world, tmp_path, c
         ),
         (["session", "keep", "a", "--if-mtime=m"], "ID must be qualified"),
         (["session", "unkeep", "claude-code:a", "--json"], "--json needs --if-mtime"),
+        (["session", "wake", "claude-code:a", "--json"], "--json needs --if-mtime"),
         (["session", "harvest", "--archive", "--if-mtime=m"], "needs a session ID"),
         (["session", "harvest", "claude-code:a", "--if-mtime=m"], "needs --archive"),
         (["session", "snooze", "claude-code:a", "--if-mtime=m"], "needs --until"),
@@ -1183,6 +1307,7 @@ def test_guarded_human_error_is_reported_with_the_verb_prefix(world, tmp_path, c
         "if-fingerprint-without-if-mtime",
         "unqualified-id",
         "unkeep-json-without-if-mtime",
+        "wake-json-without-if-mtime",
         "harvest-without-id",
         "harvest-without-archive",
         "snooze-without-until",
