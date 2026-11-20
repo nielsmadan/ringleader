@@ -169,4 +169,8 @@ def test_shell_init_refuses_a_shell_it_has_no_wrapper_for(capsys):
     with pytest.raises(SystemExit) as exited:
         cmd_init(["fish"])
     assert exited.value.code == 2
-    assert "choose from zsh, bash" in capsys.readouterr().err
+    error = capsys.readouterr().err
+    assert "invalid choice" in error
+    assert "fish" in error
+    assert "zsh" in error
+    assert "bash" in error
