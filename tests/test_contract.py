@@ -290,17 +290,18 @@ def test_list_payload_lists_snoozed_sessions_apart_from_the_inbox_and_kept():
     assert [row["id"] for row in doc["snoozed"]] == [
         "claude-code:sleeper",
         "claude-code:forever",
-        "claude-code:harvested",
         "claude-code:later",
     ]
     assert [row["id"] for row in doc["sessions"]] == ["claude-code:open"]
     assert [row["id"] for row in doc["kept"]] == ["claude-code:kept"]
     assert set(doc["snoozed"][0]) == set(contract.SESSION_ROW_KEYS)
-    assert (doc["snoozed"][3]["snoozed_at"], doc["snoozed"][3]["snoozed_until"]) == (
+    assert (doc["snoozed"][2]["snoozed_at"], doc["snoozed"][2]["snoozed_until"]) == (
         _ago(1),
         _ago(-20),
     )
-    assert "snoozed" in doc["snoozed"][3]["badges"]
+    assert "snoozed" in doc["snoozed"][2]["badges"]
+    listed = {row["id"] for key in ("sessions", "kept", "snoozed") for row in doc[key]}
+    assert "claude-code:harvested" not in listed
 
 
 def test_a_snoozed_session_moves_to_the_inbox_once_its_wake_date_passes():

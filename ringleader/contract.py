@@ -216,7 +216,7 @@ def snoozed_threads(reg: dict[str, Any], now_iso: str) -> list[dict[str, Any]]:
         (
             t
             for t in home_state.visible_threads(reg)
-            if overview.snooze_active(t, now_iso) and not overview.is_kept(t)
+            if overview.snooze_active(t, now_iso) and t.get("decision") not in ("keep", "harvested")
         ),
         key=_inbox_order,
     )
