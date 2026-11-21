@@ -184,7 +184,7 @@ failure prints `rl-<verb>: <message>` to stderr and exits 1. See
 
 | Command | Does |
 |---|---|
-| `rl session snooze <id>` | Hide from the default view but keep it live. `--until <iso>`, `--for <days>` (not with the guard). Guard flags. |
+| `rl session snooze <id>` | Hide from the default view but keep it live. `--until <iso>` (stored in UTC when it has an offset), `--for <days>` (not with the guard). Guard flags. |
 | `rl session wake <id>` | Un-snooze; back to the triage inbox unless kept or harvested. Exits 1 if it is not snoozed. Guard flags. |
 | `rl session keep <id>` | Keep long-term: stays live, leaves triage for good. `--yes`. Guard flags. |
 | `rl session unkeep <id>` | Undo a keep; back to the triage inbox. Guard flags. |

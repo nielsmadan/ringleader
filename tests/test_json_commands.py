@@ -14,6 +14,7 @@ from ringleader import (
     contract_io,
     guarded,
     harvests,
+    overview,
     presence,
     refresh,
     registry,
@@ -1358,6 +1359,24 @@ def test_plain_snooze_hides_the_session_until_the_given_time(world, capsys):
         f"snoozed {row['id']} (auto-wakes {until}, or `rl session wake {row['id'][:8]}…` sooner)\n"
     )
     assert _registry_thread(world, row["id"])["snoozedUntil"] == until
+
+
+def test_plain_snooze_stores_an_offset_until_time_in_utc(world, capsys):
+    row = _target(world, capsys)
+    argv = ["session", "snooze", row["id"], "--until=2026-10-20T11:00:00+02:00", *_reg_arg(world)]
+    assert cli.main(argv) == 0
+    capsys.readouterr()
+    thread = _registry_thread(world, row["id"])
+    assert thread["snoozedUntil"] == "2026-10-20T09:00:00+00:00"
+    assert overview.snooze_active(thread, "2026-10-20T10:00:00+00:00") is False
+
+
+def test_plain_snooze_stores_a_naive_until_time_as_given(world, capsys):
+    row = _target(world, capsys)
+    argv = ["session", "snooze", row["id"], "--until=2026-10-20T11:00:00", *_reg_arg(world)]
+    assert cli.main(argv) == 0
+    capsys.readouterr()
+    assert _registry_thread(world, row["id"])["snoozedUntil"] == "2026-10-20T11:00:00"
 
 
 def test_plain_archive_without_archive_root_uses_the_state_archive(world, capsys):

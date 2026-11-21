@@ -8,6 +8,14 @@ from .. import guard_args, registry
 from . import default_registry
 
 
+def _in_utc(text: str) -> str:
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return text
+    return parsed.astimezone(UTC).isoformat() if parsed.tzinfo is not None else text
+
+
 def cmd_snooze(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(
         prog="rl session snooze",
@@ -29,7 +37,7 @@ def cmd_snooze(argv: list[str]) -> int:
 
     reg = registry.load_registry(args.registry)
     when = datetime.now(UTC).isoformat()
-    until = args.until
+    until = None if args.until is None else _in_utc(args.until)
     if args.for_days is not None:
         until = (datetime.now(UTC) + timedelta(days=args.for_days)).isoformat()
     try:
