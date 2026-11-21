@@ -134,16 +134,30 @@ it is a no-op when ringleader is not registered, and keeps any warning hooklines
 about hooks it left in place. Status prints the setup command when a hook is `drifted` (written
 by an older hooklinesinker), and install reminds you to approve Codex hooks in Codex's `/hooks`.
 
-`scripts/hooklinesinker.json` pins the bundled release and the sha256 of each of its three
-binaries. `scripts/hooklinesinker.py vendor` downloads it into
-`build/hooklinesinker/downloads/<version>/` (reused while its checksums, the pinned hashes and
-the binary's `version --json` still match the pin), and `scripts/vendor-hooklinesinker.sh`
-stages its three binaries and checksum manifest under `ringleader/_vendor/`. The pinned hashes
-are what make a replaced release asset fail: the release's own `SHA256SUMS` would be replaced
-with it. `update` moves the pin to a published stable release carrying every artifact, records
-the new hashes, and refuses downgrades.
-Hatchling includes those ignored artifacts in the wheel.
-Source installs without artifacts still work; presence installation reports the missing bundle.
+### Bundled binaries
+
+Ringleader bundles two helper binaries the same way: hooklinesinker (presence) and slimetrail
+(session search). `scripts/vendored.py` knows both. Each has a pin, `scripts/<tool>.json`, that
+records the release version, the protocol ringleader speaks with it, and the sha256 of each of
+its three binaries (macOS universal, Linux aarch64, Linux x86_64).
+
+- **vendor:** downloads each pinned release into `build/<tool>/downloads/<version>/` and
+  `scripts/vendor-binary.sh <tool>` stages it under `ringleader/_vendor/<platform>/<tool>`. A
+  cached download is reused while its checksums, the pinned hashes and the binary's own version
+  report still match the pin. Hooklinesinker reports `version --json`; slimetrail reports
+  `--version`.
+- **One shared manifest:** `_vendor/checksums.txt` holds both tools' lines. Staging one tool
+  replaces only its own binaries and lines, so the other tool's stay staged.
+- **One failure does not block the other:** `vendor` attempts every tool and exits non-zero if
+  any failed. `just vendor` tolerates that; the release workflow does not, and
+  `scripts/release.py` refuses a wheel missing either tool's binaries.
+- **Pinned hashes:** they are what make a replaced release asset fail, because the release's
+  own `SHA256SUMS` would be replaced with it.
+- **update:** moves a pin to a published stable release carrying every artifact, records the
+  new hashes, and refuses downgrades. It also writes a tool's first pin.
+
+Hatchling includes those ignored artifacts in the wheel. Source installs without artifacts
+still work; presence installation reports the missing bundle.
 
 ### Which session am I in?
 

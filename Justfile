@@ -76,19 +76,27 @@ install-editable:
     -@rl data presence install --yes
     @echo "Installed (editable): $(which rl)"
 
-# Stage the hooklinesinker release pinned in scripts/hooklinesinker.json into
-# ringleader/_vendor (`--dist DIR` or $HOOKLINESINKER_DIST stages a local build instead).
-# Offline, `rl` still installs, just without presence support.
+# `vendor TOOL --dist DIR`, or $HOOKLINESINKER_DIST / $SLIMETRAIL_DIST, stages a local build
+# instead. Offline, `rl` still installs, just without the binaries.
+# Stage the hooklinesinker and slimetrail releases pinned in scripts/<tool>.json into _vendor.
 vendor *ARGS:
-    -@uv run python scripts/hooklinesinker.py vendor {{ARGS}}
+    -@uv run python scripts/vendored.py vendor {{ARGS}}
 
 # Pin a published hooklinesinker release: the latest, or the given version.
 update-hooklinesinker *ARGS:
-    @uv run python scripts/hooklinesinker.py update {{ARGS}}
+    @uv run python scripts/vendored.py update hooklinesinker {{ARGS}}
+
+# Pin a published slimetrail release: the latest, or the given version.
+update-slimetrail *ARGS:
+    @uv run python scripts/vendored.py update slimetrail {{ARGS}}
 
 # Warn when a newer hooklinesinker release is published than the one pinned.
 check-hooklinesinker:
-    @uv run python scripts/hooklinesinker.py check
+    @uv run python scripts/vendored.py check hooklinesinker
+
+# Warn when a newer slimetrail release is published than the one pinned.
+check-slimetrail:
+    @uv run python scripts/vendored.py check slimetrail
 
 uninstall:
     @uv tool uninstall ringleader

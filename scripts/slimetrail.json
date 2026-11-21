@@ -1,0 +1,9 @@
+{
+  "version": "0.1.0",
+  "protocol": 1,
+  "sha256": {
+    "slimetrail-macos-universal": "cf7ec1b32b2fe0e45a19d07b3e2b4f09b5d931af217d3733813aebb049e29bb7",
+    "slimetrail-linux-aarch64": "1f5f8db7f35b443225e2474f1c04d5fa8d634c7cabd19afaaa12db379c320803",
+    "slimetrail-linux-x86_64": "89073aef2bf2719bd24103a1ed2c0a09e3afa7b8f6a8700813efedc84309db8e"
+  }
+}

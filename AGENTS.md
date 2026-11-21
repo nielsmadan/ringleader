@@ -147,7 +147,9 @@ pruning them before the GC clock deletes them.
   `just vendor` (run by `just install`) downloads and verifies it against the pin and stages it into the gitignored
   `ringleader/_vendor/<platform>/`, `just update-hooklinesinker [version]` moves the pin (never
   backwards), and `just check-hooklinesinker` warns when a newer release exists. `pyproject.toml`'s wheel
-  `artifacts` key is what carries them into the wheel. Activation is explicit
+  `artifacts` key is what carries them into the wheel. The slimetrail search binary is bundled
+  the same way (`scripts/slimetrail.json`, `just update-slimetrail`, `just check-slimetrail`);
+  `scripts/vendored.py` drives both, and staging one never touches the other's files. Activation is explicit
   (`rl data presence install`) and never implicit — a caller that needs live sessions gets
   `PresenceUnavailable` naming the setup command, not a silent install and not an empty result.
 - **Scanning goes through a `Source` seam.** `ringleader/sources/` defines the

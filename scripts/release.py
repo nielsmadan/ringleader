@@ -20,7 +20,11 @@ GOLDEN_DIR = ROOT / "tests" / "golden"
 GOLDEN_TARBALL = "contract-golden.tar.gz"
 CHECKSUMS = "SHA256SUMS"
 REQUIRED_IN_WHEEL = (
-    *(f"ringleader/_vendor/{platform}/hooklinesinker" for platform in VENDOR_PLATFORMS),
+    *(
+        f"ringleader/_vendor/{platform}/{tool}"
+        for tool in ("hooklinesinker", "slimetrail")
+        for platform in VENDOR_PLATFORMS
+    ),
     "ringleader/_vendor/checksums.txt",
     "ringleader/_skills/ringleader-triage/SKILL.md",
     "ringleader/devtools/gui_world.py",

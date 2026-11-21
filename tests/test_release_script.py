@@ -46,7 +46,8 @@ def test_a_wheel_without_the_vendored_binaries_or_skills_is_incomplete():
     assert release.missing_from_wheel([*complete, "ringleader/cli.py"]) == []
     without_linux = [n for n in complete if "linux-x86_64" not in n]
     assert release.missing_from_wheel(without_linux) == [
-        "ringleader/_vendor/linux-x86_64/hooklinesinker"
+        "ringleader/_vendor/linux-x86_64/hooklinesinker",
+        "ringleader/_vendor/linux-x86_64/slimetrail",
     ]
 
 

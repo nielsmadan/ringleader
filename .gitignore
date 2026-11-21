@@ -16,7 +16,7 @@ build/
 *.egg-info/
 # throwaway world built by `just sandbox`
 .sandbox/
-# vendored hooklinesinker release artifacts (staged by scripts/vendor-hooklinesinker.sh)
+# vendored hooklinesinker and slimetrail release artifacts (staged by scripts/vendor-binary.sh)
 ringleader/_vendor/*
 !ringleader/_vendor/.gitkeep
 # uv tool cache for `just changelog`

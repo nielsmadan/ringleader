@@ -242,16 +242,16 @@ you to approve new or changed hooks in its `/hooks` menu before they run.
 to that binary. `rl doctor` ends with a `presence` section, and
 `hooklinesinker doctor` reports the same checks first-hand.
 
-Working from a source checkout? `just install` stages the artifacts first: it downloads the
-hooklinesinker release pinned in `scripts/hooklinesinker.json`, verifies each binary against the
-sha256 recorded in the pin and the release's `SHA256SUMS`, checks that the binary reports the
-pinned version, and copies it into `ringleader/_vendor/`. Without
-network access everything else still installs and works — only `rl data presence` reports
-what is missing.
+Working from a source checkout? `just install` stages the bundled binaries first:
+hooklinesinker and [slimetrail](https://github.com/nielsmadan/slimetrail), the session search
+index. For each, it downloads the release pinned in `scripts/<tool>.json`, verifies each binary
+against the sha256 recorded in the pin and the release's `SHA256SUMS`, checks that the binary
+reports the pinned version, and copies it into `ringleader/_vendor/`. Without network access
+everything else still installs and works. Only `rl data presence` reports what is missing.
 
 ```sh
-just check-hooklinesinker          # is a newer release published?
-just update-hooklinesinker         # pin the latest release (or pass a version)
+just check-hooklinesinker          # is a newer release published? (also check-slimetrail)
+just update-hooklinesinker         # pin the latest release, or pass a version (also update-slimetrail)
 just install                       # stage the new pin and reinstall
 ```
 
@@ -259,9 +259,10 @@ To stage a local release build instead of the pinned download:
 
 ```sh
 HOOKLINESINKER_DIST=/path/to/hooklinesinker/dist just install
+SLIMETRAIL_DIST=/path/to/slimetrail/dist just install
 ```
 
-That directory must contain all three release binaries and `SHA256SUMS`.
+That directory must contain all three of the tool's release binaries and `SHA256SUMS`.
 
 ## The AI engine
 

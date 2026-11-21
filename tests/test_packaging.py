@@ -14,6 +14,7 @@ from ringleader import presence
 
 REPO = Path(__file__).resolve().parent.parent
 ARTIFACT_DIRS = ("macos-universal", "linux-aarch64", "linux-x86_64")
+TOOLS = ("hooklinesinker", "slimetrail")
 
 
 @pytest.fixture
@@ -21,7 +22,7 @@ def vendor_release(tmp_path):
     project = tmp_path / "project"
     scripts = project / "scripts"
     scripts.mkdir(parents=True)
-    script = scripts / "vendor-hooklinesinker.sh"
+    script = scripts / "vendor-binary.sh"
     shutil.copy(REPO / "scripts" / script.name, script)
     (project / "ringleader").mkdir()
     stage_artifacts(project)
@@ -32,10 +33,12 @@ def vendor_release(tmp_path):
     return script, dist, project / "ringleader" / "_vendor"
 
 
-def release_manifest(dist, artifacts=ARTIFACT_DIRS, separator="  ", prefix=""):
+def release_manifest(
+    dist, artifacts=ARTIFACT_DIRS, separator="  ", prefix="", tool="hooklinesinker"
+):
     lines = []
     for artifact in artifacts:
-        name = f"hooklinesinker-{artifact}"
+        name = f"{tool}-{artifact}"
         digest = presence.sha256_file(dist / name)
         lines.append(f"{digest}{separator}{prefix}{name}\n")
     (dist / "SHA256SUMS").write_text("".join(lines))
@@ -49,9 +52,9 @@ def bundle_contents(vendor):
     }
 
 
-def run_vendor(script, dist):
+def run_vendor(script, dist, tool="hooklinesinker"):
     return subprocess.run(
-        ["bash", str(script), str(dist)],
+        ["bash", str(script), tool, str(dist)],
         capture_output=True,
         text=True,
         check=False,
@@ -68,7 +71,11 @@ def test_vendor_stages_every_verified_release_artifact(vendor_release, separator
     result = run_vendor(script, dist)
 
     assert result.returncode == 0, result.stdout + result.stderr
-    expected_manifest = {}
+    expected_manifest = {
+        relative: digest
+        for relative, digest in presence.read_manifest(vendor).items()
+        if not relative.endswith("/hooklinesinker")
+    }
     for artifact in ARTIFACT_DIRS:
         source = dist / f"hooklinesinker-{artifact}"
         installed = vendor / artifact / "hooklinesinker"
@@ -76,6 +83,59 @@ def test_vendor_stages_every_verified_release_artifact(vendor_release, separator
         assert installed.stat().st_mode & 0o111 == 0o111
         expected_manifest[f"{artifact}/hooklinesinker"] = presence.sha256_file(source)
     assert presence.read_manifest(vendor) == expected_manifest
+
+
+def test_staging_one_tool_keeps_the_other_tools_binaries_and_checksums(vendor_release):
+    script, dist, vendor = vendor_release
+    slimetrail_before = {
+        path: data for path, data in bundle_contents(vendor).items() if path.endswith("/slimetrail")
+    }
+    slimetrail_lines = {
+        relative: digest
+        for relative, digest in presence.read_manifest(vendor).items()
+        if relative.endswith("/slimetrail")
+    }
+    release_manifest(dist)
+
+    result = run_vendor(script, dist)
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert {
+        path: data for path, data in bundle_contents(vendor).items() if path.endswith("/slimetrail")
+    } == slimetrail_before
+    entries = presence.read_manifest(vendor)
+    assert {k: v for k, v in entries.items() if k.endswith("/slimetrail")} == slimetrail_lines
+    assert len(entries) == len(ARTIFACT_DIRS) * len(TOOLS)
+
+
+def test_staging_slimetrail_verifies_and_stages_its_own_release(vendor_release, tmp_path):
+    script, _, vendor = vendor_release
+    dist = tmp_path / "slimetrail-release"
+    dist.mkdir()
+    for artifact in ARTIFACT_DIRS:
+        (dist / f"slimetrail-{artifact}").write_bytes(f"slimetrail {artifact}\n".encode())
+    release_manifest(dist, tool="slimetrail")
+
+    result = run_vendor(script, dist, tool="slimetrail")
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    for artifact in ARTIFACT_DIRS:
+        staged = vendor / artifact / "slimetrail"
+        assert staged.read_bytes() == f"slimetrail {artifact}\n".encode()
+        assert presence.read_manifest(vendor)[f"{artifact}/slimetrail"] == presence.sha256_file(
+            staged
+        )
+
+
+def test_the_stager_refuses_an_unknown_tool(vendor_release):
+    script, dist, vendor = vendor_release
+    before = bundle_contents(vendor)
+
+    result = run_vendor(script, dist, tool="nonesuch")
+
+    assert result.returncode == 2
+    assert "usage:" in result.stderr
+    assert bundle_contents(vendor) == before
 
 
 def test_vendor_keeps_the_bundle_when_manifest_omits_an_artifact(vendor_release):
@@ -149,15 +209,16 @@ def stage_artifacts(project: Path) -> dict[str, str]:
     (vendor / ".gitkeep").touch()
     digests = {}
     lines = []
-    for artifact in ARTIFACT_DIRS:
-        body = f"#!/bin/sh\necho {artifact}\n".encode()
-        binary = vendor / artifact / "hooklinesinker"
-        binary.parent.mkdir()
-        binary.write_bytes(body)
-        binary.chmod(0o755)
-        digest = hashlib.sha256(body).hexdigest()
-        digests[f"{artifact}/hooklinesinker"] = digest
-        lines.append(f"{digest}  {artifact}/hooklinesinker")
+    for tool in TOOLS:
+        for artifact in ARTIFACT_DIRS:
+            body = f"#!/bin/sh\necho {tool} {artifact}\n".encode()
+            binary = vendor / artifact / tool
+            binary.parent.mkdir(exist_ok=True)
+            binary.write_bytes(body)
+            binary.chmod(0o755)
+            digest = hashlib.sha256(body).hexdigest()
+            digests[f"{artifact}/{tool}"] = digest
+            lines.append(f"{digest}  {artifact}/{tool}")
     (vendor / presence.CHECKSUM_MANIFEST).write_text("\n".join(lines) + "\n")
     return digests
 
@@ -245,9 +306,10 @@ def test_wheel_keeps_the_artifacts_executable(tmp_path):
     stage_artifacts(project)
     wheel = build_wheel(project)
 
-    for artifact in ARTIFACT_DIRS:
-        info = wheel.getinfo(f"ringleader/_vendor/{artifact}/hooklinesinker")
-        assert (info.external_attr >> 16) & 0o111 == 0o111
+    for tool in TOOLS:
+        for artifact in ARTIFACT_DIRS:
+            info = wheel.getinfo(f"ringleader/_vendor/{artifact}/{tool}")
+            assert (info.external_attr >> 16) & 0o111 == 0o111
 
 
 @needs_uv
