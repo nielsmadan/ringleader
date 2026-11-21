@@ -7,7 +7,7 @@
   "sign": true,
   "tag_prefix": "v",
   "tools": ["git", "uv", "uvx", "just"],
-  "checks": [["just", "check"]],
+  "preflight": [["just", "check"]],
   "stages": [
     {
       "files": ["pyproject.toml", "uv.lock", "CHANGELOG.md"],
@@ -20,5 +20,5 @@
       "message": "chore: release {version}"
     }
   ],
-  "publication": "GitHub Actions verifies the tagged source and publishes a GitHub release with the wheel, contract-golden.tar.gz and SHA256SUMS."
+  "success_message": "GitHub Actions verifies the tagged source and publishes a GitHub release with the wheel, contract-golden.tar.gz and SHA256SUMS."
 }
