@@ -84,7 +84,11 @@ with a machine id and de-duplicated on merge.
   the summary flags, including additional `--source` values.
 - **Captured Claude windows** require the status-line capture and a session's first API
   response. The on-demand subscription path uses OAuth.
-- **Reading is I/O-bound over local agent state**, so all-time reports on a large history are slow.
+- **Local usage automatically reuses checkpointed results.** Reports still discover files and
+  reparse changed files in scope, including older transcripts and live sessions. A cold all-time
+  report reads the full history. Normalized results over 1 MiB stream without a checkpoint.
+  OpenCode keeps up to four cached filter combinations each for summaries and session lookups.
+  It reruns queries when the database or its write-ahead log changes.
 - **OpenCode records are per assistant response.** SQLite `message.data` retains the timestamp,
   model, cost and token buckets, while the owning `session` supplies project identity.
 - **Droid records are per session, not per turn**, because droid records no per-turn counts —

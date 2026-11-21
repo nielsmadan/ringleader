@@ -1,0 +1,25 @@
+{
+  "baseline": "588ae960d6e6ae88668a4aa6325955c1719173fe",
+  "python": "3.13.6",
+  "platform": "macOS-27.2-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "files": 50,
+  "bytes": 208398600,
+  "concurrency": 1,
+  "warmup": 1,
+  "repetitions": 3,
+  "baseline_seconds": [
+    0.38025491684675217,
+    0.5086042501498014,
+    0.3926977498922497
+  ],
+  "cold_checkpoint_seconds": 0.2672097079921514,
+  "warm_checkpoint_seconds": [
+    0.10079224989749491,
+    0.08675716700963676,
+    0.08045933395624161
+  ],
+  "one_changed_file_seconds": 0.08938716677948833,
+  "json_equal": true,
+  "speedup": 4.526401257992091
+}

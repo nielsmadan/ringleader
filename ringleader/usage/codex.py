@@ -4,10 +4,11 @@ import contextlib
 import itertools
 import json
 from collections.abc import Callable, Iterable, Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, get_type_hints
 
 from .. import paths, stateio
 from ..sources.base import stat_fingerprint
@@ -24,6 +25,9 @@ from .base import (
     parse_iso,
     session_files,
 )
+from .checkpoint import Checkpoint
+
+_WINDOW_TYPES = tuple(get_type_hints(WindowSnapshot).items())
 
 _WEEKLY_MINUTES = 1440
 _UUID_DASH_PARTS = 5
@@ -31,7 +35,14 @@ _KINDS = ("5h", "weekly")
 _LONGEST_WINDOW = timedelta(weeks=1)
 _REPLAY_BURST = timedelta(seconds=1)
 _CACHED_FIELDS = 2
-REPLAY_VERSION = 2
+REPLAY_VERSION = 3
+
+
+def _decode_window(row: dict[str, Any]) -> WindowSnapshot:
+    window = WindowSnapshot(**row)
+    if any(not isinstance(getattr(window, key), kind) for key, kind in _WINDOW_TYPES):
+        raise TypeError("invalid usage window")
+    return window
 
 
 def rollout_session_id(path: Path) -> str:
@@ -105,11 +116,7 @@ def own_thread(payload: Mapping[str, Any], own_id: str) -> bool:
 
 
 def _head(f: Path) -> Iterator[tuple[int, dict[str, Any]]]:
-    try:
-        fh = f.open(encoding="utf-8", errors="replace")
-    except OSError:
-        return
-    with fh:
+    with f.open(encoding="utf-8", errors="replace") as fh:
         for index, line in enumerate(fh):
             try:
                 o = json.loads(line)
@@ -201,8 +208,6 @@ class CodexUsageReader:
 
     def __post_init__(self) -> None:
         self.sessions_dir = Path(self.sessions_dir)
-        self._meta_path: Path | None = None
-        self._meta_cwd: str | None = None
 
     def available(self) -> bool:
         return self.sessions_dir.exists()
@@ -214,14 +219,13 @@ class CodexUsageReader:
         if not self.available():
             return
         for f in sorted(self._files()):
-            yield from self._file_payloads(f)
+            try:
+                yield from self._file_payloads(f)
+            except OSError:
+                continue
 
     def _file_payloads(self, f: Path) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
-        try:
-            fh = f.open(encoding="utf-8", errors="replace")
-        except OSError:
-            return
-        with fh:
+        with f.open(encoding="utf-8", errors="replace") as fh:
             for ordinal, line in enumerate(fh):
                 if '"token_count"' not in line:
                     continue
@@ -240,11 +244,7 @@ class CodexUsageReader:
         start = starts.start(f)
         own_id = rollout_session_id(f)
         model: str | None = None
-        try:
-            fh = f.open(encoding="utf-8", errors="replace")
-        except OSError:
-            return
-        with fh:
+        with f.open(encoding="utf-8", errors="replace") as fh:
             for ordinal, line in enumerate(fh):
                 if ordinal < start or (
                     '"token_count"' not in line and '"turn_context"' not in line
@@ -260,19 +260,17 @@ class CodexUsageReader:
                 elif payload.get("type") == "token_count" and own_thread(payload, own_id):
                     yield f, ordinal, o, payload, model
 
-    def _project(self, path: Path) -> str | None:
-        if path != self._meta_path:
-            self._meta_path = path
-            try:
-                self._meta_cwd = _meta(path).get("cwd")
-            except (OSError, json.JSONDecodeError):
-                self._meta_cwd = None
-        return self._meta_cwd
-
     def latest_day(self) -> str | None:
         if not self.available():
             return None
-        return latest_day_of(self._files(), lambda f: self._records([f]))
+        files = self._files()
+        with Checkpoint(self.name, self.sessions_dir, files) as checkpoint:
+            return latest_day_of(
+                files,
+                lambda f: checkpoint.records(
+                    f, partial(self._records, f), variant=str(REPLAY_VERSION)
+                ),
+            )
 
     def _start_cache(self) -> StartCache:
         if self.starts is None:
@@ -287,18 +285,20 @@ class CodexUsageReader:
         self, since: date | None = None, session_prefix: str | None = None
     ) -> Iterator[UsageRecord]:
         if not self.available():
-            return iter(())
-        return self._records(
-            session_files(self._files(), since, session_prefix, rollout_session_id)
-        )
+            return
+        files = self._files()
+        with Checkpoint(self.name, self.sessions_dir, files) as checkpoint:
+            for f in session_files(files, since, session_prefix, rollout_session_id):
+                yield from checkpoint.records(
+                    f, partial(self._records, f), variant=str(REPLAY_VERSION)
+                )
 
-    def _records(self, files: Iterable[Path]) -> Iterator[UsageRecord]:
-        prev: tuple[Any, ...] | None = None
-        prev_file: Path | None = None
-        starts = self._start_cache()
-        for f, ordinal, o, payload, model in (
-            row for path in files for row in self._usage_payloads(path, starts)
-        ):
+    def _records(self, f: Path) -> Iterator[UsageRecord]:
+        previous: tuple[Any, ...] | None = None
+        project: str | None = None
+        project_loaded = False
+        project_error: OSError | None = None
+        for _path, ordinal, o, payload, model in self._usage_payloads(f, self._start_cache()):
             info = as_dict(payload.get("info"))
             last = as_dict(info.get("last_token_usage"))
             if not last:
@@ -308,14 +308,22 @@ class CodexUsageReader:
                 continue
             # codex writes one token_count per rate-limit family; same turn, repeated
             turn = turn_key(ts, info)
-            if f == prev_file and turn == prev:
+            if turn == previous:
                 continue
-            prev_file, prev = f, turn
+            previous = turn
+            if not project_loaded:
+                try:
+                    project = _meta(f).get("cwd")
+                except OSError as error:
+                    project_error = error
+                except json.JSONDecodeError:
+                    project = None
+                project_loaded = True
             tokens = codex_tokens(last)
             yield UsageRecord(
                 source="codex",
                 session_id=rollout_session_id(f),
-                project=self._project(f),
+                project=project,
                 timestamp=ts,
                 provider="openai",
                 model=model if isinstance(model, str) else None,
@@ -328,33 +336,54 @@ class CodexUsageReader:
                 record_id=f"{f}|{ordinal}",
             )
 
+        if project_error is not None:
+            raise project_error
+
     def windows(self) -> Iterator[WindowSnapshot]:
         for _f, _ordinal, o, payload in self._payloads():
             yield from _snapshots(o, payload)
 
+    def _latest_file_windows(self, path: Path) -> list[WindowSnapshot]:
+        own: dict[str, WindowSnapshot] = {}
+        for _f, _ordinal, record, payload in self._file_payloads(path):
+            for window in _snapshots(record, payload):
+                previous = own.get(window.window)
+                if previous is None or window.timestamp > previous.timestamp:
+                    own[window.window] = window
+        return list(own.values())
+
     def latest_windows(self) -> list[WindowSnapshot]:
         if not self.available():
             return []
+        files = self._files()
         best: dict[str, tuple[WindowSnapshot, Path]] = {}
-        for ceiling, f in newest_first(self._files()):
-            floor = _scan_floor(best)
-            if floor is not None and ceiling < floor:
-                break
-            own: dict[str, WindowSnapshot] = {}
-            for _f, _ordinal, o, payload in self._file_payloads(f):
-                for w in _snapshots(o, payload):
-                    cur = own.get(w.window)
-                    if cur is None or w.timestamp > cur.timestamp:
-                        own[w.window] = w
-            for kind, w in own.items():
-                cur_best = best.get(kind)
-                if (
-                    cur_best is None
-                    or w.timestamp > cur_best[0].timestamp
-                    or (w.timestamp == cur_best[0].timestamp and f < cur_best[1])
-                ):
-                    best[kind] = (w, f)
-        return sorted((w for w, _ in best.values()), key=lambda w: w.timestamp, reverse=True)
+        with Checkpoint("codex-windows", self.sessions_dir, files) as checkpoint:
+            for ceiling, path in newest_first(files):
+                floor = _scan_floor(best)
+                if floor is not None and ceiling < floor:
+                    break
+                try:
+                    windows = list(
+                        checkpoint.load(
+                            path,
+                            partial(self._latest_file_windows, path),
+                            encode=asdict,
+                            decode=lambda rows: (_decode_window(row) for row in rows),
+                        )
+                    )
+                except OSError:
+                    continue
+                for window in windows:
+                    previous = best.get(window.window)
+                    if (
+                        previous is None
+                        or window.timestamp > previous[0].timestamp
+                        or (window.timestamp == previous[0].timestamp and path < previous[1])
+                    ):
+                        best[window.window] = (window, path)
+        return sorted(
+            (window for window, _ in best.values()), key=lambda w: w.timestamp, reverse=True
+        )
 
 
 def _scan_floor(best: dict[str, tuple[WindowSnapshot, Path]]) -> datetime | None:

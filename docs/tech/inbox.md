@@ -331,7 +331,9 @@ See [Usage](usage.md#inbox-usage-views).
 
 `rl inbox --read-only` scans without persisting, disables registry and memory decisions, and
 uses `rl resume --dry-run` for a resume or prints the directory and argv for a handoff.
-Local Usage can update the derived Codex replay cache at `analysis/codex-own-starts.json`.
+Local Usage can populate and maintain [derived usage checkpoints](usage.md#local-checkpoints)
+at `usage/local-v2.sqlite`. It can also update the Codex replay cache at
+`analysis/codex-own-starts.json`.
 Explicit remote Usage refreshes can update the provider cache. The Codex app-server can also save an
 auth refresh when Codex usage access is enabled. `scripts/tui_shot.py --registry PATH` runs
 read-only on a copy.

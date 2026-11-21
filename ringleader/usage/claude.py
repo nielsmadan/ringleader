@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 from typing import Any
@@ -17,6 +17,7 @@ from .base import (
     latest_day_of,
     project_dir,
 )
+from .checkpoint import Checkpoint, decode_record
 
 
 def decode_project(raw: str) -> str:
@@ -72,6 +73,19 @@ def claude_tokens(usage: Mapping[str, Any]) -> TokenCounts:
     )
 
 
+@dataclass(frozen=True)
+class _Credit:
+    record: UsageRecord
+    request_ids: tuple[str | None, str | None]
+
+
+def _decode_credit(row: dict[str, Any]) -> _Credit:
+    first, second = row["request_ids"]
+    if not isinstance(first, str | None) or not isinstance(second, str | None):
+        raise TypeError("invalid request identity")
+    return _Credit(decode_record(row["record"]), (first, second))
+
+
 @dataclass
 class ClaudeUsageReader:
     name: str = "claude"
@@ -95,26 +109,42 @@ class ClaudeUsageReader:
     ) -> Iterator[UsageRecord]:
         if not self.available():
             return
-        files = sorted(files_since(self._files(), since), key=str)
+        all_files = self._files()
+        files = sorted(files_since(all_files, since), key=str)
         if session_prefix:
             files = _credit_scope(files, session_prefix, self.projects_dir)
         seen: set[tuple[str | None, str | None]] = set()
-        credited = (r for f in files for r in self._file_records(f, seen))
-        yield from (r for r in credited if r.session_id.startswith(session_prefix or ""))
+        with Checkpoint(self.name, self.projects_dir, all_files) as checkpoint:
+            credited = (r for f in files for r in self._cached_records(f, seen, checkpoint))
+            yield from (r for r in credited if r.session_id.startswith(session_prefix or ""))
 
     def latest_day(self) -> str | None:
         if not self.available():
             return None
-        return latest_day_of(self._files(), lambda f: self._file_records(f, set()))
+        files = self._files()
+        with Checkpoint(self.name, self.projects_dir, files) as checkpoint:
+            return latest_day_of(files, lambda f: self._cached_records(f, set(), checkpoint))
 
-    def _file_records(
-        self, f: Path, seen: set[tuple[str | None, str | None]]
+    def _cached_records(
+        self, f: Path, seen: set[tuple[str | None, str | None]], checkpoint: Checkpoint
     ) -> Iterator[UsageRecord]:
         try:
-            fh = f.open(encoding="utf-8", errors="replace")
+            credits = checkpoint.load(
+                f,
+                lambda: self._file_rows(f),
+                encode=asdict,
+                decode=lambda rows: (_decode_credit(row) for row in rows),
+            )
+            for credit in credits:
+                if credit.request_ids not in seen:
+                    seen.add(credit.request_ids)
+                    yield credit.record
         except OSError:
             return
-        with fh:
+
+    def _file_rows(self, f: Path) -> Iterator[_Credit]:
+        seen: set[tuple[str | None, str | None]] = set()
+        with f.open(encoding="utf-8", errors="replace") as fh:
             for line in fh:
                 if '"assistant"' not in line:
                     continue
@@ -123,14 +153,13 @@ class ClaudeUsageReader:
                 except json.JSONDecodeError:
                     continue
                 rec = self._record(o, f)
-                if rec is None:
-                    continue
-                key = request_ids(o)
-                if key in seen:
-                    continue
-                seen.add(key)
-                rec.record_id = f"{key[0]}|{key[1]}"
-                yield rec
+                if rec is not None:
+                    key = request_ids(o)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    rec.record_id = f"{key[0]}|{key[1]}"
+                    yield _Credit(rec, key)
 
     def _record(self, o: dict[str, Any], f: Path) -> UsageRecord | None:
         if o.get("type") != "assistant":

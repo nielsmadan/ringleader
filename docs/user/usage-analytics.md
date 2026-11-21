@@ -18,6 +18,13 @@ are available. Run `rl usage token --report activity --cached` to read the lates
 If the inbox says the preview could not be saved, run `rl usage token --report activity --refresh`
 to fetch a new full report.
 
+The CLI and inbox automatically save and reuse local usage results. Each report still checks
+which session files are present. It rereads new and edited files in range, including old
+transcripts and sessions still in progress. Deleted files disappear from the report. A first
+all-time report can take longer while it builds checkpoints across the full history. Large
+amounts of usage data can also slow down repeat runs because large results are read from their
+source each time.
+
 ## The basics
 
 ```sh

@@ -121,7 +121,7 @@ def test_claude_session_prefix_reads_its_own_project_up_to_the_session(claude_di
     assert opened == ["old-one.jsonl", "old-two.jsonl", "recent-a.jsonl"]
 
 
-def _pi_file(root: Path, session_id: str, day: str) -> None:
+def _pi_file(root: Path, session_id: str, day: str) -> Path:
     d = root / "--x-foo--"
     d.mkdir(parents=True, exist_ok=True)
     p = d / f"2026-01-01T00-00-00_{session_id}.jsonl"
@@ -131,6 +131,7 @@ def _pi_file(root: Path, session_id: str, day: str) -> None:
     }
     p.write_text(json.dumps(line) + "\n", encoding="utf-8")
     os.utime(p, (_epoch(day), _epoch(day)))
+    return p
 
 
 def test_pi_since_prefix_and_latest_day(tmp_path):
@@ -468,12 +469,10 @@ def test_default_window_never_opens_files_older_than_the_window(claude_dir, monk
 
     _run(capsys)
 
-    assert sorted(opened) == [
-        "recent-a.jsonl",
-        "recent-a.jsonl",
-        "recent-b.jsonl",
-        "recent-b.jsonl",
-    ]
+    assert sorted(opened) == ["recent-a.jsonl", "recent-b.jsonl"]
+    opened.clear()
+    _run(capsys)
+    assert opened == []
 
 
 def test_all_flag_still_reads_every_file(claude_dir, monkeypatch, capsys):

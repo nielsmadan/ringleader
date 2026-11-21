@@ -94,6 +94,10 @@ def default_registry() -> Path:
     return state_dir() / "registry.json"
 
 
+def local_usage_path(version: int) -> Path:
+    return state_dir() / "usage" / f"local-v{version}.sqlite"
+
+
 def config_path() -> Path:
     return state_dir() / "config.json"
 

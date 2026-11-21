@@ -641,6 +641,6 @@ def test_replay_logic_is_pinned_to_the_replay_version():
     material = "".join(inspect.getsource(part) for part in parts) + repr(usage_codex._REPLAY_BURST)
 
     assert (REPLAY_VERSION, hashlib.sha256(material.encode()).hexdigest()[:16]) == (
-        2,
-        "7e01ee09f7dcaf8f",
+        3,
+        "67e65e83151dbd97",
     )

@@ -1,0 +1,167 @@
+{
+  "db_size_mib": 52.4,
+  "records": 100000,
+  "baseline_all": [
+    {
+      "seconds": 1.618,
+      "max_rss_mib": 110.9,
+      "source_queries": [
+        "ASC"
+      ]
+    },
+    {
+      "seconds": 1.546,
+      "max_rss_mib": 111.0,
+      "source_queries": [
+        "ASC"
+      ]
+    },
+    {
+      "seconds": 1.506,
+      "max_rss_mib": 110.9,
+      "source_queries": [
+        "ASC"
+      ]
+    }
+  ],
+  "json_equal": true,
+  "initial": {
+    "all_cold": {
+      "seconds": 3.234,
+      "max_rss_mib": 288.3,
+      "source_queries": [
+        "ASC"
+      ]
+    },
+    "all_repeat": [
+      {
+        "seconds": 1.158,
+        "max_rss_mib": 245.6,
+        "source_queries": []
+      },
+      {
+        "seconds": 0.808,
+        "max_rss_mib": 245.9,
+        "source_queries": []
+      },
+      {
+        "seconds": 1.917,
+        "max_rss_mib": 245.9,
+        "source_queries": []
+      }
+    ],
+    "after_all": {
+      "size_mib": 42.68,
+      "pages": 10926,
+      "free_pages": 0,
+      "page_size": 4096,
+      "auto_vacuum": 0,
+      "payload_bytes": [
+        44700000
+      ]
+    },
+    "default_after_all": {
+      "seconds": 0.31,
+      "max_rss_mib": 37.2,
+      "source_queries": [
+        "DESC",
+        "ASC"
+      ]
+    },
+    "after_default": {
+      "size_mib": 42.688,
+      "pages": 10928,
+      "free_pages": 10709,
+      "page_size": 4096,
+      "auto_vacuum": 0,
+      "payload_bytes": [
+        886401,
+        447
+      ]
+    },
+    "default_again": {
+      "seconds": 0.191,
+      "max_rss_mib": 33.6,
+      "source_queries": []
+    },
+    "database_modified_on_default_hit": false,
+    "default_again_with_concurrent_cache_reader": {
+      "seconds": 0.145,
+      "max_rss_mib": 33.8,
+      "source_queries": []
+    }
+  },
+  "current": {
+    "all_cold": {
+      "seconds": 2.24,
+      "max_rss_mib": 111.7,
+      "source_queries": [
+        "ASC"
+      ]
+    },
+    "all_repeat": [
+      {
+        "seconds": 3.157,
+        "max_rss_mib": 111.7,
+        "source_queries": [
+          "ASC"
+        ]
+      },
+      {
+        "seconds": 3.483,
+        "max_rss_mib": 111.5,
+        "source_queries": [
+          "ASC"
+        ]
+      },
+      {
+        "seconds": 2.981,
+        "max_rss_mib": 111.4,
+        "source_queries": [
+          "ASC"
+        ]
+      }
+    ],
+    "after_all": {
+      "size_mib": 0.016,
+      "pages": 4,
+      "free_pages": 0,
+      "page_size": 4096,
+      "auto_vacuum": 2,
+      "payload_bytes": []
+    },
+    "default_after_all": {
+      "seconds": 0.485,
+      "max_rss_mib": 36.7,
+      "source_queries": [
+        "DESC",
+        "ASC"
+      ]
+    },
+    "after_default": {
+      "size_mib": 0.797,
+      "pages": 204,
+      "free_pages": 0,
+      "page_size": 4096,
+      "auto_vacuum": 2,
+      "payload_bytes": [
+        818980,
+        414
+      ]
+    },
+    "default_again": {
+      "seconds": 0.242,
+      "max_rss_mib": 34.1,
+      "source_queries": []
+    },
+    "database_modified_on_default_hit": true,
+    "default_again_with_concurrent_cache_reader": {
+      "seconds": 1.036,
+      "max_rss_mib": 32.3,
+      "source_queries": [
+        "DESC",
+        "ASC"
+      ]
+    }
+  }
+}

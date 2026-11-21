@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import date
+from functools import partial
 from pathlib import Path
 
 from ..sources.pi import default_sessions_dir as pi_sessions_dir
@@ -17,6 +18,7 @@ from .base import (
     session_files,
     total_of,
 )
+from .checkpoint import Checkpoint
 
 
 def default_sessions_dir() -> Path:
@@ -55,20 +57,22 @@ class PiUsageReader:
     ) -> Iterator[UsageRecord]:
         if not self.available():
             return
-        for f in session_files(self._files(), since, session_prefix, session_of):
-            yield from self._file_records(f)
+        files = self._files()
+        with Checkpoint(self.name, self.sessions_dir, files) as checkpoint:
+            for f in session_files(files, since, session_prefix, session_of):
+                yield from checkpoint.records(f, partial(self._file_records, f))
 
     def latest_day(self) -> str | None:
         if not self.available():
             return None
-        return latest_day_of(self._files(), self._file_records)
+        files = self._files()
+        with Checkpoint(self.name, self.sessions_dir, files) as checkpoint:
+            return latest_day_of(
+                files, lambda f: checkpoint.records(f, partial(self._file_records, f))
+            )
 
     def _file_records(self, f: Path) -> Iterator[UsageRecord]:
-        try:
-            fh = f.open(encoding="utf-8", errors="replace")
-        except OSError:
-            return
-        with fh:
+        with f.open(encoding="utf-8", errors="replace") as fh:
             for ordinal, line in enumerate(fh):
                 if '"usage"' not in line:
                     continue

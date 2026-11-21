@@ -17,6 +17,7 @@ from .base import (
     record_day,
     total_of,
 )
+from .checkpoint import Checkpoint
 
 _MESSAGE_SELECT = """
 SELECT
@@ -79,49 +80,79 @@ class OpenCodeUsageReader:
     def records(
         self, since: date | None = None, session_prefix: str | None = None
     ) -> Iterator[UsageRecord]:
+        variant = json.dumps([since.isoformat() if since else None, session_prefix])
+        try:
+            target = self.db_path.resolve()
+        except (OSError, RuntimeError):
+            return
+        namespace = f"{self.name}-session" if session_prefix else self.name
+        with Checkpoint(namespace, self.db_path, [target]) as checkpoint:
+            yield from checkpoint.records(
+                target,
+                lambda: self._records(since, session_prefix, target),
+                companions=(_wal(target),),
+                variant=variant,
+            )
+
+    def _records(
+        self, since: date | None, session_prefix: str | None, target: Path | None = None
+    ) -> Iterator[UsageRecord]:
         conditions: list[str] = []
         params: list[object] = []
-        cutoff = _since_ms(since)
-        if cutoff is not None:
+        if since is not None:
             conditions.append("m.time_created >= ?")
-            params.append(cutoff)
+            params.append(
+                int(datetime(since.year, since.month, since.day, tzinfo=UTC).timestamp() * 1000)
+            )
         if session_prefix:
             conditions.append("substr(m.session_id, 1, ?) = ?")
             params.extend([len(session_prefix), session_prefix])
-        for row in self._rows(conditions, params, "ASC"):
-            rec = _record(row)
-            if rec is not None:
-                yield rec
+        for row in self._rows(conditions, params, "ASC", target):
+            record = _record(row)
+            if record is not None:
+                yield record
+
+    def _latest_records(self, target: Path) -> list[UsageRecord]:
+        for row in self._rows([], [], "DESC", target):
+            record = _record(row)
+            if record is not None:
+                return [record]
+        return []
 
     def latest_day(self) -> str | None:
-        for row in self._rows([], [], "DESC"):
-            rec = _record(row)
-            if rec is not None:
-                return record_day(rec) or None
-        return None
+        try:
+            target = self.db_path.resolve()
+        except (OSError, RuntimeError):
+            return None
+        with Checkpoint("opencode-latest", self.db_path, [target]) as checkpoint:
+            records = list(
+                checkpoint.records(
+                    target,
+                    lambda: self._latest_records(target),
+                    companions=(_wal(target),),
+                )
+            )
+        return (record_day(records[0]) or None) if records else None
 
     def _rows(
-        self, conditions: list[str], params: list[object], direction: str
+        self,
+        conditions: list[str],
+        params: list[object],
+        direction: str,
+        target: Path | None = None,
     ) -> Iterator[sqlite3.Row]:
         where = f" WHERE {' AND '.join(conditions)}" if conditions else ""
         query = f"{_MESSAGE_SELECT}{where} ORDER BY m.time_created {direction}, m.id {direction}"
-        try:
-            connection = connect_read_only(self.db_path)
-        except (OSError, sqlite3.Error):
-            return
+        connection = connect_read_only(target or self.db_path)
         connection.row_factory = sqlite3.Row
         try:
             yield from connection.execute(query, params)
-        except sqlite3.Error:
-            return
         finally:
             connection.close()
 
 
-def _since_ms(since: date | None) -> int | None:
-    if since is None:
-        return None
-    return int(datetime(since.year, since.month, since.day, tzinfo=UTC).timestamp() * 1000)
+def _wal(path: Path) -> Path:
+    return path.with_name(path.name + "-wal")
 
 
 def _record(row: sqlite3.Row) -> UsageRecord | None:

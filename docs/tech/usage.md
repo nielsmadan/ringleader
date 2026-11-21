@@ -36,6 +36,61 @@ its reader, and is the authority for `--source`'s valid values.
 | `opencode.py` | `$XDG_DATA_HOME/opencode/opencode.db` in SQLite read-only mode |
 | `pi.py` | `~/.pi/agent/sessions/**` |
 
+### Local checkpoints
+
+[`checkpoint.py`](../../ringleader/usage/checkpoint.py) keeps parsed usage in
+`usage/local-v2.sqlite` under the state directory. Each namespace includes the reader and both
+the absolute path and original spelling of the configured source root. This keeps live and
+archived sources independent and preserves path-based export identities for relative roots.
+Within a namespace, a checkpoint matches an absolute input path, a variant and the input
+fingerprint. Fingerprints use device, inode, size, nanosecond mtime and ctime, and include
+companion files where applicable. A missing companion has its own signature value.
+
+- Claude keeps the first occurrence of each request identity within a file and deduplicates
+  across files again in sorted path order for each report.
+- Codex usage variants include `REPLAY_VERSION`. Latest captured windows use a separate
+  namespace and store only the latest snapshot per window kind within each rollout.
+  An I/O failure reading project metadata still yields uncached usage with an unknown
+  project. Transient failures in fork detection or window extraction also leave the
+  rollout eligible for retry.
+- Droid fingerprints both the transcript and settings sidecar. It stores the header session ID
+  and the optional normalized record. If sidecar data is unreadable, malformed or has a
+  counter that fails integer conversion, the first sorted path still owns the session when
+  its header is readable. A later scan retries that read. Each yielded record is a copy of
+  the reader's memoized record.
+- OpenCode fingerprints the resolved database and its actual `-wal`, including when the
+  configured database path is a symlink. Reads keep their SQL date and session filters.
+  Summary and session-prefix queries each retain up to four recently written filter variants
+  per database, so one-off session lookups cannot evict recurring summaries. The latest
+  response has a separate namespace.
+
+Readers rediscover source files on each invocation. They read selected changed files from the
+start and stream records as they parse. Results over 1 MiB of encoded payload still stream and
+are read again next time. Completed entries flush in short transactions at 64 entries or 1 MiB
+of pending payload. Context exit flushes completed entries and closes SQLite, including on
+early iterator exit. A completed read must pass a fingerprint check at the end of parsing and
+again under the SQLite write lock. The next scan retries any incomplete input. Cleanup takes
+the same lock before confirming that source paths are missing and pruning their entries in
+the active namespace. Vacuuming runs when SQLite has free pages to reclaim. Warm hits with
+no pending cleanup use read queries alone.
+
+The configured and resolved state paths must have ancestors owned by the current user or root.
+Group or world writable ancestors require the sticky bit. The cache verifies ownership and
+applies directory mode `0700` and database mode `0600` through open descriptors. Existing cache
+files must be singly linked regular files with a SQLite header and the cache application ID.
+New databases get their identity, schema and incremental autovacuum setting in a private
+temporary file before an atomic link publishes them at the cache path.
+
+SQLite waits up to 100 ms for a busy lock. An unavailable cache falls back to source reads.
+Checksums and typed decoders make an invalid entry a cache miss and a successful reread can
+replace it.
+
+Bump `checkpoint.VERSION` when changing persisted shapes or extraction semantics. The
+[version pin](../../tests/test_usage_checkpoint.py) covers the schema, stored record fields and
+typed decoders. Each version uses its own file. Removing `usage/local-v2.sqlite` while usage
+commands are idle forces a cold read. The cache stores derived data and leaves agent inputs
+intact. See the [repeatable checkpoint benchmark](../tests/local-usage-checkpoints/README.md).
+
 ### Aggregation
 
 `rollup(records, key)` buckets a record stream by any key function into `Bucket` totals;
@@ -243,16 +298,12 @@ manual checks, see [provider usage](../reference/provider-usage.md).
 - **A percentage over 1000 is an epoch**, not a percentage — see `_EPOCH_LEAK_FLOOR`.
 - **`PRICES` is a static table.** Cost figures are estimates and drift with provider pricing.
 - **`--days` defaults to 7**, so a bare `rl usage` is a week, not all time. `--all` widens it.
-- **Reading walks local session stores**, so `--all` over a large history is I/O-bound in the
-  same way a scan is. The default window is not: `latest_day()` finds the newest record by
-  reading files newest-mtime first (`base.newest_first()` yields each file with the latest
-  instant a record in it can carry), and `records(since=...)` on the same reader then skips every
-  transcript last written more than a day before the window start (a file holds no record newer
-  than its last write). The window is resolved once, from `latest_day()`; only `--archived` and
-  `--merge` anchor on the pooled records instead, and they still read everything, because
-  deduping needs the full set. OpenCode filters on `time_created` in SQL. Droid reads every
-  transcript header and sidecar once per reader, because its per-session dedupe keeps the first
-  path in sorted order and an mtime prefilter would hand a twice-filed session to its newer copy.
+- **Local usage discovers files on every run and reuses eligible checkpoints.** The default
+  seven-day window is anchored on `latest_day()`; file readers retain their mtime prefilter.
+  `--archived` and `--merge` anchor on pooled records and deduplicate the combined set. Droid
+  considers every header/sidecar checkpoint because its first-path session ownership must stay
+  stable. OpenCode retains its SQL response-date filter when refreshing a query checkpoint.
+  A cold `--all` run still reads the whole selected history.
 - **Claude subagents count toward the parent.** `*/<sid>/subagents/agent-*.jsonl` and
   `*/<sid>/subagents/workflows/*/agent-*.jsonl` are read with the main transcripts, and
   `claude.session_of()` credits them to `<sid>`. Files are ordered by `str(path)` before the

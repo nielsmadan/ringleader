@@ -88,8 +88,10 @@ to finish; a second `q` offers to discard what has not started. Triage with an a
 with an agent quit the app and start the agent in the right directory.
 
 `rl inbox --read-only` scans without persisting registry updates, disables session and memory
-decisions and prints launches as dry runs. An explicit Usage refresh can update the provider cache.
-When Codex usage access is enabled, its app-server can also save a normal auth refresh.
+decisions and prints launches as dry runs. Local Usage can update the accounting checkpoints
+shared with the CLI. An explicit Usage refresh can update the provider cache. When Codex usage
+access is enabled, its app-server can also save a normal auth refresh.
+[Local usage checkpoints](../tech/usage.md#local-checkpoints)
 
 ## `rl roundup`
 
