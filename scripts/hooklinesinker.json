@@ -1,9 +1,9 @@
 {
-  "version": "1.5.1",
+  "version": "1.5.2",
   "protocol": 1,
   "sha256": {
-    "hooklinesinker-macos-universal": "e77bccdc6deff457e8f2dbe095d6bfab4ce700a15ca569a6836a6b17e6d75d2f",
-    "hooklinesinker-linux-aarch64": "d902c82f3fc2761ad5ac109dcb2c2e525af4e99bf6444780415a0aac65e5f863",
-    "hooklinesinker-linux-x86_64": "4806f84d77cc8baf225dba012cf019149775baf3f6600684fc682e50647a9ef1"
+    "hooklinesinker-macos-universal": "d97ceb246b65a4b9b7f6b60b0d9d751230e83c1ddd4d69a70923b555912984ab",
+    "hooklinesinker-linux-aarch64": "c20cf498921e28ea7432e839ab384a422a328f5e3e16f7be9a62364428f25c0c",
+    "hooklinesinker-linux-x86_64": "a66095639eb3c5a512357ada9d0770b1dae26f5d281dfe92376c755d285cbe6a"
   }
 }
