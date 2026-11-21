@@ -1011,11 +1011,13 @@ def snooze_thread(
 ) -> dict[str, Any]:
     """Set a session aside: still open/resumable, but hidden from the default
     rl overview until woken. `when` records when it was snoozed; `until`, if
-    given, is an ISO timestamp after which the snooze auto-wakes."""
+    given, is an ISO timestamp after which the snooze auto-wakes. A reviewed mark
+    is cleared, so the session returns to the triage inbox when the snooze ends."""
     t = find_session(reg, session_id)
     if t is not None:
         t["snoozedAt"] = when
         t["snoozedUntil"] = until
+        t["reviewedAtMtime"] = None
         return reg
     raise KeyError(session_id)
 

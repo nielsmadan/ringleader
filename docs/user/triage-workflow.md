@@ -38,7 +38,8 @@ because they change only ringleader's registry.
 Both hide a session, and they are not interchangeable:
 
 - **Snooze** is temporary. The session comes back on `rl session wake`, or automatically with
-  `--until <iso>` / `--for <days>`. Use it for "ask me again later".
+  `--until <iso>` / `--for <days>`, even if you had marked it reviewed. Use it for "ask me again
+  later".
 - **Keep** is permanent. The session leaves the triage inbox **for good, even when it sees new
   activity**. Use it for a long-running thread you never want to see in triage. `rl overview
   --kept` lists them; `rl session unkeep` reverses it.

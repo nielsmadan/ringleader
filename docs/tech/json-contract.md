@@ -154,7 +154,7 @@ The app calls `rl inbox --json` often, so the read path stays cheap.
 | `home` | `Home` | The inbox home screen's data; see `home` below. |
 | `sessions` | `SessionRow[]` | See below. |
 | `kept` | `SessionRow[]` | `contract.kept_threads`: sessions kept long-term (`overview.is_kept`: `decision` is `keep`) among the visible threads, in the same order as `sessions`. Disjoint from `sessions`: the triage inbox excludes kept sessions. A kept session can also appear in `home.rows` (it may be in flight), so a client merging the two deduplicates by `id`. |
-| `snoozed` | `SessionRow[]` | `contract.snoozed_threads`: sessions with an active snooze (`overview.snooze_active`: `snoozedAt` set and `snoozedUntil` null or still ahead) among the visible threads, except kept and harvested ones, in the same order as `sessions`. A session is in at most one of `sessions`, `kept` and `snoozed`: a kept session that is also snoozed is listed under `kept` only, and a harvested one that is still snoozed in none of them (waking it could not return it to `sessions`). Once `snoozedUntil` passes, the session leaves `snoozed` and is back in `sessions` unless it is harvested or was marked reviewed at its current `mtime`. `home.waking_soon` and `home.rows` can repeat its id (and also hold kept sessions that are snoozed), so a client merging them deduplicates by `id`. |
+| `snoozed` | `SessionRow[]` | `contract.snoozed_threads`: sessions with an active snooze (`overview.snooze_active`: `snoozedAt` set and `snoozedUntil` null or still ahead) among the visible threads, except kept and harvested ones, in the same order as `sessions`. A session is in at most one of `sessions`, `kept` and `snoozed`: a kept session that is also snoozed is listed under `kept` only, and a harvested one that is still snoozed in none of them (waking it could not return it to `sessions`). Once `snoozedUntil` passes, the session leaves `snoozed` and is back in `sessions` unless it is harvested or was marked reviewed at its current `mtime` while snoozed. `home.waking_soon` and `home.rows` can repeat its id (and also hold kept sessions that are snoozed), so a client merging them deduplicates by `id`. |
 
 Membership of `sessions` is `contract.inbox_threads`: `overview.triage_inbox` over `home.state.visible_threads`
 (filtered sessions excluded, woke threads included), sorted by parsed `mtime` (a naive time is
@@ -395,7 +395,9 @@ is produced only by harvest.
   (`stateio.sigterm_deferred`) for the whole archive transaction in `decisions.execute_group`,
   and from the harvest save through the commit in harvest, so a signal there exits only after the
   archive is recorded, with no outcome printed.
-- **Snooze.** `--until` must be ISO 8601 with a timezone offset and later than now; it is
+- **Snooze.** It clears `reviewedAtMtime`, as the plain verb does, so the session is back in
+  `sessions` when the snooze ends, whether it expires or is woken. `--until` must be ISO 8601 with
+  a timezone offset and later than now; it is
   stored normalized to UTC (`contract.normalize_until`, `astimezone(UTC).isoformat()`) because `overview.snooze_active` compares ISO strings (`now_iso < until`), which orders correctly only when both sides are in the same zone; do not keep the user's offset. Failures are refusals: unparsable input gives
   `--until is not an ISO 8601 time: …`, a naive time `--until needs a timezone offset`, a past
   time `snooze time must be in the future`.

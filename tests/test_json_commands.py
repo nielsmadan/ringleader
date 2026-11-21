@@ -703,6 +703,25 @@ def test_guarded_snooze_stores_the_until_time_in_utc(decide_world, capsys):
     assert thread["snoozedUntil"] == "2026-10-20T07:00:00+00:00"
 
 
+@pytest.mark.parametrize("guarded_verb", [True, False], ids=["guarded", "plain"])
+def test_a_reviewed_session_returns_to_the_inbox_when_its_snooze_expires(
+    decide_world, capsys, monkeypatch, guarded_verb
+):
+    row = _target(decide_world, capsys)
+    _guarded(decide_world, capsys, "keep_going", row["id"], f"--if-mtime={row['mtime']}")
+    if guarded_verb:
+        _guarded(
+            decide_world, capsys, "snooze", row["id"], f"--if-mtime={row['mtime']}", FUTURE_UNTIL
+        )
+        later = datetime(2026, 10, 21, tzinfo=UTC)
+    else:
+        assert cli.main([*VERBS["snooze"], row["id"], "--for=1", *_reg_arg(decide_world)]) == 0
+        capsys.readouterr()
+        later = datetime.now(UTC) + timedelta(days=2)
+    monkeypatch.setattr(contract_io, "_now_dt", lambda: later)
+    assert row["id"] in {r["id"] for r in _list(decide_world, capsys)["sessions"]}
+
+
 def test_guarded_snooze_into_the_past_is_refused(decide_world, capsys):
     row = _target(decide_world, capsys)
     doc = _guarded(
