@@ -178,9 +178,10 @@ output is still produced.
 
 Every agent-specific rule lives in one `adapters.AnalysisAdapter` per indexed agent. Claude
 transcripts match three globs under `~/.claude/projects`: main threads, subagents and workflow
-subagents. Codex rollouts match `**/*.jsonl` under the Codex sessions dir. A subagent's
+subagents. Codex rollouts match `**/*.jsonl` and `**/*.jsonl.zst` under the Codex sessions dir,
+and facts key on the plain `.jsonl` path so compression leaves dedupe and label keys alone. A subagent's
 fingerprint also includes its `.meta.json`. The archive keeps each transcript beside its
-companion files, so its globs are `*/*.jsonl` plus each adapter's companion globs one directory
+companion files, so its globs are `*/*.jsonl` and `*/*.jsonl.zst` plus each adapter's companion globs one directory
 down (`*/*/subagents/**/agent-*.jsonl` for Claude). Adding an agent means adding an adapter.
 
 The archive holds files from several agents in one tree. `sniff_agent` reads at most 20 lines of
@@ -374,7 +375,7 @@ report, transcript and tool-output text is never followed as instructions.
 
 `usage.codex.StartCache` stores each forked rollout's `own_events_start` result in
 `analysis/codex-own-starts.json`, keyed by path and stat fingerprint and versioned by
-`REPLAY_VERSION` (2), which is pinned by a hash of the replay functions. `own_events_start`
+`REPLAY_VERSION` (4), which is pinned by a hash of the replay functions and the zstd reader they read through. `own_events_start`
 streams the rollout once and stops at the recorded ordinal or the thread's own
 `thread_settings_applied`, so a large fork is never held in memory. `rl usage` writes it. Each
 `CodexUsageReader` loads one cache on first use (`starts=` injects one) and keeps it across

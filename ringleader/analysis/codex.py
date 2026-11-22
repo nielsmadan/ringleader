@@ -7,6 +7,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Literal
 
+from ..compressed import open_text, uncompressed_path
 from ..sources.codex import is_preamble
 from ..usage.base import as_dict
 from ..usage.codex import StartCache, codex_tokens, own_thread, rollout_session_id, turn_key
@@ -164,7 +165,7 @@ def _int_or_none(value: object) -> int | None:
 
 
 def _lines(path: Path) -> Iterator[tuple[int, str]]:
-    with path.open(encoding="utf-8", errors="replace") as fh:
+    with open_text(path, errors="replace") as fh:
         yield from enumerate(fh)
 
 
@@ -680,7 +681,7 @@ def _track(scan: _Scan, record: Row) -> None:
 
 def _scan(path: Path, start: int) -> _Scan:
     scan = _Scan(own_id=rollout_session_id(path))
-    key = str(path)
+    key = str(uncompressed_path(path))
     for index, raw in _lines(path):
         own = index >= start
         if not own and '"session_meta"' not in raw:
@@ -728,7 +729,7 @@ def _messages(scan: _Scan) -> list[tuple[int, str, str, str | None, bool]]:
 def extract_codex(ref: TranscriptRef, starts: StartCache | None = None) -> TranscriptFacts:
     scan = _scan(ref.path, _start(ref.path, starts))
     identity = _identity(scan)
-    key = str(ref.path)
+    key = str(uncompressed_path(ref.path))
     requests = tuple(
         r if r.context_window else replace(r, context_window=identity.context_window)
         for r in scan.requests

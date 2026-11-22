@@ -215,6 +215,8 @@ def lifecycle_reason(thread: dict[str, Any], decision: Decision) -> str | None:
         return None
     try:
         scanner.filesystem_path(thread, decision)
+    except scanner.TranscriptMovedError:
+        return None  # a lifecycle exists; revalidation refuses the stale selection
     except (RuntimeError, ValueError, KeyError) as error:
         return str(error)
     return None

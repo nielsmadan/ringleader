@@ -92,7 +92,7 @@ ADAPTERS: tuple[AnalysisAdapter, ...] = (
         agent="codex",
         root="codex",
         live_dir=_codex_dir,
-        globs=("**/*.jsonl",),
+        globs=("**/*.jsonl", "**/*.jsonl.zst"),
         companion_globs=(),
         sniff=_is_codex,
         extract=extract_codex,
@@ -102,6 +102,7 @@ ADAPTERS: tuple[AnalysisAdapter, ...] = (
 BY_AGENT: Mapping[Agent, AnalysisAdapter] = {a.agent: a for a in ADAPTERS}
 ARCHIVE_GLOBS: tuple[str, ...] = (
     "*/*.jsonl",
+    "*/*.jsonl.zst",
     *(f"*/{pattern}" for a in ADAPTERS for pattern in a.companion_globs),
 )
 TOKENS_ONLY_SOURCES: tuple[str, ...] = tuple(

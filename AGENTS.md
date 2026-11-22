@@ -162,7 +162,9 @@ pruning them before the GC clock deletes them.
   lives beside the transcript (Claude Code's `<sessionId>/` dir, droid's `.settings.json`
   sidecars) or in a store of its own (Cursor's chat dir), and every
   archive/delete/prune/unarchive path goes through `scanner.companion_paths()` and
-  `scanner.companion_moves()` rather than deriving a sibling path itself.
+  `scanner.companion_moves()` rather than deriving a sibling path itself. A Codex rollout also
+  changes name in place (`.jsonl` ↔ `.jsonl.zst`, Codex compresses idle ones): open transcripts
+  through `compressed.open_text` and resolve lifecycle paths through `scanner.filesystem_path()`.
   See `docs/tech/sources.md`.
 - **Droid has its own directory encoding, not Claude Code's.** `~/.factory/sessions/` is keyed
   by `slug.droid_slug(cwd)`: `realpath`, then every `/` becomes `-` — unlike Claude Code's

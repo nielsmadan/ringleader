@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Literal
 
 from .. import paths
+from ..compressed import open_text, prefer_plain
 from ..sources.base import stat_fingerprint
 from ..sources.claude_code import default_projects_dir
 from ..sources.codex import default_codex_dir
@@ -85,7 +86,7 @@ def _fingerprint(path: Path) -> str | None:
 
 
 def _globbed(root: Path, patterns: Iterable[str]) -> list[Path]:
-    return sorted({p for pattern in patterns for p in root.glob(pattern) if p.is_file()})
+    return prefer_plain(p for pattern in patterns for p in root.glob(pattern) if p.is_file())
 
 
 type Known = Mapping[str, tuple[Agent, str]]
@@ -122,7 +123,7 @@ def _parsed(raw: str) -> object:
 
 def sniff_agent(path: Path) -> Agent | None:
     try:
-        with path.open(encoding="utf-8", errors="replace") as fh:
+        with open_text(path, errors="replace") as fh:
             verdicts = (_sniff_record(_parsed(raw)) for raw in islice(fh, SNIFF_LINES))
             found = next((v for v in verdicts if v is not None), None)
     except OSError:

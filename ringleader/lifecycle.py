@@ -8,6 +8,7 @@ from typing import Any
 
 from . import registry, scanner
 from .agents import source_of
+from .compressed import other_form
 from .sources.base import IndexUpdate
 
 GRACE_SECONDS = 120
@@ -103,6 +104,7 @@ def archive_thread(
         now_iso,
         summary=summary,
         project=thread.get("gitProjectLabel") or thread.get("project"),
+        original_path=str(src),
         index=index,
     )
     return ArchiveResult(str(dest), warnings)
@@ -133,8 +135,8 @@ def restore(reg: dict[str, Any], ts: dict[str, Any]) -> tuple[str, IndexUpdate]:
     scanner.filesystem_path(thread, "unarchive")
     src = Path(ts["archivePath"])
     dest = Path(original)
-    if dest.exists():
-        raise RuntimeError(f"{dest} already exists — not overwriting")
+    if taken := next((p for p in (dest, other_form(dest)) if p and p.exists()), None):
+        raise RuntimeError(f"{taken} already exists — not overwriting")
     if not src.exists():
         raise RuntimeError(f"archived transcript is gone: {src}")
 

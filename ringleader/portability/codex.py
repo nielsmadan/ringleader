@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
+from ..compressed import decompress, is_zstd
 from . import codex_state, native
 from .capabilities import (
     Compatibility,
@@ -1100,7 +1101,8 @@ class CodexAdapter:
                 break
         else:
             raise PreservationError("Codex name index changed during snapshot")
-        conversation = read_rollout(files[0].data, request.identity, request.branch_id)
+        rollout = decompress(files[0].data) if is_zstd(path) else files[0].data
+        conversation = read_rollout(rollout, request.identity, request.branch_id)
         if present and files[1].data.strip():
             for row in native.records(files[1].data):
                 if row.get("id") == request.identity.native_id and isinstance(

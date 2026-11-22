@@ -11,8 +11,9 @@ from pathlib import Path
 from typing import Any, get_type_hints
 
 from .. import paths, stateio
+from ..compressed import open_text, uncompressed_path
 from ..sources.base import stat_fingerprint
-from ..sources.codex import _meta, default_codex_dir
+from ..sources.codex import _meta, default_codex_dir, rollout_files
 from .base import (
     TokenCounts,
     UsageRecord,
@@ -35,7 +36,7 @@ _KINDS = ("5h", "weekly")
 _LONGEST_WINDOW = timedelta(weeks=1)
 _REPLAY_BURST = timedelta(seconds=1)
 _CACHED_FIELDS = 2
-REPLAY_VERSION = 3
+REPLAY_VERSION = 4
 
 
 def _decode_window(row: dict[str, Any]) -> WindowSnapshot:
@@ -46,7 +47,7 @@ def _decode_window(row: dict[str, Any]) -> WindowSnapshot:
 
 
 def rollout_session_id(path: Path) -> str:
-    stem = path.stem  # rollout-<ISO-ts>-<uuid>
+    stem = uncompressed_path(path).stem  # rollout-<ISO-ts>-<uuid>
     parts = stem.split("-")
     return "-".join(parts[-_UUID_DASH_PARTS:]) if len(parts) >= _UUID_DASH_PARTS else stem
 
@@ -116,7 +117,7 @@ def own_thread(payload: Mapping[str, Any], own_id: str) -> bool:
 
 
 def _head(f: Path) -> Iterator[tuple[int, dict[str, Any]]]:
-    with f.open(encoding="utf-8", errors="replace") as fh:
+    with open_text(f, errors="replace") as fh:
         for index, line in enumerate(fh):
             try:
                 o = json.loads(line)
@@ -213,7 +214,7 @@ class CodexUsageReader:
         return self.sessions_dir.exists()
 
     def _files(self) -> list[Path]:
-        return list(self.sessions_dir.glob("**/*.jsonl"))
+        return rollout_files(self.sessions_dir)
 
     def _payloads(self) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
         if not self.available():
@@ -225,7 +226,7 @@ class CodexUsageReader:
                 continue
 
     def _file_payloads(self, f: Path) -> Iterator[tuple[Path, int, dict[str, Any], dict[str, Any]]]:
-        with f.open(encoding="utf-8", errors="replace") as fh:
+        with open_text(f, errors="replace") as fh:
             for ordinal, line in enumerate(fh):
                 if '"token_count"' not in line:
                     continue
@@ -244,7 +245,7 @@ class CodexUsageReader:
         start = starts.start(f)
         own_id = rollout_session_id(f)
         model: str | None = None
-        with f.open(encoding="utf-8", errors="replace") as fh:
+        with open_text(f, errors="replace") as fh:
             for ordinal, line in enumerate(fh):
                 if ordinal < start or (
                     '"token_count"' not in line and '"turn_context"' not in line
@@ -333,7 +334,7 @@ class CodexUsageReader:
                 cache_write=tokens.cache_write,
                 reasoning=tokens.reasoning,
                 total=tokens.total,
-                record_id=f"{f}|{ordinal}",
+                record_id=f"{uncompressed_path(f)}|{ordinal}",
             )
 
         if project_error is not None:

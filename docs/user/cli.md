@@ -66,7 +66,8 @@ rl
 | `rl doctor` | Per-agent report: skills, hooks, statusline, retention. `--verify-conversion [AGENT]` runs the offline self-verification harness for installed conversion targets (or one named agent) and records a pass. | `--settings`, `--verify-conversion [AGENT]`, `--verified` |
 
 Session views exclude Codex exec runs and Droid runs explicitly tagged `exec` in their
-settings sidecars. Refresh removes previously cached Droid exec entries from the list;
+settings sidecars. Codex sessions recorded as `vscode` (a TUI attached to Codex's background
+daemon) are interactive and included, as `codex resume` lists them. Refresh removes previously cached Droid exec entries from the list;
 the transcripts stay on disk and remain included in usage accounting.
 
 `--status` accepts `active`, `unfinished`, `blocked`, `finished`, `abandoned`, `harvested`,

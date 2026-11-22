@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import json
 import os
-from collections.abc import Iterable
+from collections import deque
+from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any
 
 from . import scanner
 from .agents import source_of
+from .compressed import is_zstd, moved_form, open_text
 from .sources.base import ConversationRenderingSource, Source
 from .sources.cursor import prompt_text
 from .transcript import text_blocks
@@ -91,18 +93,22 @@ def _parse_line(raw: str) -> dict[str, Any] | None:
     return record if isinstance(record, dict) else None
 
 
-def _line_chunks(lines: Iterable[str]) -> list[str]:
-    return [
+def _chunks(lines: Iterable[str]) -> Iterator[str]:
+    return (
         chunk
         for line in lines
         if (record := _parse_line(line)) is not None
         for chunk in _record_chunks(record)
-    ]
+    )
+
+
+def _line_chunks(lines: Iterable[str]) -> list[str]:
+    return list(_chunks(lines))
 
 
 def _render_jsonl(path: str | Path) -> str:
-    with Path(path).open(encoding="utf-8", errors="replace") as fh:
-        return "\n".join(_line_chunks(fh))
+    with open_text(path, errors="replace") as fh:
+        return "\n".join(_chunks(fh))
 
 
 def _last(text: str, max_chars: int) -> str:
@@ -113,7 +119,23 @@ def _decoded(data: bytes) -> list[str]:
     return [line.decode("utf-8", errors="replace") for line in data.split(b"\n")]
 
 
+def _streamed_tail(path: str | Path, max_chars: int) -> str:
+    """A compressed stream cannot seek, so read it through, keeping only the chunks
+    the tail needs."""
+    kept: deque[str] = deque()
+    joined = -1  # len("\n".join(kept))
+    with open_text(path, errors="replace") as fh:
+        for chunk in _chunks(fh):
+            kept.append(chunk)
+            joined += len(chunk) + 1
+            while len(kept) > 1 and joined - len(kept[0]) - 1 >= max_chars:
+                joined -= len(kept.popleft()) + 1
+    return _last("\n".join(kept), max_chars)
+
+
 def _jsonl_tail(path: str | Path, max_chars: int) -> str:
+    if is_zstd(path):
+        return _streamed_tail(path, max_chars)
     chunks: list[str] = []
     window = TAIL_CHUNK_BYTES
     with Path(path).open("rb") as fh:
@@ -140,7 +162,8 @@ def _jsonl_file(subject: dict[str, Any], source_name: str) -> str:
     file_path = subject.get("file")
     if not isinstance(file_path, str) or not file_path:
         raise RuntimeError(f"{source_name} session has no readable conversation")
-    return file_path
+    moved = moved_form(file_path)
+    return str(moved) if moved is not None else file_path
 
 
 def _native_renderer(subject: dict[str, Any], source: Source | None) -> Source | None:

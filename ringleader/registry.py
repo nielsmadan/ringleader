@@ -969,6 +969,7 @@ def archive_session(  # noqa: PLR0913 -- the archived record's fields, plus the 
     *,
     summary: str | None = None,
     project: str | None = None,
+    original_path: str | None = None,
     index: SessionIndex | None = None,
 ) -> dict[str, Any]:
     index = _index_for(reg, session_id, index)
@@ -992,7 +993,7 @@ def archive_session(  # noqa: PLR0913 -- the archived record's fields, plus the 
             "project": project,
             # where the transcript lived before the move: restoring puts it back
             # here, and the agent's picker index still points at this path.
-            "originalPath": finished.get("file") if finished else None,
+            "originalPath": original_path or (finished.get("file") if finished else None),
             # the whole record, so a restore doesn't come back stripped of its
             # classification and need re-enriching.
             "thread": finished,

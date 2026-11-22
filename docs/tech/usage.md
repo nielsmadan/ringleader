@@ -31,7 +31,7 @@ its reader, and is the authority for `--source`'s valid values.
 | Module | Reads |
 |---|---|
 | `claude.py` | `~/.claude/projects/*.jsonl` usage records |
-| `codex.py` | `~/.codex/sessions/**/*.jsonl` |
+| `codex.py` | `~/.codex/sessions/**/*.jsonl` and `.jsonl.zst` (plain wins when both exist); record ids keep the plain path, so compression changes no id |
 | `droid.py` | `~/.factory/sessions/*/<uuid>.settings.json` sidecars, not the transcripts |
 | `opencode.py` | `$XDG_DATA_HOME/opencode/opencode.db` in SQLite read-only mode |
 | `pi.py` | `~/.pi/agent/sessions/**` |

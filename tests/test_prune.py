@@ -428,3 +428,18 @@ def test_purging_handoffs_with_retention_off_deletes_nothing(tmp_path):
 
     assert purge_handoffs(d, [old], time.time(), retention_days=0) == 0
     assert old.exists()
+
+
+def test_purge_archived_deletes_a_compressed_rollout_and_its_summary(tmp_path):
+    slug = tmp_path / "archive" / "repo"
+    slug.mkdir(parents=True)
+    packed = slug / "a.jsonl.zst"
+    packed.write_bytes(b"compressed")
+    summary = slug / "a.jsonl.md"
+    summary.write_text("summary")
+    ts = _archived_ts("a", OLD, archive_path=str(packed))
+    reg = _reg_ts([ts])
+
+    n = purge_archived(reg, [ts], NOW, archive_root_path=str(tmp_path / "archive"))
+
+    assert (n, packed.exists(), summary.exists(), ts["purgedAt"]) == (1, False, False, NOW)

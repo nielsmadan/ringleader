@@ -35,6 +35,7 @@ from tests.portability.fixtures import (
     conversation,
 )
 from tests.portability.test_native_adapters import roots
+from tests.zstd_helpers import compress_like_codex
 
 
 def initialized(tmp_path):
@@ -843,3 +844,29 @@ def test_picker_metadata_reads_only_the_rollout_header(tmp_path):
     assert CodexAdapter().stage_metadata(replace(staged, files=files)) == (
         CodexAdapter().stage_metadata(staged)
     )
+
+
+def test_snapshot_reads_a_rollout_codex_compressed(tmp_path):
+    staged = stage(tmp_path)
+    publish_files(staged)
+    request = SourceRequest(staged.identity, staged.roots, staged.source_ref)
+    plain = CodexAdapter().snapshot(request)
+    compress_like_codex(staged.roots.store / staged.source_ref)
+
+    packed = CodexAdapter().snapshot(replace(request, source_ref=staged.source_ref + ".zst"))
+
+    assert packed.conversation == plain.conversation
+
+
+def test_a_corrupt_compressed_source_is_reported_incompatible(tmp_path):
+    staged = stage(tmp_path)
+    publish_files(staged)
+    source = staged.roots.store / staged.source_ref
+    broken = source.with_name(source.name + ".zst")
+    broken.write_bytes(b"not zstd")
+    request = SourceRequest(staged.identity, staged.roots, staged.source_ref + ".zst")
+
+    compatibility = CodexAdapter().inspect_source(request)
+
+    assert not compatibility.supported
+    assert "corrupt zstd stream" in " ".join(compatibility.diagnostics)

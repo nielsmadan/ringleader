@@ -32,6 +32,11 @@ Archiving and deleting carry a session's **companion files** with the transcript
 directory from `~/.cursor/chats/` — so an archived session
 can be restored whole and a deleted one leaves nothing behind.
 
+Codex compresses a rollout idle for a week to `.jsonl.zst` and decompresses it again on resume,
+both in place. Every view, usage and analysis read accepts either form. If Codex renamed a
+transcript after the last scan, archive moves whichever form is there, while delete and prune
+refuse until `rl session refresh` has seen the new name.
+
 ## The main path
 
 ```sh

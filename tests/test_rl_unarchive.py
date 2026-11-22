@@ -217,3 +217,13 @@ def test_restore_refuses_when_a_companion_destination_exists_and_moves_nothing(t
     assert r.returncode == 1
     assert "already exists" in r.stderr
     assert (archived.is_file(), (archived.parent / "s1" / "tool.txt").is_file()) == (True, True)
+
+
+def test_unarchive_refuses_when_the_transcript_is_back_in_its_other_form(tmp_path):
+    reg, original = _setup(tmp_path)
+    compressed = original.with_name(original.name + ".zst")
+    compressed.write_bytes(b"newer copy")
+    r = _run("session", "unarchive", "s1", "--registry", str(reg))
+    assert r.returncode == 1
+    assert f"{compressed} already exists" in r.stderr
+    assert compressed.read_bytes() == b"newer copy"

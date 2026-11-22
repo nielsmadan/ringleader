@@ -65,6 +65,8 @@ def _disk_refusal(thread: dict[str, Any], stamp: tuple[int, int]) -> Refusal | N
         st = scanner.filesystem_path(thread, "revalidate").stat()
     except FileNotFoundError:
         return Refusal("transcript_missing", TRANSCRIPT_MISSING)
+    except scanner.TranscriptMovedError:
+        return Refusal("changed", CHANGED)
     except (RuntimeError, OSError) as error:
         return Refusal("other", str(error))
     return None if (st.st_size, st.st_mtime_ns) == stamp else Refusal("changed", CHANGED)

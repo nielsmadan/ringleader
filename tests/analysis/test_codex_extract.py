@@ -14,6 +14,8 @@ from ringleader.usage import codex as usage_codex
 from ringleader.usage.base import total_of
 from ringleader.usage.codex import REPLAY_VERSION, CodexUsageReader
 
+from zstd_helpers import compress_like_codex
+
 ROOT = "01a00000-0000-7000-8000-00000000000a"
 CHILD = "01a00000-0000-7000-8000-00000000000b"
 GRANDCHILD = "01a00000-0000-7000-8000-00000000000c"
@@ -787,3 +789,15 @@ def test_a_depth_2_roll_up_survives_a_second_refresh_and_the_parent_leaving(tmp_
     child.unlink()
     path.write_text(path.read_text() + json.dumps(tokens(9)) + "\n", encoding="utf-8")
     assert refresh(tmp_path, roots) == {ROOT: ROOT, GRANDCHILD: ROOT}
+
+
+def test_a_compressed_rollout_keeps_the_fact_keys_of_its_plain_file(tmp_path):
+    path = write(tmp_path, ROOT, [meta(ROOT), tokens(1), user_item(2, "hello")])
+    plain = extract(path)
+
+    compressed = extract(compress_like_codex(path))
+
+    assert [r.dedupe_key for r in compressed.requests] == [r.dedupe_key for r in plain.requests]
+    assert [m.dedupe_key for m in compressed.user_messages] == [
+        m.dedupe_key for m in plain.user_messages
+    ]

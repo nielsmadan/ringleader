@@ -10,6 +10,8 @@ from ringleader.gitinfo import GitProject, GitRun, lookup_git_project
 from ringleader.sources.claude_code import ClaudeCodeSource
 from ringleader.sources.codex import CodexSource
 
+from zstd_helpers import compress_like_codex
+
 
 def _projects_dir(tmp, sid="s1"):
     """Minimal ~/.claude/projects layout: <encoded>/<uuid>.jsonl"""
@@ -1026,3 +1028,43 @@ def test_scoped_refresh_restores_an_excluded_run_when_settings_stop_excluding_it
         os.utime(sidecar, (1, 1))
     restored, _ = refresh.scoped_refresh(path, now, cwd="/work/repo", recursive=False, **kwargs)
     assert [t["sessionId"] for t in restored["threads"]] == ["session"]
+
+
+def test_a_codex_rollout_compressed_between_refreshes_stays_registered(tmp_path):
+    sessions = _codex_sessions_dir(tmp_path, "c1")
+    reg_path = _registry(tmp_path, [])
+    source = CodexSource(sessions_dir=sessions)
+    refresh.refresh_registry(
+        reg_path, "2026-07-19T00:00:00+00:00", sources=[source], git_resolver=lambda cwd: None
+    )
+    packed = compress_like_codex(sessions / "c1.jsonl")
+
+    reg = refresh.refresh_registry(
+        reg_path, "2026-07-19T00:01:00+00:00", sources=[source], git_resolver=lambda cwd: None
+    ).reg
+
+    assert [(t["sessionId"], t["file"]) for t in reg["threads"]] == [("c1", str(packed))]
+    assert reg["deleted"] == []
+
+
+def test_a_compressed_codex_rollout_recorded_as_collected_is_registered_again(tmp_path):
+    sessions = _codex_sessions_dir(tmp_path, "c1")
+    reg_path = _registry(tmp_path, [])
+    source = CodexSource(sessions_dir=sessions)
+    refresh.refresh_registry(
+        reg_path, "2026-07-19T00:00:00+00:00", sources=[source], git_resolver=lambda cwd: None
+    )
+    saved = json.loads(reg_path.read_text())
+    thread = saved["threads"].pop()
+    saved["deleted"] = [
+        {"sessionId": "c1", "deletedAt": "x", "reason": "gc", "source": "codex", "thread": thread}
+    ]
+    reg_path.write_text(json.dumps(saved))
+    packed = compress_like_codex(sessions / "c1.jsonl")
+
+    reg = refresh.refresh_registry(
+        reg_path, "2026-07-19T00:01:00+00:00", sources=[source], git_resolver=lambda cwd: None
+    ).reg
+
+    assert [(t["sessionId"], t["file"]) for t in reg["threads"]] == [("c1", str(packed))]
+    assert reg["deleted"] == []

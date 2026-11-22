@@ -5,6 +5,7 @@ from itertools import zip_longest
 from pathlib import Path
 
 import pytest
+from ringleader.sources import codex as codex_module
 from ringleader.sources.base import (
     DiscoveryCacheSource,
     NameApplyingSource,
@@ -16,6 +17,8 @@ from ringleader.sources.base import (
     WorkspaceRebindingSource,
 )
 from ringleader.sources.codex import CodexSessionIndexError, CodexSource
+
+from zstd_helpers import compress_like_codex
 
 
 def _rollout(
@@ -97,6 +100,7 @@ def test_source_satisfies_protocol(tmp_path):
     assert src.capabilities == frozenset(
         {
             "applies_names",
+            "compresses_in_place",
             "discovers_scoped",
             "seeds_discovery",
             "filesystem_lifecycle",
@@ -175,6 +179,122 @@ def test_parse_extracts_fields_and_skips_preamble(tmp_path):
     assert ns.last_prompt == "the last prompt"
     assert ns.message_count == 2  # preamble excluded
     assert ns.custom_title is None and ns.summary is None and ns.ai_title is None
+
+
+def test_a_rollout_codex_compressed_is_discovered_and_parsed_like_the_plain_one(tmp_path):
+    sid = "33333333-0000-0000-0000-000000000003"
+    plain = _rollout(
+        tmp_path / "2026" / "07" / "28",
+        sid,
+        "/Users/me/proj",
+        ["first real prompt", "the last prompt"],
+        assistants=["an answer"],
+    )
+    packed = compress_like_codex(plain)
+    src = CodexSource(sessions_dir=tmp_path)
+
+    refs = list(src.discover())
+    ns = src.parse(refs[0])
+
+    assert [(r.file, r.source_ref) for r in refs] == [(str(packed), sid)]
+    assert (ns.session_id, ns.cwd, ns.last_prompt, ns.message_count) == (
+        sid,
+        "/Users/me/proj",
+        "the last prompt",
+        3,
+    )
+
+
+def test_a_rollout_caught_mid_compression_is_discovered_once_from_its_plain_copy(tmp_path):
+    plain = _rollout(tmp_path / "2026" / "07" / "28", "both", "/Users/me/proj", ["hi"])
+    compress_like_codex(plain, keep_plain=True)
+    (plain.parent / f"{plain.name}.tmp").write_text("partial", encoding="utf-8")
+
+    refs = list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert [r.file for r in refs] == [str(plain)]
+
+
+def test_a_rollout_decompressed_by_a_resume_mid_scan_is_read_from_its_plain_file(
+    tmp_path, monkeypatch
+):
+    plain = _rollout(tmp_path / "2026" / "07" / "28", "resumed", "/Users/me/proj", ["hi"])
+    listed = plain.with_name(plain.name + ".zst")
+    walked = []
+    monkeypatch.setattr(codex_module, "rollout_files", lambda root: walked.append(root) or [listed])
+
+    refs = list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert walked == [tmp_path]
+    assert [(r.file, r.source_ref) for r in refs] == [(str(plain), "resumed")]
+
+
+def test_a_rollout_compressed_mid_scan_is_read_from_its_compressed_file(tmp_path, monkeypatch):
+    plain = _rollout(tmp_path / "2026" / "07" / "28", "packed", "/Users/me/proj", ["hi"])
+    monkeypatch.setattr(codex_module, "rollout_files", lambda _root: [plain])
+    packed = compress_like_codex(plain)
+
+    refs = list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert [(r.file, r.source_ref) for r in refs] == [(str(packed), "packed")]
+
+
+def test_a_listed_rollout_gone_in_both_forms_is_skipped_with_a_notice(
+    tmp_path, monkeypatch, capsys
+):
+    kept = _rollout(tmp_path / "2026" / "07" / "28", "kept", "/Users/me/proj", ["hi"])
+    gone = tmp_path / "2026" / "07" / "28" / "rollout-gone.jsonl.zst"
+    monkeypatch.setattr(codex_module, "rollout_files", lambda _root: [gone, kept])
+
+    refs = list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert [r.source_ref for r in refs] == ["kept"]
+    assert f"skipped {gone}" in capsys.readouterr().err
+
+
+def test_a_rollout_compressed_in_several_frames_is_read_to_the_end(tmp_path):
+    plain = _rollout(
+        tmp_path / "2026" / "07" / "28",
+        "frames",
+        "/Users/me/proj",
+        ["first prompt", "middle prompt", "the last prompt"],
+    )
+    compress_like_codex(plain, frames=3)
+    src = CodexSource(sessions_dir=tmp_path)
+
+    ns = src.parse(next(iter(src.discover())))
+
+    assert (ns.last_prompt, ns.message_count) == ("the last prompt", 3)
+
+
+def test_a_corrupt_compressed_rollout_is_skipped_rather_than_breaking_the_scan(tmp_path, capsys):
+    day = tmp_path / "2026" / "07" / "28"
+    _rollout(day, "fine", "/Users/me/proj", ["hi"])
+    (day / "rollout-broken.jsonl.zst").write_bytes(b"not zstd")
+
+    refs = list(CodexSource(sessions_dir=tmp_path).discover())
+
+    assert [r.source_ref for r in refs] == ["fine"]
+    assert "rollout-broken.jsonl.zst: corrupt zstd stream" in capsys.readouterr().err
+
+
+def test_scoped_discovery_follows_a_known_rollout_into_its_compressed_copy(tmp_path):
+    plain = _rollout(tmp_path / "2026" / "07" / "28", "packed", "/Users/me/proj", ["hi"])
+    os.utime(plain, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
+    compress_like_codex(plain)
+    source = CodexSource(sessions_dir=tmp_path)
+
+    assert _scoped(source, "/Users/me/proj", known=frozenset({str(plain)})) == ["packed"]
+    assert _scoped(source, "/Users/me/proj") == []
+
+
+def test_scoped_discovery_skips_an_unchanged_rollout_already_registered_compressed(tmp_path):
+    plain = _rollout(tmp_path / "2026" / "07" / "28", "settled", "/Users/me/proj", ["hi"])
+    os.utime(plain, (BEFORE_LAST_SCAN, BEFORE_LAST_SCAN))
+    packed = compress_like_codex(plain)
+    source = CodexSource(sessions_dir=tmp_path)
+
+    assert _scoped(source, None, known=frozenset({str(packed)})) == []
 
 
 def test_discover_missing_dir_yields_nothing(tmp_path):
@@ -274,6 +394,18 @@ def test_apply_name_appends_native_session_index_entry(tmp_path):
     assert entries[-1]["id"] == sid
     assert entries[-1]["thread_name"] == "fresh-name"
     assert entries[-1]["updated_at"].endswith("Z")
+
+
+def test_apply_name_follows_a_rollout_compressed_since_the_last_scan(tmp_path):
+    sessions = tmp_path / "sessions"
+    sid = "99999999-0000-0000-0000-000000000009"
+    rollout = _rollout(sessions, sid, "/Users/me/proj", ["hello"])
+    compress_like_codex(rollout)
+
+    CodexSource(sessions_dir=sessions).apply_name(sid, str(rollout), "renamed")
+
+    index = (tmp_path / "session_index.jsonl").read_text(encoding="utf-8").splitlines()
+    assert json.loads(index[-1])["thread_name"] == "renamed"
 
 
 def test_apply_name_rejects_missing_rollout(tmp_path):

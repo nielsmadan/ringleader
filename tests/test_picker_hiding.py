@@ -3,10 +3,12 @@ import sqlite3
 from pathlib import Path
 
 import pytest
-from ringleader import prune, scanner
+from ringleader import decisions, lifecycle, prune, revalidate, scanner
 from ringleader.commands import delete
 from ringleader.sources.base import IndexUpdate, stat_fingerprint
 from ringleader.sources.codex import CodexSource, CodexStateError
+
+from zstd_helpers import compress_like_codex
 
 NOW = "2026-08-16T00:00:00+00:00"
 
@@ -173,3 +175,114 @@ def test_prune_keeps_the_transcript_when_the_picker_entry_cannot_be_cleared(tmp_
     assert rollout.exists()
     assert reg.get("deleted", []) == []
     assert [t["sessionId"] for t in reg["threads"]] == ["sess-1"]
+
+
+def test_hiding_and_showing_a_compressed_rollout_match_the_row_codex_keeps_for_it(
+    tmp_path, monkeypatch
+):
+    home = _codex_home(tmp_path, monkeypatch)
+    packed = compress_like_codex(_add_thread(home, "sess-1"))
+
+    assert CodexSource().hide_from_picker("sess-1", str(packed)) is IndexUpdate.UPDATED
+    assert _archived(home, "sess-1")[0] == 1
+    assert CodexSource().show_in_picker("sess-1", str(packed)) is IndexUpdate.UPDATED
+    assert _archived(home, "sess-1") == (0, None)
+
+
+def test_prune_skips_a_rollout_codex_compressed_since_it_was_selected(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    thread = {
+        **_thread("sess-1", str(rollout)),
+        "fileFingerprint": stat_fingerprint(rollout.stat()),
+    }
+    reg = _reg([thread])
+    packed = compress_like_codex(rollout)
+
+    assert prune.delete_sessions(reg, list(reg["threads"]), NOW) == 0
+
+    assert packed.exists()
+    assert _archived(home, "sess-1") == (0, None)
+    assert [t["sessionId"] for t in reg["threads"]] == ["sess-1"]
+
+
+def test_session_delete_refuses_a_rollout_compressed_since_the_last_scan(
+    tmp_path, monkeypatch, capsys
+):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    reg_path = tmp_path / "registry.json"
+    reg_path.write_text(json.dumps(_reg([_thread("sess-1", str(rollout))])), encoding="utf-8")
+    packed = compress_like_codex(rollout)
+
+    assert delete.cmd_delete(["sess-1", "--registry", str(reg_path)]) == 1
+
+    assert packed.exists()
+    assert _archived(home, "sess-1") == (0, None)
+    assert f"its transcript is now {packed.name}" in capsys.readouterr().err
+
+
+def test_archive_follows_a_rollout_compressed_since_the_last_scan_and_restores_it(
+    tmp_path, monkeypatch
+):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    reg = {**_reg([_thread("sess-1", str(rollout))]), "archived": [], "deleted": []}
+    packed = compress_like_codex(rollout)
+
+    archived = lifecycle.archive_thread(
+        reg, reg["threads"][0], archive_root_path=tmp_path / "archive", now_iso=NOW
+    )
+    [record] = reg["archived"]
+
+    assert (Path(archived.path).name, record["originalPath"]) == (packed.name, str(packed))
+    assert _archived(home, "sess-1")[0] == 1
+    assert lifecycle.restore(reg, record) == (str(packed), IndexUpdate.UPDATED)
+    assert packed.exists()
+    assert _archived(home, "sess-1") == (0, None)
+
+
+@pytest.mark.parametrize("operation", ["delete", "prune", "revalidate"])
+def test_acting_on_a_selected_rollout_that_moved_since_is_refused(tmp_path, monkeypatch, operation):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    compress_like_codex(rollout)
+
+    with pytest.raises(scanner.TranscriptMovedError, match="rl session refresh"):
+        scanner.filesystem_path(_thread("sess-1", str(rollout)), operation)
+
+
+def test_reading_or_archiving_a_rollout_that_moved_follows_it(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    packed = compress_like_codex(rollout)
+    thread = _thread("sess-1", str(rollout))
+
+    assert scanner.filesystem_path(thread, "archive") == packed
+    assert decisions.lifecycle_reason(thread, "delete") is None
+
+
+def test_only_a_source_that_compresses_in_place_follows_the_other_form(tmp_path, monkeypatch):
+    projects = tmp_path / "projects"
+    transcript = projects / "-Users-me-proj" / "s1.jsonl"
+    transcript.parent.mkdir(parents=True)
+    transcript.with_name("s1.jsonl.zst").write_bytes(b"compressed by hand")
+    monkeypatch.setenv("SESSION_TRACKER_PROJECTS_DIR", str(projects))
+
+    path = scanner.filesystem_path(_thread("s1", str(transcript), source="claude-code"), "archive")
+
+    assert path == transcript
+
+
+def test_a_rollout_compressed_since_you_looked_is_a_changed_session(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path, monkeypatch)
+    rollout = _add_thread(home, "sess-1")
+    thread = {
+        **_thread("sess-1", str(rollout)),
+        "mtime": NOW,
+        "fileFingerprint": stat_fingerprint(rollout.stat()),
+    }
+    expected = revalidate.seen(thread)
+    compress_like_codex(rollout)
+
+    assert revalidate.changed_reason(thread, expected) == "changed since you looked"

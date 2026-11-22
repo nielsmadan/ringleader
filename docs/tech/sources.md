@@ -11,7 +11,8 @@ support renaming natively. `sources/base.py` defines a small required protocol p
 a session came from ([0003](../decisions/0003-scan-behind-a-source-seam.md)).
 
 Implementations today: `claude_code.py` (`~/.claude/projects/*.jsonl`), `codex.py`
-(`~/.codex/sessions/**/*.jsonl`, with native names from `~/.codex/session_index.jsonl`),
+(`~/.codex/sessions/**/*.jsonl` and the `.jsonl.zst` Codex compresses idle rollouts into, with
+native names from `~/.codex/session_index.jsonl`),
 `droid.py` (`~/.factory/sessions/<enc-cwd>/*.jsonl` plus `.settings.json` sidecars), `pi.py`
 (`~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl`, names via `session_info`), `cursor.py`
 (`~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` plus the chat store
@@ -84,6 +85,7 @@ Each is `@runtime_checkable`. Protocols with a named capability require both the
 | `SessionLaunchingSource` | `launches_sessions` | `resume_argv()`, `fork_argv()`, `launch_argv()` |
 | `SessionLaunchingSource` | `forks_sessions` | the same protocol; the string alone says `fork_argv()` works |
 | `ForkNamingSource` | `names_forks` | `named_fork_argv()` — a fork the agent names as it creates it; only with `forks_sessions` |
+| — | `compresses_in_place` | the agent renames its own transcripts between `x.jsonl` and `x.jsonl.zst`; lifecycle verbs resolve the recorded path to whichever form exists |
 
 `filesystem_lifecycle` is a capability-only opt-in for sources whose sessions are movable files.
 Archive, delete, prune, finish, complete, sweep, and restore check it before constructing a
@@ -109,7 +111,19 @@ Deleting or moving a transcript there leaves the picker offering a session whose
 cannot update — callers must not proceed to move the file in that case.
 
 `show_in_picker()` is the inverse, and takes the transcript's **original** path, because the
-index still points there. The file has to be back in place before it runs.
+index still points there. The file has to be back in place before it runs. Codex's index keeps the
+plain `.jsonl` name after compressing a rollout, so its guards match either form.
+
+**A transcript can change its name under ringleader.** Codex compresses an idle rollout to
+`.jsonl.zst` in place and decompresses it again on resume. `ringleader/compressed.py` owns the
+pairing (`other_form`, `moved_form`, `prefer_plain`, `open_text`), and every reader goes through
+it rather than opening the file itself. Identity stays on the plain name. For a source that
+declares `compresses_in_place`, `scanner.filesystem_path()` resolves a recorded transcript that is
+now under its other name: reads and archive follow it (archive
+records the form it actually moved, so unarchive puts the same bytes back under the same name),
+while delete, prune and the guarded verbs refuse with `TranscriptMovedError` until a refresh,
+because the session changed after it was selected. Unarchive also refuses when either form
+already sits at the destination.
 
 **Workspace relocation** exists because Claude Code keys storage by the directory a session was
 launched in. Both relocate methods **raise rather than merge** when the destination is occupied;

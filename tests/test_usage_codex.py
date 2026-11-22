@@ -4,7 +4,7 @@ import json
 import os
 import stat
 
-from ringleader import paths
+from ringleader import compressed, paths
 from ringleader.analysis import codex as analysis_codex
 from ringleader.commands import usage as usage_cmd
 from ringleader.sources.base import stat_fingerprint
@@ -18,6 +18,8 @@ from ringleader.usage.codex import (
     own_events_start,
     own_thread,
 )
+
+from zstd_helpers import compress_like_codex
 
 SESSION = "01a0118b-f3a9-7453-af81-02d2d94a4e64"
 
@@ -637,10 +639,43 @@ def test_replay_logic_is_pinned_to_the_replay_version():
         analysis_codex._replay_rows,
         analysis_codex._lines,
         analysis_codex._parse,
+        compressed.open_text,
+        compressed._Decoded.readinto,
     )
     material = "".join(inspect.getsource(part) for part in parts) + repr(usage_codex._REPLAY_BURST)
 
     assert (REPLAY_VERSION, hashlib.sha256(material.encode()).hexdigest()[:16]) == (
-        3,
-        "67e65e83151dbd97",
+        4,
+        "71bad96ff76ed25b",
     )
+
+
+def test_a_compressed_rollout_yields_the_same_records_under_the_same_ids(tmp_path):
+    path = _write(
+        tmp_path,
+        [_token_count(100, 0, 0, 10, 0, ts="2026-07-25T17:11:25.192Z")],
+        meta=_session_meta("/Users/me/proj"),
+    )
+    plain = list(CodexUsageReader(sessions_dir=tmp_path).records())
+    compress_like_codex(path)
+
+    packed = list(CodexUsageReader(sessions_dir=tmp_path).records())
+
+    assert [(r.record_id, r.session_id, r.project, r.total) for r in packed] == [
+        (f"{path}|1", SESSION, "/Users/me/proj", 110)
+    ]
+    assert [r.record_id for r in plain] == [r.record_id for r in packed]
+
+
+def test_a_corrupt_compressed_rollout_is_skipped_by_usage(tmp_path):
+    limits = {"primary": {"used_percent": 47.0, "window_minutes": 10080, "resets_at": 1787213354}}
+    _write(
+        tmp_path,
+        [_token_count(100, 0, 0, 10, 0, ts="2026-07-25T17:11:25.192Z", rate_limits=limits)],
+    )
+    broken = tmp_path / "2026" / "08" / "17" / "rollout-broken.jsonl.zst"
+    broken.write_bytes(b"not zstd")
+    reader = CodexUsageReader(sessions_dir=tmp_path)
+
+    assert [r.total for r in reader.records()] == [110]
+    assert [(w.window, w.used_percent) for w in reader.windows()] == [("weekly", 47.0)]

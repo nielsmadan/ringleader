@@ -184,10 +184,10 @@ project grouping belong to the client; the rule that decides which side a row fa
 | `mtime` | string | ISO 8601 with offset, exactly as in the registry. |
 | `age_days` | number | `round(overview.age_days(mtime, now), 1)`. |
 | `age_human` | string | `overview.age_human`. |
-| `size_bytes` | number or null | Transcript size. |
+| `size_bytes` | number or null | Transcript size on disk; a compressed Codex rollout reports its compressed size. |
 | `size_human` | string | `overview.human_size`. |
 | `message_count` | number | `messageCount`, or 0. |
-| `file` | string or null | Transcript path. |
+| `file` | string or null | Transcript path. A Codex rollout switches between `.jsonl` and `.jsonl.zst` as Codex compresses and decompresses it. |
 | `decision` | string or null | The recorded decision (`keep`, `harvested`, …). |
 | `reviewed_at_mtime` | string or null | `mtime` the user last marked "keep going" at. |
 | `snoozed_at` | string or null | When the snooze was set. |
@@ -304,7 +304,7 @@ contract change.
 
 | `code` | Status | When |
 |---|---|---|
-| `changed` | refused | `--if-mtime` differs from the registry, or the transcript's size or mtime on disk differs from `--if-fingerprint` |
+| `changed` | refused | `--if-mtime` differs from the registry, the transcript's size or mtime on disk differs from `--if-fingerprint`, or Codex compressed or decompressed it in place since the last scan |
 | `no_fingerprint` | refused | `archive`, `delete` or `harvest` without a valid five-field `--if-fingerprint` |
 | `gone` | refused, failed | the session left the registry (refused by a revalidated op, failed by `keep`, `unkeep`, `wake`, `keep_going`, `snooze`) |
 | `transcript_missing` | refused | the stamped transcript is not on disk |

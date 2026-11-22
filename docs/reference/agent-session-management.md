@@ -20,7 +20,7 @@ For worktree creation, setup, isolation, session binding, and cleanup, see
 
 | | Claude Code | Codex | Droid | OpenCode | Pi | Cursor CLI |
 |---|---|---|---|---|---|---|
-| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` | `~/.factory/sessions/<enc-cwd>/<uuid>.jsonl` + `.settings.json` sidecars | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` + `~/.cursor/chats/<md5(cwd)>/<id>/` store |
+| Transcript | `~/.claude/projects/<enc-cwd>/<uuid>.jsonl` | `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl`, compressed in place to `.jsonl.zst` once idle 7 days | `~/.factory/sessions/<enc-cwd>/<uuid>.jsonl` + `.settings.json` sidecars | rows in `~/.local/share/opencode/opencode.db` | `~/.pi/agent/sessions/--<enc-cwd>--/<ts>_<uuid>.jsonl` | `~/.cursor/projects/<slug>/agent-transcripts/<id>/<id>.jsonl` + `~/.cursor/chats/<md5(cwd)>/<id>/` store |
 | Picker index | none — scans the project dir | `~/.codex/state_5.sqlite` `threads` | none — scans the session dir | same DB (`session` table) | none — scans the session dir | none — scans the chats dir for the cwd |
 | Scoped to cwd | yes | yes (`--all` to disable) | yes (`--cwd` to point elsewhere) | yes (by `project_id`) | yes | yes (`chats/<md5(cwd)>`) |
 | Fork | `--fork-session`, `forkSession` API | `codex fork` | `--fork <id>`, `resume --fork` | `--fork` | `--fork`, `/fork`, `/clone`, `/tree` | — |
@@ -144,6 +144,24 @@ So: `archived = 0`, `preview <> ''` (a session that never got a user turn is inv
 `cwd` unless `--all`, ordered by `recency_at_ms`. `--include-non-interactive` widens it to `exec`
 sessions. Locally: 204 `thread_source='user'`, 483 `subagent`, 313 unset; 373 threads from `codex
 exec`, 430 spawned as subagents.
+
+### Session sources and compressed rollouts
+
+Verified 2026-11-22 against the codex-cli 0.171.0 source (`rust-v0.171.0`) and local state.
+
+- **`source` is per server, not per client.** A TUI on its own embedded app-server records
+  `session_meta.payload.source = "cli"`; one attached to the shared app-server daemon
+  (`features.daemon_auto_start`, on by default) records `"vscode"`, with `originator` still
+  `codex-tui`. `--no-daemon`, `--profile`, or any `-c` override other than a `features.*`
+  boolean forces the embedded server (`tui/src/daemon_startup.rs`). `codex resume` lists `cli` and `vscode` alike (`tui/src/lib.rs:resume_source_kinds`);
+  `exec` and subagent (object) sources are non-interactive.
+- **Idle rollouts are compressed in place.** `rollout/src/compression.rs` replaces a rollout
+  whose mtime is at least 7 days old with `<name>.jsonl.zst` (one zstd frame), keeping the
+  mtime, in both `sessions/` and `archived_sessions/`. `threads.rollout_path` keeps the plain
+  `.jsonl` name. Readers try the plain path first; resuming or appending decompresses back to
+  `.jsonl` and deletes the `.zst`. The worker runs on startup only with the
+  `local_thread_store_compression` feature, or on an app-server `rollout/compress` request.
+  Locally 4,688 rollouts were compressed against 753 plain.
 
 ### The drift problem
 
@@ -499,3 +517,11 @@ on the cloud path). Hooklinesinker reports live Cursor sessions as `cursor`.
    moves rename both `chats/<md5>` and `projects/<slug>` and rewrite `meta.json`'s `cwd`. The
    protobuf state's `previous_workspace_uris` keeps the old path; whether the agent cares is
    *(unverified)*, as no real chat was resumed after a move.
+
+9. **A Codex rollout has two names.** Codex compresses an idle rollout to `.jsonl.zst` and a
+   resume decompresses it again, both in place, while its state db keeps the `.jsonl` name. Every
+   reader accepts both, prefers the plain file when both exist, and keys identity (thread id,
+   usage record ids, analysis facts) on the plain name. A lifecycle verb that finds the recorded
+   form gone and the other present treats the registry as stale: delete and prune refuse until a
+   refresh, archive moves whichever form exists. `codex resume` lists `cli` and `vscode` sessions
+   alike, so both count as interactive.

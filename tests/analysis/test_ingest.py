@@ -13,6 +13,8 @@ from ringleader.analysis import adapters, ingest, signals, store
 from ringleader.analysis.facts import TranscriptRef
 from ringleader.sources.base import stat_fingerprint
 
+from zstd_helpers import compress_like_codex
+
 from .factories import claude_records, write_claude, write_jsonl
 
 NOW = datetime(2026, 10, 18, 12, 0, tzinfo=UTC)
@@ -545,6 +547,50 @@ def test_rederive_failure_keeps_facts_and_records_a_failure(roots, index_dir, mo
 
 
 def test_the_adapter_list_derives_the_archive_globs_and_token_only_sources():
-    assert adapters.ARCHIVE_GLOBS == ("*/*.jsonl", "*/*/subagents/**/agent-*.jsonl")
+    assert adapters.ARCHIVE_GLOBS == (
+        "*/*.jsonl",
+        "*/*.jsonl.zst",
+        "*/*/subagents/**/agent-*.jsonl",
+    )
     assert adapters.TOKENS_ONLY_SOURCES == ("droid", "opencode", "pi")
     assert [a.agent for a in adapters.ADAPTERS] == ["claude-code", "codex"]
+
+
+def test_compressed_codex_rollouts_are_discovered_once_and_extracted(roots, index_dir):
+    live = compress_like_codex(
+        write_jsonl(roots.codex / "2026" / "10" / "rollout-x.jsonl", [{"type": "session_meta"}])
+    )
+    caught = write_jsonl(
+        roots.codex / "2026" / "10" / "rollout-y.jsonl", [{"type": "session_meta"}]
+    )
+    compress_like_codex(caught, keep_plain=True)
+    archived = compress_like_codex(
+        _archived(roots, "rollout-z.jsonl", [{"type": "session_meta", "payload": {"id": "z"}}])
+    )
+
+    found = ingest.discover(roots)
+    stats = _prepare(index_dir, roots)
+
+    assert sorted((r.path, r.agent, r.root) for r in found.refs) == sorted(
+        [(live, "codex", "codex"), (caught, "codex", "codex"), (archived, "codex", "archive")]
+    )
+    assert (stats.attempted, stats.transcripts, stats.failed) == (3, 3, 0)
+    assert sorted(_read(stats, "SELECT session_id FROM transcripts")) == [
+        ("rollout-x",),
+        ("rollout-y",),
+        ("rollout-z",),
+    ]
+
+
+def test_a_corrupt_compressed_rollout_is_recorded_as_failed(roots, index_dir):
+    write_jsonl(roots.codex / "2026" / "10" / "rollout-x.jsonl", [{"type": "session_meta"}])
+    broken = roots.codex / "2026" / "10" / "rollout-broken.jsonl.zst"
+    broken.write_bytes(b"not zstd")
+    (roots.archive / "slug").mkdir(parents=True)
+    (roots.archive / "slug" / "rollout-old.jsonl.zst").write_bytes(b"not zstd")
+
+    notices = []
+    stats = _prepare(index_dir, roots, notice=notices.append)
+
+    assert (stats.attempted, stats.transcripts, stats.failed) == (2, 1, 1)
+    assert [n.split(": ", 2)[1] for n in notices] == [f"could not index {broken}"]

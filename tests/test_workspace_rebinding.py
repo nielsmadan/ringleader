@@ -5,6 +5,8 @@ import pytest
 from ringleader.sources.base import IndexUpdate
 from ringleader.sources.codex import CodexSource, CodexStateError
 
+from zstd_helpers import compress_like_codex
+
 THREADS_DDL = """
 CREATE TABLE threads (
     id TEXT PRIMARY KEY,
@@ -125,4 +127,14 @@ def test_rebind_matches_a_row_whose_cwd_is_null(tmp_path, monkeypatch):
     rollout = _add_thread(home, "sess-1", None)
 
     assert CodexSource().rebind_workspace("sess-1", str(rollout), "/ws/new") is IndexUpdate.UPDATED
+    assert _cwd(home, "sess-1") == "/ws/new"
+
+
+def test_rebind_follows_a_compressed_rollout_to_the_row_codex_keeps_for_it(tmp_path, monkeypatch):
+    home = _codex_home(tmp_path, monkeypatch)
+    packed = compress_like_codex(_add_thread(home, "sess-1", "/ws/old"))
+    source = CodexSource()
+
+    assert source.rebind_workspace("sess-1", str(packed), "/ws/new") is IndexUpdate.UPDATED
+    assert source.rebind_workspace("sess-1", str(packed), "/ws/new") is IndexUpdate.ALREADY_CURRENT
     assert _cwd(home, "sess-1") == "/ws/new"

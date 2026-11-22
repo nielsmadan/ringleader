@@ -3,6 +3,8 @@ from pathlib import Path
 
 from ringleader.sources.codex import CodexSource
 
+from zstd_helpers import compress_like_codex
+
 PARENT = "019fe283-6fd1-7000-0000-000000000001"
 CHILD = "019fe283-705d-7000-0000-000000000002"
 
@@ -65,6 +67,25 @@ def test_non_interactive_exec_runs_are_not_registered_as_sessions(tmp_path):
     day = tmp_path / "2026" / "07" / "28"
     _rollout(day, own_id=PARENT, root_id=PARENT, source="cli")
     _rollout(day, own_id=CHILD, root_id=CHILD, source="exec")
+
+    assert _ids(CodexSource(sessions_dir=tmp_path), tmp_path) == [PARENT]
+
+
+def test_a_rollout_without_a_recorded_id_keeps_its_file_id_once_compressed(tmp_path):
+    day = tmp_path / "2025" / "09" / "20"
+    day.mkdir(parents=True)
+    plain = day / f"rollout-2025-09-20T10-00-00-{PARENT}.jsonl"
+    plain.write_text(json.dumps({"type": "response_item", "payload": {}}) + "\n", encoding="utf-8")
+    src = CodexSource(sessions_dir=tmp_path)
+    before = _ids(src, tmp_path)
+    compress_like_codex(plain)
+
+    assert _ids(CodexSource(sessions_dir=tmp_path), tmp_path) == before == [plain.stem]
+
+
+def test_tui_sessions_codex_records_with_the_vscode_source_are_registered(tmp_path):
+    day = tmp_path / "2026" / "11" / "22"
+    _rollout(day, own_id=PARENT, root_id=PARENT, source="vscode")
 
     assert _ids(CodexSource(sessions_dir=tmp_path), tmp_path) == [PARENT]
 

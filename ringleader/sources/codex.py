@@ -8,8 +8,17 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar, NamedTuple, cast
 
+from ..compressed import (
+    is_transcript,
+    is_zstd,
+    moved_form,
+    open_text,
+    other_form,
+    prefer_plain,
+    uncompressed_path,
+)
 from .base import (
     FingerprintMemo,
     IndexUpdate,
@@ -26,6 +35,8 @@ from .base import (
 
 _ARCHIVE_COLUMNS = frozenset({"archived", "archived_at", "rollout_path"})
 _REBIND_COLUMNS = frozenset({"cwd", "rollout_path"})
+# `codex resume` lists both by default; a TUI attached to the app-server records `vscode`.
+_INTERACTIVE_SOURCES = frozenset({"cli", "vscode"})
 
 
 class CodexSessionIndexError(RuntimeError):
@@ -34,6 +45,15 @@ class CodexSessionIndexError(RuntimeError):
 
 class CodexStateError(RuntimeError):
     pass
+
+
+type _Header = tuple[str, bool, str | None]
+
+
+class _Located(NamedTuple):
+    path: Path
+    stat: os.stat_result
+    entry: tuple[str, _Header]
 
 
 def _state_db(codex_home: Path) -> Path | None:
@@ -60,6 +80,23 @@ def default_codex_dir() -> Path:
     )
 
 
+def rollout_files(root: Path) -> list[Path]:
+    """Every rollout under `root`, plain or compressed in place to `.jsonl.zst`."""
+    return prefer_plain(p for p in root.glob("**/*.jsonl*") if is_transcript(p))
+
+
+def _forms(path: Path) -> Iterator[Path]:
+    """The path, then its other form: built only if the first is gone."""
+    yield path
+    if (alternate := other_form(path)) is not None:
+        yield alternate
+
+
+def _rollout_path_forms(file_path: str | Path) -> tuple[str, str]:
+    """Codex's state db keeps naming the `.jsonl` path after compressing the rollout."""
+    return str(file_path), str(uncompressed_path(file_path))
+
+
 def is_preamble(text: str) -> bool:
     t = text.lstrip()
     return t.startswith("# AGENTS.md") or "<INSTRUCTIONS>" in text
@@ -76,7 +113,7 @@ def _message_stats(path: Path) -> tuple[str | None, str | None, int]:
     last: str | None = None
     message_count = 0
     first_seen = False
-    with path.open(encoding="utf-8") as fh:
+    with open_text(path) as fh:
         for line in fh:
             if not line.strip():
                 continue
@@ -111,7 +148,7 @@ def _message_stats(path: Path) -> tuple[str | None, str | None, int]:
 
 
 def _meta(path: Path) -> dict[str, Any]:
-    with path.open(encoding="utf-8") as fh:
+    with open_text(path) as fh:
         for line in fh:
             if not line.strip():
                 continue
@@ -127,7 +164,7 @@ def _thread_id(meta: dict[str, Any], path: Path) -> str:
     so for a subagent rollout it names the parent, not this file — keying on it
     collapses a whole spawn tree onto one id. `id` is always this file's own, and
     matches the UUID in the filename."""
-    return meta.get("id") or meta.get("session_id") or path.stem
+    return meta.get("id") or meta.get("session_id") or uncompressed_path(path).stem
 
 
 def _is_interactive(meta: dict[str, Any]) -> bool:
@@ -137,10 +174,10 @@ def _is_interactive(meta: dict[str, Any]) -> bool:
     `source` is a dict for subagents; rollouts old enough to predate the field are
     all interactive."""
     source = meta.get("source")
-    return source is None or source == "cli"
+    return source is None or (isinstance(source, str) and source in _INTERACTIVE_SOURCES)
 
 
-def _header(path: Path) -> tuple[str, bool, str | None]:
+def _header(path: Path) -> _Header:
     meta = _meta(path)
     return _thread_id(meta, path), _is_interactive(meta), meta.get("cwd")
 
@@ -156,6 +193,7 @@ class CodexSource:
         default_factory=lambda: frozenset(
             {
                 "applies_names",
+                "compresses_in_place",
                 "discovers_scoped",
                 "seeds_discovery",
                 "filesystem_lifecycle",
@@ -170,7 +208,7 @@ class CodexSource:
     _names_by_id: dict[str, str | None] | None = field(
         default=None, init=False, repr=False, compare=False
     )
-    _headers: FingerprintMemo[tuple[str, bool, str | None]] = field(
+    _headers: FingerprintMemo[_Header] = field(
         default_factory=dict, init=False, repr=False, compare=False
     )
 
@@ -207,11 +245,19 @@ class CodexSource:
     def discover_scoped(
         self, cwd: str | None, *, recursive: bool, since: datetime, known: frozenset[str]
     ) -> Iterator[RawRef]:
-        def in_scope(p: Path, session_cwd: str | None) -> bool:
-            return str(p) in known or in_workspace(session_cwd, cwd, recursive=recursive)
+        def newly_compressed(p: Path) -> bool:
+            return is_zstd(p) and str(uncompressed_path(p)) in known
 
-        # rollouts are filed by date: mtime first, since it skips the oversized meta read
-        return self._refs(lambda p: changed_since(p, since), in_scope)
+        def in_scope(p: Path, session_cwd: str | None) -> bool:
+            return (
+                str(p) in known
+                or newly_compressed(p)
+                or in_workspace(session_cwd, cwd, recursive=recursive)
+            )
+
+        # rollouts are filed by date: mtime first, since it skips the oversized meta read.
+        # Compressing keeps the old mtime, so a registered rollout's new `.zst` is let through.
+        return self._refs(lambda p: changed_since(p, since) or newly_compressed(p), in_scope)
 
     def seed_discovery(self, sessions: Iterable[NormalizedSession]) -> None:
         self._headers = {
@@ -234,33 +280,47 @@ class CodexSource:
         self._names_by_id = None
         if not self.sessions_dir.exists():
             return
-        headers: FingerprintMemo[tuple[str, bool, str | None]] = {}
-        for p in sorted(self.sessions_dir.glob("**/*.jsonl")):
+        headers: FingerprintMemo[_Header] = {}
+        for p in rollout_files(self.sessions_dir):
             if not wanted(p):
                 if str(p) in self._headers:
                     headers[str(p)] = self._headers[str(p)]
                 continue
-            try:
-                st = p.stat()
-                fingerprint = stat_fingerprint(st)
-                headers[str(p)] = entry = memo_by_fingerprint(
-                    self._headers, p, fingerprint, _header
-                )
-            except (OSError, json.JSONDecodeError) as e:
-                print(f"skipped {p}: {e}", file=sys.stderr)
+            located = self._located(p)
+            if isinstance(located, str):
+                print(f"skipped {p}: {located}", file=sys.stderr)
                 continue
-            thread_id, interactive, session_cwd = entry[1]
-            if not interactive or not wanted_meta(p, session_cwd):
+            path, st, (fingerprint, header) = located
+            headers[str(path)] = (fingerprint, header)
+            thread_id, interactive, session_cwd = header
+            if not interactive or not wanted_meta(path, session_cwd):
                 continue
             yield RawRef(
                 source=self.name,
                 source_ref=thread_id,
-                file=str(p),
+                file=str(path),
                 mtime=iso_mtime(st),
                 size_bytes=st.st_size,
                 fingerprint=fingerprint,
             )
         self._headers = headers
+
+    def _located(self, p: Path) -> _Located | str:
+        """The rollout and its header, or why it was skipped. Codex compresses and
+        decompresses rollouts in place, so one that vanished mid-scan is looked for
+        under its other name."""
+        reason = "no such file"
+        for candidate in _forms(p):
+            try:
+                st = candidate.stat()
+                entry = memo_by_fingerprint(self._headers, candidate, stat_fingerprint(st), _header)
+            except FileNotFoundError as e:
+                reason = str(e)
+                continue
+            except (OSError, json.JSONDecodeError) as e:
+                return str(e)
+            return _Located(candidate, st, entry)
+        return reason
 
     def parse(self, ref: RawRef) -> NormalizedSession:
         path = ref.file_path()
@@ -310,7 +370,7 @@ class CodexSource:
         session.custom_title = self._thread_names().get(session.session_id)
 
     def apply_name(self, session_id: str, file_path: str, name: str) -> None:
-        path = Path(file_path)
+        path = moved_form(file_path) or Path(file_path)
         path.stat()
         if _thread_id(_meta(path), path) != session_id:
             raise ValueError(f"session id mismatch in {file_path}")
@@ -322,20 +382,24 @@ class CodexSource:
         append_jsonl_line(self._session_index_path(), line)
         self._names_by_id = None
 
-    def _update_thread(
+    def _update_thread(  # noqa: PLR0913 -- the guarded statement and its bindings
         self,
         sql: str,
-        params: tuple[Any, ...],
+        before: tuple[Any, ...],
         *,
-        key: tuple[str, str],
+        session_id: str,
+        file_path: str,
+        after: tuple[Any, ...] = (),
         required: frozenset[str],
         note: str,
     ) -> IndexUpdate:
         """Run one guarded UPDATE against Codex's state db. Every caller pins its
         WHERE on `rollout_path` as well as the id, so a stale or mis-derived id
         touches nothing rather than some other thread. When the UPDATE matches no
-        row, `key` re-queries for the thread itself, which is what separates a
-        session Codex has no record of from one already in the desired state."""
+        row, the guard re-queries for the thread itself, which is what separates a
+        session Codex has no record of from one already in the desired state.
+        `sql` binds `before`, then the id and both rollout path forms, then `after`."""
+        key = (session_id, *_rollout_path_forms(file_path))
         db = _state_db(Path(self.sessions_dir).parent)
         if db is None:
             return IndexUpdate.NO_INDEX
@@ -347,12 +411,12 @@ class CodexSource:
             columns = {row[1] for row in con.execute("PRAGMA table_info(threads)")}
             if not required <= columns:
                 raise CodexStateError(f"{db} {note}")
-            cur = con.execute(sql, params)
+            cur = con.execute(sql, (*before, *key, *after))
             con.commit()
             if cur.rowcount > 0:
                 return IndexUpdate.UPDATED
             row = con.execute(
-                "SELECT 1 FROM threads WHERE id = ? AND rollout_path = ?", key
+                "SELECT 1 FROM threads WHERE id = ? AND rollout_path IN (?, ?)", key
             ).fetchone()
             return IndexUpdate.ALREADY_CURRENT if row else IndexUpdate.NO_ENTRY
         except sqlite3.Error as e:
@@ -366,9 +430,10 @@ class CodexSource:
         the rollout file is gone, so this has to run before we move or delete it."""
         return self._update_thread(
             "UPDATE threads SET archived = 1, archived_at = ? "
-            "WHERE id = ? AND rollout_path = ? AND archived = 0",
-            (int(datetime.now(UTC).timestamp()), session_id, str(file_path)),
-            key=(session_id, str(file_path)),
+            "WHERE id = ? AND rollout_path IN (?, ?) AND archived = 0",
+            (int(datetime.now(UTC).timestamp()),),
+            session_id=session_id,
+            file_path=file_path,
             required=_ARCHIVE_COLUMNS,
             note="has no archivable threads table — Codex's schema moved, so sessions "
             "cannot be cleared from its resume picker",
@@ -383,9 +448,10 @@ class CodexSource:
         `rollout_path` rewritten, so it reports `NO_ENTRY`."""
         return self._update_thread(
             "UPDATE threads SET archived = 0, archived_at = NULL "
-            "WHERE id = ? AND rollout_path = ? AND archived = 1",
-            (session_id, str(file_path)),
-            key=(session_id, str(file_path)),
+            "WHERE id = ? AND rollout_path IN (?, ?) AND archived = 1",
+            (),
+            session_id=session_id,
+            file_path=file_path,
             required=_ARCHIVE_COLUMNS,
             note="has no archivable threads table — Codex's schema moved, so sessions "
             "cannot be restored to its resume picker",
@@ -399,9 +465,11 @@ class CodexSource:
 
         `IS NOT` rather than `!=` so a NULL cwd is rebound rather than read as unchanged."""
         return self._update_thread(
-            "UPDATE threads SET cwd = ? WHERE id = ? AND rollout_path = ? AND cwd IS NOT ?",
-            (str(new_cwd), session_id, str(file_path), str(new_cwd)),
-            key=(session_id, str(file_path)),
+            "UPDATE threads SET cwd = ? WHERE id = ? AND rollout_path IN (?, ?) AND cwd IS NOT ?",
+            (str(new_cwd),),
+            session_id=session_id,
+            file_path=file_path,
+            after=(str(new_cwd),),
             required=_REBIND_COLUMNS,
             note="has no threads.cwd — Codex's schema moved, so sessions cannot follow "
             "a workspace to its new path",

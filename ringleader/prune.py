@@ -11,6 +11,7 @@ from typing import Any
 from . import overview, registry, revalidate, scanner
 from .agents import source_of
 from .batch import Txn, apply_batch, no_presence, run_batch
+from .compressed import is_transcript
 from .progress import CancelCheck, never_cancelled
 from .revalidate import PresenceProbe
 
@@ -214,7 +215,7 @@ def purge_archived(
             rp = Path(archive_path).resolve()
             # Never delete outside the archive tree: registry.json is hand-editable,
             # and these deletes are irreversible last-copy data.
-            if not rp.is_relative_to(root) or rp.suffix != ".jsonl":
+            if not rp.is_relative_to(root) or not is_transcript(rp):
                 report(
                     f"skipped archived {ts['sessionId']}: {archive_path} is not an "
                     f"archive-root .jsonl transcript"

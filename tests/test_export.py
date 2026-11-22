@@ -5,6 +5,8 @@ import pytest
 from ringleader import export
 from ringleader.export import render_conversation
 
+from zstd_helpers import compress_like_codex
+
 
 def _write(p: Path, records):
     p.write_text("\n".join(json.dumps(r) for r in records), encoding="utf-8")
@@ -204,3 +206,24 @@ def test_render_tail_raises_like_render_conversation(tmp_path):
         export.render_tail(
             {"source": "claude-code", "sessionId": "s", "file": str(tmp_path / "gone.jsonl")}, 100
         )
+
+
+def test_a_compressed_codex_rollout_renders_like_the_plain_one(tmp_path):
+    f = tmp_path / "rollout.jsonl"
+    _write(f, _transcript(4))
+    plain = render_conversation(f)
+    packed = compress_like_codex(f)
+    thread = {"source": "codex", "sessionId": "s", "file": str(packed)}
+    tails = {n: export.render_tail(thread, n) for n in range(len(plain) + 2)}
+
+    assert render_conversation(packed) == plain
+    assert tails == {n: plain[-n:] if n else "" for n in range(len(plain) + 2)}
+
+
+def test_a_transcript_compressed_since_the_last_scan_still_renders(tmp_path):
+    f = tmp_path / "rollout.jsonl"
+    _write(f, _transcript(3))
+    plain = render_conversation(f)
+    compress_like_codex(f)
+
+    assert render_conversation({"source": "codex", "sessionId": "s", "file": str(f)}) == plain

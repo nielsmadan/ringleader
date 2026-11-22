@@ -6,10 +6,11 @@ from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from . import registry
 from .agents import source_of
+from .compressed import moved_form
 from .gitinfo import GitIdentity, GitResolver, git_identities, lookup_git_project
 from .sources.base import (
     AvailabilitySource,
@@ -159,7 +160,27 @@ def sources_with(capability: str, protocol: type) -> dict[str, Any]:
     return {s.name: s for s in active_sources() if supports(s, capability, protocol)}
 
 
-_CONFINED_OPERATIONS = frozenset({"delete", "prune"})
+type Operation = Literal[
+    "archive",
+    "complete",
+    "delete",
+    "finish",
+    "harvest",
+    "prune",
+    "purge",
+    "revalidate",
+    "sweep",
+    "unarchive",
+]
+
+_CONFINED_OPERATIONS: frozenset[Operation] = frozenset({"delete", "prune"})
+# these act on what was selected, so a transcript that moved since is a changed session
+_EXACT_OPERATIONS: frozenset[Operation] = frozenset({"delete", "prune", "revalidate"})
+
+
+class TranscriptMovedError(RuntimeError):
+    """The recorded transcript is gone and its other form is there: the agent compressed
+    or decompressed it in place after the last scan, so the registry is stale."""
 
 
 def _strictly_under(path: Path, root: Path) -> bool:
@@ -174,7 +195,7 @@ def _outside_store(source: StoredSource, path: Path) -> Path | None:
     return next((p for p in owned if not any(_strictly_under(p, s) for s in stores)), None)
 
 
-def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
+def filesystem_path(thread: dict[str, Any], operation: Operation) -> Path:
     source_name = source_of(thread)
     source = source_for_thread(thread)
     file_path = thread.get("file")
@@ -194,7 +215,15 @@ def filesystem_path(thread: dict[str, Any], operation: str) -> Path:
             f"cannot {operation} {source_name} session {thread.get('sessionId')}: "
             f"{stray} is outside the {source_name} session store"
         )
-    return path
+    moved = moved_form(path) if "compresses_in_place" in source.capabilities else None
+    if moved is None:
+        return path
+    if operation in _EXACT_OPERATIONS:
+        raise TranscriptMovedError(
+            f"cannot {operation} {source_name} session {thread.get('sessionId')}: "
+            f"its transcript is now {moved.name}; run `rl session refresh` and retry"
+        )
+    return moved
 
 
 def companion_paths(source_name: str | None, file_path: str | Path) -> tuple[Path, ...]:
