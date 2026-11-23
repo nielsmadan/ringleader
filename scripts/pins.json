@@ -1,0 +1,44 @@
+{
+  "hooklinesinker": {
+    "repository": "nielsmadan/hooklinesinker",
+    "version": "1.5.2",
+    "commit": "bd8646c29df59445bfd89fc449cbb1ed046c428a",
+    "assets": {
+      "hooklinesinker-macos-universal": "sha256:d97ceb246b65a4b9b7f6b60b0d9d751230e83c1ddd4d69a70923b555912984ab",
+      "hooklinesinker-linux-aarch64": "sha256:c20cf498921e28ea7432e839ab384a422a328f5e3e16f7be9a62364428f25c0c",
+      "hooklinesinker-linux-x86_64": "sha256:a66095639eb3c5a512357ada9d0770b1dae26f5d281dfe92376c755d285cbe6a"
+    },
+    "after_update": [
+      [
+        "uv",
+        "run",
+        "--locked",
+        "python",
+        "scripts/vendored.py",
+        "vendor",
+        "hooklinesinker"
+      ]
+    ]
+  },
+  "slimetrail": {
+    "repository": "nielsmadan/slimetrail",
+    "version": "0.1.0",
+    "commit": "eee557b9e80e8a8a2b165315276656e28f4ba456",
+    "assets": {
+      "slimetrail-macos-universal": "sha256:cf7ec1b32b2fe0e45a19d07b3e2b4f09b5d931af217d3733813aebb049e29bb7",
+      "slimetrail-linux-aarch64": "sha256:1f5f8db7f35b443225e2474f1c04d5fa8d634c7cabd19afaaa12db379c320803",
+      "slimetrail-linux-x86_64": "sha256:89073aef2bf2719bd24103a1ed2c0a09e3afa7b8f6a8700813efedc84309db8e"
+    },
+    "after_update": [
+      [
+        "uv",
+        "run",
+        "--locked",
+        "python",
+        "scripts/vendored.py",
+        "vendor",
+        "slimetrail"
+      ]
+    ]
+  }
+}

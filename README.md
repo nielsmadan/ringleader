@@ -244,7 +244,7 @@ to that binary. `rl doctor` ends with a `presence` section, and
 
 Working from a source checkout? `just install` stages the bundled binaries first:
 hooklinesinker and [slimetrail](https://github.com/nielsmadan/slimetrail), the session search
-index. For each, it downloads the release pinned in `scripts/<tool>.json`, verifies each binary
+index. For each, it downloads the release pinned in `scripts/pins.json`, verifies each binary
 against the sha256 recorded in the pin and the release's `SHA256SUMS`, checks that the binary
 reports the pinned version, and copies it into `ringleader/_vendor/`. Without network access
 everything else still installs and works. Only `rl data presence` reports what is missing.
@@ -254,6 +254,10 @@ just check-hooklinesinker          # is a newer release published? (also check-s
 just update-hooklinesinker         # pin the latest release, or pass a version (also update-slimetrail)
 just install                       # stage the new pin and reinstall
 ```
+
+`just release` also pins newer hooklinesinker and slimetrail releases before it releases, after
+staging and checking each one, and commits each update as `fix: update NAME to VERSION`.
+`just release --keep-pins` releases with the current pins.
 
 To stage a local release build instead of the pinned download:
 

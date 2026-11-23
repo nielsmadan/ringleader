@@ -137,9 +137,10 @@ by an older hooklinesinker), and install reminds you to approve Codex hooks in C
 ### Bundled binaries
 
 Ringleader bundles two helper binaries the same way: hooklinesinker (presence) and slimetrail
-(session search). `scripts/vendored.py` knows both. Each has a pin, `scripts/<tool>.json`, that
-records the release version, the protocol ringleader speaks with it, and the sha256 of each of
-its three binaries (macOS universal, Linux aarch64, Linux x86_64).
+(session search). `scripts/vendored.py` knows both, including the protocol ringleader speaks
+with each. Their pins live in `scripts/pins.json`, managed by `curtains pins`: the release version,
+its tag commit and the sha256 of each of the three binaries (macOS universal, Linux aarch64,
+Linux x86_64).
 
 - **vendor:** downloads each pinned release into `build/<tool>/downloads/<version>/` and
   `scripts/vendor-binary.sh <tool>` stages it under `ringleader/_vendor/<platform>/<tool>`. A
@@ -153,8 +154,9 @@ its three binaries (macOS universal, Linux aarch64, Linux x86_64).
   `scripts/release.py` refuses a wheel missing either tool's binaries.
 - **Pinned hashes:** they are what make a replaced release asset fail, because the release's
   own `SHA256SUMS` would be replaced with it.
-- **update:** moves a pin to a published stable release carrying every artifact, records the
-  new hashes, and refuses downgrades. It also writes a tool's first pin.
+- **update:** `curtains pins update TOOL` moves a pin and then runs `vendored.py vendor TOOL`, so a
+  release whose binaries fail the checksum, hash or version check is not pinned silently.
+  `just release` does this for both tools before releasing (the policy's `pins`).
 
 Hatchling includes those ignored artifacts in the wheel. Source installs without artifacts
 still work; presence installation reports the missing bundle.

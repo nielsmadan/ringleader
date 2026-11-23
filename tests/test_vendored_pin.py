@@ -5,7 +5,6 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from urllib.error import HTTPError
 
 import pytest
 
@@ -29,23 +28,10 @@ def binary(tool, version: str, protocol: int = 1) -> bytes:
     return f'#!/bin/sh\n[ "$1" = --version ] || exit 2\necho "slimetrail {version}"\n'.encode()
 
 
-def release(tool, version: str, *, assets=None, prerelease=False) -> dict[str, object]:
-    names = assets if assets is not None else [*tool.artifacts, vendored.MANIFEST]
-    return {
-        "tag_name": f"v{version}",
-        "draft": False,
-        "prerelease": prerelease,
-        "assets": [{"name": name} for name in names],
-    }
-
-
 class FakeGitHub:
-    def __init__(self, tool, releases: dict[str, dict[str, object]], latest: str) -> None:
+    def __init__(self, tool) -> None:
         self.tool = tool
-        self.api = f"https://api.github.com/repos/nielsmadan/{tool.name}/releases/"
         self.download = f"https://github.com/nielsmadan/{tool.name}/releases/download/"
-        self.releases = releases
-        self.latest = latest
         self.requests: list[str] = []
 
     def files(self, version: str) -> dict[str, bytes]:
@@ -57,12 +43,6 @@ class FakeGitHub:
 
     def __call__(self, url: str) -> bytes:
         self.requests.append(url)
-        if url.startswith(self.api):
-            endpoint = url.removeprefix(self.api)
-            version = self.latest if endpoint == "latest" else endpoint.removeprefix("tags/v")
-            if version not in self.releases:
-                raise HTTPError(url, 404, "Not Found", {}, None)  # type: ignore[arg-type]
-            return json.dumps(self.releases[version]).encode()
         assert url.startswith(self.download), url
         tag, name = url.removeprefix(self.download).split("/")
         return self.files(tag.removeprefix("v"))[name]
@@ -73,10 +53,19 @@ def pinned(tool, version: str) -> object:
     return vendored.Pin(version, 1, hashes)
 
 
+def pins_entry(pin) -> dict[str, object]:
+    return {
+        "repository": "nielsmadan/tool",
+        "version": pin.version,
+        "commit": "a" * 40,
+        "assets": {name: f"sha256:{digest}" for name, digest in pin.sha256.items()},
+    }
+
+
 @pytest.fixture
 def pin_path(tmp_path: Path, tool) -> Path:
-    path = tmp_path / f"{tool.name}.json"
-    vendored.write_pin(pinned(tool, "1.0.3"), path)
+    path = tmp_path / "pins.json"
+    path.write_text(json.dumps({tool.name: pins_entry(pinned(tool, "1.0.3"))}))
     return path
 
 
@@ -96,92 +85,27 @@ def test_read_pin_returns_the_pinned_version(tool, pin_path):
     assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.3")
 
 
-@pytest.mark.parametrize(
-    ("content", "message"),
-    [
-        ({"version": "1.0", "protocol": 1}, "stable version"),
-        ({"version": "1.0.3-rc1", "protocol": 1}, "stable version"),
-        ({"version": "1.0.3", "protocol": 2}, "speaks 1"),
-        ({"version": "1.0.3"}, "integer protocol"),
-        ({"version": "1.0.3", "protocol": 1}, "needs a sha256"),
-        ({"version": "1.0.3", "protocol": 1, "sha256": {"x": "ab"}}, "needs a sha256"),
-    ],
-)
-def test_read_pin_refuses_an_invalid_pin(tool, tmp_path, content, message):
-    path = tmp_path / "pin.json"
-    path.write_text(json.dumps(content))
+def test_read_pin_refuses_a_pin_without_every_platform_digest(tool, tmp_path):
+    entry = pins_entry(pinned(tool, "1.0.3"))
+    entry["assets"] = {tool.artifacts[0]: entry["assets"][tool.artifacts[0]]}
+    path = tmp_path / "pins.json"
+    path.write_text(json.dumps({tool.name: entry}))
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match=f"needs a sha256 digest for {tool.artifacts[1]}"):
         vendored.read_pin(tool, path)
 
 
-def test_a_missing_pin_names_the_command_that_creates_it(tool, tmp_path):
-    with pytest.raises(ValueError, match=f"run `just update-{tool.name}`"):
+def test_a_missing_pin_names_the_command_that_adds_it(tool, tmp_path):
+    with pytest.raises(ValueError, match="add one with `curtains pins add`"):
         vendored.read_pin(tool, tmp_path / "absent.json")
 
 
-def test_update_pins_the_latest_release_after_verifying_it(tool, pin_path):
-    github = FakeGitHub(tool, {"1.0.4": release(tool, "1.0.4")}, latest="1.0.4")
-
-    vendored.update(tool, None, pin_path, github)
-
-    assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.4")
-    assert f"{github.download}v1.0.4/{vendored.MANIFEST}" in github.requests
-
-
-def test_update_creates_the_first_pin(tool, tmp_path):
-    github = FakeGitHub(tool, {"0.1.0": release(tool, "0.1.0")}, latest="0.1.0")
-    path = tmp_path / f"{tool.name}.json"
-
-    vendored.update(tool, None, path, github)
-
-    assert vendored.read_pin(tool, path) == pinned(tool, "0.1.0")
-
-
-def test_update_pins_a_requested_version(tool, pin_path):
-    github = FakeGitHub(
-        tool, {"1.0.5": release(tool, "1.0.5"), "1.0.6": release(tool, "1.0.6")}, latest="1.0.6"
-    )
-
-    vendored.update(tool, "v1.0.5", pin_path, github)
-
-    assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.5")
-
-
-def test_update_refuses_to_downgrade(tool, pin_path):
-    github = FakeGitHub(tool, {"1.0.2": release(tool, "1.0.2")}, latest="1.0.2")
-
-    with pytest.raises(ValueError, match="downgrade"):
-        vendored.update(tool, "1.0.2", pin_path, github)
-
-    assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.3")
-
-
-def test_incomplete_or_unstable_releases_are_refused(tool, pin_path):
-    for published, message in (
-        (release(tool, "1.0.4", assets=[tool.artifacts[0], vendored.MANIFEST]), "missing release"),
-        (release(tool, "1.0.4", prerelease=True), "not a published stable release"),
-    ):
-        github = FakeGitHub(tool, {"1.0.4": published}, latest="1.0.4")
-
-        with pytest.raises(ValueError, match=message):
-            vendored.update(tool, None, pin_path, github)
-
-    assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.3")
-
-
-def test_update_refuses_a_binary_reporting_another_version(tool, pin_path, monkeypatch):
-    github = FakeGitHub(tool, {"1.0.4": release(tool, "1.0.4")}, latest="1.0.4")
-    monkeypatch.setattr(github, "files", lambda version: FakeGitHub.files(github, "9.9.9"))
-
-    with pytest.raises(ValueError, match="reports"):
-        vendored.update(tool, None, pin_path, github)
-
-    assert vendored.read_pin(tool, pin_path) == pinned(tool, "1.0.3")
+def test_the_repository_pins_every_vendored_platform(tool):
+    assert vendored.read_pin(tool).sha256.keys() == set(tool.artifacts)
 
 
 def test_cached_release_downloads_once_then_reuses_the_cache(tool, tmp_path):
-    github = FakeGitHub(tool, {"1.0.3": release(tool, "1.0.3")}, latest="1.0.3")
+    github = FakeGitHub(tool)
     pin = pinned(tool, "1.0.3")
 
     first = vendored.cached_release(tool, pin, tmp_path / "cache", github)
@@ -194,7 +118,7 @@ def test_cached_release_downloads_once_then_reuses_the_cache(tool, tmp_path):
 
 
 def test_cached_release_replaces_a_damaged_cache(tool, tmp_path):
-    github = FakeGitHub(tool, {"1.0.3": release(tool, "1.0.3")}, latest="1.0.3")
+    github = FakeGitHub(tool)
     pin = pinned(tool, "1.0.3")
     cached = vendored.cached_release(tool, pin, tmp_path / "cache", github)
     (cached / tool.artifacts[0]).write_bytes(b"tampered")
@@ -205,7 +129,7 @@ def test_cached_release_replaces_a_damaged_cache(tool, tmp_path):
 
 
 def test_verify_checksums_rejects_a_mismatched_artifact(tool, tmp_path):
-    github = FakeGitHub(tool, {"1.0.3": release(tool, "1.0.3")}, latest="1.0.3")
+    github = FakeGitHub(tool)
     vendored.download(tool, "1.0.3", tmp_path, github)
     (tmp_path / tool.artifacts[1]).write_bytes(b"other")
 
@@ -214,24 +138,13 @@ def test_verify_checksums_rejects_a_mismatched_artifact(tool, tmp_path):
 
 
 def test_cached_release_refuses_a_release_that_no_longer_matches_the_pin(tool, tmp_path):
-    github = FakeGitHub(tool, {"1.0.3": release(tool, "1.0.3")}, latest="1.0.3")
+    github = FakeGitHub(tool)
     swapped = {name: hashlib.sha256(b"earlier upload").hexdigest() for name in tool.artifacts}
 
     with pytest.raises(ValueError, match="does not match the sha256 pinned"):
         vendored.cached_release(tool, vendored.Pin("1.0.3", 1, swapped), tmp_path / "cache", github)
 
     assert not (tmp_path / "cache" / "1.0.3").exists()
-
-
-def test_update_records_the_sha256_of_every_artifact(tool, pin_path):
-    github = FakeGitHub(tool, {"1.0.4": release(tool, "1.0.4")}, latest="1.0.4")
-
-    vendored.update(tool, None, pin_path, github)
-
-    recorded = json.loads(pin_path.read_text())["sha256"]
-    assert recorded == {
-        name: hashlib.sha256(binary(tool, "1.0.4")).hexdigest() for name in tool.artifacts
-    }
 
 
 def test_vendor_keeps_staging_the_other_tools_when_one_fails(monkeypatch, capsys):

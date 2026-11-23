@@ -6,7 +6,8 @@
   "initial_version": "0.2.0",
   "sign": true,
   "tag_prefix": "v",
-  "tools": ["git", "uv", "uvx", "just"],
+  "tools": ["git", "gh", "uv", "uvx", "just"],
+  "pins": ["hooklinesinker", "slimetrail"],
   "preflight": [["just", "check"]],
   "stages": [
     {

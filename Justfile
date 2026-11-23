@@ -78,25 +78,25 @@ install-editable:
 
 # `vendor TOOL --dist DIR`, or $HOOKLINESINKER_DIST / $SLIMETRAIL_DIST, stages a local build
 # instead. Offline, `rl` still installs, just without the binaries.
-# Stage the hooklinesinker and slimetrail releases pinned in scripts/<tool>.json into _vendor.
+# Stage the hooklinesinker and slimetrail releases pinned in scripts/pins.json into _vendor.
 vendor *ARGS:
     -@uv run python scripts/vendored.py vendor {{ARGS}}
 
 # Pin a published hooklinesinker release: the latest, or the given version.
 update-hooklinesinker *ARGS:
-    @uv run python scripts/vendored.py update hooklinesinker {{ARGS}}
+    @curtains pins update hooklinesinker {{ARGS}}
 
 # Pin a published slimetrail release: the latest, or the given version.
 update-slimetrail *ARGS:
-    @uv run python scripts/vendored.py update slimetrail {{ARGS}}
+    @curtains pins update slimetrail {{ARGS}}
 
 # Warn when a newer hooklinesinker release is published than the one pinned.
 check-hooklinesinker:
-    @uv run python scripts/vendored.py check hooklinesinker
+    @curtains pins check hooklinesinker
 
 # Warn when a newer slimetrail release is published than the one pinned.
 check-slimetrail:
-    @uv run python scripts/vendored.py check slimetrail
+    @curtains pins check slimetrail
 
 uninstall:
     @uv tool uninstall ringleader
