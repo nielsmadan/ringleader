@@ -2,6 +2,32 @@
 
 User-facing changes to ringleader. While it is on `0.x`, a minor release may break things.
 
+## 0.3.0 - 2026-11-26
+
+### Features
+
+- Support cursor cli sessions
+- View the Projects screen by repo, folder, tree or date
+- Add --fork to rl resume
+- Name claude and pi forks with a fork counter
+- Curate native agent memories
+- Ask where to open a session from another directory
+- Expose kept sessions and unkeep in the json contract
+- Expose snoozed sessions and wake in the json contract
+- Add provider usage reports
+- Checkpoint local usage reports
+- Bundle the slimetrail binary
+
+### Fixes
+
+- Tolerate unfamiliar standalone claude records
+- Size centered dialogs to their content
+- Return unkept sessions to the triage inbox
+- Keep harvested sessions out of the snoozed list
+- Return reviewed sessions to the inbox when their snooze ends
+- Store plain snooze until times in utc
+- Read compressed and daemon-hosted codex sessions
+
 ## 0.2.0 - 2026-11-09
 
 ### Features
