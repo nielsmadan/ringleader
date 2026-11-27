@@ -1,12 +1,12 @@
 {
   "hooklinesinker": {
     "repository": "nielsmadan/hooklinesinker",
-    "version": "1.5.2",
-    "commit": "bd8646c29df59445bfd89fc449cbb1ed046c428a",
+    "version": "1.5.3",
+    "commit": "7f9db3c046c9976bcd1ce6342fbc583c0dc43979",
     "assets": {
-      "hooklinesinker-macos-universal": "sha256:d97ceb246b65a4b9b7f6b60b0d9d751230e83c1ddd4d69a70923b555912984ab",
-      "hooklinesinker-linux-aarch64": "sha256:c20cf498921e28ea7432e839ab384a422a328f5e3e16f7be9a62364428f25c0c",
-      "hooklinesinker-linux-x86_64": "sha256:a66095639eb3c5a512357ada9d0770b1dae26f5d281dfe92376c755d285cbe6a"
+      "hooklinesinker-macos-universal": "sha256:d447541c312994348f268a702b2a01757484d99f5c945c0a290342915d7b0152",
+      "hooklinesinker-linux-aarch64": "sha256:4e5fc69679431f97cbdedddd75709066dff7ecf1eae07cdd186b0fbd4fce215d",
+      "hooklinesinker-linux-x86_64": "sha256:14bd94896dc8b300d126dd6c18a581aaf7ea06746caaaff6865705bedad428aa"
     },
     "after_update": [
       [
