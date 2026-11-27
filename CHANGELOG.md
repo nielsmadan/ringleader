@@ -2,6 +2,16 @@
 
 User-facing changes to ringleader. While it is on `0.x`, a minor release may break things.
 
+## 0.4.0 - 2026-11-27
+
+### Features
+
+- Publish the sdist with each release
+
+### Fixes
+
+- Update hooklinesinker to 1.5.3
+
 ## 0.3.0 - 2026-11-26
 
 ### Features
