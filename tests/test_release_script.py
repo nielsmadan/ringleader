@@ -79,6 +79,18 @@ def _wheel(dist: Path, names) -> Path:
     return path
 
 
+def _sdist(dist: Path, names) -> Path:
+    dist.mkdir(parents=True, exist_ok=True)
+    version = release.project_version()
+    path = dist / release.sdist_name(version)
+    with tarfile.open(path, "w:gz") as archive:
+        for name in names:
+            info = tarfile.TarInfo(f"ringleader-{version}/{name}")
+            info.size = 1
+            archive.addfile(info, io.BytesIO(b"x"))
+    return path
+
+
 def test_assets_needs_the_wheel_of_this_version(tmp_path, capsys):
     (tmp_path / "dist").mkdir()
     code = release.main(["assets", "--dist", str(tmp_path / "dist"), "--out", str(tmp_path / "o")])
@@ -96,13 +108,32 @@ def test_assets_refuses_an_incomplete_wheel_and_names_what_is_missing(tmp_path, 
     assert not (tmp_path / "o").exists()
 
 
-def test_assets_writes_the_wheel_the_goldens_and_their_checksums(tmp_path):
+def test_assets_needs_the_sdist_of_this_version(tmp_path, capsys):
+    _wheel(tmp_path / "dist", release.REQUIRED_IN_WHEEL)
+    code = release.main(["assets", "--dist", str(tmp_path / "dist"), "--out", str(tmp_path / "o")])
+    assert code == 1
+    assert capsys.readouterr().err.startswith("release: no sdist at ")
+    assert not (tmp_path / "o").exists()
+
+
+def test_assets_refuses_an_sdist_without_the_lockfile(tmp_path, capsys):
+    _wheel(tmp_path / "dist", release.REQUIRED_IN_WHEEL)
+    _sdist(tmp_path / "dist", ["pyproject.toml", "README.md"])
+    code = release.main(["assets", "--dist", str(tmp_path / "dist"), "--out", str(tmp_path / "o")])
+    assert code == 1
+    assert capsys.readouterr().err.endswith("is missing uv.lock\n")
+    assert not (tmp_path / "o").exists()
+
+
+def test_assets_writes_the_wheel_the_sdist_the_goldens_and_their_checksums(tmp_path):
     wheel = _wheel(tmp_path / "dist", release.REQUIRED_IN_WHEEL)
+    sdist = _sdist(tmp_path / "dist", release.REQUIRED_IN_SDIST)
     out = tmp_path / "out"
     assert release.main(["assets", "--dist", str(tmp_path / "dist"), "--out", str(out)]) == 0
     assert sorted(p.name for p in out.iterdir()) == sorted(
-        [wheel.name, release.GOLDEN_TARBALL, release.CHECKSUMS]
+        [wheel.name, sdist.name, release.GOLDEN_TARBALL, release.CHECKSUMS]
     )
+    assert (out / sdist.name).read_bytes() == sdist.read_bytes()
     goldens = sorted(p.name for p in (REPO / "tests" / "golden").glob("contract-*.json"))
     tarball = (out / release.GOLDEN_TARBALL).read_bytes()
     with tarfile.open(fileobj=io.BytesIO(gzip.decompress(tarball))) as tar:
@@ -110,7 +141,7 @@ def test_assets_writes_the_wheel_the_goldens_and_their_checksums(tmp_path):
     sums = (out / release.CHECKSUMS).read_text().splitlines()
     assert sums == [
         f"{hashlib.sha256((out / name).read_bytes()).hexdigest()}  {name}"
-        for name in sorted((wheel.name, release.GOLDEN_TARBALL))
+        for name in sorted((wheel.name, sdist.name, release.GOLDEN_TARBALL))
     ]
 
 

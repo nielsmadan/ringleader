@@ -202,8 +202,8 @@ pruning them before the GC clock deletes them.
   `CHANGELOG.md` from feat/fix commits (`cliff.toml`), and it commits `chore: release X.Y.Z`,
   creates an annotated `vX.Y.Z` tag and pushes branch and tag atomically. Agents cannot push, so the
   user runs it. The tag starts `.github/workflows/release.yml`, which validates the tag with
-  `curtains ci`, checks it matches the version, and publishes the wheel, `contract-golden.tar.gz`
-  and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job and publishes from a
+  `curtains ci`, checks it matches the version, and publishes the wheel, the sdist (which must
+  contain `uv.lock`), `contract-golden.tar.gz` and `SHA256SUMS` (`scripts/release.py`). It builds in a read-only job and publishes from a
   separate one; its actions are locked to commits in `.github/workflows/actions.lock`. A failed publish is retried with
   `gh workflow run release.yml --ref main -f tag=vX.Y.Z`, never by re-tagging. The circus app pins a
   release by version and wheel hash, so release for anything it should pick up.

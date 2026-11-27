@@ -33,7 +33,8 @@ State (registry, archive, pending harvest queue) lives under `~/.local/share/rin
 ### From a release
 
 Each GitHub release carries `ringleader-X.Y.Z-py3-none-any.whl` (with the presence binaries
-and the skills inside) and a `SHA256SUMS`. Check the wheel against it, then:
+and the skills inside), the sdist `ringleader-X.Y.Z.tar.gz` (with `uv.lock`, for installers that
+pin dependencies by hash) and a `SHA256SUMS`. Check the wheel against it, then:
 
 ```sh
 uv tool install --force ./ringleader-X.Y.Z-py3-none-any.whl
@@ -328,9 +329,9 @@ the commit types since the last tag. `just release` runs `just check`, sets `pyp
 
 The tag starts `.github/workflows/release.yml`. It validates the tag, refuses one that does not
 match the version, vendors the pinned hooklinesinker (failing, unlike `just vendor`, when the
-download does), runs `just check` and builds the wheel in a read-only job. A separate job, holding
-the only write token, publishes a GitHub release with `ringleader-X.Y.Z-py3-none-any.whl`,
-`contract-golden.tar.gz` (the `tests/golden/contract-*.json` documents, flat) and `SHA256SUMS`,
+download does), runs `just check` and builds the wheel and sdist in a read-only job. A separate
+job, holding the only write token, publishes a GitHub release with
+`ringleader-X.Y.Z-py3-none-any.whl`, `ringleader-X.Y.Z.tar.gz`, `contract-golden.tar.gz` (the `tests/golden/contract-*.json` documents, flat) and `SHA256SUMS`,
 assembled and checked by `scripts/release.py`. If publishing fails after the tag is pushed, fix
 `main` if needed and rerun it with `gh workflow run release.yml --ref main -f tag=vX.Y.Z`.
 

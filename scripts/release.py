@@ -30,6 +30,7 @@ REQUIRED_IN_WHEEL = (
     "ringleader/devtools/gui_world.py",
     "ringleader/devtools/tui_fixture.py",
 )
+REQUIRED_IN_SDIST = ("pyproject.toml", "uv.lock")
 
 VERSION_LINE = re.compile(r'^version = "([^"]*)"$', re.MULTILINE)
 CANONICAL_VERSION = re.compile(r"(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)")
@@ -62,9 +63,18 @@ def wheel_name(version: str) -> str:
     return f"ringleader-{version}-py3-none-any.whl"
 
 
+def sdist_name(version: str) -> str:
+    return f"ringleader-{version}.tar.gz"
+
+
 def missing_from_wheel(names: Iterable[str]) -> list[str]:
     present = set(names)
     return [name for name in REQUIRED_IN_WHEEL if name not in present]
+
+
+def missing_from_sdist(names: Iterable[str], version: str) -> list[str]:
+    present = set(names)
+    return [name for name in REQUIRED_IN_SDIST if f"ringleader-{version}/{name}" not in present]
 
 
 def golden_tarball(files: Sequence[NamedBytes]) -> bytes:
@@ -119,14 +129,24 @@ def _assets(args: argparse.Namespace) -> int:
     if missing:
         print(f"release: {wheel.name} is missing {', '.join(missing)}", file=sys.stderr)
         return 1
+    sdist = Path(args.dist) / sdist_name(version)
+    if not sdist.is_file():
+        print(f"release: no sdist at {sdist}", file=sys.stderr)
+        return 1
+    with tarfile.open(sdist) as archive:
+        missing = missing_from_sdist(archive.getnames(), version)
+    if missing:
+        print(f"release: {sdist.name} is missing {', '.join(missing)}", file=sys.stderr)
+        return 1
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    shipped_wheel = out / wheel.name
-    shutil.copyfile(wheel, shipped_wheel)
+    shipped = [out / wheel.name, out / sdist.name]
+    for source, target in zip((wheel, sdist), shipped, strict=True):
+        shutil.copyfile(source, target)
     tarball = out / GOLDEN_TARBALL
     tarball.write_bytes(golden_tarball(_named(GOLDEN_DIR.glob("contract-*.json"))))
-    (out / CHECKSUMS).write_text(sha256sums(_named([shipped_wheel, tarball])), encoding="utf-8")
-    print("\n".join(str(p) for p in (shipped_wheel, tarball, out / CHECKSUMS)))
+    (out / CHECKSUMS).write_text(sha256sums(_named([*shipped, tarball])), encoding="utf-8")
+    print("\n".join(str(p) for p in (*shipped, tarball, out / CHECKSUMS)))
     return 0
 
 
@@ -139,8 +159,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     prepare = sub.add_parser("prepare", help="set the pyproject version to VERSION")
     prepare.add_argument("version")
     prepare.set_defaults(run=_prepare)
-    assets = sub.add_parser("assets", help="verify the wheel and write the release assets")
-    assets.add_argument("--dist", required=True, help="directory holding the built wheel")
+    assets = sub.add_parser(
+        "assets", help="verify the wheel and sdist and write the release assets"
+    )
+    assets.add_argument("--dist", required=True, help="directory holding the built wheel and sdist")
     assets.add_argument("--out", required=True, help="directory to write the release assets into")
     assets.set_defaults(run=_assets)
     args = ap.parse_args(argv)
